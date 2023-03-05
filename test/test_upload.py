@@ -7,6 +7,7 @@ from distutils.command.upload import upload
 import logging
 from pathlib import Path
 from re import T
+from typing import Union
 from uuid import uuid4
 import boto3
 from botocore.exceptions import ClientError
@@ -71,6 +72,41 @@ def test_get_commit_obj(tmp_path: Path, hs5: Hs5Runner):
 
     with open(fpath, "r") as f:
         assert len(f.read())>30
+
+def test_multipage_list(tmp_path: Path, hs5: Hs5Runner):
+    with open(tmp_path / "upload.txt", "w") as upload_file:
+        upload_file.write("abc")
+
+    s3_client = hs5.get_s3_client()
+    ul_files = set[str]()
+    for i in range(0, 210):
+        s3name = f"{i}.txt"
+        s3_client.upload_file(upload_file.name, "testbucket", s3name)
+        ul_files.add(s3name)
+
+
+    marker : Union[None, str]= None
+    while True:
+        if marker is not None:
+            res = s3_client.list_objects(Bucket="testbucket", Marker=marker, MaxKeys=100)
+        else:
+            res = s3_client.list_objects(Bucket="testbucket", MaxKeys=100)
+
+        objs = res["Contents"]
+        assert len(objs)<=100
+        for obj in objs:
+            assert "Key" in obj
+            assert obj["Key"] in ul_files
+            assert "Size" in obj and obj["Size"] == 3
+            ul_files.remove(obj["Key"])
+
+        if not res["IsTruncated"]:
+            break
+
+        marker = res["NextMarker"]
+
+    assert not ul_files
+
 
 def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):
 

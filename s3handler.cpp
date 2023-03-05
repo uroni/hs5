@@ -201,7 +201,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         if(fpath.find('/')==std::string::npos)
         {
-            listObjects(*headers);
+            listObjects(*headers, fpath);
             return;
         }
 
@@ -248,7 +248,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     }
 }
 
-void S3Handler::listObjects(proxygen::HTTPMessage& headers)
+void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& bucket)
 {
     request_type = RequestType::ListObjects;
     auto marker = headers.getQueryParam("marker");
@@ -259,9 +259,9 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers)
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     folly::getGlobalCPUExecutor()->add(
-    [self = self, evb, marker, max_keys, prefix, delimiter]()
+    [self = self, evb, marker, max_keys, prefix, delimiter, bucket]()
     {
-        self->listObjects(evb, self, marker, std::max(0, std::min(10000, max_keys)), prefix, delimiter);
+        self->listObjects(evb, self, marker, std::max(0, std::min(10000, max_keys)), prefix, delimiter, bucket);
     });
 }
 
@@ -555,10 +555,10 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
     }
 }
 
-void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& marker, int max_keys, const std::string& prefix, const std::string& delimiter)
+void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& marker, int max_keys, const std::string& prefix, const std::string& delimiter, const std::string& bucket)
 {
     SingleFileStorage::IterData iter_data = {};
-    if(!sfs.iter_start(marker, false, iter_data))
+    if(!sfs.iter_start(bucket + "/" + marker, false, iter_data))
     {
         evb->runInEventBaseThread([self = self]()
                                               {
@@ -589,6 +589,11 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             size += ext.len;
         }
 
+        // Remove bucket name
+        auto slash_idx = key.find('/');
+        if(slash_idx != std::string::npos)
+            key = key.substr(slash_idx+1);
+
         val_data += fmt::format("\t<Contents>\n"
             "\t\t<Key>{}</Key>\n"
             "\t\t<LastModified>2009-10-12T17:50:30.000Z</LastModified>\n"
@@ -615,10 +620,15 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     }
 
     std::string next_maker;
-    if(!truncated)
+    if(truncated)
     {
         std::string data;
         sfs.iter_curr_val(next_maker, data, iter_data);
+
+        // Remove bucket name
+        auto slash_idx = next_maker.find('/');
+        if(slash_idx != std::string::npos)
+            next_maker = next_maker.substr(slash_idx+1);
     }
 
     sfs.iter_stop(iter_data);

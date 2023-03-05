@@ -40,14 +40,14 @@ private:
     void readFile(folly::EventBase *evb);
     void readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> self, int64_t offset);
 	void onBodyCPU(folly::EventBase *evb, int64_t offs, std::unique_ptr<folly::IOBuf> body);
-    void listObjects(proxygen::HTTPMessage& headers);
+    void listObjects(proxygen::HTTPMessage& headers, const std::string& bucket);
     void getCommitObject(proxygen::HTTPMessage& headers);
     void getObject(proxygen::HTTPMessage& headers);
     void putObject(proxygen::HTTPMessage& headers);
     void commit(proxygen::HTTPMessage& headers);
     void deleteObject(proxygen::HTTPMessage& headers);
 
-    void listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& marker, int max_keys, const std::string& prefix, const std::string& delimiter);
+    void listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& marker, int max_keys, const std::string& prefix, const std::string& delimiter, const std::string& bucket);
 
 	enum class RequestType
 	{
