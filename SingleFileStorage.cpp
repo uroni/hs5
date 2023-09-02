@@ -504,10 +504,10 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 
         std::error_code ec;
         std::filesystem::remove(options.dm_cache_path + "/cache", ec);
-        int cache_fd = open((options.dm_cache_path + "/cache").c_str(), O_WRONLY | O_CREAT | O_CLOEXEC);
+        int cache_fd = open((options.dm_cache_path + "/cache").c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
 		
         std::filesystem::remove(options.dm_cache_path + "/meta", ec);
-        int cache_meta_fd = open((options.dm_cache_path + "/meta").c_str(), O_WRONLY | O_CREAT | O_CLOEXEC);
+        int cache_meta_fd = open((options.dm_cache_path + "/meta").c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
 
 		std::string cache_loop, meta_loop, db_loop;
 
@@ -516,7 +516,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 		std::string cache_name = data_path_p.parent_path().filename().string() + "-" + random_uuid();
 
 		{
-            int fd = open(index_lmdb_fn.c_str(), O_RDWR | O_CREAT | O_CLOEXEC);
+            int fd = open(index_lmdb_fn.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
 			if (fd!=-1)
 			{
 				int64_t fsize = fileSize(fd);
@@ -6916,7 +6916,7 @@ void SingleFileStorage::operator()()
 					auto active_fn = data_file_path.parent_path() / "active";
 					if (!std::filesystem::exists(active_fn))
 					{
-						int fd = open(active_fn.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC);
+						int fd = open(active_fn.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
 						if (fd !=-1)
 						{
 							folly::fsyncNoInt(fd);
