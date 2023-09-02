@@ -3,7 +3,6 @@ build
 data
 index.lmdb
 index.lmdb-lock
-test/requirements.txt
 test/.test_venv
 .vscode/settings.json
 __pycache__
