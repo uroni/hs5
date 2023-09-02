@@ -29,7 +29,19 @@ class Hs5Runner:
         if data_file_alloc_chunk_size is None:
             data_file_alloc_chunk_size = str(10*1024*1024)
 
-        args = [f"{os.getcwd()}/build/hs5",
+        locs = [Path("builds/ninja-multi-vcpkg/Debug/hs5"),
+                Path("builds/ninja-multi-vcpkg/RelWithDebInfo/hs5"),
+                Path("builds/ninja-multi-vcpkg/Release/hs5"),
+                Path("build/hs5")]
+        
+        hs5_loc = None
+        for loc in locs:
+            if (Path(os.getcwd()) / loc).exists():
+                hs5_loc = Path(os.getcwd()) / loc
+
+        assert hs5_loc is not None
+
+        args = [str(hs5_loc),
                 "--ip",
                 "127.0.0.1",
                 "--http_port",
