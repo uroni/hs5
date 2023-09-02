@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <thread>
 #include <folly/io/IOBufQueue.h>
+#include <sodium.h>
 
 
 using THREAD_ID = pid_t;
@@ -111,7 +112,7 @@ public:
 		std::vector<Ext> extents;
 	};
 
-	WritePrepareResult write_prepare(const std::string& fn, size_t data_size, size_t max_data_fragments);
+	WritePrepareResult write_prepare(const std::string& fn, size_t data_size);
 
 	int write_ext(const Ext& ext, const void* data, size_t data_size);
 
@@ -120,20 +121,24 @@ public:
 
 	int write(const std::string& fn,
 		const char* data, size_t data_size, int64_t last_modified, const std::string& md5sum,
-		bool no_del_old, bool is_fragment, size_t max_data_fragments);
+		bool no_del_old, bool is_fragment);
 
 	const static unsigned int ReadWithReadahead = 1;
 	const static unsigned int ReadUnsynced = 2;
 	const static unsigned int ReadMetaOnly = 4;
+	const static unsigned int ReadSkipAddReading = 8;
 
 	struct ReadPrepareResult
 	{
 		int err;
 		std::vector<Ext> extents;
 		int64_t total_len;
+		std::string md5sum;
 	};
 
 	ReadPrepareResult read_prepare(const std::string& fn, unsigned int flags);
+	std::string read(const std::string& fn, unsigned int flags);
+	int check_existence(const std::string& fn, unsigned int flags);
 
 	struct ReadExtResult
 	{
@@ -145,7 +150,7 @@ public:
 
 	int read_finalize(const std::string& fn, const std::vector<Ext>& extents, unsigned int flags);
 
-	bool del(const std::string& fn, DelAction da,
+	int del(const std::string& fn, DelAction da,
 		bool background_queue);
 
 	bool restore_old(const std::string& fn);
@@ -264,11 +269,14 @@ public:
 		return manual_commit;
 	}
 
+    std::pair<int64_t, std::string> get_next_partid();
+
+	int64_t decrpyt_partid(const std::string& encdata);
+
 private:
 
 	int write_int(const std::string& fn, const char* data, size_t data_size,
-		int64_t last_modified, const std::string& md5sum, bool allow_defrag_lock, bool no_del_old,
-		size_t max_data_fragments);
+		int64_t last_modified, const std::string& md5sum, bool allow_defrag_lock, bool no_del_old);
 
 	int64_t remove_fn(const std::string& fn,
 		MDB_txn* txn, MDB_txn* freespace_txn, bool del_from_main, bool del_old, THREAD_ID tid);
@@ -405,6 +413,7 @@ private:
 		RestoreOld,
 		EmptyQueue,
 		ReadFragInfo,
+		ReadFragInfoWithoutParsing,
 		FreeExtents,
 		ResetDelLog,
 		GetDiskId,
@@ -451,7 +460,7 @@ private:
 
 	std::string compress_filename(const std::string& fn);
 
-	SFragInfo get_frag_info(MDB_txn* txn, const std::string& fn);
+	SFragInfo get_frag_info(MDB_txn* txn, const std::string& fn, bool parse_data);
 
 	bool generate_free_len_idx(MDB_txn* txn);
 
@@ -493,6 +502,7 @@ private:
 	int64_t data_file_offset_end;
 	int64_t data_file_free;
 	std::map<int64_t, int64_t> reserved_extents;
+	std::mutex reserved_extents_mutex;
     folly::File data_file;
     folly::File data_file_dio;
     folly::File new_data_file;
@@ -563,6 +573,9 @@ private:
 	bool manual_commit;
 	bool stop_on_error;
 	bool punch_holes;
+
+	int64_t curr_partid = 0;
+	unsigned char enckey[crypto_secretbox_KEYBYTES];
 };
 
 

@@ -1848,6 +1848,9 @@ mdb_dlist_free(MDB_txn *txn)
 	dl[0].mid = 0;
 }
 
+static int
+mdb_cleanup_loose(MDB_txn* txn);
+
 /** Loosen or free a single page.
  * Saves single pages to a list for future reuse
  * in this same txn. It has been pulled from the freeDB
@@ -1895,6 +1898,14 @@ mdb_page_loose(MDB_cursor *mc, MDB_page *mp)
 		txn->mt_loose_pgs = mp;
 		txn->mt_loose_count++;
 		mp->mp_flags |= P_LOOSE;
+
+		/* When spilling we skip loose pages. So at some point we need to clean them up. */
+		if (txn->mt_loose_count > MDB_IDL_DIRTY_MAX/2) {
+			int rc = mdb_cleanup_loose(txn);
+			if (rc)
+				return rc;
+		}
+
 	} else {
 		int rc = mdb_midl_append(&txn->mt_free_pgs, pgno);
 		if (rc)
@@ -2011,7 +2022,7 @@ static int mdb_page_flush(MDB_txn *txn, int keep);
  * @return 0 on success, non-zero on failure.
  */
 static int
-mdb_page_spill(MDB_cursor *m0, MDB_val *key, MDB_val *data)
+mdb_page_spill(MDB_cursor *m0, MDB_val *key, MDB_val *data, MDB_cursor* mx)
 {
 	MDB_txn *txn = m0->mc_txn;
 	MDB_page *dp;
@@ -2031,6 +2042,8 @@ mdb_page_spill(MDB_cursor *m0, MDB_val *key, MDB_val *data)
 	/* For puts, roughly factor in the key+data size */
 	if (key)
 		i += (LEAFSIZE(key, data) + txn->mt_env->me_psize) / txn->mt_env->me_psize;
+	if (mx && mx->mc_flags & C_INITIALIZED)
+		i += mx->mc_db->md_depth;
 	i += i;	/* double it for good measure */
 	need = i;
 
@@ -3079,6 +3092,59 @@ mdb_txn_abort(MDB_txn *txn)
 	mdb_txn_end(txn, MDB_END_ABORT|MDB_END_SLOT|MDB_END_FREE);
 }
 
+/* Put loose page numbers in mt_free_pgs, since
+* we may be unable to return them to me_pghead.
+*/
+static int
+mdb_cleanup_loose(MDB_txn* txn)
+{
+	int rc;
+	MDB_env* env = txn->mt_env;
+	MDB_page* mp = txn->mt_loose_pgs;
+	MDB_ID2* dl = txn->mt_u.dirty_list;
+	unsigned x;
+	if ((rc = mdb_midl_need(&txn->mt_free_pgs, txn->mt_loose_count)) != 0)
+		return rc;
+	for (; mp; mp = NEXT_LOOSE_PAGE(mp)) {
+		mdb_midl_xappend(txn->mt_free_pgs, mp->mp_pgno);
+		/* must also remove from dirty list */
+		if (txn->mt_flags & MDB_TXN_WRITEMAP) {
+			for (x = 1; x <= dl[0].mid; x++)
+				if (dl[x].mid == mp->mp_pgno)
+					break;
+			mdb_tassert(txn, x <= dl[0].mid);
+		}
+		else {
+			x = mdb_mid2l_search(dl, mp->mp_pgno);
+			mdb_tassert(txn, dl[x].mid == mp->mp_pgno);
+			mdb_dpage_free(env, mp);
+		}
+		dl[x].mptr = NULL;
+	}
+	{
+		/* squash freed slots out of the dirty list */
+		unsigned y;
+		for (y = 1; dl[y].mptr && y <= dl[0].mid; y++);
+		if (y <= dl[0].mid) {
+			for (x = y, y++;;) {
+				while (!dl[y].mptr && y <= dl[0].mid) y++;
+				if (y > dl[0].mid) break;
+				dl[x++] = dl[y++];
+			}
+			dl[0].mid = x - 1;
+		}
+		else {
+			/* all slots freed */
+			dl[0].mid = 0;
+		}
+	}
+	txn->mt_loose_pgs = NULL;
+	txn->mt_dirty_room += txn->mt_loose_count;
+	txn->mt_loose_count = 0;
+
+	return MDB_SUCCESS;
+}
+
 /** Save the freelist as of this transaction to the freeDB.
  * This changes the freelist. Keep trying until it stabilizes.
  */
@@ -3106,47 +3172,9 @@ mdb_freelist_save(MDB_txn *txn)
 	}
 
 	if (!env->me_pghead && txn->mt_loose_pgs) {
-		/* Put loose page numbers in mt_free_pgs, since
-		 * we may be unable to return them to me_pghead.
-		 */
-		MDB_page *mp = txn->mt_loose_pgs;
-		MDB_ID2 *dl = txn->mt_u.dirty_list;
-		unsigned x;
-		if ((rc = mdb_midl_need(&txn->mt_free_pgs, txn->mt_loose_count)) != 0)
+		rc = mdb_cleanup_loose(txn);
+		if (rc)
 			return rc;
-		for (; mp; mp = NEXT_LOOSE_PAGE(mp)) {
-			mdb_midl_xappend(txn->mt_free_pgs, mp->mp_pgno);
-			/* must also remove from dirty list */
-			if (txn->mt_flags & MDB_TXN_WRITEMAP) {
-				for (x=1; x<=dl[0].mid; x++)
-					if (dl[x].mid == mp->mp_pgno)
-						break;
-				mdb_tassert(txn, x <= dl[0].mid);
-			} else {
-				x = mdb_mid2l_search(dl, mp->mp_pgno);
-				mdb_tassert(txn, dl[x].mid == mp->mp_pgno);
-				mdb_dpage_free(env, mp);
-			}
-			dl[x].mptr = NULL;
-		}
-		{
-			/* squash freed slots out of the dirty list */
-			unsigned y;
-			for (y=1; dl[y].mptr && y <= dl[0].mid; y++);
-			if (y <= dl[0].mid) {
-				for(x=y, y++;;) {
-					while (!dl[y].mptr && y <= dl[0].mid) y++;
-					if (y > dl[0].mid) break;
-					dl[x++] = dl[y++];
-				}
-				dl[0].mid = x-1;
-			} else {
-				/* all slots freed */
-				dl[0].mid = 0;
-			}
-		}
-		txn->mt_loose_pgs = NULL;
-		txn->mt_loose_count = 0;
 	}
 
 	/* MDB_RESERVE cancels meminit in ovpage malloc (when no WRITEMAP) */
@@ -6674,13 +6702,16 @@ mdb_cursor_put(MDB_cursor *mc, MDB_val *key, MDB_val *data,
 
 	/* Cursor is positioned, check for room in the dirty list */
 	if (!nospill) {
+		MDB_cursor* spillmx = NULL;
+		if (!(flags & MDB_NODUPDATA) && mc->mc_xcursor != NULL)
+			spillmx = &mc->mc_xcursor->mx_cursor;
 		if (flags & MDB_MULTIPLE) {
 			rdata = &xdata;
 			xdata.mv_size = data->mv_size * dcount;
 		} else {
 			rdata = data;
 		}
-		if ((rc2 = mdb_page_spill(mc, key, rdata)))
+		if ((rc2 = mdb_page_spill(mc, key, rdata, spillmx)))
 			return rc2;
 	}
 
@@ -7111,6 +7142,7 @@ mdb_cursor_del(MDB_cursor *mc, unsigned int flags)
 {
 	MDB_node	*leaf;
 	MDB_page	*mp;
+	MDB_cursor* spillmx = NULL;
 	int rc;
 
 	if (mc->mc_txn->mt_flags & (MDB_TXN_RDONLY|MDB_TXN_BLOCKED))
@@ -7122,7 +7154,10 @@ mdb_cursor_del(MDB_cursor *mc, unsigned int flags)
 	if (mc->mc_ki[mc->mc_top] >= NUMKEYS(mc->mc_pg[mc->mc_top]))
 		return MDB_NOTFOUND;
 
-	if (!(flags & MDB_NOSPILL) && (rc = mdb_page_spill(mc, NULL, NULL)))
+	if (!(flags & MDB_NOSPILL) && !(flags & MDB_NODUPDATA) && mc->mc_xcursor != NULL)
+		spillmx = &mc->mc_xcursor->mx_cursor;
+
+	if (!(flags & MDB_NOSPILL) && (rc = mdb_page_spill(mc, NULL, NULL, spillmx)))
 		return rc;
 
 	rc = mdb_cursor_touch(mc);

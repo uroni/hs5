@@ -1,8 +1,7 @@
 /**
  * Copyright Martin Raiber. All Rights Reserved.
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: LGPL-3.0-or-later
  */
- 
 #include "utils.h"
 #include <folly/Random.h>
 #include <folly/String.h>

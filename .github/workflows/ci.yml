@@ -1,0 +1,76 @@
+# Copyright (c) 2021-2022-2023 Luca Cappa
+# Released under the term specified in file LICENSE.txt
+# SPDX short identifier: MIT
+#
+# The peculiarity of this workflow is that assumes vcpkg stored as a submodule of this repository.
+# The workflow runs on x64 and ARM platforms.
+# Workflow steps:
+# - Setup vcpkg and cache it on the GitHub Action cloud based cache.
+# - Runs CMake with CMakePreset.json using a presest configuration
+#   that leverages the vcpkg's toolchain file. This will automatically run vcpkg 
+#   to install dependencies described by the vcpkg.json manifest file. 
+#   This stage also runs vcpkg with Binary Caching leveraging GitHub Action cache to 
+#   store the built packages artifacts, hence it will be a no-op if those are restored 
+#   from cache (e.g., already previously built).
+# - Finally builds the sources with Ninja, and tests as well.
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  job:
+    name: ${{ matrix.os }}-${{ github.workflow }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest, buildjet-2vcpu-ubuntu-2204-arm]
+    #env:
+    #
+    # [OPTIONAL] Define the vcpkg's triplet 
+    # you want to enforce, otherwise the default one 
+    # for the hosting system will be automatically
+    # choosen (x64 is the default on all platforms, 
+    # e.g. x64-osx).
+    # VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }} 
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Restore from cache and setup vcpkg executable and data files.
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgJsonGlob: 'vcpkg.json'
+
+      # Note: if the preset misses the "configuration", it is possible to explicitly select the
+      # configuration with the additional `--config` flag, e.g.:
+      #   buildPreset: 'ninja-vcpkg'
+      #   buildPresetAdditionalArgs: "[`--config`, `Release`]"
+      #   testPreset: 'ninja-vcpkg'
+      #   testPresetAdditionalArgs: "[`--config`, `Release`]"
+      - name: Run CMake+vcpkg+Ninja+CTest to build packages and generate/build/test the code.
+        uses: lukka/run-cmake@v10
+        with:
+          configurePreset: 'ninja-multi-vcpkg'
+          buildPreset: 'ninja-vcpkg-release'
+          testPreset: 'test-release'
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      - name: Install Python dependencies
+        run: pip install -r test/requirements.txt
+
+      - name: Install pytest dependencies
+        run: pip install pytest-md pytest-emoji
+
+      - uses: pavelzw/pytest-action@v2
+        with:
+          custom-arguments: -p no:sugar

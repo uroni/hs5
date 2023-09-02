@@ -1,8 +1,7 @@
 /**
  * Copyright Martin Raiber. All Rights Reserved.
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: LGPL-3.0-or-later
  */
-
 #include <folly/String.h>
 #include <gflags/gflags.h>
 #include <iostream>
@@ -17,6 +16,7 @@
 #include <folly/portability/GFlags.h>
 #include <folly/portability/Unistd.h>
 #include <folly/Random.h>
+#include <folly/logging/xlog.h>
 #include <proxygen/httpserver/HTTPServer.h>
 #include <proxygen/httpserver/RequestHandlerFactory.h>
 #include "s3handler.h"
@@ -30,7 +30,7 @@ DEFINE_int32(h2_port, -1, "Port to listen on with HTTP/2 protocol (-1 if disable
 DEFINE_string(ip, "localhost", "IP/Hostname to bind to");
 DEFINE_string(root_key, "", "Secret access key for 'root'");
 DEFINE_int64(data_file_size_limit_mb, 0, "Max data file size (0 for unlimited)");
-DEFINE_int64(data_file_alloc_chunk_size_mb, 512, "Data file chunk allocation size");
+DEFINE_int64(data_file_alloc_chunk_size, 512*1024*1024, "Data file chunk allocation size");
 DEFINE_int32(threads,
              0,
              "Number of threads to listen on. Numbers <= 0 "
@@ -40,6 +40,7 @@ DEFINE_string(index_path, ".", "Path where to put the index file");
 DEFINE_string(data_path, ".", "Path where to put the data file");
 DEFINE_bool(stop_on_error, false, "Stop on write/read errors");
 DEFINE_bool(punch_holes, true, "Free up space if not enough free space is left by punching holes");
+DEFINE_string(server_url, "serverurl", "URL of server");
 
 namespace {
 class S3HandlerFactory : public proxygen::RequestHandlerFactory {
@@ -60,7 +61,7 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
   }
 
   proxygen::RequestHandler* onRequest(proxygen::RequestHandler*, proxygen::HTTPMessage*) noexcept override {
-    return new S3Handler(sfs, root_key);
+    return new S3Handler(sfs, root_key, FLAGS_server_url);
   }
 };
 }
@@ -69,6 +70,9 @@ int main(int argc, char* argv[])
 {
     folly::init(&argc, &argv, true);
     SingleFileStorage::init_mutex();
+
+    if(FLAGS_server_url.empty())
+      FLAGS_server_url = "http://example.com";
 
     std::vector<proxygen::HTTPServer::IPConfig> IPs = {
         {folly::SocketAddress(FLAGS_ip, FLAGS_http_port, true), proxygen::HTTPServer::Protocol::HTTP},
@@ -83,7 +87,7 @@ int main(int argc, char* argv[])
     sfsoptions.data_path = FLAGS_data_path;
     sfsoptions.db_path = FLAGS_index_path;
     sfsoptions.data_file_size_limit_mb = FLAGS_data_file_size_limit_mb;
-    sfsoptions.alloc_chunk_size = FLAGS_data_file_alloc_chunk_size_mb*1024*1024;
+    sfsoptions.alloc_chunk_size = FLAGS_data_file_alloc_chunk_size;
     std::vector<unsigned char> runtime_id(32);
     folly::Random::secureRandom(runtime_id.data(), runtime_id.size());
     sfsoptions.runtime_id = folly::hexlify<std::string>(folly::ByteRange(runtime_id.data(), runtime_id.size()));
@@ -102,6 +106,11 @@ int main(int argc, char* argv[])
 
     proxygen::HTTPServer server(std::move(options));
     server.bind(IPs);
+
+    for(const auto& ip: IPs)
+    {
+      XLOGF(INFO, "Listening on {}", ip.address.describe());
+    }
 
     std::thread t([&]() { server.start(); });
     t.join();    

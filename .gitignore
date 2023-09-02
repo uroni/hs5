@@ -7,3 +7,6 @@ test/requirements.txt
 test/.test_venv
 .vscode/settings.json
 __pycache__
+test/.venv/*
+builds
+vcpkg

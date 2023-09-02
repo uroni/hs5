@@ -1,10 +1,11 @@
 /**
  * Copyright Martin Raiber. All Rights Reserved.
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 #include "SingleFileStorage.h"
 #include <asm-generic/errno-base.h>
 #include <asm-generic/errno.h>
+#include <cstdint>
 #include <folly/File.h>
 #include <folly/FileUtil.h>
 #include <folly/Range.h>
@@ -32,6 +33,7 @@
 #include <thread>
 #include <chrono>
 #include "data.h"
+#include "crypt.h"
 
 using namespace std::chrono_literals;
 
@@ -81,7 +83,6 @@ namespace
 	}
 
 	const int64_t block_size = 4096;
-	const size_t max_extent_num = 64;
 	const size_t num_cached_free_exts = 1000;
 	const size_t max_defrag_extents = 1000000;
 	const int64_t data_file_copy_num_bytes = 100 * 1024 * 1024;
@@ -123,6 +124,8 @@ namespace
 		return static_cast<int>(diff ? diff : len_diff < 0 ? -1 : len_diff);
 	}
 
+	const int64_t max_inline_exts = 511;
+
 	int64_t extract_num_exts(int64_t& offset)
 	{
 		int64_t exts = offset % 512;
@@ -132,9 +135,46 @@ namespace
 
 	int64_t encode_num_exts(int64_t offset, int64_t exts)
 	{
-		assert(exts < 512);
+		assert(exts < max_inline_exts);
 		assert(offset % 512 == 0);
 		return offset + exts;
+	}
+
+	int64_t encode_max_num_exts(int64_t offset)
+	{
+		return offset + max_inline_exts;
+	}
+
+	bool read_extra_exts(int64_t& offset, CRData& rdata,
+		std::vector<SingleFileStorage::SPunchItem>& extra_exts)
+	{
+		int64_t num_exts = extract_num_exts(offset);
+
+		if(num_exts==max_inline_exts)
+		{
+			int64_t skip_lists;
+			if(!rdata.getVarInt(&num_exts) ||
+				!rdata.getVarInt(&skip_lists))
+			{
+				XLOG(ERR) << "Error reading number of extents/skip lists";
+				return false;
+			}
+		}
+
+		extra_exts.resize(num_exts);
+
+		for (int64_t i = 0; i < num_exts; ++i)
+		{
+			auto& ext = extra_exts[i];
+			if (!rdata.getVarInt(&ext.offset)
+				|| !rdata.getVarInt(&ext.len))
+			{
+				XLOG(ERR) << "Error reading extent " << i << " information";
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	class SingleFileStorageMigrate
@@ -331,6 +371,7 @@ namespace
 	const char dbi_size_info_next_disk_id = 1;
 	const char dbi_size_info_migration = 2;
 	const char dbi_size_info_ext_freespace = 3;
+	const char dbi_size_info_enckey = 4;
 
 }
 
@@ -801,17 +842,21 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 
 	if (rc != MDB_NOTFOUND)
 	{
-		if (size_out.mv_size == sizeof(data_file_offset) * 5)
+		if (size_out.mv_size == sizeof(data_file_offset) * 5 || 
+			size_out.mv_size == sizeof(data_file_offset) * 6)
 		{
 			memcpy(&data_file_max_size, size_out.mv_data, sizeof(data_file_max_size));
 			memcpy(&data_file_offset, reinterpret_cast<char*>(size_out.mv_data) + sizeof(data_file_max_size), sizeof(data_file_offset));
 			memcpy(&data_file_offset_end, reinterpret_cast<char*>(size_out.mv_data) + sizeof(data_file_offset) * 2, sizeof(data_file_offset_end));
 			memcpy(&data_file_free, reinterpret_cast<char*>(size_out.mv_data) + sizeof(data_file_offset) * 3, sizeof(data_file_free));
 			memcpy(&curr_transid, reinterpret_cast<char*>(size_out.mv_data) + sizeof(data_file_offset) * 4, sizeof(curr_transid));
+			if(size_out.mv_size > sizeof(data_file_offset) * 5)
+				memcpy(&curr_partid, reinterpret_cast<char*>(size_out.mv_data) + sizeof(data_file_offset) * 5, sizeof(curr_transid));
 			XLOG(INFO) << "Data file max " << std::to_string(data_file_max_size) << " offset " << std::to_string(data_file_offset) <<
 				" end " << std::to_string(data_file_offset_end) <<
 				" free " << std::to_string(data_file_free) <<
-				" transid " << std::to_string(curr_transid) << " fn " << data_file_path;
+				" transid " << std::to_string(curr_transid) << 
+				" curr_partid " << curr_partid << " fn " << data_file_path;
 		}
 		else
 		{
@@ -899,6 +944,53 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	if (options.data_path != db_path)
 	{
 		XLOG(INFO) << "Data file metadata at " << index_lmdb_fn;
+	}
+
+	ch = dbi_size_info_enckey;
+	val.mv_data = &ch;
+	val.mv_size = 1;
+
+	MDB_val enckey_info_out;
+
+	rc = mdb_get(txn, dbi_size, &val, &enckey_info_out);
+
+	if (rc && rc != MDB_NOTFOUND)
+	{
+		throw std::runtime_error("LMDB: Error getting enckey info (" + (std::string)mdb_strerror(rc) + ")");
+	}
+	if (has_mmap_read_error_reset(tid))
+	{
+		throw std::runtime_error("LMDB: Error getting enckey info (SIGBUS)");
+	}
+
+	if (rc != MDB_NOTFOUND)
+	{
+		if (enckey_info_out.mv_size == crypto_secretbox_KEYBYTES)
+		{
+			memcpy(enckey, enckey_info_out.mv_data, crypto_secretbox_KEYBYTES);
+		}
+		else
+		{
+			throw std::runtime_error("LMDB: Enckey has wrong size");
+		}
+	}
+	else
+	{
+		crypto_secretbox_keygen(enckey);
+
+		enckey_info_out.mv_data = enckey;
+		enckey_info_out.mv_size = crypto_secretbox_KEYBYTES;
+
+		rc = mdb_put(txn, dbi_size, &val, &enckey_info_out, 0);
+
+		if (rc)
+		{
+			throw std::runtime_error("LMDB: Failed to put enckey into db on startup");
+		}
+		if (has_mmap_read_error_reset(tid))
+		{
+			throw std::runtime_error("LMDB: Failed to put enckey into db on startup (SIGBUS)");
+		}
 	}
 
 	ch = dbi_size_info_ext_freespace;
@@ -1035,7 +1127,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 SingleFileStorage::SingleFileStorage()
 	: data_file_max_size(0), data_file_offset(0), data_file_offset_end(-1), data_file_free(0), 
 	do_quit(false),	min_free_space(20LL * 1024 * 1024 * 1024), is_defragging(false), defrag_restart(0), db_path(std::string()),
-	is_dead(true), write_offline(true), curr_transid(0), startup_finished(false),
+	is_dead(true), write_offline(true), curr_transid(1), startup_finished(false),
 	force_freespace_check(true), stop_defrag(false), allow_defrag(false), next_disk_id(1), data_file_copy_done(-1), data_file_copy_max(0), data_file_copy_done_sync(0),
 	stop_data_file_copy(false), references(0),
 	db_env(nullptr), cache_db_env(nullptr), regen_freespace_cache(false), sync_freespace_cache(true)
@@ -1193,7 +1285,7 @@ void SingleFileStorage::handle_mmap_read_error(void* addr)
 
 int SingleFileStorage::write(const std::string & fn, const char* data, 
 	size_t data_size, int64_t last_modified, const std::string & md5sum,
-	bool no_del_old, bool is_fragment, size_t max_data_fragments)
+	bool no_del_old, bool is_fragment)
 {
 	if (is_dead)
 	{
@@ -1203,7 +1295,7 @@ int SingleFileStorage::write(const std::string & fn, const char* data,
 	if (fn.size() > 255)
 		return EINVAL;
 
-	return write_int(fn, data, data_size, last_modified, md5sum, true, no_del_old, max_data_fragments);
+	return write_int(fn, data, data_size, last_modified, md5sum, true, no_del_old);
 }
 
 int64_t SingleFileStorage::get_transid(int64_t disk_id)
@@ -1494,7 +1586,7 @@ void SingleFileStorage::unreference()
 	--references;
 }
 
-SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std::string& fn, size_t data_size, size_t max_data_fragments)
+SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std::string& fn, size_t data_size)
 {
 	if (is_dead)
 	{
@@ -1504,11 +1596,10 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
 	if (fn.size() > 255)
 		return WritePrepareResult{EINVAL};
 
-		assert(data_size > 0);
-	std::string cfn = compress_filename(fn);
-
-	if (max_data_fragments > max_extent_num)
-		max_data_fragments = max_extent_num;
+	if(data_size==0)
+	{
+		return WritePrepareResult{0, {}};
+	}
 
 	std::vector<Ext> extents;
 	size_t data_size_remaining = data_size;
@@ -1517,12 +1608,6 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
 
 		while (data_size_remaining > 0)
 		{
-			if (extents.size() >= max_data_fragments)
-			{
-				XLOG(INFO) << "Too many extents (" << std::to_string(extents.size()) << " while writing " << fn << " size " << std::to_string(data_size) << ")";
-				free_extents(extents);
-				return WritePrepareResult{ENOSPC};
-			}
 			Ext curr_ext;
 
 			if (data_file_offset_end > 0
@@ -1579,7 +1664,11 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
 			curr_ext.obj_offset = data_size - data_size_remaining;
 			data_size_remaining -= curr_ext.len;
 
-			reserved_extents[curr_ext.data_file_offset] = curr_ext.len;
+			{
+				std::scoped_lock lock(reserved_extents_mutex);
+				reserved_extents[curr_ext.data_file_offset] = curr_ext.len;
+			}
+
 			extents.push_back(curr_ext);
 		}
 	}
@@ -1654,6 +1743,8 @@ int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<E
 	SFragInfo curr_frag(extents[0].data_file_offset, extents[0].len);
 	for (size_t i = 1; i < extents.size(); ++i)
 	{
+		assert(extents[0].len>0);
+		assert(extents[i].len>0);
 		curr_frag.extra_exts.push_back(SPunchItem(extents[i].data_file_offset, extents[i].len));
 	}
 	curr_frag.action = no_del_old ? FragAction::AddNoDelOld : FragAction::Add;
@@ -1676,16 +1767,13 @@ int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<E
 
 int SingleFileStorage::write_int(const std::string & fn, const char* data,
 	size_t data_size, int64_t last_modified, const std::string & md5sum, bool allow_defrag_lock,
-	bool no_del_old, size_t max_data_fragments)
+	bool no_del_old)
 {
-	assert(data_size > 0);
-	std::string cfn = compress_filename(fn);
-
-	if (max_data_fragments > max_extent_num)
-		max_data_fragments = max_extent_num;
+	std::string cfn = fn;
 
 	std::vector<Ext> extents;
 	size_t data_size_remaining = data_size;
+	if(data_size_remaining>0)
 	{
 		if (!allow_defrag_lock)
 		{
@@ -1703,12 +1791,6 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 
 		while (data_size_remaining > 0)
 		{
-			if (extents.size() >= max_data_fragments)
-			{
-				XLOG(INFO) << "Too many extents (" << std::to_string(extents.size()) << " while writing " << fn << " size " << std::to_string(data_size) << ")";
-				free_extents(extents);
-				return ENOSPC;
-			}
 			Ext curr_ext;
 
 			if (data_file_offset_end > 0
@@ -1774,8 +1856,6 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 		}
 	}
 
-	assert(!extents.empty());
-
 	{
 		std::shared_lock copy_lock(data_file_copy_mutex);
 
@@ -1840,6 +1920,10 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 	if (extents.size() > 1)
 	{
 		XLOG(INFO) << "Item " << fn << " has " << std::to_string(extents.size()) << " extents";
+	}
+	else if(extents.empty())
+	{
+		extents.push_back(Ext(0, 0, 0));
 	}
 
 	std::unique_lock lock(mutex);
@@ -1922,7 +2006,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 	SFragInfo frag_info;
 	if ((flags & ReadUnsynced) == 0)
 	{
-		frag_info = get_frag_info(nullptr, fn);
+		frag_info = get_frag_info(nullptr, fn, true);
 
 		if (frag_info.offset == -1)
 		{
@@ -1930,15 +2014,18 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 			return ReadPrepareResult{ENOENT};
 		}
 
-		std::lock_guard lock(mutex);
-		add_reading_item(frag_info);
+		if(!(flags & ReadSkipAddReading))
+		{
+			std::lock_guard lock(mutex);
+			add_reading_item(frag_info);
+		}
 	}
 	else
 	{
 		SCommitInfo commit_info;
 		commit_info.frag_info = &frag_info;
 		SFragInfo curr_frag;
-		curr_frag.action =FragAction::ReadFragInfo;
+		curr_frag.action = FragAction::ReadFragInfo;
 		curr_frag.fn = fn;
 		curr_frag.commit_info = &commit_info;
 
@@ -1955,7 +2042,8 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 			return ReadPrepareResult{ENOENT};
 		}
 
-		add_reading_item(frag_info);
+		if(!(flags & ReadSkipAddReading))
+			add_reading_item(frag_info);
 	}
 
 	ReadPrepareResult res = {0};
@@ -1967,8 +2055,87 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 		res.extents.push_back(Ext(res.total_len, ext.offset, ext.len));
 		res.total_len += ext.len;
 	}
+	res.md5sum = frag_info.md5sum;
 
 	return res;	
+}
+
+int SingleFileStorage::check_existence(const std::string& fn, unsigned int flags)
+{
+	if (is_dead)
+	{
+		return ENOTRECOVERABLE;
+	}
+
+	if ((flags & ReadUnsynced) == 0)
+	{
+		std::unique_lock lock(mutex);
+
+		auto it = commit_items.find(std::hash<std::string>()(fn));
+		if(it!=commit_items.end())
+		{
+			flags |= ReadUnsynced;
+		}
+	}
+
+	if ((flags & ReadUnsynced) == 0)
+	{
+		auto frag_info = get_frag_info(nullptr, fn, false);
+
+		if (frag_info.offset == -1)
+		{
+			XLOG(INFO) << "Could not find metadata for fragment " << fn << " in LMDB sfs " << db_path;
+			return ENOENT;
+		}
+	}
+	else
+	{
+		SFragInfo frag_info;
+		SCommitInfo commit_info;
+		commit_info.frag_info = &frag_info;
+		SFragInfo curr_frag;
+		curr_frag.action =FragAction::ReadFragInfoWithoutParsing;
+		curr_frag.fn = fn;
+		curr_frag.commit_info = &commit_info;
+
+		std::unique_lock lock(mutex);
+		wait_startup_finished(lock);
+
+		commit_queue.push_back(curr_frag);
+		cond.notify_all();
+		commit_info.commit_done.wait(lock);
+
+		if (frag_info.offset == -1)
+		{
+			XLOG(INFO) << "Could not find metadata for fragment " << fn << " in LMDB (read unsynced) sfs " << db_path;
+			return ENOENT;
+		}
+	}
+
+	return 0;
+}
+
+std::string SingleFileStorage::read(const std::string& fn, const unsigned int flags)
+{
+	auto prepRes = read_prepare(fn, flags);
+	if(prepRes.err!=0)
+		return std::string();
+
+	std::string data;
+	folly::IOBufQueue buf;
+	for(const auto& ext: prepRes.extents)
+	{
+		auto readExtRes = read_ext(ext, 0, ext.len, buf);
+		if(readExtRes.err!=0)
+		{
+			read_finalize(fn, prepRes.extents, flags);
+			return std::string();
+		}
+
+		data.append(reinterpret_cast<const char*>(readExtRes.buf->buffer()), readExtRes.buf->length());
+	}
+
+	return data;
 }
 
 
@@ -2037,15 +2204,17 @@ int SingleFileStorage::read_finalize(const std::string& fn, const std::vector<Ex
 	return 0;
 }
 
-bool SingleFileStorage::del(const std::string & fn, DelAction da,
+int SingleFileStorage::del(const std::string & fn, DelAction da,
 	bool background_queue)
 {
 	if (is_dead)
 	{
-		return false;
+		return ENOTRECOVERABLE;
 	}
 
-	std::string cfn = compress_filename(fn);
+	int rc = check_existence(fn, 0);
+	if(rc)
+		return rc;
 
 	SFragInfo curr_frag;
 	switch (da)
@@ -2069,16 +2238,16 @@ bool SingleFileStorage::del(const std::string & fn, DelAction da,
 		curr_frag.action = FragAction::AssertDelQueueEmpty;
 		break;
 	}
-	curr_frag.fn = cfn;
+	curr_frag.fn = fn;
 
 	std::unique_lock lock(mutex);
 	wait_queue(lock, background_queue, false);
-	wait_defrag(cfn, lock);
-	++commit_items[std::hash<std::string>()(cfn)];
+	wait_defrag(fn, lock);
+	++commit_items[std::hash<std::string>()(fn)];
 	
 	if (is_defragging)
 	{
-		defrag_skip_items.insert(cfn);
+		defrag_skip_items.insert(fn);
 	}
 	if (background_queue)
 	{
@@ -2090,7 +2259,7 @@ bool SingleFileStorage::del(const std::string & fn, DelAction da,
 	}
 	cond.notify_all();
 
-	return true;
+	return 0;
 }
 
 bool SingleFileStorage::restore_old(const std::string & fn)
@@ -2364,19 +2533,8 @@ bool SingleFileStorage::iter_curr_val(std::string & fn, int64_t& offset, int64_t
 		return false;
 	}
 
-	int64_t num_exts = extract_num_exts(offset);
-
-	for (int64_t i = 0; i < num_exts; ++i)
-	{
-		SPunchItem ext;
-		if (!rdata.getVarInt(&ext.offset)
-			|| !rdata.getVarInt(&ext.len))
-		{
-			return false;
-		}
-
-		extra_exts.push_back(ext);
-	}
+	if(!read_extra_exts(offset, rdata, extra_exts))
+		return false;
 
 	if(!rdata.getVarInt(&last_modified)
 		|| !rdata.getStr2(&md5sum))
@@ -2468,24 +2626,12 @@ int64_t SingleFileStorage::remove_fn(const std::string & fn, MDB_txn * txn, MDB_
 		if (rdata.getVarInt(&offset)
 			&& rdata.getVarInt(&length))
 		{
-			int64_t num_exts = extract_num_exts(offset);
-
 			std::vector<SPunchItem> extra_exts;
-			extra_exts.reserve(num_exts);
-			for (int64_t i = 0; i < num_exts; ++i)
+			if(!read_extra_exts(offset, rdata, extra_exts))
 			{
-				int64_t extra_offset, extra_length;
-				if (!rdata.getVarInt(&extra_offset)
-					|| !rdata.getVarInt(&extra_length))
-				{
-					XLOG(ERR) << "LMDB: Failed to read extra extent sfs " << db_path;
-					++commit_errors;
-					break;
-				}
-				else
-				{
-					extra_exts.push_back(SPunchItem(extra_offset, extra_length));
-				}
+				XLOG(ERR) << "LMDB: Error reading extra_exts " << db_path;
+				++commit_errors;
+				return commit_errors;
 			}
 
 			if(startup_finished)
@@ -2709,6 +2855,7 @@ int64_t SingleFileStorage::add_tmp(int64_t idx, MDB_txn* txn, THREAD_ID tid, int
 	int64_t commit_errors = 0;
 
 	CWData keydata;
+	keydata.addChar(0);
 	keydata.addChar('t');
 	keydata.addVarInt(idx);
 
@@ -2751,6 +2898,7 @@ int64_t SingleFileStorage::add_tmp(int64_t idx, MDB_txn* txn, THREAD_ID tid, int
 int64_t SingleFileStorage::rm_tmp(int64_t idx, MDB_txn* txn, THREAD_ID tid)
 {
 	CWData keydata;
+	keydata.addChar(0);
 	keydata.addChar('t');
 	keydata.addVarInt(idx);
 
@@ -2922,7 +3070,17 @@ bool SingleFileStorage::add_freemap_ext(MDB_txn* txn, int64_t offset, int64_t le
 			else if (offset == prev_offset + prev_length)
 			{
 				//Delete prev
-				rc = mdb_del(txn, dbi_free_len, &val, &key);
+				CWData del_val;
+				del_val.addVarInt(prev_length);
+				MDB_val m_del_val;
+				m_del_val.mv_data = del_val.getDataPtr();
+				m_del_val.mv_size = del_val.getDataSize();
+				CWData del_key;
+				del_key.addVarInt(prev_offset);
+				MDB_val m_del_key;
+				m_del_key.mv_data = del_key.getDataPtr();
+				m_del_key.mv_size = del_key.getDataSize();
+				rc = mdb_del(txn, dbi_free_len, &m_del_val, &m_del_key);
 				if (rc)
 				{
 					XLOG(ERR) << "LMDB: Failed to del prev for freemap ext len (" << mdb_strerror(rc) << ") sfs " << db_path;
@@ -3637,6 +3795,7 @@ int64_t SingleFileStorage::get_really_min_space(int64_t& index_file_size)
 		if (fd!=-1)
 		{
 			index_file_size = fileSize(fd);
+			close(fd);
 		}
 		else
 		{
@@ -3651,6 +3810,7 @@ int64_t SingleFileStorage::get_really_min_space(int64_t& index_file_size)
 		if (fd!=-1)
 		{
 			index_file_size += fileSize(fd);
+			close(fd);
 		}
 		else
 		{
@@ -4117,23 +4277,7 @@ bool SingleFileStorage::generate_freespace_cache(MDB_txn* source_txn, MDB_txn* d
 
 		std::vector<SPunchItem> extents;
 
-		int64_t num_extents = extract_num_exts(first_ext.offset);
-
-		bool has_error = false;
-		for (int64_t i = 0; i < num_extents; ++i)
-		{
-			SPunchItem cfrag;
-			if (!rdata.getVarInt(&cfrag.offset)
-				|| !rdata.getVarInt(&cfrag.len))
-			{
-				has_error = true;
-				break;
-			}
-
-			extents.push_back(cfrag);
-		}
-
-		if (has_error)
+		if(!read_extra_exts(first_ext.offset, rdata, extents))
 		{
 			std::string key_name = std::string(reinterpret_cast<char*>(tkey.mv_data), tkey.mv_size);
 			XLOG(ERR) << "Error getting extents of " << decompress_filename(key_name) << " in generate_freespace_cache";
@@ -4298,26 +4442,9 @@ bool SingleFileStorage::generate_freespace_cache(MDB_txn* source_txn, MDB_txn* d
 				XLOG(ERR) << "Error getting first old extent of " << decompress_filename(key_name) << " in generate_freespace_cache";
 				continue;
 			}
-
+			
 			std::vector<SPunchItem> extents;
-
-			int64_t num_extents = extract_num_exts(first_ext.offset);
-
-			bool has_error = false;
-			for (int64_t i = 0; i < num_extents; ++i)
-			{
-				SPunchItem cfrag;
-				if (!rdata.getVarInt(&cfrag.offset)
-					|| !rdata.getVarInt(&cfrag.len))
-				{
-					has_error = true;
-					break;
-				}
-
-				extents.push_back(cfrag);
-			}
-
-			if (has_error)
+			if(!read_extra_exts(first_ext.offset, rdata, extents))
 			{
 				std::string key_name = std::string(reinterpret_cast<char*>(tkey.mv_data), tkey.mv_size);
 				XLOG(ERR) << "Error getting old extents of " << decompress_filename(key_name) << " in generate_freespace_cache";
@@ -4515,23 +4642,7 @@ bool SingleFileStorage::freespace_check(MDB_txn* source_txn, MDB_txn* freespace_
 
 		std::vector<SPunchItem> extents;
 
-		int64_t num_extents = extract_num_exts(first_ext.offset);
-
-		bool has_error = false;
-		for (int64_t i = 0; i < num_extents; ++i)
-		{
-			SPunchItem cfrag;
-			if (!rdata.getVarInt(&cfrag.offset)
-				|| !rdata.getVarInt(&cfrag.len))
-			{
-				has_error = true;
-				break;
-			}
-
-			extents.push_back(cfrag);
-		}
-
-		if (has_error)
+		if(!read_extra_exts(first_ext.offset, rdata, extents))
 		{
 			std::string key_name = std::string(reinterpret_cast<char*>(tkey.mv_data), tkey.mv_size);
 			XLOG(ERR) << "Error getting extents of " << decompress_filename(key_name) << " in freespace_check";
@@ -4704,23 +4815,7 @@ bool SingleFileStorage::freespace_check(MDB_txn* source_txn, MDB_txn* freespace_
 
 			std::vector<SPunchItem> extents;
 
-			int64_t num_extents = extract_num_exts(first_ext.offset);
-
-			bool has_error = false;
-			for (int64_t i = 0; i < num_extents; ++i)
-			{
-				SPunchItem cfrag;
-				if (!rdata.getVarInt(&cfrag.offset)
-					|| !rdata.getVarInt(&cfrag.len))
-				{
-					has_error = true;
-					break;
-				}
-
-				extents.push_back(cfrag);
-			}
-
-			if (has_error)
+			if(!read_extra_exts(first_ext.offset, rdata, extents))
 			{
 				std::string key_name = std::string(reinterpret_cast<char*>(tkey.mv_data), tkey.mv_size);
 				XLOG(ERR) << "Error getting old extents of " << decompress_filename(key_name) << " in freespace_check";
@@ -5237,6 +5332,7 @@ bool SingleFileStorage::clear_freespace_cache(MDB_txn* txn)
 
 std::string SingleFileStorage::compress_filename(const std::string & fn)
 {
+	assert(false);
 	std::string key;
 	size_t slash = fn.find_last_of('/');
 	if (slash != std::string::npos)
@@ -5724,7 +5820,7 @@ void SingleFileStorage::wait_for_startup_finish()
 	wait_startup_finished(lock);
 }
 
-SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, const std::string & fn)
+SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, const std::string & fn, bool parse_data)
 {
 	THREAD_ID tid = gettid();
 
@@ -5786,6 +5882,17 @@ SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, cons
 		return SFragInfo();
 	}
 
+	if(!parse_data)
+	{
+		if (tear_down_txn)
+		{
+			mdb_txn_abort(txn);
+		}
+		SFragInfo ret;
+		ret.offset = -2;
+		return ret;
+	}
+
 	CRData rdata(reinterpret_cast<char*>(tvalue.mv_data), tvalue.mv_size);
 
 	SFragInfo ret;
@@ -5798,24 +5905,20 @@ SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, cons
 	}
 	else
 	{
-		int64_t exts = extract_num_exts(ret.offset);
-		for (int64_t i = 0; i < exts; ++i)
+		if(!read_extra_exts(ret.offset, rdata, ret.extra_exts))
 		{
-			SPunchItem ext;
-			if (!rdata.getVarInt(&ext.offset)
-				|| !rdata.getVarInt(&ext.len))
-			{
-				XLOG(ERR) << "LMDB: Error extracting ext " << std::to_string(i) << " offset and len from fragment info txn=" << std::to_string(reinterpret_cast<int64_t>(txn)) << " sfs " << db_path;
-				ret = SFragInfo();
-				break;
-			}
-			ret.extra_exts.push_back(ext);
+			XLOG(ERR) << "LMDB: Error reading extra exts from fragment info txn=" << std::to_string(reinterpret_cast<int64_t>(txn)) << " sfs " << db_path;
+			ret = SFragInfo();
 		}
 
 		if (ret.offset != -1)
 		{
-			rdata.getVarInt(&ret.last_modified);
-		}
+			if(!rdata.getVarInt(&ret.last_modified) ||
+				!rdata.getStr2(&ret.md5sum) )
+			{
+				XLOG(WARN) << "LMDB: Error reading last_modified, md5sum txn=" << std::to_string(reinterpret_cast<int64_t>(txn)) << " sfs " << db_path;
+			}
+		}		
 	}
 
 	if (tear_down_txn)
@@ -6296,8 +6399,7 @@ void SingleFileStorage::operator()()
 		}
 	}
 
-	if (freespace_txn != txn
-		&& std::filesystem::exists("/etc/urbackup/check_free_space_cache") )
+	if (std::filesystem::exists("/etc/urbackup/check_free_space_cache") )
 	{
 		if (!freespace_check(txn, freespace_txn, true))
 		{
@@ -6618,14 +6720,18 @@ void SingleFileStorage::operator()()
 			posix_fadvise64(data_file.fd(), 0, 0, POSIX_FADV_DONTNEED);
 #endif
 			size_t num_reserved_extents;
+			int64_t local_curr_partid;
 			{
 				std::vector<SPunchItem> local_reserved_extents;
 				{
-					std::scoped_lock lock(datafileoffset_mutex);
+					std::scoped_lock lock(reserved_extents_mutex);
+					local_curr_partid = curr_partid;
 					local_reserved_extents.reserve(reserved_extents.size());
 					for(const auto& it: reserved_extents)
 					{
-						if(it.first + it.second <= data_file_max_size)
+						if( it.first + it.second <= data_file_max_size &&
+							 !(it.first >= curr_write_ext_start && 
+								it.first + it.second <= curr_write_ext_end) )
 							local_reserved_extents.emplace_back(SPunchItem(it.first, it.second));
 					}
 				}
@@ -6637,6 +6743,14 @@ void SingleFileStorage::operator()()
 				{
 					commit_errors += add_tmp(ext_idx, txn, tid, reserved_extent.offset, reserved_extent.len);
 					++ext_idx;
+
+					auto size = reserved_extent.offset + div_up(reserved_extent.len, block_size)*block_size;
+
+					if (size > curr_write_ext_start
+						&& size <= curr_write_ext_end)
+						curr_write_ext_start = size;
+					if (size > data_file_max_size)
+						data_file_max_size = size;
 				}
 			}
 
@@ -6649,13 +6763,14 @@ void SingleFileStorage::operator()()
 				tkey.mv_size = 1;
 
 				MDB_val tval;
-				int64_t tdata[5];
+				int64_t tdata[6];
 
 				tdata[0] = data_file_max_size;
 				tdata[1] = curr_write_ext_start;
 				tdata[2] = curr_write_ext_end;
 				tdata[3] = data_file_free;
 				tdata[4] = curr_transid;
+				tdata[5] = local_curr_partid;
 
 				tval.mv_data = tdata;
 				tval.mv_size = sizeof(tdata);
@@ -6815,15 +6930,6 @@ void SingleFileStorage::operator()()
 				commit_ok = false;
 			}
 
-			if(commit_ok)
-			{
-				for(size_t ext_idx =0;ext_idx <num_reserved_extents;++ext_idx)
-				{
-					if(rm_tmp(ext_idx, txn, tid)>0)
-						commit_ok = false;
-				}
-			}
-
 			if (commit_ok)
 			{
 				curr_new_free_extents.clear();
@@ -6917,6 +7023,12 @@ void SingleFileStorage::operator()()
 						++it;
 					}
 				}
+
+				for(size_t ext_idx =0;ext_idx <num_reserved_extents;++ext_idx)
+				{
+					if(rm_tmp(ext_idx, txn, tid)>0)
+						commit_ok = false;
+				}
 			}
 		}
 		else if (frag_info.action == FragAction::ResetDelLog)
@@ -6957,7 +7069,8 @@ void SingleFileStorage::operator()()
 				frag_info.commit_info->commit_done.notify_all();
 			}
 		}
-		else if (frag_info.action == FragAction::ReadFragInfo)
+		else if (frag_info.action == FragAction::ReadFragInfo ||
+			frag_info.action == FragAction::ReadFragInfoWithoutParsing)
 		{
 			if (frag_info.commit_info != nullptr)
 			{
@@ -6967,7 +7080,7 @@ void SingleFileStorage::operator()()
 
 				if (frag_info.commit_info->frag_info != nullptr)
 				{
-					*frag_info.commit_info->frag_info = get_frag_info(txn, frag_info.fn);
+					*frag_info.commit_info->frag_info = get_frag_info(txn, frag_info.fn, frag_info.action == FragAction::ReadFragInfo);
 				}
 
 				frag_info.commit_info->commit_done.notify_all();
@@ -7067,8 +7180,26 @@ void SingleFileStorage::operator()()
 			}
 
 			CWData wdata;
-			wdata.addVarInt(encode_num_exts(frag_info.offset, static_cast<int64_t>(frag_info.extra_exts.size())));
+
+			int64_t encoded_first_offset;
+			if(frag_info.extra_exts.size() < max_inline_exts)
+			{
+				encoded_first_offset = encode_num_exts(frag_info.offset, static_cast<int64_t>(frag_info.extra_exts.size()));
+			}
+			else
+			{
+				encoded_first_offset = encode_max_num_exts(frag_info.offset);
+			}
+
+			wdata.addVarInt(encoded_first_offset);
 			wdata.addVarInt(frag_info.len);
+
+			if(frag_info.extra_exts.size() >= max_inline_exts)
+			{
+				wdata.addVarInt(frag_info.extra_exts.size());
+				wdata.addVarInt(0);
+			}
+
 			int64_t size = frag_info.offset + div_up(frag_info.len, block_size)*block_size;
 
 			if (size > curr_write_ext_start
@@ -7091,7 +7222,7 @@ void SingleFileStorage::operator()()
 			}
 
 			{
-				std::scoped_lock lock(datafileoffset_mutex);
+				std::scoped_lock lock(reserved_extents_mutex);
 
 				auto it_r = reserved_extents.find(frag_info.offset);
 				if(it_r!=reserved_extents.end())
@@ -7277,6 +7408,21 @@ void SingleFileStorage::operator()()
 				curr_write_ext_start = size;
 			if (size > data_file_max_size)
 				data_file_max_size = size;
+
+			{
+				std::scoped_lock lock(reserved_extents_mutex);
+
+				auto it_r = reserved_extents.find(frag_info.offset);
+				if(it_r!=reserved_extents.end())
+					reserved_extents.erase(it_r);
+
+				for (const SPunchItem& ext : frag_info.extra_exts)
+				{
+					it_r = reserved_extents.find(ext.offset);
+					if(it_r!=reserved_extents.end())
+						reserved_extents.erase(it_r);
+				}
+			}
 
 			if (!add_freemap_ext(freespace_txn, frag_info.offset, frag_info.len, true, tid))
 			{
@@ -8011,24 +8157,9 @@ void SingleFileStorage::defrag(str_map& params, relaxed_atomic<int64_t>& defrag_
 
 				std::vector<SPunchItem> extents;
 
-				int64_t num_extents = extract_num_exts(first_ext.offset);
-
-				bool has_error = false;
-				for (int64_t i = 0; i < num_extents; ++i)
+				if(!read_extra_exts(first_ext.offset, rdata, extents))
 				{
-					SPunchItem cfrag;
-					if (!rdata.getVarInt(&cfrag.offset)
-						|| !rdata.getVarInt(&cfrag.len))
-					{
-						has_error = true;
-						break;
-					}
-
-					extents.push_back(cfrag);
-				}
-
-				if (has_error)
-				{
+					XLOG(ERR) << "Error reading extra exts for defrag";
 					continue;
 				}
 
@@ -8352,9 +8483,8 @@ void SingleFileStorage::do_stop_on_error()
 SingleFileStorage::TmpMmapedPgIds::TmpMmapedPgIds()
 	: mmap_ptr(nullptr), n_pgids(0)
 {
-	std::string tmp_fn = "/var/tmp/tmp_mmaped_pgids_";
-	tmp_fn += random_uuid();
-	backing_file = folly::File(tmp_fn, O_RDWR | O_CLOEXEC | O_CREAT | O_TMPFILE );
+	std::string tmp_fn = "/var/tmp";
+	backing_file = folly::File(tmp_fn, O_RDWR | O_CLOEXEC | O_TMPFILE );
 
 	mmap_size = 10ULL * 1024 * 1024 * 1024;
 	ftruncate64(backing_file.fd(), mmap_size);
@@ -8375,4 +8505,22 @@ SingleFileStorage::TmpMmapedPgIds::~TmpMmapedPgIds()
 	{
 		munmap(mmap_ptr, mmap_size);
 	}
+}
+
+std::pair<int64_t, std::string> SingleFileStorage::get_next_partid()
+{
+	int64_t local_curr_partid;
+	{
+    	std::scoped_lock lock(reserved_extents_mutex);
+    	++curr_partid;
+		local_curr_partid = curr_partid;
+	}
+    
+	return std::make_pair(local_curr_partid,
+		cryptId(local_curr_partid, enckey));
+}
+
+int64_t SingleFileStorage::decrpyt_partid(const std::string& encdata)
+{
+	return decryptId(encdata, enckey);
 }

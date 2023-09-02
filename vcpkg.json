@@ -1,0 +1,11 @@
+{
+  "name": "main",
+  "version-string": "latest",
+  "dependencies": [
+    "folly",
+    "proxygen",
+    "zstd",
+    "expat",
+    "libsodium"
+  ]
+}

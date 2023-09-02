@@ -1,8 +1,7 @@
 /**
  * Copyright Martin Raiber. All Rights Reserved.
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: LGPL-3.0-or-later
  */
- 
 #include "s3handler.h"
 #include "SingleFileStorage.h"
 #include <algorithm>
@@ -11,6 +10,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <expat.h>
 #include <folly/Format.h>
 #include <folly/Range.h>
 #include <folly/String.h>
@@ -19,12 +19,18 @@
 #include <folly/io/IOBufQueue.h>
 #include <folly/logging/LogLevel.h>
 #include <folly/logging/xlog.h>
+#include <folly/Uri.h>
+#include <folly/lang/Bits.h>
 #include <limits>
-#include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
+#include <openssl/md5.h>
+#include <openssl/types.h>
 #include <proxygen/lib/http/HTTPCommonHeaders.h>
 #include <proxygen/lib/http/HTTPMethod.h>
+#include "data.h"
+#include "utils.h"
+#include <limits.h>
 
 using namespace proxygen;
 
@@ -61,6 +67,37 @@ std::string currDate()
     ret.resize(8);
     strftime(&ret[0], ret.size(), "%Y%m%d", &final_tm);
     return ret;
+}
+
+
+std::string uploadIdToStr(int64_t uploadId)
+{
+    std::string key;
+	if(uploadId<UCHAR_MAX)
+	{
+		key.resize(sizeof(unsigned char)+1);
+		unsigned char bnum = folly::Endian::big(static_cast<unsigned char>(uploadId));
+		memcpy(&key[1], &bnum, sizeof(bnum));
+	}
+	else if(uploadId<USHRT_MAX)
+	{
+		key.resize(sizeof(unsigned short)+1);
+		unsigned short bnum = folly::Endian::big(static_cast<unsigned short>(uploadId));
+		memcpy(&key[1], &bnum, sizeof(bnum));
+	}
+	else if(uploadId<UINT_MAX)
+	{
+		key.resize(sizeof(unsigned int)+1);
+		unsigned int bnum = folly::Endian::big(static_cast<unsigned int>(uploadId));
+		memcpy(&key[1], &bnum, sizeof(bnum));
+	}
+	else
+	{
+		key.resize(sizeof(int64_t)+1);	
+        uploadId = folly::Endian::big(uploadId);
+		memcpy(&key[1], &uploadId, sizeof(uploadId));
+	}
+	return key;
 }
 
 bool checkSig(HTTPMessage &headers, const std::string &secretKey,
@@ -167,6 +204,117 @@ bool checkSig(HTTPMessage &headers, const std::string &secretKey,
     return sig == itSignature->second;
 }
 
+static void multiPartUploadXmlElementStart(void *userData,
+                                               const XML_Char *name,
+                                               const XML_Char **atts)
+{
+    auto multiPartData = reinterpret_cast<S3Handler::MultiPartUploadData*>(userData);
+
+    switch(multiPartData->parseState)
+    {
+    case S3Handler::MultiPartUploadData::ParseState::Init:
+        {
+            if(strcmp(name, "CompleteMultipartUpload")==0)
+                multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InRoot;
+            else
+                multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::Unknown;
+        } break;
+    case S3Handler::MultiPartUploadData::ParseState::InRoot:
+        {
+            if(strcmp(name, "Part")==0)
+            {
+                multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InPart;
+                multiPartData->parts.push_back(S3Handler::MultiPartUploadData::PartData());
+            }
+            else
+            {
+                multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::Unknown;
+            }
+        } break;
+    case S3Handler::MultiPartUploadData::ParseState::InPart:
+        {
+            if(strcmp(name, "PartNumber")==0)
+                multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InPartNumber;
+            else if(strcmp(name, "ETag")==0)
+                multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InEtag;
+            else
+                multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InUnknownPartAttr;
+        } break;
+    default:
+        break;
+    }
+}
+
+static void multiPartUploadXmlElementEnd(void *userData,
+                                               const XML_Char *name)
+{
+    auto multiPartData = reinterpret_cast<S3Handler::MultiPartUploadData*>(userData);
+
+    switch(multiPartData->parseState)
+    {
+    case S3Handler::MultiPartUploadData::ParseState::InRoot:
+        {
+            if(strcmp(name, "CompleteMultipartUpload")==0)
+                multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::Finished;
+            else
+                multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::Unknown;
+        } break;
+    case S3Handler::MultiPartUploadData::ParseState::InPart:
+        {
+            if(strcmp(name, "Part")==0)
+                multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InRoot;
+            else
+                multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::Unknown;
+        } break;
+    case S3Handler::MultiPartUploadData::ParseState::InPartNumber:
+    case S3Handler::MultiPartUploadData::ParseState::InEtag:
+    case S3Handler::MultiPartUploadData::ParseState::InUnknownPartAttr:
+        {
+            multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InPart;
+        } break;
+    default:
+        break;
+    }
+}
+
+static void multiPartUploadXmlCharData(void *userData,
+                                               const XML_Char *s, int len)
+{
+    auto multiPartData = reinterpret_cast<S3Handler::MultiPartUploadData*>(userData);
+
+    if(multiPartData->parseState == S3Handler::MultiPartUploadData::ParseState::InPartNumber &&
+        !multiPartData->parts.empty())
+    {
+        std::string data(s, len);
+        int partNum = 0;
+        try
+        {
+            partNum = std::stoi(data);
+        }
+        catch(std::invalid_argument&)
+        {}
+        catch(std::out_of_range&)
+        {}
+
+        if(multiPartData->parts.size()>1)
+        {
+            auto& prevPart = multiPartData->parts[multiPartData->parts.size()-2];
+            if(partNum<=prevPart.partNumber)
+                multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InvalidPartOrder;
+        }
+
+        multiPartData->parts.back().partNumber = partNum;
+    }
+    else if(multiPartData->parseState == S3Handler::MultiPartUploadData::ParseState::InEtag &&
+        !multiPartData->parts.empty())
+    {
+        std::string data(s, len);
+        multiPartData->parts.back().etag += data;
+    }
+}
+
+
+
 /**
  * Handles requests by serving the file named in path.  Only supports GET.
  * reads happen in a CPU thread pool since read(2) is blocking.
@@ -178,11 +326,12 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     if (headers->getMethod() != HTTPMethod::PUT &&
         headers->getMethod() != HTTPMethod::GET &&
         headers->getMethod() != HTTPMethod::HEAD &&
-        headers->getMethod() != HTTPMethod::DELETE)
+        headers->getMethod() != HTTPMethod::DELETE &&
+        headers->getMethod() != HTTPMethod::POST)
     {
         ResponseBuilder(downstream_)
             .status(400, "Bad method")
-            .body("Only GET/PUT is supported")
+            .body("Only GET/PUT/HEAD/DELETE/POST is supported")
             .sendWithEOM();
         return;
     }
@@ -228,15 +377,75 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 .sendWithEOM();
             return;
         }
-        put_remaining = std::atoll(cl.c_str());
+        auto remaining = std::atoll(cl.c_str());
+        put_remaining = remaining;
 
-        XLOGF(DBG0, "PutObject {} length {}", fpath, put_remaining);
+        if(!headers->getQueryStringAsStringPiece().empty())
+        {
+            int partNumber = 0;
+            const auto& queryParams = headers->getQueryParams();
+            const auto partNumberIt = queryParams.find("partNumber");
+            if(partNumberIt != queryParams.end())
+            {
+                try
+                {
+                    partNumber = std::stoi(partNumberIt->second);
+                }
+                catch(std::invalid_argument&)
+                {
+                    partNumber = 0;
+                }
+                catch(std::out_of_range&)
+                {
+                    partNumber=0;
+                }
+            }
+            const auto uploadIdIt = queryParams.find("uploadId");
+            std::string uploadIdHex, uploadIdStr;
+            std::string uploadVerIdHex, uploadVerId;
+            if(uploadIdIt != queryParams.end() )
+            {
+                if(!folly::split("-", uploadIdIt->second, uploadIdHex, uploadVerIdHex)
+                 || !folly::unhexlify(uploadIdHex, uploadIdStr)
+                 || !folly::unhexlify(uploadVerIdHex, uploadVerId) )
+                 uploadIdStr.clear();
+            }
+
+            auto uploadId = sfs.decrpyt_partid(uploadIdStr);
+
+            if(uploadId<0 || uploadVerId.empty())
+            {
+                ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("uploadId parameter not set")
+                    .sendWithEOM();
+                return;
+            }
+
+            if(partNumber<=0 || partNumber>10000)
+            {
+                ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("partNumber parameter out of range")
+                    .sendWithEOM();
+                return;
+            }
+
+            XLOGF(DBG0, "PutObjectPart {} part {} uploadId {}", fpath, partNumber, uploadId);
+
+            putObjectPart(*headers, partNumber, uploadId, uploadVerId);
+            return;
+        }
 
         if(fpath.find(c_commit_uuid)!=std::string::npos)
         {
+            XLOGF(DBG0, "PutObject {} COMMIT", fpath);
+
             commit(*headers);
             return;
         }
+
+        XLOGF(DBG0, "PutObject {} length {}", fpath, remaining);
 
         putObject(*headers);
         return;
@@ -245,6 +454,84 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     {
         request_type = RequestType::DeleteObject;
         deleteObject(*headers);
+    }
+    else if(headers->getMethod() == HTTPMethod::POST)
+    {
+        auto header_path = headers->getPathAsStringPiece();
+        if(!header_path.empty())
+        {
+            fpath = std::string(header_path.subpiece(1));
+        }
+        else
+        {
+            ResponseBuilder(downstream_)
+                .status(500, "Internal error")
+                .body("Unknown POST request (1)")
+                .sendWithEOM();
+            return;
+        }
+
+        const std::string uploadsStr = "uploads";
+        
+        if(headers->getQueryStringAsStringPiece() == uploadsStr)
+        {
+            createMultipartUpload(*headers);
+            return;
+        }
+        else
+        {
+            std::string uploadIdHex, uploadVerIdHex;
+            std::string uploadIdStr, uploadVerId;
+            const auto uploadIdIt = headers->getQueryParams().find("uploadId");
+            if(uploadIdIt != headers->getQueryParams().end())
+            {
+                if(!folly::split("-", uploadIdIt->second, uploadIdHex, uploadVerIdHex)
+                 || !folly::unhexlify(uploadIdHex, uploadIdStr)
+                 || !folly::unhexlify(uploadVerIdHex, uploadVerId) )
+                    uploadIdStr.clear();
+            }
+
+            const auto uploadId = sfs.decrpyt_partid(uploadIdStr);
+
+            if(uploadId<0)
+            {
+                ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("UploadId parameter not found")
+                    .sendWithEOM();
+                return;
+            }
+
+            std::string cl = headers->getHeaders().getSingleOrEmpty(
+                    proxygen::HTTP_HEADER_CONTENT_LENGTH);
+            if (cl.empty())
+            {
+                ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("Content-Length header not set")
+                    .sendWithEOM();
+                return;
+            }
+            put_remaining = std::atoll(cl.c_str());
+            request_type = RequestType::CompleteMultipartUpload;
+            xmlBody.init();
+            if(xmlBody.parser == nullptr)
+            {
+                ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("Could not init XML parser")
+                    .sendWithEOM();
+                return;
+            }
+            multiPartUploadData = std::make_unique<MultiPartUploadData>();
+            multiPartUploadData->uploadId = uploadId;
+            multiPartUploadData->verId = uploadVerId;
+
+            XML_SetUserData(xmlBody.parser, multiPartUploadData.get());
+
+            XML_SetElementHandler(xmlBody.parser, multiPartUploadXmlElementStart, multiPartUploadXmlElementEnd);
+            XML_SetCharacterDataHandler(xmlBody.parser, multiPartUploadXmlCharData);
+        }
     }
 }
 
@@ -277,6 +564,56 @@ void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
                         .status(200, "OK")
                         .body(fmt::format("{}", sfs.get_runtime_id()))
                         .sendWithEOM();
+}
+
+bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen)
+{
+    CRData rdata(md5sum.data(), md5sum.size());
+    char itype;
+    if(!rdata.getChar(&itype))
+        return false;
+
+    if(itype==0)
+        return true;
+    
+    multiPartDownloadData = std::make_unique<MultiPartDownloadData>();
+    if(rdata.getLeft()>=MD5_DIGEST_LENGTH)
+    {
+        multiPartDownloadData->etag.assign(rdata.getCurrDataPtr(), MD5_DIGEST_LENGTH);
+        rdata.incrementPtr(MD5_DIGEST_LENGTH);
+    }
+
+    if(!rdata.getVarInt(&multiPartDownloadData->uploadId))
+        return false;
+
+    if(!rdata.getVarInt(&multiPartDownloadData->numParts))
+        return false;
+
+    if(multiPartDownloadData->numParts<0)
+        return false;
+
+    totalLen = 0;
+    int64_t numParts = 0;
+    int64_t size, start, len;
+    while(rdata.getVarInt(&size) &&
+        rdata.getVarInt(&start) &&
+        rdata.getVarInt(&len))
+    {
+        numParts += len;
+        totalLen += len*size;
+        MultiPartDownloadData::PartExt ext{.size=size, .start=static_cast<int>(start), .len=static_cast<int>(len)};
+        multiPartDownloadData->exts.emplace_back(std::move(ext));
+    }
+
+    return true;
+}
+
+std::string S3Handler::getEtag(const std::string& md5sum)
+{
+    if(multiPartDownloadData)
+        return fmt::format("\"{}-{}\"", folly::hexlify(multiPartDownloadData->etag), multiPartDownloadData->numParts);
+    else
+        return fmt::format("\"{}\"", folly::hexlify(md5sum));
 }
 
 void S3Handler::commit(proxygen::HTTPMessage& headers)
@@ -355,9 +692,25 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers)
                     return;
                 }
 
-                evb->runInEventBaseThread([self = self, total_len = res.total_len]()
+                if(!self->parseMultipartInfo(res.md5sum, res.total_len))
+                {
+                    evb->runInEventBaseThread([self = self]()
                                               {
-                    auto resp = std::move(ResponseBuilder(self->downstream_).status(200, "OK").header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(total_len)));
+                                ResponseBuilder(self->downstream_)
+                                .status(500, "Internal error")
+                                .body(fmt::format("Error parsing md5sum data"))
+                                .sendWithEOM();
+                                              });
+                                            return;
+                } 
+
+                const auto md5sum = (!res.md5sum.empty() && res.md5sum[0] ==0 ) ? res.md5sum.substr(1) : "";
+
+                evb->runInEventBaseThread([self = self, total_len = res.total_len, md5sum]()
+                                              {
+                    auto resp = std::move(ResponseBuilder(self->downstream_).status(200, "OK")
+                        .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(total_len))
+                        .header(proxygen::HTTP_HEADER_ETAG, self->getEtag(md5sum)));
 
                     if(self->request_type==RequestType::HeadObject)
                     {
@@ -388,7 +741,21 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb]()
             {
-                auto res = self->sfs.write_prepare(self->fpath, self->put_remaining, std::string::npos);
+                if(!self->evpMdCtx.init())
+                {
+                    evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Could not initialize md5"))
+                            .sendWithEOM();
+                        std::lock_guard lock(self->extents_mutex);
+                        self->finished_ = true;
+                        self->extents_cond.notify_all(); });
+                    return;
+                }
+
+                auto res = self->sfs.write_prepare(self->fpath, self->put_remaining);
                 if (res.err != 0)
                 {                    
                     evb->runInEventBaseThread([self = self, res]()
@@ -409,6 +776,315 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
             });
 }
 
+std::pair<std::string, std::string> getBucketAndKey(const std::string& fpath)
+{
+    auto slash_idx = fpath.find('/');
+    if(slash_idx != std::string::npos)
+    {
+        return std::make_pair(fpath.substr(0, slash_idx), 
+            fpath.substr(slash_idx+1));
+    }
+    else
+    {
+        return std::make_pair(fpath, fpath);
+    }
+}
+
+std::pair<std::string, std::string> splitUploadId(const std::string& uploadId)
+{
+    auto dashIdx = uploadId.find('-');
+    if(dashIdx != std::string::npos)
+    {
+        return std::make_pair(uploadId.substr(0, dashIdx), 
+            uploadId.substr(dashIdx+1));
+    }
+    else
+    {
+        return std::make_pair(uploadId, uploadId);
+    }
+}
+
+void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId)
+{
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+    folly::getGlobalCPUExecutor()->add(
+            [self = this->self, evb, partNumber, uploadId, uploadVerId]()
+            {
+                if(!self->evpMdCtx.init())
+                {
+                    evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Could not initialize md5"))
+                            .sendWithEOM();
+                        std::lock_guard lock(self->extents_mutex);
+                        self->finished_ = true;
+                        self->extents_cond.notify_all(); });
+                    return;
+                }
+
+                const auto [bucket, key] = getBucketAndKey(self->fpath);
+                auto readRes = self->sfs.read_prepare("/" + bucket + "/" + uploadIdToStr(uploadId), 0);
+                if(readRes.err!=0)
+                {
+                    evb->runInEventBaseThread([self = self, readRes]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Could not find upload data."))
+                            .sendWithEOM();
+                        std::lock_guard lock(self->extents_mutex);
+                        self->finished_ = true;
+                        self->extents_cond.notify_all(); });
+                    return;
+                }
+
+                CRData rdata(readRes.md5sum.data(), readRes.md5sum.size());
+
+                std::string dataPath, dataUploadVerId;
+
+                if(!rdata.getStr2(&dataPath) || !rdata.getStr2(&dataUploadVerId) ||
+                    dataPath != self->fpath || dataUploadVerId!=uploadVerId)
+                {
+                    evb->runInEventBaseThread([self = self, readRes]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Could not verify upload data."))
+                            .sendWithEOM();
+                        std::lock_guard lock(self->extents_mutex);
+                        self->finished_ = true;
+                        self->extents_cond.notify_all(); });
+                    return;
+                }
+
+                self->fpath = "/" + bucket + "/" + uploadIdToStr(uploadId) +"."+uploadIdToStr(partNumber);
+                auto res = self->sfs.write_prepare(self->fpath, self->put_remaining);
+                if (res.err != 0)
+                {                    
+                    evb->runInEventBaseThread([self = self, res]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Error preparing writing. Errno {}", res.err))
+                            .sendWithEOM();
+                        std::lock_guard lock(self->extents_mutex);
+                        self->finished_ = true;
+                        self->extents_cond.notify_all(); });
+                    return;
+                }
+
+                for(const auto& ext: res.extents)
+                {
+                    assert(ext.len>0);
+                }
+
+                std::lock_guard lock(self->extents_mutex);
+                self->extents = std::move(res.extents);
+                self->extents_cond.notify_all();
+            });
+}
+
+void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
+{
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+    folly::getGlobalCPUExecutor()->add(
+            [self = this->self, evb]()
+            {
+                const auto [bucket, key] = getBucketAndKey(self->fpath);
+                auto [uploadId, uploadIdEnc] = self->sfs.get_next_partid();
+                auto uploadVerId = random_uuid_binary();
+
+                CWData data;
+                data.addString2(self->fpath);
+                data.addString2(uploadVerId);
+
+                std::string md5sum(data.getDataPtr(), data.getDataSize());
+
+                auto rc = self->sfs.write("/" + bucket+ "/" +uploadIdToStr(uploadId), data.getDataPtr(), 0, 0, md5sum,  false, false);
+
+         
+                evb->runInEventBaseThread([rc=rc, bucket=bucket, key=key, uploadIdEnc = uploadIdEnc, uploadVerId, self = self]()
+                                  {   
+                                    if(rc!=0)        
+                                    {
+                        ResponseBuilder(self->downstream_)
+                        .status(500, "Internal error")
+                        .body("Write finalization error")
+                        .sendWithEOM();
+                                    }
+                                    else
+                                    {
+                                        std::string resp = fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<InitiateMultipartUploadResult>"
+   "\t<Bucket>{}</Bucket>"
+   "\t<Key>{}</Key>"
+   "\t<UploadId>{}-{}</UploadId>"
+"</InitiateMultipartUploadResult>", bucket, key, folly::hexlify(uploadIdEnc), folly::hexlify(uploadVerId));
+
+                                       ResponseBuilder(self->downstream_)
+                        .status(200, "OK")
+                        .body(resp)
+                        .sendWithEOM(); 
+                                    }
+                    self->finished_ = true; });
+                    return;
+            });
+}
+
+void S3Handler::finalizeMultipartUpload()
+{
+    assert(multiPartUploadData.get()!=nullptr);
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+    folly::getGlobalCPUExecutor()->add(
+            [self = this->self, evb, multiPartData = this->multiPartUploadData.get()]()
+            {
+                const auto [bucket, key] = getBucketAndKey(self->fpath);
+                auto readRes = self->sfs.read_prepare("/" + bucket + "/" + uploadIdToStr(multiPartData->uploadId), 0);
+                CRData uploadData(readRes.md5sum.data(), readRes.md5sum.size());
+                std::string uploadFPath;
+                std::string uploadVerId;
+                if(readRes.err != 0 ||
+                    !uploadData.getStr2(&uploadFPath) ||
+                    uploadFPath!=self->fpath ||
+                    !uploadData.getStr2(&uploadVerId) ||
+                    uploadVerId!=multiPartData->verId )
+                {
+                    evb->runInEventBaseThread([self = self, readRes]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Could not find upload. Errno {}", readRes.err))
+                            .sendWithEOM();
+                        self->finished_ = true; });
+                    return;
+                }
+
+                MultiPartDownloadData::PartExt lastExt = {-1, 0, 0};
+                CWData wdata;
+                wdata.addChar(1);
+                const size_t md5sumOffset = wdata.getDataSize();
+                wdata.resize(wdata.getDataSize()+MD5_DIGEST_LENGTH);
+                wdata.addVarInt(multiPartData->uploadId);
+                wdata.addVarInt(multiPartData->parts.size());
+
+                EVP_MD_CTX* md5Ctx = EVP_MD_CTX_new();
+                SCOPE_EXIT { EVP_MD_CTX_free(md5Ctx); };
+                if(md5Ctx==nullptr ||
+                    EVP_DigestInit(md5Ctx, EVP_md5())!=1)
+                {
+                    evb->runInEventBaseThread([self = self, readRes]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Error initializing hash function", readRes.err))
+                            .sendWithEOM();
+                        self->finished_ = true; });
+                    return;
+                }
+
+                for(const auto& part: multiPartData->parts)
+                {
+                    auto readPartRes = self->sfs.read_prepare("/"+bucket+"/"+uploadIdToStr(multiPartData->uploadId)+"."+uploadIdToStr(part.partNumber), SingleFileStorage::ReadSkipAddReading);
+
+                    if(readPartRes.err!=0)
+                    {
+                        evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Could not find part {}", partNumber))
+                            .sendWithEOM();
+                        self->finished_ = true; });
+                        return;
+                    }
+
+                    //TODO: check etag
+
+                    EVP_DigestUpdate(md5Ctx, readPartRes.md5sum.data(), readPartRes.md5sum.size());
+
+                    if(lastExt.len==0)
+                    {
+                        lastExt.size = readPartRes.total_len;
+                        lastExt.start = part.partNumber;
+                        lastExt.len = 1;
+                    }
+                    else
+                    {
+                        if(lastExt.start + lastExt.len == part.partNumber &&
+                            lastExt.size == readPartRes.total_len)
+                        {
+                            ++lastExt.len;
+                        }
+                        else
+                        {
+                            wdata.addVarInt(lastExt.size);
+                            wdata.addVarInt(lastExt.start);
+                            wdata.addVarInt(lastExt.len);
+                            lastExt.size = readPartRes.total_len;
+                            lastExt.start = part.partNumber;
+                            lastExt.len = 1;
+                        }
+                    }
+                }
+
+                if(lastExt.len>0)
+                {
+                    wdata.addVarInt(lastExt.size);
+                    wdata.addVarInt(lastExt.start);
+                    wdata.addVarInt(lastExt.len);
+                }
+
+                EVP_DigestFinal_ex(md5Ctx, reinterpret_cast<unsigned char*>(wdata.getDataPtr()) + md5sumOffset, nullptr);
+
+                std::string etagBin(wdata.getDataPtr() + md5sumOffset, wdata.getDataPtr() + md5sumOffset + MD5_DIGEST_LENGTH);
+                std::string md5sum(wdata.getDataPtr(), wdata.getDataSize());
+                auto writeRes = self->sfs.write_finalize(uploadFPath, {SingleFileStorage::Ext(0, 0, 0)}, 0, md5sum, false, true);
+                if(writeRes)
+                {
+                     evb->runInEventBaseThread([self = self, writeRes]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Error adding object to db. Err {}", writeRes))
+                            .sendWithEOM();
+                        self->finished_ = true; });
+                        return;
+                }
+
+                auto delRes = self->sfs.del("/"+bucket+"/"+uploadIdToStr(multiPartData->uploadId), SingleFileStorage::DelAction::Del, false);
+
+                if(delRes)
+                {
+                    evb->runInEventBaseThread([self = self, delRes]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Error deleting upload metadata. Err {}", delRes))
+                            .sendWithEOM();
+                        self->finished_ = true; });
+                        return;
+                }
+
+                evb->runInEventBaseThread([self = self, etagBin, numParts = multiPartData->parts.size()]()
+                                              {
+                        auto [bucket, key] = getBucketAndKey(self->fpath);
+                        ResponseBuilder(self->downstream_)
+                            .status(200, "OK")
+                            .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n"
+             "\t<Location>{}/{}/{}</Location>\n"
+             "\t<Bucket>{}</Bucket>\n"
+             "\t<Key>{}</Key>\n"
+             "\t<ETag>\"{}-{}\"</ETag>\n"
+            "</CompleteMultipartUploadResult>", self->serverUrl, bucket, key, bucket, key, folly::hexlify(etagBin), numParts))
+                            .sendWithEOM();
+                        self->finished_ = true; });
+                        return;
+            });    
+}
+
 void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
 {
     fpath = std::string(headers.getPathAsStringPiece().subpiece(1));
@@ -417,27 +1093,30 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
     folly::getGlobalCPUExecutor()->add(
         [self = this->self, evb]()
         {
+            XLOGF(INFO, "Removing object {}", self->fpath);
             auto res = self->sfs.del(self->fpath, SingleFileStorage::DelAction::Del, false);
 
-            if(res && !self->sfs.get_manual_commit())
+            if(res==0 && !self->sfs.get_manual_commit())
             {
-                res = self->sfs.commit(false, -1);
+                res = self->sfs.commit(false, -1) ? 0 : 1;
             }
 
             evb->runInEventBaseThread([self = self, res]()
                                             {
-                    if(!res && self->sfs.get_is_dead())
+                    if(res==ENOENT)
                     {
-                        ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
-                            .body(fmt::format("Storage is dead"))
-                            .sendWithEOM();
-                    }
-                    else if(!res)
-                    {
+                        XLOGF(INFO, "Removing object '{}' not found", self->fpath);
                         ResponseBuilder(self->downstream_)
                             .status(404, "Not found")
                             .body(fmt::format("Object not found"))
+                            .sendWithEOM();
+                    }
+                    else if(res!=0)
+                    {
+                        XLOGF(INFO, "Removing object '{}' err {}", self->fpath, res);
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Storage is dead"))
                             .sendWithEOM();
                     }
                     else
@@ -452,10 +1131,170 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
         });
 }
 
+int S3Handler::seekMultipartExt(int64_t offset)
+{
+    if(multiPartDownloadData->exts.empty())
+    {
+        XLOG(WARN, "No multi-part parts found in seek");
+        return ENOENT;
+    }
+
+    XLOGF(DBG0, "Seeking multi-part to offset {}", offset);
+
+    multiPartDownloadData->extIdx = 0;
+    multiPartDownloadData->currExt = multiPartDownloadData->exts[multiPartDownloadData->extIdx];
+
+    int64_t seekOffset = 0;
+
+    while(seekOffset<offset)
+    {        
+        int64_t toSeek = offset - seekOffset;
+        int64_t numSeek = toSeek/multiPartDownloadData->currExt.size;
+        
+        if(numSeek>multiPartDownloadData->currExt.len)
+        {
+            seekOffset+=multiPartDownloadData->currExt.size*multiPartDownloadData->currExt.size;
+            XLOGF(DBG0, "Seeking forward to next multi-part ext seekOffset {}", seekOffset);            
+            ++multiPartDownloadData->extIdx;
+            if(multiPartDownloadData->extIdx>=multiPartDownloadData->exts.size())
+            {
+                XLOGF(WARN, "Out of multi-part parts size {} in seek", multiPartDownloadData->exts.size());
+                return ENOENT;
+            }
+            multiPartDownloadData->currExt = multiPartDownloadData->exts[multiPartDownloadData->extIdx];
+        }
+        else
+        {
+            XLOGF(DBG0, "Seeking forward {} exts in current multi-part ext", numSeek);
+            multiPartDownloadData->currExt.start += numSeek;
+            multiPartDownloadData->currExt.len -= numSeek;
+            seekOffset+=numSeek*multiPartDownloadData->currExt.size;
+            break;
+        }
+    }
+
+    return readMultipartExt(seekOffset);
+}
+
+int S3Handler::readMultipartExt(int64_t offset)
+{
+    const auto [bucket, key] = getBucketAndKey(fpath);
+    auto partNum = multiPartDownloadData->currExt.start;
+    auto res = self->sfs.read_prepare("/"+bucket+"/"+uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), 0);
+    if (res.err != 0)
+    {
+        XLOGF(WARN, "Error reading next multipart object meta-information uploadid {} partnum {} for key {}", multiPartDownloadData->uploadId, partNum, fpath);
+        return EIO;
+    }
+
+    extents = std::move(res.extents);
+
+    multiPartDownloadData->currOffset = offset;
+
+    for(auto& ext: extents)
+    {
+        ext.obj_offset+=offset;
+    }
+
+    return 0;
+}
+
+int S3Handler::readNextMultipartExt(int64_t offset)
+{
+    int lastPartNum = -1;
+    if(multiPartDownloadData->extIdx == std::string::npos)
+    {
+        if(multiPartDownloadData->exts.empty())
+        {
+            XLOG(WARN, "No multi-part parts found");
+            return ENOENT;
+        }
+
+        multiPartDownloadData->extIdx = 0;
+        multiPartDownloadData->currExt = multiPartDownloadData->exts[multiPartDownloadData->extIdx];
+    }
+    else
+    {
+        lastPartNum = multiPartDownloadData->currExt.start;
+        ++multiPartDownloadData->currExt.start;
+        --multiPartDownloadData->currExt.len;
+    }
+
+    while(multiPartDownloadData->currExt.len<=0)
+    {
+        if(multiPartDownloadData->extIdx >= multiPartDownloadData->exts.size())
+        {
+            XLOGF(WARN, "Out of multi-part parts size {}", multiPartDownloadData->exts.size());
+            return ENOENT;
+        }
+        
+        ++multiPartDownloadData->extIdx;
+        multiPartDownloadData->currExt = multiPartDownloadData->exts[multiPartDownloadData->extIdx];
+    }
+
+    
+    if(!extents.empty() && extents[0].len>0)
+    {
+        for(auto& ext: extents)
+        {
+            assert(ext.obj_offset>=multiPartDownloadData->currOffset );
+            ext.obj_offset-=multiPartDownloadData->currOffset;
+        }
+        const auto [bucket, key] = getBucketAndKey(fpath);
+        const auto rc = self->sfs.read_finalize("/"+bucket+"/"+uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(lastPartNum), extents, 0);
+        assert(rc==0);
+    }
+
+    const auto rc = readMultipartExt(offset);
+    if(rc)
+        return rc;
+
+    return 0;
+}
+
+int S3Handler::finalizeMultiPart()
+{
+    if(!multiPartDownloadData || multiPartDownloadData->extIdx == std::string::npos)
+        return ENOENT;
+
+    const auto [bucket, key] = getBucketAndKey(fpath);
+    auto partNum = multiPartDownloadData->currExt.start;
+
+    if(!extents.empty() && extents[0].len>0)
+    {
+        for(auto& ext: extents)
+        {
+            assert(ext.obj_offset>multiPartDownloadData->currOffset );
+            ext.obj_offset-=multiPartDownloadData->currOffset;
+        }
+        
+        const auto rc = self->sfs.read_finalize("/"+bucket+"/"+uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), extents, 0);
+        assert(rc==0);
+    }
+
+    return 0;
+}
+
 void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> self, int64_t offset)
 {
     const size_t bufsize = 32768;
     folly::IOBufQueue buf;
+
+    if(multiPartDownloadData)
+    {
+        const auto rc = seekMultipartExt(offset);
+        if(rc)
+        {
+            XLOGF(WARN, "Error seeking to part rc {}", rc);
+            evb->runInEventBaseThread([self = self]() mutable
+                                {
+                self->downstream_->sendAbort();
+                self->finished_ = true;
+                self->running = false;
+                                    } );
+            return;
+        }
+    }
 
     bool did_pause = false;
     bool has_error = false;
@@ -472,8 +1311,27 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
         if(!extents.empty())
             --it;
         assert(it != extents.end());
-        if(it==extents.end())
+        if(it==extents.end() || it->len==0 || it->obj_offset + it->len <= offset)
+        {
+            if(multiPartDownloadData)
+            {
+                const int rc = readNextMultipartExt(offset);
+                if(rc)
+                {
+                    XLOGF(WARN, "Error reading next part code {}", rc);
+                    evb->runInEventBaseThread([self = self]() mutable
+                                      {
+                        self->downstream_->sendAbort();
+                        self->finished_ = true;
+                        self->running = false;
+                                            } );
+                    has_error = true;
+                    break;
+                }
+                continue;
+            }
             break;
+        }
 
         assert(it->obj_offset <= offset && it->obj_offset + it->len > offset);
         
@@ -498,7 +1356,14 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
 
         offset += res.buf->length();
     
-        XLOGF(DBG0, "Sending body len {} of fpath {} total_len {}", res.buf->length(), self->fpath, put_remaining.load(std::memory_order_relaxed));
+        if(multiPartDownloadData)
+        {
+            XLOGF(DBG0, "Sending body len {} of fpath {} total_len {} part {}", res.buf->length(), self->fpath, put_remaining.load(std::memory_order_relaxed), multiPartDownloadData->currExt.start);
+        }
+        else
+        {
+            XLOGF(DBG0, "Sending body len {} of fpath {} total_len {}", res.buf->length(), self->fpath, put_remaining.load(std::memory_order_relaxed));
+        }
 
         evb->runInEventBaseThread([self = self, body = std::move(res.buf), total_len = put_remaining.load(std::memory_order_relaxed)]() mutable
                                       {
@@ -686,6 +1551,29 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
     size_t body_bytes = body->length();
 
+    if(request_type == RequestType::CompleteMultipartUpload)
+    {
+        done_bytes += body_bytes;
+        bool isFinal = put_remaining.fetch_sub(body->length(), std::memory_order_release) == body->length();
+        auto rc = XML_Parse(xmlBody.parser, reinterpret_cast<const char*>(body->data()), body->length(), isFinal ? 1 : 0);
+        if(rc!=XML_STATUS_OK)
+        {                 
+            ResponseBuilder(self->downstream_)
+                .status(500, "Internal error")
+                .body("Write ext error")
+                .sendWithEOM();
+            finished_ = true; 
+            return;
+        }
+
+        if(isFinal)
+        {
+            finalizeMultipartUpload();
+        }
+
+        return;
+    }
+
     folly::getGlobalCPUExecutor()->add(
         [self = this->self, evb, offset = done_bytes, lbody = std::move(body)]() mutable
         {
@@ -715,8 +1603,16 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         assert(extents[0] < extents[1]);
     }
 
+    for(const auto& ext: extents)
+    {
+        assert(ext.len>0);
+    }
+
     const uint8_t *data = body->data();
     size_t data_size = body->length();
+
+    EVP_DigestUpdate(evpMdCtx.ctx, data, data_size);
+
     while(data_size > 0)
     {
         auto it = std::upper_bound(extents.begin(), extents.end(), SingleFileStorage::Ext(offset, 0, 0));
@@ -740,7 +1636,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         auto curr_ext = SingleFileStorage::Ext(it->obj_offset + ext_offset, it->data_file_offset + ext_offset, it->len - ext_offset);
         int64_t wlen = std::min(static_cast<int64_t>(data_size), curr_ext.len);
 
-        auto rc = sfs.write_ext(curr_ext, data, data_size);
+        auto rc = sfs.write_ext(curr_ext, data, wlen);
         if (rc != 0)
         {
             evb->runInEventBaseThread([self = self]()
@@ -762,7 +1658,11 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
     if (put_remaining.fetch_sub(body->length(), std::memory_order_release) == body->length())
     {
-        auto rc = sfs.write_finalize(fpath, extents, 0, std::string(), false, true);
+        std::string md5sum;
+        md5sum.resize(MD5_DIGEST_LENGTH+1);
+        EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&md5sum[1]), nullptr);
+
+        auto rc = sfs.write_finalize(fpath, extents, 0, md5sum, false, true);
 
         if (rc != 0)
         {
@@ -793,10 +1693,11 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
             }
         }
 
-        evb->runInEventBaseThread([self = self]()
+        evb->runInEventBaseThread([self = self, md5sum]()
                                   {           
                     ResponseBuilder(self->downstream_)
                         .status(200, "OK")
+                        .header(HTTPHeaderCode::HTTP_HEADER_ETAG, fmt::format("\"{}\"", folly::hexlify(md5sum)))
                         .sendWithEOM();
                     self->finished_ = true; });
     }
