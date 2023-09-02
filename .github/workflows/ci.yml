@@ -74,4 +74,4 @@ jobs:
 
       - uses: pavelzw/pytest-action@v2
         with:
-          custom-arguments: -p no:sugar
+          custom-arguments: -p no:sugar test
