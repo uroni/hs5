@@ -66,3 +66,5 @@ static bool isHex(const std::string &str)
 std::string random_uuid();
 
 std::string random_uuid_binary();
+
+std::string escapeXML(const std::string & xml);

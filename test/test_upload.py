@@ -83,7 +83,7 @@ def test_get_commit_obj(tmp_path: Path, hs5: Hs5Runner):
     with open(fpath, "r") as f:
         assert len(f.read())>30
 
-def test_multipage_list(tmp_path: Path, hs5: Hs5Runner):
+def add_objects(tmp_path: Path, hs5: Hs5Runner) -> set[str]:
     with open(tmp_path / "upload.txt", "w") as upload_file:
         upload_file.write("abc")
 
@@ -95,6 +95,14 @@ def test_multipage_list(tmp_path: Path, hs5: Hs5Runner):
         ul_files.add(s3name)
 
     hs5.commit_storage(s3_client)
+
+    return ul_files
+
+def test_multipage_list(tmp_path: Path, hs5: Hs5Runner):
+
+    ul_files = add_objects(tmp_path, hs5)
+
+    s3_client = hs5.get_s3_client()
 
     marker : Optional[str]= None
     while True:
@@ -111,11 +119,10 @@ def test_multipage_list(tmp_path: Path, hs5: Hs5Runner):
             assert "Size" in obj and obj["Size"] == 3
             ul_files.remove(obj["Key"])
             s3_client.delete_object(Bucket="testbucket", Key=obj["Key"])
+            marker = obj["Key"]
 
         if not res["IsTruncated"]:
             break
-
-        marker = res["NextMarker"]
 
     assert not ul_files
     
@@ -123,6 +130,87 @@ def test_multipage_list(tmp_path: Path, hs5: Hs5Runner):
 
     res = s3_client.list_objects(Bucket="testbucket", MaxKeys=100)
     assert "Contents" not in res
+
+def test_multipage_list_v2(tmp_path: Path, hs5: Hs5Runner):
+
+    ul_files = add_objects(tmp_path, hs5)
+
+    s3_client = hs5.get_s3_client()
+
+    continuation_token : Optional[str]= None
+    while True:
+        if continuation_token:
+            res = s3_client.list_objects_v2(Bucket="testbucket", ContinuationToken=continuation_token, MaxKeys=100)
+        else:
+            res = s3_client.list_objects_v2(Bucket="testbucket", MaxKeys=100)
+
+        objs = res["Contents"]
+        assert len(objs)<=100
+        for obj in objs:
+            assert "Key" in obj
+            assert obj["Key"] in ul_files
+            assert "Size" in obj and obj["Size"] == 3
+            ul_files.remove(obj["Key"])
+            s3_client.delete_object(Bucket="testbucket", Key=obj["Key"])
+
+        if not res["IsTruncated"]:
+            break
+
+        continuation_token = res["NextContinuationToken"]
+
+    assert not ul_files
+    
+    hs5.commit_storage(s3_client)
+
+    res = s3_client.list_objects(Bucket="testbucket", MaxKeys=100)
+    assert "Contents" not in res
+
+
+def test_list_prefix(tmp_path: Path, hs5: Hs5Runner):
+    with open(tmp_path / "upload.txt", "w") as upload_file:
+        upload_file.write("abc")
+
+    s3_client = hs5.get_s3_client()
+
+    s3_client.upload_file(upload_file.name, "testbucket", "1.txt")
+    s3_client.upload_file(upload_file.name, "testbucket", "a/2.txt")
+    s3_client.upload_file(upload_file.name, "testbucket", "b/3.txt")
+
+    hs5.commit_storage(s3_client)
+
+    res = s3_client.list_objects(Bucket="testbucket", Prefix="a/")
+
+    objs = res["Contents"]
+    assert objs is not None
+    assert len(objs) == 1
+    assert objs[0]["Key"] == "a/2.txt"
+
+
+def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
+    with open(tmp_path / "upload.txt", "w") as upload_file:
+        upload_file.write("abc")
+
+    s3_client = hs5.get_s3_client()
+
+    s3_client.upload_file(upload_file.name, "testbucket", "1.txt")
+    s3_client.upload_file(upload_file.name, "testbucket", "a/2.txt")
+    s3_client.upload_file(upload_file.name, "testbucket", "b/3.txt")
+
+    hs5.commit_storage(s3_client)
+
+    res = s3_client.list_objects(Bucket="testbucket", Delimiter="/")
+
+    objs = res["Contents"]
+    assert objs is not None
+    assert len(objs) == 1
+    assert objs[0]["Key"] == "1.txt"
+
+    common_prefixes = res["CommonPrefixes"]
+    prefixes = [pre["Prefix"] for pre in common_prefixes]
+
+    assert len(prefixes) == 2
+    assert "a/" in prefixes
+    assert "b/" in prefixes
 
 
 def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):

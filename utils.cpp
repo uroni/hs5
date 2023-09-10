@@ -21,3 +21,18 @@ std::string random_uuid_binary()
 	folly::Random::secureRandom(&rnd[0], 16);
     return rnd;
 }
+
+std::string escapeXML(const std::string & xml)
+{
+	std::string ret;
+	ret.reserve(xml.size());
+	for (size_t i = 0; i < xml.size(); ++i)
+	{
+		if (xml[i] == '<') ret += "&lt;";
+		else if (xml[i] == '>') ret += "&gt;";
+		else if (xml[i] == '&') ret += "&amp;";
+		else if (xml[i] == '\"') ret += "&quot;";
+		else ret += xml[i];
+	}
+	return ret;
+}

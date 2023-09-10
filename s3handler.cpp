@@ -537,18 +537,79 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
 void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& bucket)
 {
+    const auto listType = headers.getQueryParam("list-type");
+    if(listType=="2")
+    {
+        listObjectsV2(headers, bucket);
+        return;
+    }
+    else if(!listType.empty())
+    {
+        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Unknown list type"))
+                            .sendWithEOM();
+        return;
+    }
+
     request_type = RequestType::ListObjects;
-    auto marker = headers.getQueryParam("marker");
-    auto max_keys = headers.getIntQueryParam("max-keys", 1000);
-    auto prefix = headers.getQueryParam("prefix");
-    auto delimiter = headers.getQueryParam("delimiter");
+    const auto marker = headers.getDecodedQueryParam("marker");
+    const auto maxKeys = headers.getIntQueryParam("max-keys", 1000);
+    const auto prefix = headers.hasQueryParam("prefix") ? std::make_optional(headers.getDecodedQueryParam("prefix")) : std::nullopt;
+    const auto delimiter = headers.getDecodedQueryParam("delimiter");
+
+    if(delimiter.size()>1)
+    {
+        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Delimiter has more than one char"))
+                            .sendWithEOM();
+        return;
+    }
 
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     folly::getGlobalCPUExecutor()->add(
-    [self = self, evb, marker, max_keys, prefix, delimiter, bucket]()
+    [self = self, evb, marker, maxKeys, prefix, delimiter, bucket]()
     {
-        self->listObjects(evb, self, marker, std::max(0, std::min(10000, max_keys)), prefix, delimiter, bucket);
+        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, std::nullopt, delimiter, bucket, false);
+    });
+}
+
+void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket)
+{
+    request_type = RequestType::ListObjects;
+    const auto continuationToken = headers.getDecodedQueryParam("continuation-token");
+    const auto maxKeys = headers.getIntQueryParam("max-keys", 1000);
+    const auto prefix = headers.hasQueryParam("prefix") ? std::make_optional(headers.getDecodedQueryParam("prefix")) : std::nullopt;
+    const auto delimiter = headers.getDecodedQueryParam("delimiter");
+    const auto startAfter = headers.hasQueryParam("start-after") ? std::make_optional(headers.getDecodedQueryParam("start-after")) : std::nullopt;
+
+    if(delimiter.size()>1)
+    {
+        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Delimiter has more than one char"))
+                            .sendWithEOM();
+        return;
+    }
+
+    std::string marker;
+    if(!folly::unhexlify(continuationToken, marker))
+    {
+        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Cannot decode continuation token"))
+                            .sendWithEOM();
+        return;
+    }
+
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+
+    folly::getGlobalCPUExecutor()->add(
+    [self = self, evb, marker, maxKeys, prefix, startAfter, delimiter, bucket]()
+    {
+        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, startAfter, delimiter, bucket, true);
     });
 }
 
@@ -1420,25 +1481,49 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
     }
 }
 
-void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& marker, int max_keys, const std::string& prefix, const std::string& delimiter, const std::string& bucket)
+void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& marker,
+    const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter,
+    const std::string& delimiter, const std::string& bucket,
+    const bool listV2)
 {
     SingleFileStorage::IterData iter_data = {};
-    if(!sfs.iter_start(bucket + "/" + marker, false, iter_data))
+    std::string iterStartVal;
+    if(!marker.empty())
+    {
+        if(startAfter && *startAfter>marker)
+            iterStartVal = bucket + "/" + *startAfter;
+        else
+            iterStartVal = bucket + "/" + marker;
+    }
+    else
+    {
+        if(startAfter)
+            iterStartVal = bucket + "/" + *startAfter;
+        else if(prefix)
+            iterStartVal = bucket + "/" + *prefix;
+        else
+            iterStartVal = bucket + "/";
+    }
+
+    if(!sfs.iter_start(iterStartVal, false, iter_data))
     {
         evb->runInEventBaseThread([self = self]()
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Error listing"))
+                            .body(fmt::format("Error starting listing"))
                             .sendWithEOM(); });
         return;
     }
 
     std::string val_data;
+    std::vector<std::string> commonPrefixes;
+    const size_t prefixSize = bucket.size() + (prefix ? prefix->size() : 0) + 1;
 
     int i;
     bool truncated = true;
-    for(i=0;i<max_keys;++i)
+    size_t keyCount = 0;
+    for(i=0;i<maxKeys;++i)
     {
         std::string key, md5sum;
         int64_t offset, size, last_modified;
@@ -1449,27 +1534,55 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             break;
         }
 
-        for(const auto& ext: extra_exts)
+        if(prefix && !key.starts_with(bucket + "/" + *prefix))
         {
-            size += ext.len;
+            truncated = false;
+            break;
         }
 
-        // Remove bucket name
-        auto slash_idx = key.find('/');
-        if(slash_idx != std::string::npos)
-            key = key.substr(slash_idx+1);
+        if(!key.starts_with(bucket + "/"))
+        {
+            truncated = false;
+            break;
+        }
 
-        val_data += fmt::format("\t<Contents>\n"
-            "\t\t<Key>{}</Key>\n"
-            "\t\t<LastModified>2009-10-12T17:50:30.000Z</LastModified>\n"
-            "\t\t<ETag>\"{}\"</ETag>\n"
-            "\t\t<Size>{}</Size>\n"
-            "\t\t<StorageClass>STANDARD</StorageClass>\n"
-            "\t\t<Owner>\n"
-            "\t\t\t<ID>75aa57f09aa0c8caeab4f8c24e99d10f8e7faeebf76c078efc7c6caea54ba06a</ID>\n"
-            "\t\t\t<DisplayName>mtd@amazon.com</DisplayName>\n"
-            "\t\t</Owner>\n"
-            "\t</Contents>", key, folly::hexlify(md5sum), size);
+        bool outputKey = true;
+
+        if(!delimiter.empty())
+        {
+            const size_t delimPos = key.find_first_of(delimiter[0], prefixSize);
+            if(delimPos != std::string::npos)
+            {
+                commonPrefixes.push_back(key.substr(prefixSize, delimPos - prefixSize + 1));
+                outputKey = false;
+            }
+        }
+
+        if (outputKey)
+        {
+            for(const auto& ext: extra_exts)
+            {
+                size += ext.len;
+            }
+
+            // Remove bucket name
+            const auto slash_idx = key.find('/');
+            if(slash_idx != std::string::npos)
+                key = key.substr(slash_idx+1);
+
+            val_data += fmt::format("\t<Contents>\n"
+                "\t\t<Key>{}</Key>\n"
+                "\t\t<LastModified>2009-10-12T17:50:30.000Z</LastModified>\n"
+                "\t\t<ETag>\"{}\"</ETag>\n"
+                "\t\t<Size>{}</Size>\n"
+                "\t\t<StorageClass>STANDARD</StorageClass>\n"
+                "\t\t<Owner>\n"
+                "\t\t\t<ID>75aa57f09aa0c8caeab4f8c24e99d10f8e7faeebf76c078efc7c6caea54ba06a</ID>\n"
+                "\t\t\t<DisplayName>mtd@amazon.com</DisplayName>\n"
+                "\t\t</Owner>\n"
+                "\t</Contents>", escapeXML(key), folly::hexlify(md5sum), size);
+            ++keyCount;
+        }
 
         if(!sfs.iter_next(iter_data))
         {
@@ -1484,31 +1597,80 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         }
     }
 
-    std::string next_maker;
+    std::string nextMarker;
     if(truncated)
     {
         std::string data;
-        sfs.iter_curr_val(next_maker, data, iter_data);
+        sfs.iter_curr_val(nextMarker, data, iter_data);
 
         // Remove bucket name
-        auto slash_idx = next_maker.find('/');
+        const auto slash_idx = nextMarker.find('/');
         if(slash_idx != std::string::npos)
-            next_maker = next_maker.substr(slash_idx+1);
+            nextMarker = nextMarker.substr(slash_idx+1);
     }
 
     sfs.iter_stop(iter_data);
 
     std::string resp = fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
         "<ListBucketResult>\n"
+        "\t<Name>{}</Name>\n"
         "\t<IsTruncated>{}</IsTruncated>\n"
-        "\t<Marker>{}</Marker>\n"
-        "\t<MaxKeys>{}</MaxKeys>\n"
-        "\t<Delimiter>{}</Delimiter>\n"
-        "\t<NextMarker>{}</NextMarker>\n"
-        "{}"
-        "</ListBucketResult>", truncated ? "true" : "false", marker, max_keys, delimiter, next_maker, val_data);
+        "\t<MaxKeys>{}</MaxKeys>\n", escapeXML(bucket), truncated ? "true" : "false", maxKeys);
 
-     evb->runInEventBaseThread([self = self, resp = std::move(resp)]()
+
+    if(!listV2)
+    {
+        resp+=fmt::format("\t<Marker>{}</Marker>\n", escapeXML(marker));
+    }
+    else if(!marker.empty())
+    {
+        resp+=fmt::format("\t<ContinuationToken>{}</ContinuationToken>\n", folly::hexlify(marker));
+    }
+
+    if(listV2 && truncated)
+    {
+        resp+=fmt::format("\t<NextContinuationToken>{}</NextContinuationToken>\n", folly::hexlify(nextMarker));
+    }
+    else if(!listV2 && truncated && !delimiter.empty())
+    {
+        resp+=fmt::format("\t<NextMarker>{}</NextMarker>\n", escapeXML(nextMarker));
+    }
+
+    resp+=val_data;
+
+    if(prefix)
+    {
+        resp+=fmt::format("\t<Prefix>{}</Prefix>\n", escapeXML(*prefix));
+    }
+
+    if(!delimiter.empty())
+    {
+        resp+=fmt::format("\t<Delimiter>{}</Delimiter>\n", escapeXML(delimiter));
+    }
+
+    if(listV2)
+    {
+        resp+=fmt::format("\t<KeyCount>{}</KeyCount>\n", keyCount);
+    }
+
+    if(startAfter)
+    {
+        resp+=fmt::format("\t<StartAfter>{}</StartAfter>\n", escapeXML(*startAfter));
+    }
+
+    if(!commonPrefixes.empty())
+    {
+        for(const auto commonPrefix: commonPrefixes)
+        {
+            resp+=fmt::format("\t<CommonPrefixes>\n"
+                "\t\t<Prefix>{}</Prefix>\n"
+                "\t</CommonPrefixes>\n", escapeXML(commonPrefix));
+        }
+    }
+
+    resp+="</ListBucketResult>";
+
+    evb->runInEventBaseThread([self = self, resp = std::move(resp)]()
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(200, "OK")

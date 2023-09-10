@@ -125,6 +125,7 @@ private:
     void readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> self, int64_t offset);
 	void onBodyCPU(folly::EventBase *evb, int64_t offs, std::unique_ptr<folly::IOBuf> body);
     void listObjects(proxygen::HTTPMessage& headers, const std::string& bucket);
+    void listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket);
     void getCommitObject(proxygen::HTTPMessage& headers);
     void getObject(proxygen::HTTPMessage& headers);
     void putObject(proxygen::HTTPMessage& headers);
@@ -132,7 +133,9 @@ private:
     void commit(proxygen::HTTPMessage& headers);
     void deleteObject(proxygen::HTTPMessage& headers);
 
-    void listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& marker, int max_keys, const std::string& prefix, const std::string& delimiter, const std::string& bucket);
+    void listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& continuationToken, 
+        const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter, const std::string& delimiter, const std::string& bucket,
+        const bool listV2);
     void createMultipartUpload(proxygen::HTTPMessage& headers);
     void finalizeMultipartUpload();
     bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen);
