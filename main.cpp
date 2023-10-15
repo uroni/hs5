@@ -19,6 +19,7 @@
 #include <folly/logging/xlog.h>
 #include <proxygen/httpserver/HTTPServer.h>
 #include <proxygen/httpserver/RequestHandlerFactory.h>
+#include <proxygen/lib/http/session/HTTPSessionBase.h>
 #include "s3handler.h"
 #include "SingleFileStorage.h"
 #include <chrono>
@@ -94,6 +95,8 @@ int main(int argc, char* argv[])
     sfsoptions.manual_commit = FLAGS_manual_commit;
     sfsoptions.stop_on_error = FLAGS_stop_on_error;
     sfsoptions.punch_holes = FLAGS_punch_holes;
+
+    proxygen::HTTPSessionBase::setMaxReadBufferSize(16*1024);
 
     proxygen::HTTPServerOptions options;
     options.threads = static_cast<size_t>(FLAGS_threads);

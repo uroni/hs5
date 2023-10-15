@@ -198,7 +198,7 @@ namespace
 		while (num > 0)
 		{
 			int64_t towrite = (std::min)((int64_t)4096, num);
-			if (file.pwriteNoInt(buf, static_cast<size_t>(towrite), offset)!= towrite)
+			if (file.pwriteFull(buf, static_cast<size_t>(towrite), offset)!= towrite)
 			{
 				return false;
 			}
@@ -1285,7 +1285,7 @@ void SingleFileStorage::handle_mmap_read_error(void* addr)
 }
 
 int SingleFileStorage::write(const std::string & fn, const char* data, 
-	size_t data_size, int64_t last_modified, const std::string & md5sum,
+	size_t data_size, const size_t data_alloc_size, int64_t last_modified, const std::string & md5sum,
 	bool no_del_old, bool is_fragment)
 {
 	if (is_dead)
@@ -1296,7 +1296,7 @@ int SingleFileStorage::write(const std::string & fn, const char* data,
 	if (fn.size() > 255)
 		return EINVAL;
 
-	return write_int(fn, data, data_size, last_modified, md5sum, true, no_del_old);
+	return write_int(fn, data, data_size, data_alloc_size, last_modified, md5sum, true, no_del_old);
 }
 
 int64_t SingleFileStorage::get_transid(int64_t disk_id)
@@ -1501,7 +1501,7 @@ void SingleFileStorage::migrate_thread()
 			int64_t tocopy = (std::min)(static_cast<int64_t>(buf.size()), data_file_copy_max - pos);
 
 			unsigned int read;
-			if ( (read=data_file.preadNoInt(buf.data(), static_cast<size_t>(tocopy), pos)) != tocopy)
+			if ( (read=data_file.preadFull(buf.data(), static_cast<size_t>(tocopy), pos)) != tocopy)
 			{
 				if (errno == EIO)
 				{
@@ -1517,7 +1517,7 @@ void SingleFileStorage::migrate_thread()
 				}
 			}
 
-			if (new_data_file.pwriteNoInt(buf.data(), static_cast<size_t>(tocopy), pos)!=tocopy)
+			if (new_data_file.pwriteFull(buf.data(), static_cast<size_t>(tocopy), pos)!=tocopy)
 			{
 				XLOG(ERR) << "Error writing " << std::to_string(tocopy) << " bytes at pos " << std::to_string(pos) << " to " << new_data_file_path << " for migration. " << folly::errnoStr(errno);
 				folly::writeFileAtomic(status_fn.string(), "{\"status\": \"error\"}");
@@ -1697,7 +1697,7 @@ int SingleFileStorage::write_ext(const Ext& ext, const char* data, size_t data_s
 	if (ext.data_file_offset + ext.len >= data_file_copy_done_sync
 		&& ext.data_file_offset + ext.len <= data_file_copy_done)
 	{
-		if (sel_data_file->pwriteNoInt(data, data_size, ext.data_file_offset) != data_size)
+		if (sel_data_file->pwriteFullFillPage(data, data_size, ext.data_file_offset) != data_size)
 		{
 			std::string fn =
 				sel_data_file == &data_file ? data_file_path : (data_file_path.parent_path() / "new_data");
@@ -1716,9 +1716,9 @@ int SingleFileStorage::write_ext(const Ext& ext, const char* data, size_t data_s
 		sel_data_file = &new_data_file;
 	}
 
-	EXT_DEBUG(XLOG(INFO) << "Writing " << fn << " to offset " << std::to_string(ext.offset) << " len " << std::to_string(ext.len) )
+	EXT_DEBUG(XLOG(INFO) << "Writing " << data_file_path << " to offset " << std::to_string(ext.data_file_offset) << " len " << std::to_string(data_size));
 
-	if (sel_data_file->pwriteNoInt(data, data_size, ext.data_file_offset) != data_size )
+	if (sel_data_file->pwriteFullFillPage(data, data_size, ext.data_file_offset) != data_size )
 	{
 		std::string fn =
 				sel_data_file == &data_file ? data_file_path : (data_file_path.parent_path() / "new_data");
@@ -1767,7 +1767,7 @@ int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<E
 }
 
 int SingleFileStorage::write_int(const std::string & fn, const char* data,
-	size_t data_size, int64_t last_modified, const std::string & md5sum, bool allow_defrag_lock,
+	size_t data_size, const size_t data_alloc_size, int64_t last_modified, const std::string & md5sum, bool allow_defrag_lock,
 	bool no_del_old)
 {
 	std::string cfn = fn;
@@ -1863,23 +1863,27 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 		size_t data_offset = 0;
 		for (Ext& ext : extents)
 		{
+			int64_t resv_len = div_up(ext.len, block_size) * block_size;
+			if (data_offset + resv_len > data_alloc_size)
+				resv_len = ext.len;
+			
 			auto sel_data_file = &data_file;
 
 			while (data_file_copy_done!=-1
 				&& (ext.data_file_offset >= data_file_copy_done
 				&& ext.data_file_offset <= data_file_copy_max) 
-				|| (ext.data_file_offset+ext.len >= data_file_copy_done
-					&& ext.data_file_offset+ext.len <= data_file_copy_max) )
+				|| (ext.data_file_offset+resv_len >= data_file_copy_done
+					&& ext.data_file_offset+resv_len <= data_file_copy_max) )
 			{
 				copy_lock.unlock();
 				std::this_thread::sleep_for(1s);
 				copy_lock.lock();
 			}
 
-			if (ext.data_file_offset + ext.len >= data_file_copy_done_sync
-				&& ext.data_file_offset + ext.len <= data_file_copy_done)
+			if (ext.data_file_offset + resv_len >= data_file_copy_done_sync
+				&& ext.data_file_offset + resv_len <= data_file_copy_done)
 			{
-				if (sel_data_file->pwriteNoInt(data + data_offset, static_cast<size_t>(ext.len), ext.data_file_offset) != static_cast<ssize_t>(ext.len))
+				if (sel_data_file->pwriteFull(data + data_offset, static_cast<size_t>(resv_len), ext.data_file_offset) != static_cast<ssize_t>(resv_len))
 				{
 					std::string fn =
 						sel_data_file == &data_file ? data_file_path : (data_file_path.parent_path() / "new_data");
@@ -1893,14 +1897,14 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 				}
 			}
 
-			if (ext.data_file_offset+ext.len <= data_file_copy_done)
+			if (ext.data_file_offset+resv_len <= data_file_copy_done)
 			{
 				sel_data_file = &new_data_file;
 			}
 
-			EXT_DEBUG(XLOG(INFO) << "Writing " << fn << " to offset " << std::to_string(ext.offset) << " len " << std::to_string(ext.len) )
+			EXT_DEBUG(XLOG(INFO) << "Writing " << fn << " to offset " << std::to_string(ext.offset) << " len " << std::to_string(ext.len) << " resv len " << std::to_string(resv_len) )
 
-			if (sel_data_file->pwriteNoInt(data + data_offset, static_cast<size_t>(ext.len), ext.data_file_offset) != static_cast<ssize_t>(ext.len))
+			if (sel_data_file->pwriteFull(data + data_offset, static_cast<size_t>(resv_len), ext.data_file_offset) != static_cast<ssize_t>(resv_len))
 			{
 				std::string fn =
 						sel_data_file == &data_file ? data_file_path : (data_file_path.parent_path() / "new_data");
@@ -2167,18 +2171,18 @@ SingleFileStorage::ReadExtResult SingleFileStorage::read_ext(const Ext& ext, con
 	bool dio_read = (flags & ReadWithReadahead) == 0 && (flags & ReadUnsynced) == 0 && *sel_data_file_dio;
 	if (dio_read)
 	{
-		read = sel_data_file_dio->preadNoInt(bufptr, toread, ext.data_file_offset);
+		read = sel_data_file_dio->preadFull(bufptr, toread, ext.data_file_offset);
 	}
 	else
 	{
-		read = sel_data_file->preadNoInt(bufptr, toread, ext.data_file_offset);
+		read = sel_data_file->preadFull(bufptr, toread, ext.data_file_offset);
 	}
 
 	if (read<ssize_t(toread))
 	{
 		if (dio_read)
 		{
-			read = sel_data_file->preadNoInt(bufptr, toread, ext.data_file_offset);
+			read = sel_data_file->preadFull(bufptr, toread, ext.data_file_offset);
 		}
 		if (read < ssize_t(toread))
 		{

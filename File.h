@@ -11,6 +11,9 @@
 #include <shared_mutex>
 #include "os_functions.h"
 
+constexpr int64_t fillPageSize = 4096;
+
+char *zeroBuf();
 
 class File : public folly::File
 {
@@ -41,14 +44,19 @@ public:
         folly::checkUnixError(ftruncate64(fd(), len), "Truncate failed");
     }
 
-    ssize_t preadNoInt(void* buf, size_t count, off64_t offset) const
+    ssize_t preadFull(void* buf, size_t count, off64_t offset) const
     {
-        return folly::preadNoInt(fd(), buf, count, offset);
+        return folly::preadFull(fd(), buf, count, offset);
     }
 
-    ssize_t pwriteNoInt(const void* buf, size_t count, off64_t offset) const
+    ssize_t pwriteFull(const void* buf, size_t count, off64_t offset) const
     {
-        return folly::pwriteNoInt(fd(), buf, count, offset);
+        return folly::pwriteFull(fd(), buf, count, offset);
+    }
+
+    ssize_t pwritevFull(iovec* iov, int count, off64_t offset) const
+    {
+        return folly::pwritevFull(fd(), iov, count, offset);
     }
 
     int fsyncNoInt() const
@@ -193,20 +201,48 @@ public:
         return !chunks.empty();
     }
 
-    ssize_t preadNoInt(char* buf, size_t count, off64_t offset)
+    ssize_t preadFull(char* buf, size_t count, off64_t offset)
     {
         return mapOp([&](const File& file, size_t count, size_t offset) {
-            const auto rc = file.preadNoInt(buf, count, offset);
+            const auto rc = file.preadFull(buf, count, offset);
             if(rc>0)
                 buf+=rc;
             return rc;
         }, count, offset, false);
     }
 
-    ssize_t pwriteNoInt(const char* buf, size_t count, off64_t offset)
+    ssize_t pwriteFull(const char* buf, size_t count, off64_t offset)
     {
         return mapOp([&](const File& file, size_t count, size_t offset) {
-            const auto rc = file.pwriteNoInt(buf, count, offset);
+            const auto rc = file.pwriteFull(buf, count, offset);
+            if(rc>0)
+                buf+=rc;
+            return rc;
+        }, count, offset, true);
+    }
+
+    ssize_t pwriteFullFillPage(const char* buf, size_t count, off64_t offset)
+    {
+        return mapOp([&](const File& file, size_t mapCount, size_t offset) {
+            
+            if(mapCount==count && 
+                offset % fillPageSize == 0 &&
+                mapCount % fillPageSize != 0)
+            {
+                iovec iov[2];
+                iov[0].iov_base = const_cast<char*>(buf);
+                iov[0].iov_len = mapCount;
+                iov[1].iov_base = zeroBuf();
+                iov[1].iov_len = fillPageSize - (mapCount % fillPageSize);
+                const auto rc = file.pwritevFull(iov, 2, offset);
+                if(rc==-1)
+                    return rc;
+
+                buf+=mapCount;
+                return static_cast<ssize_t>(mapCount);
+            }
+
+            const auto rc = file.pwriteFull(buf, mapCount, offset);
             if(rc>0)
                 buf+=rc;
             return rc;

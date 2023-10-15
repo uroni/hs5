@@ -27,6 +27,8 @@
 
 using THREAD_ID = pid_t;
 
+constexpr int64_t sfs_block_size = 4096;
+
 class SingleFileStorage
 {
 public:
@@ -121,7 +123,8 @@ public:
 		bool no_del_old, bool is_fragment);
 
 	int write(const std::string& fn,
-		const char* data, size_t data_size, int64_t last_modified, const std::string& md5sum,
+		const char* data, size_t data_size, const size_t data_alloc_size, 
+		int64_t last_modified, const std::string& md5sum,
 		bool no_del_old, bool is_fragment);
 
 	const static unsigned int ReadWithReadahead = 1;
@@ -276,7 +279,7 @@ public:
 
 private:
 
-	int write_int(const std::string& fn, const char* data, size_t data_size,
+	int write_int(const std::string& fn, const char* data, size_t data_size, const size_t data_alloc_size,
 		int64_t last_modified, const std::string& md5sum, bool allow_defrag_lock, bool no_del_old);
 
 	int64_t remove_fn(const std::string& fn,

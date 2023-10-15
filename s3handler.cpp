@@ -13,6 +13,7 @@
 #include <expat.h>
 #include <folly/Format.h>
 #include <folly/Range.h>
+#include <folly/ScopeGuard.h>
 #include <folly/String.h>
 #include <folly/executors/GlobalExecutor.h>
 #include <folly/io/IOBuf.h>
@@ -963,7 +964,7 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
 
                 std::string md5sum(data.getDataPtr(), data.getDataSize());
 
-                auto rc = self->sfs.write("/" + bucket+ "/" +uploadIdToStr(uploadId), data.getDataPtr(), 0, 0, md5sum,  false, false);
+                auto rc = self->sfs.write("/" + bucket+ "/" +uploadIdToStr(uploadId), data.getDataPtr(), 0, 0, 0, md5sum,  false, false);
 
          
                 evb->runInEventBaseThread([rc=rc, bucket=bucket, key=key, uploadIdEnc = uploadIdEnc, uploadVerId, self = self]()
@@ -1736,11 +1737,52 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
         return;
     }
 
-    folly::getGlobalCPUExecutor()->add(
-        [self = this->self, evb, offset = done_bytes, lbody = std::move(body)]() mutable
+    {
+        std::scoped_lock lock{bodyMutex};
+        const bool pause = bodyQueue.size()>7;
+        if(pause)
+            downstream_->pauseIngress();
+        bodyQueue.emplace(BodyObj{.offset = done_bytes, .body = std::move(body), .unpause = pause});
+
+        if(!hasBodyThread)
         {
-            self->onBodyCPU(evb, offset, std::move(lbody));
-        });
+            hasBodyThread = true;
+            folly::getGlobalCPUExecutor()->add(
+                [self = this->self, evb]() mutable
+                {
+                    std::unique_lock lock{self->bodyMutex};
+                    bool unpause = false;
+                    while(!self->bodyQueue.empty())
+                    {
+                        BodyObj obj = std::move(self->bodyQueue.front());
+                        self->bodyQueue.pop();
+                        lock.unlock();
+                        self->onBodyCPU(evb, obj.offset, std::move(obj.body));
+                        if(obj.unpause)
+                            unpause = true;
+                        lock.lock();
+
+                        if(self->bodyQueue.size()<4 && unpause)
+                        {
+                            evb->runInEventBaseThread([self = self]()
+                            {
+                                self->downstream_->resumeIngress();
+                            });
+                            unpause=false;
+                        }
+                    }
+                    self->hasBodyThread = false;
+
+                    if(unpause)
+                    {
+                        evb->runInEventBaseThread([self = self]()
+                        {
+                            self->downstream_->resumeIngress();
+                        });
+                    }
+                });
+        }
+    }
 
     done_bytes += body_bytes;
 }

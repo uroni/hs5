@@ -8,6 +8,7 @@
 #include <proxygen/httpserver/RequestHandlerFactory.h>
 #include <proxygen/httpserver/ResponseBuilder.h>
 #include <proxygen/lib/http/HTTPHeaders.h>
+#include <proxygen/lib/http/ProxygenErrorEnum.h>
 #include <vector>
 #include <thread>
 #include <expat.h>
@@ -177,4 +178,15 @@ private:
 
 	std::vector<SingleFileStorage::Ext> extents;
     EvpMdCtx evpMdCtx;
+
+    struct BodyObj
+    {
+        int64_t offset;
+        std::unique_ptr<folly::IOBuf> body;
+        bool unpause;
+    };
+
+    std::mutex bodyMutex;
+    bool hasBodyThread = false;
+    std::queue<BodyObj> bodyQueue;
 };
