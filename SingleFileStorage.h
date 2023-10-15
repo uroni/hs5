@@ -16,13 +16,13 @@
 #include <mutex>
 #include <condition_variable>
 #include <shared_mutex>
-#include <folly/File.h>
 #include <iostream>
 #include <stdint.h>
 #include <filesystem>
 #include <thread>
 #include <folly/io/IOBufQueue.h>
 #include <sodium.h>
+#include "File.h"
 
 
 using THREAD_ID = pid_t;
@@ -90,6 +90,7 @@ public:
 		bool manual_commit = false;
 		bool stop_on_error = false;
 		bool punch_holes = true;
+		int64_t data_file_chunk_size = 1LL * 1024 * 1024 * 1024 * 1024;
 	};
 
 	SingleFileStorage(SFSOptions options);
@@ -114,7 +115,7 @@ public:
 
 	WritePrepareResult write_prepare(const std::string& fn, size_t data_size);
 
-	int write_ext(const Ext& ext, const void* data, size_t data_size);
+	int write_ext(const Ext& ext, const char* data, size_t data_size);
 
 	int write_finalize(const std::string& fn, const std::vector<Ext>& extents, int64_t last_modified, const std::string& md5sum,
 		bool no_del_old, bool is_fragment);
@@ -394,7 +395,7 @@ private:
 		}
 
 	private:
-        folly::File backing_file;
+        File backing_file;
 		size_t n_pgids;
 		size_t mmap_size;
 		char* mmap_ptr;
@@ -503,10 +504,10 @@ private:
 	int64_t data_file_free;
 	std::map<int64_t, int64_t> reserved_extents;
 	std::mutex reserved_extents_mutex;
-    folly::File data_file;
-    folly::File data_file_dio;
-    folly::File new_data_file;
-    folly::File new_data_file_dio;
+    MultiFile data_file;
+    MultiFile data_file_dio;
+    MultiFile new_data_file;
+    MultiFile new_data_file_dio;
 	MDB_env* db_env;
 	MDB_dbi dbi_main;
 	MDB_dbi dbi_free;
@@ -568,6 +569,7 @@ private:
 
 	int64_t data_file_size_limit;
 	int64_t alloc_chunk_size;
+	int64_t data_file_chunk_size;
 
 	std::string runtime_id;
 	bool manual_commit;

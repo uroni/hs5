@@ -11,7 +11,8 @@ add_executable(hs5
     data.cpp
     os_functions.cpp 
     utils.cpp
-    crypt.cpp )
+    crypt.cpp
+    File.cpp )
 
 #set(GCC_COVERAGE_COMPILE_FLAGS "-fcoroutines")
 

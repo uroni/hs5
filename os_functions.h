@@ -1,3 +1,5 @@
+#pragma once
+
 #include <string>
 #include <sys/types.h>
 #include <unistd.h>
@@ -12,13 +14,6 @@ static std::string os_file_sep() {
 
 static pid_t getThreadID() {
 	return syscall(__NR_gettid);
-}
-
-static int64_t fileSize(const folly::File& file)
-{
-    struct stat64 st;
-    folly::checkUnixError(fstat64(file.fd(), &st), "fstat() failed");
-    return st.st_size;
 }
 
 static int64_t fileSize(int fd)
@@ -43,11 +38,5 @@ enum EFileType
 unsigned int os_get_file_type(const std::string& path);
 
 int os_popen(const std::string& cmd, std::string& ret);
-
-static bool punchHole(int fd, __off64_t spos, __off64_t size)
-{
-    int rc = fallocate64(fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, spos, size);
-    return rc == 0;
-}
 
 bool os_sync(const std::string & path);

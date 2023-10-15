@@ -191,14 +191,14 @@ namespace
 		}
 	};
 
-	bool writeZeroes(int64_t offset, const folly::File& file, int64_t num, int set_val)
+	bool writeZeroes(int64_t offset, const File& file, int64_t num, int set_val)
 	{
 		static char buf[4096] = {};
 
 		while (num > 0)
 		{
 			int64_t towrite = (std::min)((int64_t)4096, num);
-			if (folly::writeNoInt(file.fd(), buf, static_cast<size_t>(towrite))!= towrite)
+			if (file.pwriteNoInt(buf, static_cast<size_t>(towrite), offset)!= towrite)
 			{
 				return false;
 			}
@@ -238,9 +238,9 @@ namespace
 			total_size = n;
 			bitmap_size = static_cast<size_t>(n / 8 + (n % 8 == 0 ? 0 : 1));
 
-			if (fileSize(backing_file) < static_cast<int64_t>(bitmap_size))
+			if (backing_file.size() < static_cast<int64_t>(bitmap_size))
 			{
-				while (!writeZeroes(fileSize(backing_file), backing_file, bitmap_size - fileSize(backing_file), init_set ? 255 : 0))
+				while (!writeZeroes(backing_file.size(), backing_file, bitmap_size - backing_file.size(), init_set ? 255 : 0))
 				{
                     XLOG(ERR) << "Error resizing bitmap file. Retrying...";
                     std::this_thread::sleep_for(1s);
@@ -361,7 +361,7 @@ namespace
 
 
 	private:
-		folly::File backing_file;
+		File backing_file;
 		size_t bitmap_size;
 		int64_t total_size;
 		char* mmap_ptr;
@@ -391,7 +391,7 @@ std::unordered_map<THREAD_ID, std::pair<bool, std::vector<uintptr_t> > > SingleF
 std::vector<MDB_env*> SingleFileStorage::mmap_dbs;
 
 SingleFileStorage::SingleFileStorage(SFSOptions options)
-    : data_file(options.data_path + os_file_sep() + "data", O_RDWR|O_CREAT|O_CLOEXEC),
+    : data_file(options.data_path + os_file_sep() + "data", options.data_file_chunk_size, O_RDWR|O_CREAT|O_CLOEXEC),
     data_file_path(options.data_path + os_file_sep() + "data"),
 	data_file_max_size(0), data_file_offset(0), data_file_offset_end(-1), data_file_free(0), do_quit(false), 
 	min_free_space(20LL * 1024 * 1024 * 1024), is_defragging(false), defrag_restart(0), db_path(options.db_path),
@@ -399,7 +399,8 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	force_freespace_check(true), stop_defrag(false), allow_defrag(true), next_disk_id(1), data_file_copy_done(-1), data_file_copy_max(0), data_file_copy_done_sync(0),
 	stop_data_file_copy(false), references(0), 	db_env(nullptr), freespace_cache_path(options.freespace_cache_path), cache_db_env(nullptr), regen_freespace_cache(false),
 	sync_freespace_cache(true), mdb_curr_sync(false), data_file_size_limit(options.data_file_size_limit_mb*1024*1024), alloc_chunk_size(options.alloc_chunk_size),
-	runtime_id(options.runtime_id), manual_commit(options.manual_commit), stop_on_error(options.stop_on_error), punch_holes(options.punch_holes)
+	runtime_id(options.runtime_id), manual_commit(options.manual_commit), stop_on_error(options.stop_on_error), punch_holes(options.punch_holes),
+	data_file_chunk_size(options.data_file_chunk_size)
 {
 	int64_t index_file_size = 0;
 
@@ -619,20 +620,20 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 
 	if (options.use_direct_io)
 	{
-        data_file_dio = folly::File(data_file_path, O_RDONLY | O_CLOEXEC | O_DIRECT );
+        data_file_dio = MultiFile(data_file_path, data_file_chunk_size, O_RDONLY | O_CLOEXEC | O_DIRECT );
 	}
 
-	if (os_get_file_type(options.data_path + os_file_sep() + "new_data")!=0)
+	if (os_get_file_type(options.data_path + os_file_sep() + "new_data0")!=0)
 	{
-        new_data_file = folly::File( (options.data_path + os_file_sep() + "new_data").c_str(), O_RDWR | O_CLOEXEC);
+        new_data_file = MultiFile( options.data_path + os_file_sep() + "new_data", data_file_chunk_size,  O_RDWR | O_CLOEXEC);
 
 		if (options.use_direct_io)
 		{
-            new_data_file_dio = folly::File( (options.data_path + os_file_sep() + "new_data").c_str(), O_RDWR | O_CLOEXEC | O_DIRECT);
+            new_data_file_dio = MultiFile( options.data_path + os_file_sep() + "new_data", data_file_chunk_size, O_RDWR | O_CLOEXEC | O_DIRECT);
 		}
 	}
 
-	if ( fileSize(data_file.fd()) > 0
+	if ( data_file.size() > 0
 		&& index_file_size == 0)
 	{
 		throw std::runtime_error("Could not open index file at \"" + db_path + os_file_sep() + "index.lmdb");
@@ -935,8 +936,8 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 
 			if (data_file_copy_done_sync > 0)
 			{
-				new_data_file = folly::File(data_file_path.parent_path() / "new_data", O_RDWR | O_CLOEXEC);
-				new_data_file_dio = folly::File(data_file_path.parent_path() / "new_data", O_RDWR | O_CLOEXEC | O_DIRECT);
+				new_data_file = MultiFile(data_file_path.parent_path() / "new_data", data_file_chunk_size, O_RDWR | O_CLOEXEC);
+				new_data_file_dio = MultiFile(data_file_path.parent_path() / "new_data", data_file_chunk_size, O_RDWR | O_CLOEXEC | O_DIRECT);
 			}
 		}
 	}
@@ -1096,10 +1097,10 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 		throw std::runtime_error("LMDB: Error commiting txn for dbi handle (SIGBUS)");
 	}
 
-	if (data_file_max_size < fileSize(data_file.fd()))
+	if (data_file_max_size < data_file.size())
 	{
-		XLOG(INFO) << "Trimming " << folly::prettyPrint(fileSize(data_file.fd()) - data_file_max_size, folly::PRETTY_BYTES_IEC) << " from data file during recovery";
-		folly::checkUnixError(ftruncate64(data_file.fd(), data_file_max_size), "Recovery truncate failed");
+		XLOG(INFO) << "Trimming " << folly::prettyPrint(data_file.size() - data_file_max_size, folly::PRETTY_BYTES_IEC) << " from data file during recovery";
+		data_file.truncate(data_file_max_size);
 	}
 
 	if (data_file_offset_end < 0)
@@ -1471,13 +1472,13 @@ void SingleFileStorage::migrate_thread()
 
 	auto new_data_file_path = data_file_path.parent_path() / "new_data";
 
-	if (new_data_file.fd() == -1)
+	if (!new_data_file)
 	{
-		new_data_file = folly::File(new_data_file_path, O_RDWR | O_CLOEXEC);
+		new_data_file = MultiFile(new_data_file_path, data_file_chunk_size, O_RDWR | O_CLOEXEC);
 
-		if (data_file_dio.fd() == -1)
+		if (!data_file_dio)
 		{
-			new_data_file_dio = folly::File(new_data_file_path, O_RDWR | O_CLOEXEC | O_DIRECT);
+			new_data_file_dio = MultiFile(new_data_file_path, data_file_chunk_size, O_RDWR | O_CLOEXEC | O_DIRECT);
 		}
 	}
 
@@ -1487,7 +1488,7 @@ void SingleFileStorage::migrate_thread()
 	buf.resize(512 * 1024);
 	int64_t pos = (std::max)((int64_t)0, data_file_copy_done);
 	int64_t data_file_size;
-	while (pos < (data_file_size=fileSize(data_file.fd()))
+	while (pos < (data_file_size=data_file.size())
 		&& !stop_data_file_copy)
 	{
 		data_file_copy_max = (std::min)(pos + data_file_copy_num_bytes, data_file_size);
@@ -1500,7 +1501,7 @@ void SingleFileStorage::migrate_thread()
 			int64_t tocopy = (std::min)(static_cast<int64_t>(buf.size()), data_file_copy_max - pos);
 
 			unsigned int read;
-			if ( (read=folly::preadNoInt(data_file.fd(), buf.data(), static_cast<size_t>(tocopy), pos)) != tocopy)
+			if ( (read=data_file.preadNoInt(buf.data(), static_cast<size_t>(tocopy), pos)) != tocopy)
 			{
 				if (errno == EIO)
 				{
@@ -1516,7 +1517,7 @@ void SingleFileStorage::migrate_thread()
 				}
 			}
 
-			if (folly::pwriteNoInt(new_data_file.fd(), buf.data(), static_cast<size_t>(tocopy), pos)!=tocopy)
+			if (new_data_file.pwriteNoInt(buf.data(), static_cast<size_t>(tocopy), pos)!=tocopy)
 			{
 				XLOG(ERR) << "Error writing " << std::to_string(tocopy) << " bytes at pos " << std::to_string(pos) << " to " << new_data_file_path << " for migration. " << folly::errnoStr(errno);
 				folly::writeFileAtomic(status_fn.string(), "{\"status\": \"error\"}");
@@ -1526,7 +1527,7 @@ void SingleFileStorage::migrate_thread()
 			pos += tocopy;
 		}
 
-		if (folly::fsyncNoInt(new_data_file.fd())!=0)
+		if (new_data_file.fsyncNoInt()!=0)
 		{
 			XLOG(ERR) << "Error syncing " << new_data_file_path << " (pos "<<std::to_string(data_file_copy_done)<<" to "<<std::to_string(data_file_copy_max)<<") for migration. " << folly::errnoStr(errno);
 			folly::writeFileAtomic(status_fn.string(), "{\"status\": \"error\"}");
@@ -1540,7 +1541,7 @@ void SingleFileStorage::migrate_thread()
 		data_file_copy_done = pos;
 	}
 
-	if (pos == fileSize(data_file.fd()))
+	if (pos == data_file.size())
 	{
 		data_file_copy_done = LLONG_MAX;
 		data_file_copy_max = LLONG_MAX;
@@ -1676,11 +1677,11 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
 	return WritePrepareResult{0, extents};
 }
 
-int SingleFileStorage::write_ext(const Ext& ext, const void* data, size_t data_size)
+int SingleFileStorage::write_ext(const Ext& ext, const char* data, size_t data_size)
 {
 	std::shared_lock copy_lock(data_file_copy_mutex);
 
-	folly::File* sel_data_file = &data_file;
+	auto sel_data_file = &data_file;
 
 	while (data_file_copy_done!=-1
 		&& (ext.data_file_offset >= data_file_copy_done
@@ -1696,7 +1697,7 @@ int SingleFileStorage::write_ext(const Ext& ext, const void* data, size_t data_s
 	if (ext.data_file_offset + ext.len >= data_file_copy_done_sync
 		&& ext.data_file_offset + ext.len <= data_file_copy_done)
 	{
-		if (folly::pwriteNoInt(sel_data_file->fd(), data, data_size, ext.data_file_offset) != data_size)
+		if (sel_data_file->pwriteNoInt(data, data_size, ext.data_file_offset) != data_size)
 		{
 			std::string fn =
 				sel_data_file == &data_file ? data_file_path : (data_file_path.parent_path() / "new_data");
@@ -1717,7 +1718,7 @@ int SingleFileStorage::write_ext(const Ext& ext, const void* data, size_t data_s
 
 	EXT_DEBUG(XLOG(INFO) << "Writing " << fn << " to offset " << std::to_string(ext.offset) << " len " << std::to_string(ext.len) )
 
-	if (folly::pwriteNoInt(sel_data_file->fd(), data, data_size, ext.data_file_offset) != data_size )
+	if (sel_data_file->pwriteNoInt(data, data_size, ext.data_file_offset) != data_size )
 	{
 		std::string fn =
 				sel_data_file == &data_file ? data_file_path : (data_file_path.parent_path() / "new_data");
@@ -1862,7 +1863,7 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 		size_t data_offset = 0;
 		for (Ext& ext : extents)
 		{
-			folly::File* sel_data_file = &data_file;
+			auto sel_data_file = &data_file;
 
 			while (data_file_copy_done!=-1
 				&& (ext.data_file_offset >= data_file_copy_done
@@ -1878,7 +1879,7 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 			if (ext.data_file_offset + ext.len >= data_file_copy_done_sync
 				&& ext.data_file_offset + ext.len <= data_file_copy_done)
 			{
-				if (folly::pwriteNoInt(sel_data_file->fd(), data + data_offset, static_cast<size_t>(ext.len), ext.data_file_offset) != static_cast<ssize_t>(ext.len))
+				if (sel_data_file->pwriteNoInt(data + data_offset, static_cast<size_t>(ext.len), ext.data_file_offset) != static_cast<ssize_t>(ext.len))
 				{
 					std::string fn =
 						sel_data_file == &data_file ? data_file_path : (data_file_path.parent_path() / "new_data");
@@ -1899,7 +1900,7 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 
 			EXT_DEBUG(XLOG(INFO) << "Writing " << fn << " to offset " << std::to_string(ext.offset) << " len " << std::to_string(ext.len) )
 
-			if (folly::pwriteNoInt(sel_data_file->fd(), data + data_offset, static_cast<size_t>(ext.len), ext.data_file_offset) != static_cast<ssize_t>(ext.len))
+			if (sel_data_file->pwriteNoInt(data + data_offset, static_cast<size_t>(ext.len), ext.data_file_offset) != static_cast<ssize_t>(ext.len))
 			{
 				std::string fn =
 						sel_data_file == &data_file ? data_file_path : (data_file_path.parent_path() / "new_data");
@@ -2148,8 +2149,8 @@ SingleFileStorage::ReadExtResult SingleFileStorage::read_ext(const Ext& ext, con
 
 	std::shared_lock copy_lock(data_file_copy_mutex);
 
-	folly::File* sel_data_file = &data_file;
-	folly::File* sel_data_file_dio = &data_file_dio;
+	auto sel_data_file = &data_file;
+	auto sel_data_file_dio = &data_file_dio;
 
 	size_t toread = std::min(static_cast<size_t>(ext.len), bufsize);
 
@@ -2163,21 +2164,21 @@ SingleFileStorage::ReadExtResult SingleFileStorage::read_ext(const Ext& ext, con
 	auto bufptr = reinterpret_cast<char*>(data.first);
 
 	ssize_t read;
-	bool dio_read = (flags & ReadWithReadahead) == 0 && (flags & ReadUnsynced) == 0 && sel_data_file_dio->fd() != -1;
+	bool dio_read = (flags & ReadWithReadahead) == 0 && (flags & ReadUnsynced) == 0 && *sel_data_file_dio;
 	if (dio_read)
 	{
-		read = folly::preadNoInt(sel_data_file_dio->fd(), bufptr, toread, ext.data_file_offset);
+		read = sel_data_file_dio->preadNoInt(bufptr, toread, ext.data_file_offset);
 	}
 	else
 	{
-		read = folly::preadNoInt(sel_data_file->fd(), bufptr, toread, ext.data_file_offset);
+		read = sel_data_file->preadNoInt(bufptr, toread, ext.data_file_offset);
 	}
 
 	if (read<ssize_t(toread))
 	{
 		if (dio_read)
 		{
-			read = folly::preadNoInt(sel_data_file->fd(), bufptr, toread, ext.data_file_offset);
+			read = sel_data_file->preadNoInt(bufptr, toread, ext.data_file_offset);
 		}
 		if (read < ssize_t(toread))
 		{
@@ -2297,7 +2298,7 @@ bool SingleFileStorage::commit(bool background_queue, int64_t transid, int64_t d
 		return false;
 	}
 
-	if (folly::fsyncNoInt(data_file.fd())!=0)
+	if (data_file.fsyncNoInt()!=0)
 	{
 		XLOG(ERR) << "Failed to sync data file " << data_file_path << ". " << folly::errnoStr(errno);
 		write_offline = true;
@@ -3868,7 +3869,7 @@ bool SingleFileStorage::do_free_minspace(MDB_txn* txn, MDB_txn* freespace_txn, T
 		{
 			XLOG(INFO) << "Punching extent (" << std::to_string(start) << ", " << std::to_string(len) << ") size "+folly::prettyPrint(len, folly::PRETTY_BYTES_IEC);
 
-			if (!punchHole(data_file.fd(), start, len))
+			if (!data_file.punchHole(start, len))
 			{
 				XLOG(ERR) << "Error punching hole (" << std::to_string(start) << ", " << std::to_string(len) << ") file " << data_file_path << ". " << folly::errnoStr(errno);
 				return false;
@@ -4259,7 +4260,7 @@ bool SingleFileStorage::generate_freespace_cache(MDB_txn* source_txn, MDB_txn* d
 	MDB_val tkey;
 	int rc;
 
-	int64_t data_size = fileSize(data_file.fd());
+	int64_t data_size = data_file.size();
 	int64_t bitmap_size = div_up(data_size, 4096);
 
 	TmpMmapedFileBitmap bmap(bitmap_size, false);
@@ -4622,7 +4623,7 @@ bool SingleFileStorage::freespace_check(MDB_txn* source_txn, MDB_txn* freespace_
 	MDB_val tkey;
 	int rc;
 
-	int64_t data_size = fileSize(data_file.fd());
+	int64_t data_size = data_file.size();
 	int64_t bitmap_size = div_up(data_size, 4096);
 
 	TmpMmapedFileBitmap bmap(bitmap_size, false);
@@ -6700,25 +6701,19 @@ void SingleFileStorage::operator()()
 				}
 			}
 
-			if (folly::fsyncNoInt(data_file.fd())!=0)
+			if (data_file.fsyncNoInt()!=0)
 			{
 				XLOG(ERR) << "Failed to sync data file " << data_file_path << ". " << folly::errnoStr(errno);
 				++commit_errors;
 			}
 
-			if (new_data_file.fd() != -1
-				&& folly::fsyncNoInt(new_data_file.fd())!=0)
+			if (new_data_file
+				&& new_data_file.fsyncNoInt()!=0)
 			{
 				XLOG(ERR) << "Failed to sync new data file " << (data_file_path.parent_path() / "new_data") << ". " << folly::errnoStr(errno);
 				++commit_errors;
-#ifndef _WIN32
-				posix_fadvise64(new_data_file.fd(), 0, 0, POSIX_FADV_DONTNEED);
-#endif
 			}
 
-#ifndef _WIN32
-			posix_fadvise64(data_file.fd(), 0, 0, POSIX_FADV_DONTNEED);
-#endif
 			size_t num_reserved_extents;
 			int64_t local_curr_partid;
 			{
@@ -7494,7 +7489,7 @@ int64_t SingleFileStorage::get_free_space_in_data_file()
 	{
 		std::scoped_lock lock(datafileoffset_mutex);
 		if (data_file_offset_end > 0
-			&& data_file_offset_end <= div_up(fileSize(data_file.fd()), block_size)*block_size)
+			&& data_file_offset_end <= div_up(data_file.size(), block_size)*block_size)
 		{
 			curr_ext_add = data_file_offset_end - data_file_offset;
 		}
@@ -7532,7 +7527,7 @@ int64_t SingleFileStorage::get_total_space()
 
 int64_t SingleFileStorage::get_data_file_size()
 {
-	return fileSize(data_file.fd());
+	return data_file.size();
 }
 
 int64_t SingleFileStorage::max_free_extent(int64_t& len)
@@ -7651,7 +7646,7 @@ int64_t SingleFileStorage::get_free_space_slow(bool verbose, int64_t& freespace_
 	{
 		std::scoped_lock lock(datafileoffset_mutex);
 		if (data_file_offset_end > 0
-			&& data_file_offset_end <= div_up(fileSize(data_file.fd()), block_size)*block_size)
+			&& data_file_offset_end <= div_up(data_file.size(), block_size)*block_size)
 		{
 			curr_ext_add = data_file_offset_end - data_file_offset;
 
@@ -8484,7 +8479,7 @@ SingleFileStorage::TmpMmapedPgIds::TmpMmapedPgIds()
 	: mmap_ptr(nullptr), n_pgids(0)
 {
 	std::string tmp_fn = "/var/tmp";
-	backing_file = folly::File(tmp_fn, O_RDWR | O_CLOEXEC | O_TMPFILE );
+	backing_file = File(tmp_fn, O_RDWR | O_CLOEXEC | O_TMPFILE );
 
 	mmap_size = 10ULL * 1024 * 1024 * 1024;
 	ftruncate64(backing_file.fd(), mmap_size);

@@ -1798,15 +1798,19 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         auto curr_ext = SingleFileStorage::Ext(it->obj_offset + ext_offset, it->data_file_offset + ext_offset, it->len - ext_offset);
         int64_t wlen = std::min(static_cast<int64_t>(data_size), curr_ext.len);
 
-        auto rc = sfs.write_ext(curr_ext, data, wlen);
+        auto rc = sfs.write_ext(curr_ext, reinterpret_cast<const char*>(data), wlen);
         if (rc != 0)
         {
             evb->runInEventBaseThread([self = self]()
-                                  {           
-                    ResponseBuilder(self->downstream_)
-                        .status(500, "Internal error")
-                        .body("Write ext error")
-                        .sendWithEOM();
+                                  {  
+                    if(!self)
+                        return;
+                    if(!self->finished_)         
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body("Write ext error")
+                            .sendWithEOM();
+
                     self->finished_ = true; });
             return;
         }
