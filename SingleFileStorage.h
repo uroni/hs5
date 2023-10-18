@@ -92,7 +92,7 @@ public:
 		bool manual_commit = false;
 		bool stop_on_error = false;
 		bool punch_holes = true;
-		int64_t data_file_chunk_size = 1LL * 1024 * 1024 * 1024 * 1024;
+		int64_t data_file_chunk_size = 10LL * 1024 * 1024 * 1024 * 1024;
 	};
 
 	SingleFileStorage(SFSOptions options);
