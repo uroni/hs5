@@ -630,6 +630,13 @@ void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
 
 bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen)
 {
+#ifdef ALLOW_LEGACY_MD5SUM
+    if(md5sum.size()==MD5_DIGEST_LENGTH)
+    {
+        return true;
+    }
+#endif
+
     CRData rdata(md5sum.data(), md5sum.size());
     char itype;
     if(!rdata.getChar(&itype))
@@ -766,7 +773,11 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers)
                                             return;
                 } 
 
+                #ifdef ALLOW_LEGACY_MD5SUM
+                const auto md5sum = res.md5sum.size() == MD5_DIGEST_LENGTH ? res.md5sum : ((!res.md5sum.empty() && res.md5sum[0] ==0 ) ? res.md5sum.substr(1) : "");
+                #else
                 const auto md5sum = (!res.md5sum.empty() && res.md5sum[0] ==0 ) ? res.md5sum.substr(1) : "";
+                #endif
 
                 evb->runInEventBaseThread([self = self, total_len = res.total_len, md5sum]()
                                               {
