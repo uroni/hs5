@@ -631,7 +631,7 @@ void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
 bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen)
 {
 #ifdef ALLOW_LEGACY_MD5SUM
-    if(md5sum.size()==MD5_DIGEST_LENGTH)
+    if(md5sum.size()==MD5_DIGEST_LENGTH || md5sum.empty())
     {
         return true;
     }
