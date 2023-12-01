@@ -386,6 +386,14 @@ void mmap_read_error(int sig, siginfo_t *si, void *unused)
 }
 #endif
 
+namespace
+{
+	std::string common_prefix_passthrough(const std::string& str)
+	{
+		return str;
+	}
+}
+
 std::mutex SingleFileStorage::mmap_read_error_mutex;
 std::unordered_map<THREAD_ID, std::pair<bool, std::vector<uintptr_t> > > SingleFileStorage::mmap_read_error_jmp;
 std::vector<MDB_env*> SingleFileStorage::mmap_dbs;
@@ -400,8 +408,11 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	stop_data_file_copy(false), references(0), 	db_env(nullptr), freespace_cache_path(options.freespace_cache_path), cache_db_env(nullptr), regen_freespace_cache(false),
 	sync_freespace_cache(true), mdb_curr_sync(false), data_file_size_limit(options.data_file_size_limit_mb*1024*1024), alloc_chunk_size(options.alloc_chunk_size),
 	runtime_id(options.runtime_id), manual_commit(options.manual_commit), stop_on_error(options.stop_on_error), punch_holes(options.punch_holes),
-	data_file_chunk_size(options.data_file_chunk_size)
+	data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func)
 {
+	if(common_prefix_func==nullptr)
+		common_prefix_func = common_prefix_passthrough;
+
 	int64_t index_file_size = 0;
 
 	int64_t total_space = os_total_space(options.data_path);
@@ -771,6 +782,15 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 		throw std::runtime_error("LMDB: Error setting free comparison function (" + (std::string)mdb_strerror(rc) + ")");
 	}
 
+	if(key_compare_func)
+	{
+		rc = mdb_set_compare(txn, dbi_main, key_compare_func);
+		if (rc)
+		{
+			throw std::runtime_error("LMDB: Error setting main comparison function (" + (std::string)mdb_strerror(rc) + ")");
+		}
+	}
+
 	rc = mdb_dbi_open(txn, "holes", MDB_CREATE, &dbi_holes);
 	if (rc)
 	{
@@ -844,7 +864,8 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	if (rc != MDB_NOTFOUND)
 	{
 		if (size_out.mv_size == sizeof(data_file_offset) * 5 || 
-			size_out.mv_size == sizeof(data_file_offset) * 6)
+			size_out.mv_size == sizeof(data_file_offset) * 6 ||
+			size_out.mv_size == sizeof(data_file_offset) * 7 )
 		{
 			memcpy(&data_file_max_size, size_out.mv_data, sizeof(data_file_max_size));
 			memcpy(&data_file_offset, reinterpret_cast<char*>(size_out.mv_data) + sizeof(data_file_max_size), sizeof(data_file_offset));
@@ -852,12 +873,15 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 			memcpy(&data_file_free, reinterpret_cast<char*>(size_out.mv_data) + sizeof(data_file_offset) * 3, sizeof(data_file_free));
 			memcpy(&curr_transid, reinterpret_cast<char*>(size_out.mv_data) + sizeof(data_file_offset) * 4, sizeof(curr_transid));
 			if(size_out.mv_size > sizeof(data_file_offset) * 5)
-				memcpy(&curr_partid, reinterpret_cast<char*>(size_out.mv_data) + sizeof(data_file_offset) * 5, sizeof(curr_transid));
+				memcpy(&curr_partid, reinterpret_cast<char*>(size_out.mv_data) + sizeof(data_file_offset) * 5, sizeof(curr_partid));
+			if(size_out.mv_size > sizeof(data_file_offset) * 6)
+				memcpy(&curr_version, reinterpret_cast<char*>(size_out.mv_data) + sizeof(data_file_offset) * 6, sizeof(curr_version));
 			XLOG(INFO) << "Data file max " << std::to_string(data_file_max_size) << " offset " << std::to_string(data_file_offset) <<
 				" end " << std::to_string(data_file_offset_end) <<
 				" free " << std::to_string(data_file_free) <<
 				" transid " << std::to_string(curr_transid) << 
-				" curr_partid " << curr_partid << " fn " << data_file_path;
+				" curr_partid " << curr_partid <<
+				" curr_version " << curr_version << " fn " << data_file_path;
 		}
 		else
 		{
@@ -1131,7 +1155,7 @@ SingleFileStorage::SingleFileStorage()
 	is_dead(true), write_offline(true), curr_transid(1), startup_finished(false),
 	force_freespace_check(true), stop_defrag(false), allow_defrag(false), next_disk_id(1), data_file_copy_done(-1), data_file_copy_max(0), data_file_copy_done_sync(0),
 	stop_data_file_copy(false), references(0),
-	db_env(nullptr), cache_db_env(nullptr), regen_freespace_cache(false), sync_freespace_cache(true)
+	db_env(nullptr), cache_db_env(nullptr), regen_freespace_cache(false), sync_freespace_cache(true), key_compare_func(nullptr)
 {
 
 }
@@ -1753,7 +1777,7 @@ int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<E
 	curr_frag.last_modified = last_modified;
 	curr_frag.md5sum = md5sum;
 
-	++commit_items[std::hash<std::string>()(fn)];
+	++commit_items[std::hash<std::string>()(common_prefix_func(fn))];
 
 	commit_queue.push_back(curr_frag);
 	
@@ -1948,7 +1972,7 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 	curr_frag.last_modified = last_modified;
 	curr_frag.md5sum = md5sum;
 
-	++commit_items[std::hash<std::string>()(cfn)];
+	++commit_items[std::hash<std::string>()(common_prefix_func(cfn))];
 
 	commit_queue.push_back(curr_frag);
 	
@@ -2001,7 +2025,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 	{
 		std::unique_lock lock(mutex);
 
-		auto it = commit_items.find(std::hash<std::string>()(fn));
+		auto it = commit_items.find(std::hash<std::string>()(common_prefix_func(fn)));
 		if(it!=commit_items.end())
 		{
 			flags |= ReadUnsynced;
@@ -2076,7 +2100,7 @@ int SingleFileStorage::check_existence(const std::string& fn, unsigned int flags
 	{
 		std::unique_lock lock(mutex);
 
-		auto it = commit_items.find(std::hash<std::string>()(fn));
+		auto it = commit_items.find(std::hash<std::string>()(common_prefix_func(fn)));
 		if(it!=commit_items.end())
 		{
 			flags |= ReadUnsynced;
@@ -2248,7 +2272,7 @@ int SingleFileStorage::del(const std::string & fn, DelAction da,
 	std::unique_lock lock(mutex);
 	wait_queue(lock, background_queue, false);
 	wait_defrag(fn, lock);
-	++commit_items[std::hash<std::string>()(fn)];
+	++commit_items[std::hash<std::string>()(common_prefix_func(fn))];
 	
 	if (is_defragging)
 	{
@@ -2283,7 +2307,7 @@ bool SingleFileStorage::restore_old(const std::string & fn)
 	std::unique_lock lock(mutex);
 	wait_queue(lock, false, false);
 	wait_defrag(cfn, lock);
-	++commit_items[std::hash<std::string>()(cfn)];
+	++commit_items[std::hash<std::string>()(common_prefix_func(cfn))];
 
 	if (is_defragging)
 	{
@@ -2439,6 +2463,16 @@ bool SingleFileStorage::iter_start(std::string fn, bool compressed, IterData& it
 	{
 		XLOG(ERR) << "LMDB: Failed to open transaction handle for iteration (" << mdb_strerror(rc) << ") sfs " << db_path;
 		return false;
+	}
+
+	if(key_compare_func)
+	{
+		rc = mdb_set_compare(iter_data.iter_txn, dbi_main, key_compare_func);
+		if (rc)
+		{
+			XLOG(ERR) << "LMDB: Error setting main compare func in iter_start (" << mdb_strerror(rc) << ") sfs " << db_path;
+			return false;
+		}
 	}
 
 	rc = mdb_cursor_open(iter_data.iter_txn, dbi_main, &iter_data.iter_cur);
@@ -5843,6 +5877,16 @@ SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, cons
 			clear_mmap_read_error(tid);
 			return SFragInfo();
 		}
+
+		if(key_compare_func)
+		{
+			rc = mdb_set_compare(txn, dbi_main, key_compare_func);
+			if (rc)
+			{
+				XLOG(ERR) << "LMDB: Error setting main compare func in get_frag_info (" << mdb_strerror(rc) << ") sfs " << db_path;
+				return SFragInfo();
+			}
+		}
 	}
 
 	MDB_val tkey;
@@ -6373,6 +6417,16 @@ void SingleFileStorage::operator()()
 		++commit_errors;
 	}
 
+	if(key_compare_func)
+	{
+		rc = mdb_set_compare(txn, dbi_main, key_compare_func);
+		if (rc)
+		{
+			XLOG(ERR) << "Error setting main comparison function (" << mdb_strerror(rc) << ") sfs " << db_path;
+			++commit_errors;
+		}	
+	}
+
 	if (!regen_freespace_cache
 		&& cache_db_env == nullptr
 		&& std::filesystem::exists("/etc/urbackup/regen_free_space_cache"))
@@ -6632,7 +6686,7 @@ void SingleFileStorage::operator()()
 			|| frag_info.action==FragAction::DelWithQueued)
 		{
 			++mod_items;
-			--commit_items[std::hash<std::string>()(frag_info.fn)];
+			--commit_items[std::hash<std::string>()(common_prefix_func(frag_info.fn))];
 		}
 
 		if (frag_info.action == FragAction::FindFree
@@ -6692,6 +6746,11 @@ void SingleFileStorage::operator()()
 					}
 				}
 
+				if(!setup_compare_funcs(txn, freespace_txn))
+				{
+					++commit_errors;
+				}
+
 				commit_errors += reset_del_queue(txn, freespace_txn, tid, 0, curr_transid);
 			}
 
@@ -6720,11 +6779,13 @@ void SingleFileStorage::operator()()
 
 			size_t num_reserved_extents;
 			int64_t local_curr_partid;
+			int64_t local_curr_version;
 			{
 				std::vector<SPunchItem> local_reserved_extents;
 				{
 					std::scoped_lock lock(reserved_extents_mutex);
 					local_curr_partid = curr_partid;
+					local_curr_version = curr_version;
 					local_reserved_extents.reserve(reserved_extents.size());
 					for(const auto& it: reserved_extents)
 					{
@@ -6762,7 +6823,7 @@ void SingleFileStorage::operator()()
 				tkey.mv_size = 1;
 
 				MDB_val tval;
-				int64_t tdata[6];
+				int64_t tdata[7];
 
 				tdata[0] = data_file_max_size;
 				tdata[1] = curr_write_ext_start;
@@ -6770,6 +6831,7 @@ void SingleFileStorage::operator()()
 				tdata[3] = data_file_free;
 				tdata[4] = curr_transid;
 				tdata[5] = local_curr_partid;
+				tdata[6] = local_curr_version;
 
 				tval.mv_data = tdata;
 				tval.mv_size = sizeof(tdata);
@@ -6987,27 +7049,10 @@ void SingleFileStorage::operator()()
 
 				XLOG(INFO) << "After commit txn id " + std::to_string(mdb_get_txnid(txn));
 
-				rc = mdb_set_compare(freespace_txn, dbi_free, mdb_cmp_varint);
-				if (rc)
+				if(!setup_compare_funcs(txn, freespace_txn))
 				{
-					XLOG(ERR) << "Error setting free comparison function (2) (" << mdb_strerror(rc) << ") sfs " << db_path;
 					++commit_errors;
 				}
-
-				rc = mdb_set_compare(freespace_txn, dbi_free_len, mdb_cmp_varint_rev);
-				if (rc)
-				{
-					XLOG(ERR) << "Error setting free_len comparison function (2) (" << mdb_strerror(rc) << ") sfs " << db_path;
-					++commit_errors;
-				}
-
-				rc = mdb_set_compare(txn, dbi_holes, mdb_cmp_varint);
-				if (rc)
-				{
-					XLOG(ERR) << "Error setting holes comparison function (2) (" << mdb_strerror(rc) << ") sfs " << db_path;
-					++commit_errors;
-				}
-
 
 				for(auto it=commit_items.begin();it!=commit_items.end();)
 				{
@@ -7485,6 +7530,43 @@ void SingleFileStorage::operator()()
 	{
 		std::this_thread::sleep_for(100ms);
 	}
+}
+
+bool SingleFileStorage::setup_compare_funcs(MDB_txn* txn, MDB_txn* freespace_txn)
+{
+	bool ret = true;
+	int rc = mdb_set_compare(freespace_txn, dbi_free, mdb_cmp_varint);
+	if (rc)
+	{
+		XLOG(ERR) << "Error setting free comparison function (2) (" << mdb_strerror(rc) << ") sfs " << db_path;
+		ret = false;
+	}
+
+	rc = mdb_set_compare(freespace_txn, dbi_free_len, mdb_cmp_varint_rev);
+	if (rc)
+	{
+		XLOG(ERR) << "Error setting free_len comparison function (2) (" << mdb_strerror(rc) << ") sfs " << db_path;
+		ret = false;
+	}
+
+	rc = mdb_set_compare(txn, dbi_holes, mdb_cmp_varint);
+	if (rc)
+	{
+		XLOG(ERR) << "Error setting holes comparison function (2) (" << mdb_strerror(rc) << ") sfs " << db_path;
+		ret = false;
+	}
+
+	if(key_compare_func)
+	{
+		rc = mdb_set_compare(txn, dbi_main, key_compare_func);
+		if (rc)
+		{
+			XLOG(ERR) << "Error setting main comparison function (2) (" << mdb_strerror(rc) << ") sfs " << db_path;
+			ret = false;
+		}
+	}
+
+	return ret;
 }
 
 int64_t SingleFileStorage::get_free_space_in_data_file()
@@ -8083,6 +8165,20 @@ void SingleFileStorage::defrag(str_map& params, relaxed_atomic<int64_t>& defrag_
 		return;
 	}
 
+	if(key_compare_func)
+	{
+		rc = mdb_set_compare(txn, dbi_main, key_compare_func);
+		if (rc)
+		{
+			XLOG(ERR) << "LMDB: Error setting main compare func (2) (" << mdb_strerror(rc) << ") sfs " << db_path;
+			std::scoped_lock lock(mutex);
+			is_defragging = false;
+			defrag_skip_items.clear();
+			curr_free_skip_extents.clear();
+			return;
+		}
+	}
+
 	XLOG(INFO) << "Defragging using txn id " << std::to_string(mdb_get_txnid(txn));
 
 	size_t defrag_write_errors = 0;
@@ -8285,6 +8381,16 @@ void SingleFileStorage::defrag(str_map& params, relaxed_atomic<int64_t>& defrag_
 					{
 						XLOG(ERR) << "LMDB: Error starting transaction for read (4) (SIGBUS) sfs " << db_path;
 						break;
+					}
+
+					if(key_compare_func)
+					{
+						rc = mdb_set_compare(txn, dbi_main, key_compare_func);
+						if (rc)
+						{
+							XLOG(ERR) << "LMDB: Error setting main compare func (3) (" << mdb_strerror(rc) << ") sfs " << db_path;
+							break;
+						}
 					}
 
 					XLOG(INFO) << "Defragging using txn id " + std::to_string(mdb_get_txnid(txn));
@@ -8516,10 +8622,22 @@ std::pair<int64_t, std::string> SingleFileStorage::get_next_partid()
 	}
     
 	return std::make_pair(local_curr_partid,
-		cryptId(local_curr_partid, enckey));
+		encrypt_id(local_curr_partid));
 }
 
-int64_t SingleFileStorage::decrpyt_partid(const std::string& encdata)
+int64_t SingleFileStorage::get_next_version()
+{
+	std::scoped_lock lock(reserved_extents_mutex);
+	++curr_version;
+	return curr_version;
+}
+
+int64_t SingleFileStorage::decrypt_id(const std::string& encdata)
 {
 	return decryptId(encdata, enckey);
+}
+
+std::string SingleFileStorage::encrypt_id(const int64_t id)
+{
+	return cryptId(id, enckey);
 }

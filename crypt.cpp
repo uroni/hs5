@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 #include <folly/String.h>
+#include <folly/base64.h>
 #include <string>
 #include <assert.h>
 #include <sodium.h>
@@ -16,15 +17,24 @@ std::string cryptId(int64_t id, unsigned char* key)
     if(crypto_secretbox_easy(&encbuf[0], reinterpret_cast<unsigned char*>(&id), sizeof(id), nonce, key)!=0)
         return std::string();
 
-    return folly::hexlify(folly::ByteRange(nonce, sizeof(nonce))) +
-        folly::hexlify(encbuf);
+    std::string_view nonce_view(reinterpret_cast<char*>(nonce), sizeof(nonce));
+    std::string_view encbuf_view(reinterpret_cast<char*>(encbuf.data()), encbuf.size());
+
+    return folly::base64URLEncode(nonce_view) +
+        folly::base64URLEncode(encbuf_view);
 }
 
 int64_t decryptId(const std::string& encryptedId, unsigned char* key)
 {
     std::string binEncId;
-    if(!folly::unhexlify(encryptedId, binEncId))
+    try
+    {
+        binEncId = folly::base64URLDecode(encryptedId);
+    }
+    catch(folly::base64_decode_error&)
+    {
         return -1;
+    }
 
     int64_t ret;
     if(binEncId.size()!=crypto_secretbox_NONCEBYTES+crypto_secretbox_MACBYTES + sizeof(ret))

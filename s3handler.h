@@ -50,13 +50,17 @@ public:
     }
 };
 
+int	mdb_cmp_s3key(const MDB_val *a, const MDB_val *b);
+std::string s3key_common_prefix(const std::string& key);
+
 class S3Handler : public proxygen::RequestHandler
 {
     SingleFileStorage &sfs;
 	const std::string& root_key;
+    bool withBucketVersioning;
 
 public:
-    S3Handler(SingleFileStorage &sfs, const std::string& root_key, const std::string& serverUrl) : sfs(sfs), self(this), root_key(root_key), serverUrl(serverUrl) {}
+    S3Handler(SingleFileStorage &sfs, const std::string& root_key, const std::string& serverUrl, bool withBucketVersioning) : sfs(sfs), self(this), root_key(root_key), serverUrl(serverUrl), withBucketVersioning(withBucketVersioning) {}
 
     void
     onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexcept override;
@@ -145,6 +149,7 @@ private:
     int readNextMultipartExt(int64_t offset);
     int finalizeMultiPart();
     int readMultipartExt(int64_t offset);
+    void readBodyThread(folly::EventBase *evb);
 
 	enum class RequestType
 	{
@@ -165,6 +170,7 @@ private:
     int64_t done_bytes = 0;
 	bool running = false;
     bool finished_ = false;
+    int64_t objectVersion = 0;
 	std::atomic<int64_t> put_remaining = -1;
     ExpatXmlParser xmlBody;
 

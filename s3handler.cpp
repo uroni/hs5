@@ -205,6 +205,82 @@ bool checkSig(HTTPMessage &headers, const std::string &secretKey,
     return sig == itSignature->second;
 }
 
+std::pair<std::string_view, int64_t> extractObjectVersion(const std::string_view& key)
+{
+    size_t searchStart = 0;
+    if(key.size()>10)
+        searchStart = key.size() - 10;
+
+    while(searchStart<key.size())
+    {
+        if(key[searchStart] == 0)
+            break;
+
+        ++searchStart;
+    }
+
+    if(searchStart>=key.size())
+        return std::make_pair(key, 0);
+
+    CRData rdata(key.data()+searchStart+1, key.size() - searchStart - 1);
+
+    char dataVer;
+    int64_t version;
+    if(!rdata.getChar(&dataVer)
+        || !rdata.getVarInt(&version))
+    {
+        XLOGF(ERR, "Error extracting object version from key {}", key);
+        version = -1;
+        abort();
+    }
+
+    if(dataVer!=1)
+    {
+        XLOGF(ERR, "Unknown data version {} key {}", dataVer, key);
+        abort();
+    }
+
+    return std::make_pair(key.substr(0, searchStart), version);
+}
+
+int	mdb_cmp_s3key(const MDB_val *a, const MDB_val *b)
+{
+    std::string_view keyA(reinterpret_cast<const char*>(a->mv_data), a->mv_size);
+    std::string_view keyB(reinterpret_cast<const char*>(b->mv_data), b->mv_size);
+
+    auto [keyStrA, verA] = extractObjectVersion(keyA);
+    auto [keyStrB, verB] = extractObjectVersion(keyB);
+
+    int cmp = keyStrA.compare(keyStrB);
+    if(cmp!=0)
+        return cmp;
+
+    if(verA<verB)
+        return 1;
+    else if(verA>verB)
+        return -1;
+    else
+        return 0;
+}
+
+std::string s3key_common_prefix(const std::string& key)
+{
+    auto [keyStr, ver] = extractObjectVersion(key);
+    return std::string(keyStr);
+}
+
+std::string addObjectVersion(std::string key, int64_t version)
+{
+    CWData wdata;
+    wdata.addChar(0);
+    wdata.addChar(1);
+    wdata.addVarInt(version);
+
+    key.append(wdata.getDataPtr(), wdata.getDataSize());
+
+    return key;
+}
+
 static void multiPartUploadXmlElementStart(void *userData,
                                                const XML_Char *name,
                                                const XML_Char **atts)
@@ -412,7 +488,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                  uploadIdStr.clear();
             }
 
-            auto uploadId = sfs.decrpyt_partid(uploadIdStr);
+            auto uploadId = sfs.decrypt_id(uploadIdStr);
 
             if(uploadId<0 || uploadVerId.empty())
             {
@@ -492,7 +568,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                     uploadIdStr.clear();
             }
 
-            const auto uploadId = sfs.decrpyt_partid(uploadIdStr);
+            const auto uploadId = sfs.decrypt_id(uploadIdStr);
 
             if(uploadId<0)
             {
@@ -828,7 +904,16 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                     return;
                 }
 
-                auto res = self->sfs.write_prepare(self->fpath, self->put_remaining);
+
+                int64_t versionNum = 0;
+                std::string fpath = self->fpath;
+                if(self->withBucketVersioning)
+                {
+                    versionNum = self->sfs.get_next_version();
+                    fpath = addObjectVersion(self->fpath, versionNum);
+                }
+
+                auto res = self->sfs.write_prepare(fpath, self->put_remaining);
                 if (res.err != 0)
                 {                    
                     evb->runInEventBaseThread([self = self, res]()
@@ -846,6 +931,8 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                 std::lock_guard lock(self->extents_mutex);
                 self->extents = std::move(res.extents);
                 self->extents_cond.notify_all();
+                self->objectVersion = versionNum;
+                self->fpath = fpath;
             });
 }
 
@@ -1719,6 +1806,62 @@ void S3Handler::onEgressResumed() noexcept
     }
 }
 
+void S3Handler::readBodyThread(folly::EventBase *evb)
+{
+    std::unique_lock lock{self->bodyMutex};
+    bool unpause = false;
+    size_t cnt = 0;
+    while(!self->bodyQueue.empty())
+    {
+        if(cnt>2)
+        {
+            lock.unlock();
+
+            if(unpause)
+            {
+                evb->runInEventBaseThread([self = self]()
+                {
+                    self->downstream_->resumeIngress();
+                });
+            }
+            folly::getGlobalCPUExecutor()->add(
+                [self = this->self, evb]() mutable
+                {
+                    self->readBodyThread(evb);
+                });
+            return;
+        }
+
+        BodyObj obj = std::move(self->bodyQueue.front());
+        self->bodyQueue.pop();
+        lock.unlock();
+        self->onBodyCPU(evb, obj.offset, std::move(obj.body));
+        if(obj.unpause)
+            unpause = true;
+        lock.lock();
+
+        if(self->bodyQueue.size()<4 && unpause)
+        {
+            evb->runInEventBaseThread([self = self]()
+            {
+                self->downstream_->resumeIngress();
+            });
+            unpause=false;
+        }
+    }
+    self->hasBodyThread = false;
+
+    lock.unlock();
+
+    if(unpause)
+    {
+        evb->runInEventBaseThread([self = self]()
+        {
+            self->downstream_->resumeIngress();
+        });
+    }
+}
+
 void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
@@ -1761,36 +1904,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
             folly::getGlobalCPUExecutor()->add(
                 [self = this->self, evb]() mutable
                 {
-                    std::unique_lock lock{self->bodyMutex};
-                    bool unpause = false;
-                    while(!self->bodyQueue.empty())
-                    {
-                        BodyObj obj = std::move(self->bodyQueue.front());
-                        self->bodyQueue.pop();
-                        lock.unlock();
-                        self->onBodyCPU(evb, obj.offset, std::move(obj.body));
-                        if(obj.unpause)
-                            unpause = true;
-                        lock.lock();
-
-                        if(self->bodyQueue.size()<4 && unpause)
-                        {
-                            evb->runInEventBaseThread([self = self]()
-                            {
-                                self->downstream_->resumeIngress();
-                            });
-                            unpause=false;
-                        }
-                    }
-                    self->hasBodyThread = false;
-
-                    if(unpause)
-                    {
-                        evb->runInEventBaseThread([self = self]()
-                        {
-                            self->downstream_->resumeIngress();
-                        });
-                    }
+                    self->readBodyThread(evb);
                 });
         }
     }
@@ -1913,11 +2027,16 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         }
 
         evb->runInEventBaseThread([self = self, md5sum]()
-                                  {           
-                    ResponseBuilder(self->downstream_)
-                        .status(200, "OK")
-                        .header(HTTPHeaderCode::HTTP_HEADER_ETAG, fmt::format("\"{}\"", folly::hexlify(md5sum)))
-                        .sendWithEOM();
+                                  {      
+                    ResponseBuilder resp(self->downstream_);
+                    resp.status(200, "OK");
+                    resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, fmt::format("\"{}\"", folly::hexlify(md5sum)));
+                    if(self->objectVersion != 0)
+                    {
+                        resp.header("x-amz-version-id", self->sfs.encrypt_id(self->objectVersion));
+                        
+                    }
+                    resp.sendWithEOM();
                     self->finished_ = true; });
     }
 }

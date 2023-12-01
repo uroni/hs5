@@ -78,6 +78,8 @@ public:
 		AssertQueueEmpty = 5
 	};
 
+	typedef std::string(*common_prefix_func_t)(const std::string&);
+
 	struct SFSOptions
 	{
 		std::string data_path;
@@ -93,6 +95,8 @@ public:
 		bool stop_on_error = false;
 		bool punch_holes = true;
 		int64_t data_file_chunk_size = 10LL * 1024 * 1024 * 1024 * 1024;
+		MDB_cmp_func* key_compare_func = nullptr;
+		common_prefix_func_t common_prefix_func = nullptr;
 	};
 
 	SingleFileStorage(SFSOptions options);
@@ -131,6 +135,7 @@ public:
 	const static unsigned int ReadUnsynced = 2;
 	const static unsigned int ReadMetaOnly = 4;
 	const static unsigned int ReadSkipAddReading = 8;
+	const static unsigned int ReadNewest = 16;
 
 	struct ReadPrepareResult
 	{
@@ -275,7 +280,11 @@ public:
 
     std::pair<int64_t, std::string> get_next_partid();
 
-	int64_t decrpyt_partid(const std::string& encdata);
+	int64_t get_next_version();
+
+	int64_t decrypt_id(const std::string& encdata);
+
+	std::string encrypt_id(const int64_t id);
 
 private:
 
@@ -484,6 +493,8 @@ private:
 
 	void do_stop_on_error();
 
+	bool setup_compare_funcs(MDB_txn* txn, MDB_txn* freespace_txn);
+
 	bool with_rewrite;
 
 	std::unordered_set<std::string> defrag_skip_items;
@@ -581,6 +592,12 @@ private:
 
 	int64_t curr_partid = 0;
 	unsigned char enckey[crypto_secretbox_KEYBYTES];
+
+	MDB_cmp_func* key_compare_func;
+
+	common_prefix_func_t common_prefix_func;
+
+	int64_t curr_version = 0;
 };
 
 
