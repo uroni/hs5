@@ -22,7 +22,7 @@ std::string random_uuid_binary()
     return rnd;
 }
 
-std::string escapeXML(const std::string & xml)
+std::string escapeXML(const std::string_view xml)
 {
 	std::string ret;
 	ret.reserve(xml.size());

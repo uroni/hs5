@@ -51,7 +51,7 @@ public:
 };
 
 int	mdb_cmp_s3key(const MDB_val *a, const MDB_val *b);
-std::string s3key_common_prefix(const std::string& key);
+std::string_view s3key_common_prefix(const std::string_view key);
 
 class S3Handler : public proxygen::RequestHandler
 {

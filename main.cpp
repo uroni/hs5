@@ -42,6 +42,7 @@ DEFINE_string(data_path, ".", "Path where to put the data file");
 DEFINE_bool(stop_on_error, false, "Stop on write/read errors");
 DEFINE_bool(punch_holes, true, "Free up space if not enough free space is left by punching holes");
 DEFINE_string(server_url, "serverurl", "URL of server");
+DEFINE_bool(with_bucket_versioning, true, "Enable bucket versioning");
 
 namespace {
 class S3HandlerFactory : public proxygen::RequestHandlerFactory {
@@ -62,7 +63,7 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
   }
 
   proxygen::RequestHandler* onRequest(proxygen::RequestHandler*, proxygen::HTTPMessage*) noexcept override {
-    return new S3Handler(sfs, root_key, FLAGS_server_url);
+    return new S3Handler(sfs, root_key, FLAGS_server_url, FLAGS_with_bucket_versioning);
   }
 };
 }

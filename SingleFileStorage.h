@@ -78,7 +78,7 @@ public:
 		AssertQueueEmpty = 5
 	};
 
-	typedef std::string(*common_prefix_func_t)(const std::string&);
+	typedef std::string_view(*common_prefix_func_t)(const std::string_view);
 
 	struct SFSOptions
 	{
@@ -143,11 +143,12 @@ public:
 		std::vector<Ext> extents;
 		int64_t total_len;
 		std::string md5sum;
+		std::string key;
 	};
 
-	ReadPrepareResult read_prepare(const std::string& fn, unsigned int flags);
+	ReadPrepareResult read_prepare(const std::string_view fn, unsigned int flags);
 	std::string read(const std::string& fn, unsigned int flags);
-	int check_existence(const std::string& fn, unsigned int flags);
+	int check_existence(const std::string_view fn, unsigned int flags);
 
 	struct ReadExtResult
 	{
@@ -159,7 +160,7 @@ public:
 
 	int read_finalize(const std::string& fn, const std::vector<Ext>& extents, unsigned int flags);
 
-	int del(const std::string& fn, DelAction da,
+	int del(const std::string_view fn, DelAction da,
 		bool background_queue);
 
 	bool restore_old(const std::string& fn);
@@ -318,7 +319,7 @@ private:
 
 	void unlock_defrag(const std::string& fn);
 
-	void wait_defrag(const std::string& fn, std::unique_lock<std::mutex>& lock);
+	void wait_defrag(const std::string_view fn, std::unique_lock<std::mutex>& lock);
 
 	void setup_mmap_read_error(THREAD_ID tid);
 
@@ -473,7 +474,7 @@ private:
 
 	std::string compress_filename(const std::string& fn);
 
-	SFragInfo get_frag_info(MDB_txn* txn, const std::string& fn, bool parse_data);
+	SFragInfo get_frag_info(MDB_txn* txn, const std::string_view fn, bool parse_data, const bool read_newest);
 
 	bool generate_free_len_idx(MDB_txn* txn);
 

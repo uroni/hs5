@@ -23,6 +23,7 @@
 #include <folly/logging/xlog.h>
 #include <folly/ScopeGuard.h>
 #include <folly/io/IOBufQueue.h>
+#include "lmdb/lmdb.h"
 #include "os_functions.h"
 #include "utils.h"
 #include <filesystem>
@@ -388,7 +389,7 @@ void mmap_read_error(int sig, siginfo_t *si, void *unused)
 
 namespace
 {
-	std::string common_prefix_passthrough(const std::string& str)
+	std::string_view common_prefix_passthrough(const std::string_view str)
 	{
 		return str;
 	}
@@ -1777,7 +1778,7 @@ int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<E
 	curr_frag.last_modified = last_modified;
 	curr_frag.md5sum = md5sum;
 
-	++commit_items[std::hash<std::string>()(common_prefix_func(fn))];
+	++commit_items[std::hash<std::string_view>()(common_prefix_func(fn))];
 
 	commit_queue.push_back(curr_frag);
 	
@@ -1881,6 +1882,7 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 		}
 	}
 
+	if(!extents.empty())
 	{
 		std::shared_lock copy_lock(data_file_copy_mutex);
 
@@ -1972,7 +1974,7 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 	curr_frag.last_modified = last_modified;
 	curr_frag.md5sum = md5sum;
 
-	++commit_items[std::hash<std::string>()(common_prefix_func(cfn))];
+	++commit_items[std::hash<std::string_view>()(common_prefix_func(cfn))];
 
 	commit_queue.push_back(curr_frag);
 	
@@ -2014,7 +2016,7 @@ void SingleFileStorage::remove_reading_item(const std::vector<Ext>& extents)
 	}
 }
 
-SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::string& fn, unsigned int flags)
+SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::string_view fn, unsigned int flags)
 {
 	if (is_dead)
 	{
@@ -2025,17 +2027,19 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 	{
 		std::unique_lock lock(mutex);
 
-		auto it = commit_items.find(std::hash<std::string>()(common_prefix_func(fn)));
+		auto it = commit_items.find(std::hash<std::string_view>()(common_prefix_func(fn)));
 		if(it!=commit_items.end())
 		{
 			flags |= ReadUnsynced;
 		}
 	}
 
+	const bool read_newest = (flags & ReadNewest);
+
 	SFragInfo frag_info;
 	if ((flags & ReadUnsynced) == 0)
 	{
-		frag_info = get_frag_info(nullptr, fn, true);
+		frag_info = get_frag_info(nullptr, fn, true, read_newest);
 
 		if (frag_info.offset == -1)
 		{
@@ -2057,6 +2061,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 		curr_frag.action = FragAction::ReadFragInfo;
 		curr_frag.fn = fn;
 		curr_frag.commit_info = &commit_info;
+		curr_frag.offset = read_newest ? 1 : 0;
 
 		std::unique_lock lock(mutex);
 		wait_startup_finished(lock);
@@ -2086,10 +2091,15 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 	}
 	res.md5sum = frag_info.md5sum;
 
+	if(read_newest)
+	{
+		res.key = frag_info.fn;
+	}
+
 	return res;	
 }
 
-int SingleFileStorage::check_existence(const std::string& fn, unsigned int flags)
+int SingleFileStorage::check_existence(const std::string_view fn, unsigned int flags)
 {
 	if (is_dead)
 	{
@@ -2100,16 +2110,18 @@ int SingleFileStorage::check_existence(const std::string& fn, unsigned int flags
 	{
 		std::unique_lock lock(mutex);
 
-		auto it = commit_items.find(std::hash<std::string>()(common_prefix_func(fn)));
+		auto it = commit_items.find(std::hash<std::string_view>()(common_prefix_func(fn)));
 		if(it!=commit_items.end())
 		{
 			flags |= ReadUnsynced;
 		}
 	}
 
+	const bool read_newest = (flags & ReadNewest);
+
 	if ((flags & ReadUnsynced) == 0)
 	{
-		auto frag_info = get_frag_info(nullptr, fn, false);
+		auto frag_info = get_frag_info(nullptr, fn, false, read_newest);
 
 		if (frag_info.offset == -1)
 		{
@@ -2126,6 +2138,7 @@ int SingleFileStorage::check_existence(const std::string& fn, unsigned int flags
 		curr_frag.action =FragAction::ReadFragInfoWithoutParsing;
 		curr_frag.fn = fn;
 		curr_frag.commit_info = &commit_info;
+		curr_frag.offset = read_newest ? 1 : 0;
 
 		std::unique_lock lock(mutex);
 		wait_startup_finished(lock);
@@ -2233,7 +2246,7 @@ int SingleFileStorage::read_finalize(const std::string& fn, const std::vector<Ex
 	return 0;
 }
 
-int SingleFileStorage::del(const std::string & fn, DelAction da,
+int SingleFileStorage::del(const std::string_view fn, DelAction da,
 	bool background_queue)
 {
 	if (is_dead)
@@ -2272,11 +2285,11 @@ int SingleFileStorage::del(const std::string & fn, DelAction da,
 	std::unique_lock lock(mutex);
 	wait_queue(lock, background_queue, false);
 	wait_defrag(fn, lock);
-	++commit_items[std::hash<std::string>()(common_prefix_func(fn))];
+	++commit_items[std::hash<std::string_view>()(common_prefix_func(fn))];
 	
 	if (is_defragging)
 	{
-		defrag_skip_items.insert(fn);
+		defrag_skip_items.insert(std::string(fn));
 	}
 	if (background_queue)
 	{
@@ -2307,7 +2320,7 @@ bool SingleFileStorage::restore_old(const std::string & fn)
 	std::unique_lock lock(mutex);
 	wait_queue(lock, false, false);
 	wait_defrag(cfn, lock);
-	++commit_items[std::hash<std::string>()(common_prefix_func(cfn))];
+	++commit_items[std::hash<std::string_view>()(common_prefix_func(cfn))];
 
 	if (is_defragging)
 	{
@@ -2994,6 +3007,9 @@ bool SingleFileStorage::add_freemap_ext(MDB_txn* txn, int64_t offset, int64_t le
 	if (is_dead)
 		return false;
 
+	if(offset == 0 && len == 0)
+		return true;
+
 	len = div_up(len, block_size)*block_size;
 
 	MDB_cursor* fmap_cur;
@@ -3474,9 +3490,9 @@ void SingleFileStorage::unlock_defrag(const std::string & fn)
 	defrag_items.erase(fn);
 }
 
-void SingleFileStorage::wait_defrag(const std::string & fn, std::unique_lock<std::mutex>& lock)
+void SingleFileStorage::wait_defrag(const std::string_view fn, std::unique_lock<std::mutex>& lock)
 {
-	while (defrag_items.find(fn) != defrag_items.end())
+	while (defrag_items.find(std::string(fn)) != defrag_items.end())
 	{
 		lock.unlock();
 		std::this_thread::sleep_for(10ms);
@@ -3809,6 +3825,8 @@ void SingleFileStorage::wait_startup_finished(std::unique_lock<std::mutex> & loc
 void SingleFileStorage::free_extents(const std::vector<Ext>& extents)
 {
 	if (extents.empty())
+		return;
+	if(extents.size() == 1 && extents[0].data_file_offset==0 && extents[0].len == 0)
 		return;
 
 	std::unique_lock lock(mutex);
@@ -5859,7 +5877,7 @@ void SingleFileStorage::wait_for_startup_finish()
 	wait_startup_finished(lock);
 }
 
-SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, const std::string & fn, bool parse_data)
+SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, const std::string_view fn, bool parse_data, const bool read_newest)
 {
 	THREAD_ID tid = gettid();
 
@@ -5889,12 +5907,43 @@ SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, cons
 		}
 	}
 
+	SCOPE_EXIT {
+		if(tear_down_txn)
+			mdb_txn_abort(txn);
+	};
+
 	MDB_val tkey;
 	tkey.mv_data = const_cast<char*>(&fn[0]);
 	tkey.mv_size = fn.size();
 
+	int rc;
 	MDB_val tvalue;
-	int rc = mdb_get(txn, dbi_main, &tkey, &tvalue);
+	MDB_cursor* mc = nullptr;
+
+	SCOPE_EXIT { mdb_cursor_close(mc); };
+
+	if(read_newest)
+	{
+		rc = mdb_cursor_open(txn, dbi_main, &mc);
+
+		if (rc)
+		{
+			XLOG(ERR) << "LMDB: Failed mdb_cursor_open in get_frag_info (" << mdb_strerror(rc) << ") sfs " << db_path;
+			return SFragInfo();
+		}
+		
+		if (has_mmap_read_error_reset(tid))
+		{
+			XLOG(ERR) << "LMDB: Failed  mdb_cursor_open in get_frag_info (SIGBUS) sfs " << db_path;
+			return SFragInfo();
+		}
+
+		rc = mdb_cursor_get(mc, &tkey, &tvalue, MDB_SET_RANGE);
+	}
+	else
+	{
+		rc = mdb_get(txn, dbi_main, &tkey, &tvalue);
+	}
 
 	if (tear_down_txn)
 	{
@@ -5910,10 +5959,6 @@ SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, cons
 		if (has_mmap_read_error_reset(tid))
 		{
 			XLOG(ERR) << "LMDB: Error getting fragment info because of SIGBUS txn = " << std::to_string(reinterpret_cast<int64_t>(txn)) << " sfs " << db_path;
-			if (tear_down_txn)
-			{
-				mdb_txn_abort(txn);
-			}
 			return SFragInfo();
 		}
 	}
@@ -5924,27 +5969,26 @@ SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, cons
 		{
 			XLOG(ERR) << "LMDB: Error getting fragment info (" << mdb_strerror(rc) << ") txn=" << std::to_string(reinterpret_cast<int64_t>(txn)) << " sfs " << db_path;
 		}
-		if (tear_down_txn)
-		{
-			mdb_txn_abort(txn);
-		}
 		return SFragInfo();
+	}
+
+	SFragInfo ret;
+	if(read_newest)
+	{
+		ret.fn = std::string(reinterpret_cast<char*>(tkey.mv_data), tkey.mv_size);
+		if(common_prefix_func(ret.fn) != common_prefix_func(fn))
+		{
+			return SFragInfo();
+		}
 	}
 
 	if(!parse_data)
 	{
-		if (tear_down_txn)
-		{
-			mdb_txn_abort(txn);
-		}
-		SFragInfo ret;
 		ret.offset = -2;
 		return ret;
 	}
 
 	CRData rdata(reinterpret_cast<char*>(tvalue.mv_data), tvalue.mv_size);
-
-	SFragInfo ret;
 
 	if (!rdata.getVarInt(&ret.offset)
 		|| !rdata.getVarInt(&ret.len))
@@ -5968,11 +6012,6 @@ SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, cons
 				XLOG(WARN) << "LMDB: Error reading last_modified, md5sum txn=" << std::to_string(reinterpret_cast<int64_t>(txn)) << " sfs " << db_path;
 			}
 		}		
-	}
-
-	if (tear_down_txn)
-	{
-		mdb_txn_abort(txn);
 	}
 
 	return ret;
@@ -6686,7 +6725,7 @@ void SingleFileStorage::operator()()
 			|| frag_info.action==FragAction::DelWithQueued)
 		{
 			++mod_items;
-			--commit_items[std::hash<std::string>()(common_prefix_func(frag_info.fn))];
+			--commit_items[std::hash<std::string_view>()(common_prefix_func(frag_info.fn))];
 		}
 
 		if (frag_info.action == FragAction::FindFree
@@ -7124,7 +7163,7 @@ void SingleFileStorage::operator()()
 
 				if (frag_info.commit_info->frag_info != nullptr)
 				{
-					*frag_info.commit_info->frag_info = get_frag_info(txn, frag_info.fn, frag_info.action == FragAction::ReadFragInfo);
+					*frag_info.commit_info->frag_info = get_frag_info(txn, frag_info.fn, frag_info.action == FragAction::ReadFragInfo, frag_info.offset>0);
 				}
 
 				frag_info.commit_info->commit_done.notify_all();
@@ -8628,7 +8667,17 @@ std::pair<int64_t, std::string> SingleFileStorage::get_next_partid()
 int64_t SingleFileStorage::get_next_version()
 {
 	std::scoped_lock lock(reserved_extents_mutex);
-	++curr_version;
+	while(true)
+	{	
+		++curr_version;
+
+		CWData data;
+		data.addVarInt(curr_version);
+		auto it_end = data.getDataPtr() + data.getDataSize();
+		if(std::find(data.getDataPtr(), it_end, 0) == it_end)
+			break;
+	}
+
 	return curr_version;
 }
 

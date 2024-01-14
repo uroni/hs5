@@ -32,10 +32,16 @@
 #include "data.h"
 #include "utils.h"
 #include <limits.h>
+#include <string_view>
 
 using namespace proxygen;
 
 const char* c_commit_uuid = "a711e93e-93b4-4a9e-8a0b-688797470002";
+
+
+const char metadata_object = 0;
+const char metadata_multipart_object = 1;
+const char metadata_tombstone = 2;
 
 std::string hashSha256Hex(const std::string &payload)
 {
@@ -207,19 +213,19 @@ bool checkSig(HTTPMessage &headers, const std::string &secretKey,
 
 std::pair<std::string_view, int64_t> extractObjectVersion(const std::string_view& key)
 {
-    size_t searchStart = 0;
-    if(key.size()>10)
-        searchStart = key.size() - 10;
-
-    while(searchStart<key.size())
+    size_t searchStart = key.size();
+    auto searchStop = key.size()>11 ? key.size() - 12 : 0;
+    bool found=false;
+    for(;searchStart-->searchStop;)
     {
         if(key[searchStart] == 0)
+        {
+            found=true;
             break;
-
-        ++searchStart;
+        }
     }
 
-    if(searchStart>=key.size())
+    if(!found)
         return std::make_pair(key, 0);
 
     CRData rdata(key.data()+searchStart+1, key.size() - searchStart - 1);
@@ -263,10 +269,10 @@ int	mdb_cmp_s3key(const MDB_val *a, const MDB_val *b)
         return 0;
 }
 
-std::string s3key_common_prefix(const std::string& key)
+std::string_view s3key_common_prefix(const std::string_view key)
 {
     auto [keyStr, ver] = extractObjectVersion(key);
-    return std::string(keyStr);
+    return keyStr;
 }
 
 std::string addObjectVersion(std::string key, int64_t version)
@@ -508,7 +514,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            XLOGF(DBG0, "PutObjectPart {} part {} uploadId {}", fpath, partNumber, uploadId);
+            XLOGF(DBG0, "PutObjectPart {} part {} uploadId {} length {}", fpath, partNumber, uploadId, remaining);
 
             putObjectPart(*headers, partNumber, uploadId, uploadVerId);
             return;
@@ -718,8 +724,13 @@ bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen)
     if(!rdata.getChar(&itype))
         return false;
 
-    if(itype==0)
+    if(itype==metadata_object || itype==metadata_tombstone)
         return true;
+
+    assert(itype == metadata_multipart_object);
+
+    if(itype != metadata_multipart_object)
+        return false;
     
     multiPartDownloadData = std::make_unique<MultiPartDownloadData>();
     if(rdata.getLeft()>=MD5_DIGEST_LENGTH)
@@ -804,8 +815,32 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers)
                 unsigned int flags = 0;
                 if(self->request_type == RequestType::HeadObject)
                     flags |= SingleFileStorage::ReadMetaOnly;
+                
+                std::string_view keyStr;
+                int64_t ver;
+                std::string_view findPath;
+                std::string findPathStr;
 
-                auto res = self->sfs.read_prepare(self->fpath, flags);
+                if(self->withBucketVersioning)
+                {
+                    const auto extVer = extractObjectVersion(self->fpath);
+                    keyStr = extVer.first;
+                    const auto ver = extVer.second;
+
+                    if(ver==0)
+                    {
+                        flags |= SingleFileStorage::ReadNewest;
+                        findPathStr = addObjectVersion(std::string(keyStr), std::numeric_limits<int64_t>::max());
+                        findPath = findPathStr;
+                    }
+                }
+                else
+                {
+                    keyStr = self->fpath;
+                    findPath = keyStr;
+                }
+
+                auto res = self->sfs.read_prepare(findPath, flags);
 
                 if (res.err != 0)
                 {
@@ -849,10 +884,22 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers)
                                             return;
                 } 
 
+                if(res.md5sum.size()==1 && res.md5sum[0] == metadata_tombstone)
+                {
+                    evb->runInEventBaseThread([self = self, res]()
+                    {
+                        ResponseBuilder(self->downstream_)
+                                    .status(404, "Not found")
+                                    .body(fmt::format("Object not found"))
+                                    .sendWithEOM();
+                    });
+                    return;
+                }
+
                 #ifdef ALLOW_LEGACY_MD5SUM
-                const auto md5sum = res.md5sum.size() == MD5_DIGEST_LENGTH ? res.md5sum : ((!res.md5sum.empty() && res.md5sum[0] ==0 ) ? res.md5sum.substr(1) : "");
+                const auto md5sum = res.md5sum.size() == MD5_DIGEST_LENGTH ? res.md5sum : ((!res.md5sum.empty() && res.md5sum[0] == metadata_object ) ? res.md5sum.substr(1) : "");
                 #else
-                const auto md5sum = (!res.md5sum.empty() && res.md5sum[0] ==0 ) ? res.md5sum.substr(1) : "";
+                const auto md5sum = (!res.md5sum.empty() && res.md5sum[0] == metadata_object ) ? res.md5sum.substr(1) : "";
                 #endif
 
                 evb->runInEventBaseThread([self = self, total_len = res.total_len, md5sum]()
@@ -985,7 +1032,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                 }
 
                 const auto [bucket, key] = getBucketAndKey(self->fpath);
-                auto readRes = self->sfs.read_prepare("/" + bucket + "/" + uploadIdToStr(uploadId), 0);
+                auto readRes = self->sfs.read_prepare(addObjectVersion("/" + bucket + "/" + uploadIdToStr(uploadId), 1), 0);
                 if(readRes.err!=0)
                 {
                     evb->runInEventBaseThread([self = self, readRes]()
@@ -1019,7 +1066,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                     return;
                 }
 
-                self->fpath = "/" + bucket + "/" + uploadIdToStr(uploadId) +"."+uploadIdToStr(partNumber);
+                self->fpath = addObjectVersion("/" + bucket + "/" + uploadIdToStr(uploadId) +"."+uploadIdToStr(partNumber), 1);
                 auto res = self->sfs.write_prepare(self->fpath, self->put_remaining);
                 if (res.err != 0)
                 {                    
@@ -1039,6 +1086,9 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                 {
                     assert(ext.len>0);
                 }
+
+                if(!res.extents.empty())
+                    XLOGF(INFO, "Write object prepare done partNumber {} size {} ext offset={} len={}", partNumber, self->put_remaining.load(std::memory_order_relaxed), res.extents[0].data_file_offset, res.extents[0].len);
 
                 std::lock_guard lock(self->extents_mutex);
                 self->extents = std::move(res.extents);
@@ -1062,7 +1112,7 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
 
                 std::string md5sum(data.getDataPtr(), data.getDataSize());
 
-                auto rc = self->sfs.write("/" + bucket+ "/" +uploadIdToStr(uploadId), data.getDataPtr(), 0, 0, 0, md5sum,  false, false);
+                auto rc = self->sfs.write(addObjectVersion("/" + bucket+ "/" +uploadIdToStr(uploadId), 1), data.getDataPtr(), 0, 0, 0, md5sum,  false, false);
 
          
                 evb->runInEventBaseThread([rc=rc, bucket=bucket, key=key, uploadIdEnc = uploadIdEnc, uploadVerId, self = self]()
@@ -1101,7 +1151,7 @@ void S3Handler::finalizeMultipartUpload()
             [self = this->self, evb, multiPartData = this->multiPartUploadData.get()]()
             {
                 const auto [bucket, key] = getBucketAndKey(self->fpath);
-                auto readRes = self->sfs.read_prepare("/" + bucket + "/" + uploadIdToStr(multiPartData->uploadId), 0);
+                auto readRes = self->sfs.read_prepare(addObjectVersion("/" + bucket + "/" + uploadIdToStr(multiPartData->uploadId), 1), 0);
                 CRData uploadData(readRes.md5sum.data(), readRes.md5sum.size());
                 std::string uploadFPath;
                 std::string uploadVerId;
@@ -1121,9 +1171,16 @@ void S3Handler::finalizeMultipartUpload()
                     return;
                 }
 
+                int64_t versionNum = 0;
+                if(self->withBucketVersioning)
+                {
+                    versionNum = self->sfs.get_next_version();
+                    uploadFPath = addObjectVersion(uploadFPath, versionNum);
+                }
+
                 MultiPartDownloadData::PartExt lastExt = {-1, 0, 0};
                 CWData wdata;
-                wdata.addChar(1);
+                wdata.addChar(metadata_multipart_object);
                 const size_t md5sumOffset = wdata.getDataSize();
                 wdata.resize(wdata.getDataSize()+MD5_DIGEST_LENGTH);
                 wdata.addVarInt(multiPartData->uploadId);
@@ -1146,7 +1203,10 @@ void S3Handler::finalizeMultipartUpload()
 
                 for(const auto& part: multiPartData->parts)
                 {
-                    auto readPartRes = self->sfs.read_prepare("/"+bucket+"/"+uploadIdToStr(multiPartData->uploadId)+"."+uploadIdToStr(part.partNumber), SingleFileStorage::ReadSkipAddReading);
+                    if(part.partNumber==7)
+                        int abc=5;
+
+                    auto readPartRes = self->sfs.read_prepare(addObjectVersion("/"+bucket+"/"+uploadIdToStr(multiPartData->uploadId)+"."+uploadIdToStr(part.partNumber), 1), SingleFileStorage::ReadSkipAddReading);
 
                     if(readPartRes.err!=0)
                     {
@@ -1213,7 +1273,7 @@ void S3Handler::finalizeMultipartUpload()
                         return;
                 }
 
-                auto delRes = self->sfs.del("/"+bucket+"/"+uploadIdToStr(multiPartData->uploadId), SingleFileStorage::DelAction::Del, false);
+                auto delRes = self->sfs.del(addObjectVersion("/"+bucket+"/"+uploadIdToStr(multiPartData->uploadId), 1), SingleFileStorage::DelAction::Del, false);
 
                 if(delRes)
                 {
@@ -1254,7 +1314,52 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
         [self = this->self, evb]()
         {
             XLOGF(INFO, "Removing object {}", self->fpath);
-            auto res = self->sfs.del(self->fpath, SingleFileStorage::DelAction::Del, false);
+
+            std::string_view currPath;
+            std::string_view keyStr;
+            std::string currPathStr;
+            bool delNewest = false;
+            
+
+            if(self->withBucketVersioning)
+            {
+                const auto extVer = extractObjectVersion(self->fpath);
+                keyStr = extVer.first;
+                if(extVer.second==0)
+                {
+                    delNewest = true;                    
+                    currPathStr = addObjectVersion(std::string(keyStr), std::numeric_limits<int64_t>::max());
+                    currPath = currPathStr;
+                }
+                else
+                {
+                    currPath = self->fpath;
+                }
+            }
+            else
+            {
+                currPath = self->fpath;
+                keyStr = currPath;
+            }
+
+            int res;
+
+            if(delNewest)
+            {
+                res = self->sfs.check_existence(currPath, SingleFileStorage::ReadNewest);
+
+                if(res==0)
+                {
+                    const auto versionNum = self->sfs.get_next_version();
+                    const auto writePath = addObjectVersion(std::string(keyStr), versionNum);
+                    std::string md5sum(1, metadata_tombstone);
+                    res = self->sfs.write(writePath, nullptr, 0, 0, 0, md5sum, false, false);
+                }
+            }
+            else
+            {
+                res = self->sfs.del(currPath, SingleFileStorage::DelAction::Del, false);
+            }
 
             if(res==0 && !self->sfs.get_manual_commit())
             {
@@ -1340,7 +1445,7 @@ int S3Handler::readMultipartExt(int64_t offset)
 {
     const auto [bucket, key] = getBucketAndKey(fpath);
     auto partNum = multiPartDownloadData->currExt.start;
-    auto res = self->sfs.read_prepare("/"+bucket+"/"+uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), 0);
+    auto res = self->sfs.read_prepare(addObjectVersion("/"+bucket+"/"+uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), 1), 0);
     if (res.err != 0)
     {
         XLOGF(WARN, "Error reading next multipart object meta-information uploadid {} partnum {} for key {}", multiPartDownloadData->uploadId, partNum, fpath);
@@ -1401,7 +1506,7 @@ int S3Handler::readNextMultipartExt(int64_t offset)
             ext.obj_offset-=multiPartDownloadData->currOffset;
         }
         const auto [bucket, key] = getBucketAndKey(fpath);
-        const auto rc = self->sfs.read_finalize("/"+bucket+"/"+uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(lastPartNum), extents, 0);
+        const auto rc = self->sfs.read_finalize(addObjectVersion("/"+bucket+"/"+uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(lastPartNum), 1), extents, 0);
         assert(rc==0);
     }
 
@@ -1428,7 +1533,7 @@ int S3Handler::finalizeMultiPart()
             ext.obj_offset-=multiPartDownloadData->currOffset;
         }
         
-        const auto rc = self->sfs.read_finalize("/"+bucket+"/"+uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), extents, 0);
+        const auto rc = self->sfs.read_finalize(addObjectVersion("/"+bucket+"/"+uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), 1), extents, 0);
         assert(rc==0);
     }
 
@@ -1622,7 +1727,9 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     int i;
     bool truncated = true;
     size_t keyCount = 0;
-    for(i=0;i<maxKeys;++i)
+    std::string lastKeyStr;
+    int skippedKeys = 0;
+    for(i=0;i<maxKeys + skippedKeys;++i)
     {
         std::string key, md5sum;
         int64_t offset, size, last_modified;
@@ -1647,6 +1754,20 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
         bool outputKey = true;
 
+        const auto [keyStr, ver] = extractObjectVersion(key);
+        if(keyStr == lastKeyStr)
+        {
+            ++skippedKeys;
+            outputKey = false;
+        }
+        else if(md5sum.size() == 1 && md5sum[0] == metadata_tombstone)
+        {
+            ++skippedKeys;
+            outputKey = false;
+        }
+
+        lastKeyStr = keyStr;        
+
         if(!delimiter.empty())
         {
             const size_t delimPos = key.find_first_of(delimiter[0], prefixSize);
@@ -1665,9 +1786,8 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             }
 
             // Remove bucket name
-            const auto slash_idx = key.find('/');
-            if(slash_idx != std::string::npos)
-                key = key.substr(slash_idx+1);
+            const auto slash_idx = keyStr.find('/');
+            const auto keyWithoutBucket = slash_idx != std::string::npos ? keyStr.substr(slash_idx+1) : keyStr;
 
             val_data += fmt::format("\t<Contents>\n"
                 "\t\t<Key>{}</Key>\n"
@@ -1679,7 +1799,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 "\t\t\t<ID>75aa57f09aa0c8caeab4f8c24e99d10f8e7faeebf76c078efc7c6caea54ba06a</ID>\n"
                 "\t\t\t<DisplayName>mtd@amazon.com</DisplayName>\n"
                 "\t\t</Owner>\n"
-                "\t</Contents>", escapeXML(key), folly::hexlify(md5sum), size);
+                "\t</Contents>", escapeXML(keyWithoutBucket), folly::hexlify(md5sum), size);
             ++keyCount;
         }
 
@@ -1993,7 +2113,12 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
     {
         std::string md5sum;
         md5sum.resize(MD5_DIGEST_LENGTH+1);
+        md5sum[0] = metadata_object;
         EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&md5sum[1]), nullptr);
+
+
+        if(!extents.empty())
+            XLOGF(INFO, "Finalize object {} ext off {} len {}", fpath, extents[0].data_file_offset, extents[0].len);
 
         auto rc = sfs.write_finalize(fpath, extents, 0, md5sum, false, true);
 
