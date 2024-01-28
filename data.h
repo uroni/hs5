@@ -33,6 +33,11 @@ public:
 	void resize(size_t count);
 
 	size_t capacity();
+
+	std::string releaseData()
+	{
+		return std::move(data);
+	}
 protected:
 	std::string data;
 };

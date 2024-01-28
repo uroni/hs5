@@ -98,6 +98,7 @@ int main(int argc, char* argv[])
     sfsoptions.punch_holes = FLAGS_punch_holes;
     sfsoptions.key_compare_func = mdb_cmp_s3key;
     sfsoptions.common_prefix_func = s3key_common_prefix;
+    sfsoptions.common_prefix_hash_func = s3key_common_prefix_hash;
 
     proxygen::HTTPSessionBase::setMaxReadBufferSize(16*1024);
 

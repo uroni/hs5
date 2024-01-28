@@ -389,9 +389,14 @@ void mmap_read_error(int sig, siginfo_t *si, void *unused)
 
 namespace
 {
-	std::string_view common_prefix_passthrough(const std::string_view str)
+	std::string common_prefix_passthrough(const std::string_view str)
 	{
-		return str;
+		return std::string(str);
+	}
+
+	size_t common_prefix_hash_func_passthrough(const std::string_view str)
+	{
+		return std::hash<std::string_view>()(str);
 	}
 }
 
@@ -409,10 +414,13 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	stop_data_file_copy(false), references(0), 	db_env(nullptr), freespace_cache_path(options.freespace_cache_path), cache_db_env(nullptr), regen_freespace_cache(false),
 	sync_freespace_cache(true), mdb_curr_sync(false), data_file_size_limit(options.data_file_size_limit_mb*1024*1024), alloc_chunk_size(options.alloc_chunk_size),
 	runtime_id(options.runtime_id), manual_commit(options.manual_commit), stop_on_error(options.stop_on_error), punch_holes(options.punch_holes),
-	data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func)
+	data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func),
+	common_prefix_hash_func(options.common_prefix_hash_func)
 {
 	if(common_prefix_func==nullptr)
 		common_prefix_func = common_prefix_passthrough;
+	if(common_prefix_hash_func==nullptr)
+		common_prefix_hash_func = common_prefix_hash_func_passthrough;
 
 	int64_t index_file_size = 0;
 
@@ -1778,7 +1786,7 @@ int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<E
 	curr_frag.last_modified = last_modified;
 	curr_frag.md5sum = md5sum;
 
-	++commit_items[std::hash<std::string_view>()(common_prefix_func(fn))];
+	++commit_items[common_prefix_hash_func(fn)];
 
 	commit_queue.push_back(curr_frag);
 	
@@ -1974,7 +1982,7 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 	curr_frag.last_modified = last_modified;
 	curr_frag.md5sum = md5sum;
 
-	++commit_items[std::hash<std::string_view>()(common_prefix_func(cfn))];
+	++commit_items[common_prefix_hash_func(cfn)];
 
 	commit_queue.push_back(curr_frag);
 	
@@ -2027,7 +2035,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 	{
 		std::unique_lock lock(mutex);
 
-		auto it = commit_items.find(std::hash<std::string_view>()(common_prefix_func(fn)));
+		auto it = commit_items.find(common_prefix_hash_func(fn));
 		if(it!=commit_items.end())
 		{
 			flags |= ReadUnsynced;
@@ -2110,7 +2118,7 @@ int SingleFileStorage::check_existence(const std::string_view fn, unsigned int f
 	{
 		std::unique_lock lock(mutex);
 
-		auto it = commit_items.find(std::hash<std::string_view>()(common_prefix_func(fn)));
+		auto it = commit_items.find(common_prefix_hash_func(fn));
 		if(it!=commit_items.end())
 		{
 			flags |= ReadUnsynced;
@@ -2285,7 +2293,7 @@ int SingleFileStorage::del(const std::string_view fn, DelAction da,
 	std::unique_lock lock(mutex);
 	wait_queue(lock, background_queue, false);
 	wait_defrag(fn, lock);
-	++commit_items[std::hash<std::string_view>()(common_prefix_func(fn))];
+	++commit_items[common_prefix_hash_func(fn)];
 	
 	if (is_defragging)
 	{
@@ -2320,7 +2328,7 @@ bool SingleFileStorage::restore_old(const std::string & fn)
 	std::unique_lock lock(mutex);
 	wait_queue(lock, false, false);
 	wait_defrag(cfn, lock);
-	++commit_items[std::hash<std::string_view>()(common_prefix_func(cfn))];
+	++commit_items[common_prefix_hash_func(cfn)];
 
 	if (is_defragging)
 	{
@@ -6725,7 +6733,7 @@ void SingleFileStorage::operator()()
 			|| frag_info.action==FragAction::DelWithQueued)
 		{
 			++mod_items;
-			--commit_items[std::hash<std::string_view>()(common_prefix_func(frag_info.fn))];
+			--commit_items[common_prefix_hash_func(frag_info.fn)];
 		}
 
 		if (frag_info.action == FragAction::FindFree
@@ -8667,17 +8675,7 @@ std::pair<int64_t, std::string> SingleFileStorage::get_next_partid()
 int64_t SingleFileStorage::get_next_version()
 {
 	std::scoped_lock lock(reserved_extents_mutex);
-	while(true)
-	{	
-		++curr_version;
-
-		CWData data;
-		data.addVarInt(curr_version);
-		auto it_end = data.getDataPtr() + data.getDataSize();
-		if(std::find(data.getDataPtr(), it_end, 0) == it_end)
-			break;
-	}
-
+	++curr_version;
 	return curr_version;
 }
 

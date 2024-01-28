@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SingleFileStorage.h"
+#include "buckets.h"
 #include <condition_variable>
 #include <memory>
 #include <proxygen/httpserver/HTTPServer.h>
@@ -51,7 +52,22 @@ public:
 };
 
 int	mdb_cmp_s3key(const MDB_val *a, const MDB_val *b);
-std::string_view s3key_common_prefix(const std::string_view key);
+std::string s3key_common_prefix(const std::string_view key);
+size_t s3key_common_prefix_hash(const std::string_view key);
+
+struct KeyInfo
+{
+    std::string key;
+    int64_t version;
+    int64_t bucketId;
+};
+
+struct KeyInfoView
+{
+    std::string_view key;
+    int64_t version;
+    int64_t bucketId;
+};
 
 class S3Handler : public proxygen::RequestHandler
 {
@@ -130,7 +146,7 @@ private:
     void readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> self, int64_t offset);
 	void onBodyCPU(folly::EventBase *evb, int64_t offs, std::unique_ptr<folly::IOBuf> body);
     void listObjects(proxygen::HTTPMessage& headers, const std::string& bucket);
-    void listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket);
+    void listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId);
     void getCommitObject(proxygen::HTTPMessage& headers);
     void getObject(proxygen::HTTPMessage& headers);
     void putObject(proxygen::HTTPMessage& headers);
@@ -139,8 +155,8 @@ private:
     void deleteObject(proxygen::HTTPMessage& headers);
 
     void listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& continuationToken, 
-        const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter, const std::string& delimiter, const std::string& bucket,
-        const bool listV2);
+        const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter, const std::string& delimiter, const int64_t bucket,
+        const bool listV2, const std::string& bucketName);
     void createMultipartUpload(proxygen::HTTPMessage& headers);
     void finalizeMultipartUpload();
     bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen);
@@ -150,6 +166,7 @@ private:
     int finalizeMultiPart();
     int readMultipartExt(int64_t offset);
     void readBodyThread(folly::EventBase *evb);
+    bool setKeyInfoFromPath(const std::string_view path);
 
 	enum class RequestType
 	{
@@ -165,12 +182,11 @@ private:
 	std::shared_ptr<S3Handler> self;
 	RequestType request_type = RequestType::Unknown;
 
-    std::string fpath;
+    KeyInfo keyInfo;
     std::atomic<bool> paused_{ false };
     int64_t done_bytes = 0;
 	bool running = false;
     bool finished_ = false;
-    int64_t objectVersion = 0;
 	std::atomic<int64_t> put_remaining = -1;
     ExpatXmlParser xmlBody;
 
@@ -195,4 +211,6 @@ private:
     std::mutex bodyMutex;
     bool hasBodyThread = false;
     std::queue<BodyObj> bodyQueue;
+
+    Buckets buckets;
 };

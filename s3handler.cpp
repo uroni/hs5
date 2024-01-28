@@ -22,6 +22,7 @@
 #include <folly/logging/xlog.h>
 #include <folly/Uri.h>
 #include <folly/lang/Bits.h>
+#include <folly/hash/Hash.h>
 #include <limits>
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
@@ -211,42 +212,52 @@ bool checkSig(HTTPMessage &headers, const std::string &secretKey,
     return sig == itSignature->second;
 }
 
-std::pair<std::string_view, int64_t> extractObjectVersion(const std::string_view& key)
+
+
+KeyInfoView extractKeyInfoView(const std::string_view key)
 {
-    size_t searchStart = key.size();
-    auto searchStop = key.size()>11 ? key.size() - 12 : 0;
-    bool found=false;
-    for(;searchStart-->searchStop;)
+    CRData rdata(key.data(), key.size());
+    unsigned char version;
+    if(!rdata.getUChar(&version))
     {
-        if(key[searchStart] == 0)
-        {
-            found=true;
-            break;
-        }
+        assert(false);
+        XLOGF(ERR, "Corrupted key {}. Version not found", key);
+        return {.key=key, .version=0, .bucketId=0};
     }
 
-    if(!found)
-        return std::make_pair(key, 0);
-
-    CRData rdata(key.data()+searchStart+1, key.size() - searchStart - 1);
-
-    char dataVer;
-    int64_t version;
-    if(!rdata.getChar(&dataVer)
-        || !rdata.getVarInt(&version))
+    int64_t bucketId;
+    if(!rdata.getVarInt(&bucketId))
     {
-        XLOGF(ERR, "Error extracting object version from key {}", key);
-        version = -1;
-        abort();
+        assert(false);
+        XLOGF(ERR, "Corrupted key {}. Bucket id not found", key);
+        return {.key=key, .version=0, .bucketId=0};
     }
 
-    if(dataVer!=1)
+    if(version==0)
+        return {.key=std::string_view(rdata.getCurrDataPtr(), rdata.getLeft()), .version=0, .bucketId=bucketId};
+
+    assert(version==1);
+    if(version!=1)
     {
-        XLOGF(ERR, "Unknown data version {} key {}", dataVer, key);
-        abort();
+        XLOGF(ERR, "Corrupted key {}. Unknown version {}", key, version);
+        return {.key=key, .version=0, .bucketId=0};
     }
 
-    return std::make_pair(key.substr(0, searchStart), version);
+    int64_t objectVersion;
+    if(!rdata.getVarInt(&objectVersion))
+    {
+        assert(false);
+        XLOGF(ERR, "Corrupted key {}. Object version not found", key);
+        return {.key=key, .version=0, .bucketId=0};
+    }
+
+    return {.key=std::string_view(rdata.getCurrDataPtr(), rdata.getLeft()), .version=objectVersion, .bucketId=bucketId};
+}
+
+KeyInfo extractKeyInfo(const std::string_view key)
+{
+    auto tmp = extractKeyInfoView(key);
+    return {.key=std::string(tmp.key), .version=tmp.version, .bucketId=tmp.bucketId};
 }
 
 int	mdb_cmp_s3key(const MDB_val *a, const MDB_val *b)
@@ -254,37 +265,50 @@ int	mdb_cmp_s3key(const MDB_val *a, const MDB_val *b)
     std::string_view keyA(reinterpret_cast<const char*>(a->mv_data), a->mv_size);
     std::string_view keyB(reinterpret_cast<const char*>(b->mv_data), b->mv_size);
 
-    auto [keyStrA, verA] = extractObjectVersion(keyA);
-    auto [keyStrB, verB] = extractObjectVersion(keyB);
+    const auto keyInfoA = extractKeyInfoView(keyA);
+    const auto keyInfoB = extractKeyInfoView(keyB);
 
-    int cmp = keyStrA.compare(keyStrB);
+    if(keyInfoA.bucketId != keyInfoB.bucketId)
+        return keyInfoA.bucketId < keyInfoB.bucketId;
+
+    int cmp = keyInfoA.key.compare(keyInfoB.key);
     if(cmp!=0)
         return cmp;
 
-    if(verA<verB)
+    if(keyInfoA.version<keyInfoB.version)
         return 1;
-    else if(verA>verB)
+    else if(keyInfoA.version>keyInfoB.version)
         return -1;
     else
         return 0;
 }
 
-std::string_view s3key_common_prefix(const std::string_view key)
-{
-    auto [keyStr, ver] = extractObjectVersion(key);
-    return keyStr;
-}
-
-std::string addObjectVersion(std::string key, int64_t version)
+std::string make_key(const std::string_view key, const int64_t bucketId, const int64_t version)
 {
     CWData wdata;
-    wdata.addChar(0);
-    wdata.addChar(1);
-    wdata.addVarInt(version);
+    wdata.addChar(version==0 ? 0 : 1);
+    wdata.addVarInt(bucketId);
+    if(version!=0)
+        wdata.addVarInt(version);
+    wdata.addBuffer(key.data(), key.size());
+    return wdata.releaseData();
+}
 
-    key.append(wdata.getDataPtr(), wdata.getDataSize());
+std::string make_key(const KeyInfo& keyInfo)
+{
+    return make_key(keyInfo.key, keyInfo.bucketId, keyInfo.version);
+}
 
-    return key;
+std::string s3key_common_prefix(const std::string_view key)
+{
+    const auto keyInfo = extractKeyInfoView(key);
+    return make_key(keyInfo.key, keyInfo.bucketId, 0);
+}
+
+size_t s3key_common_prefix_hash(const std::string_view key)
+{
+    const auto keyInfo = extractKeyInfoView(key);
+    return folly::hash::hash_combine(keyInfo.bucketId, keyInfo.key);
 }
 
 static void multiPartUploadXmlElementStart(void *userData,
@@ -423,25 +447,24 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     {
         request_type = headers->getMethod() == HTTPMethod::GET ? RequestType::GetObject : RequestType::HeadObject;
 
-        auto header_path = headers->getPathAsStringPiece();
-        if(!header_path.empty())
-        {
-            fpath = std::string(header_path.subpiece(1));
-        }
+        const auto header_path = headers->getPathAsStringPiece();
 
         running = true;
 
-        if(fpath.find('/')==std::string::npos)
+        if(!header_path.empty() && header_path.find('/', 1)==std::string::npos)
         {
-            listObjects(*headers, fpath);
+            listObjects(*headers, std::string(header_path.subpiece(1)));
             return;
         }
 
-        if(fpath.find(c_commit_uuid)!=std::string::npos)
+        if(header_path.find(c_commit_uuid)!=std::string::npos)
         {
             getCommitObject(*headers);
             return;
         }
+
+        if(!setKeyInfoFromPath(header_path))
+            return;
         
         getObject(*headers);
         return;
@@ -449,7 +472,6 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     else if (headers->getMethod() == HTTPMethod::PUT)
     {
         request_type = RequestType::PutObject;
-        fpath = std::string(headers->getPathAsStringPiece().subpiece(1));
         std::string cl = headers->getHeaders().getSingleOrEmpty(
             proxygen::HTTP_HEADER_CONTENT_LENGTH);
         if (cl.empty())
@@ -462,6 +484,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         }
         auto remaining = std::atoll(cl.c_str());
         put_remaining = remaining;
+
+        if(!setKeyInfoFromPath(headers->getPathAsStringPiece()))
+            return;
 
         if(!headers->getQueryStringAsStringPiece().empty())
         {
@@ -514,21 +539,21 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            XLOGF(DBG0, "PutObjectPart {} part {} uploadId {} length {}", fpath, partNumber, uploadId, remaining);
+            XLOGF(DBG0, "PutObjectPart {} part {} uploadId {} length {}", headers->getPathAsStringPiece(), partNumber, uploadId, remaining);
 
             putObjectPart(*headers, partNumber, uploadId, uploadVerId);
             return;
         }
 
-        if(fpath.find(c_commit_uuid)!=std::string::npos)
+        if(headers->getPathAsStringPiece().find(c_commit_uuid)!=std::string::npos)
         {
-            XLOGF(DBG0, "PutObject {} COMMIT", fpath);
+            XLOGF(DBG0, "PutObject {} COMMIT", headers->getPathAsStringPiece());
 
             commit(*headers);
             return;
         }
 
-        XLOGF(DBG0, "PutObject {} length {}", fpath, remaining);
+        XLOGF(DBG0, "PutObject {} length {}", headers->getPathAsStringPiece(), remaining);
 
         putObject(*headers);
         return;
@@ -536,23 +561,16 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     else if(headers->getMethod() == HTTPMethod::DELETE)
     {
         request_type = RequestType::DeleteObject;
+
+        if(!setKeyInfoFromPath(headers->getPathAsStringPiece()))
+            return;
+
         deleteObject(*headers);
     }
     else if(headers->getMethod() == HTTPMethod::POST)
     {
-        auto header_path = headers->getPathAsStringPiece();
-        if(!header_path.empty())
-        {
-            fpath = std::string(header_path.subpiece(1));
-        }
-        else
-        {
-            ResponseBuilder(downstream_)
-                .status(500, "Internal error")
-                .body("Unknown POST request (1)")
-                .sendWithEOM();
+        if(!setKeyInfoFromPath(headers->getPathAsStringPiece()))
             return;
-        }
 
         const std::string uploadsStr = "uploads";
         
@@ -618,12 +636,66 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     }
 }
 
+bool S3Handler::setKeyInfoFromPath(const std::string_view path)
+{
+    if(path.empty())
+    {
+        ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("Path is empty")
+                    .sendWithEOM();
+        return false;
+    }
+
+    const auto bucketEnd = path.find_first_of('/', 1);
+
+    if(bucketEnd == std::string::npos)
+    {
+        ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("Could not find bucket in path")
+                    .sendWithEOM();
+        return false;
+    }
+
+    const auto bucketName = path.substr(1, bucketEnd);
+    const auto keyStr = path.substr(bucketEnd+1);
+
+    const auto bucketId = buckets.getBucket(bucketName);
+    if(!bucketId)
+    {
+        ResponseBuilder(downstream_)
+                    .status(404, "Not found")
+                    .body("Bucket not found")
+                    .sendWithEOM();
+        return false;
+    }
+
+    keyInfo.bucketId = *bucketId;
+    keyInfo.key = keyStr;
+    keyInfo.version = 0;
+
+    return true;
+}
+
 void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& bucket)
 {
+    auto bucketId = buckets.getBucket(bucket);
+    if(!bucketId)
+    {
+        ResponseBuilder(self->downstream_)
+                            .status(404, "Not found")
+                            .body(fmt::format("Bucket not found"))
+                            .sendWithEOM();
+        return;
+    }
+
+    keyInfo.bucketId = *bucketId;
+
     const auto listType = headers.getQueryParam("list-type");
     if(listType=="2")
     {
-        listObjectsV2(headers, bucket);
+        listObjectsV2(headers, bucket, *bucketId);
         return;
     }
     else if(!listType.empty())
@@ -653,13 +725,13 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     folly::getGlobalCPUExecutor()->add(
-    [self = self, evb, marker, maxKeys, prefix, delimiter, bucket]()
+    [self = self, evb, marker, maxKeys, prefix, delimiter, bucket, bucketId]()
     {
-        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, std::nullopt, delimiter, bucket, false);
+        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, std::nullopt, delimiter, *bucketId, false, bucket);
     });
 }
 
-void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket)
+void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId)
 {
     request_type = RequestType::ListObjects;
     const auto continuationToken = headers.getDecodedQueryParam("continuation-token");
@@ -690,9 +762,9 @@ void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string&
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     folly::getGlobalCPUExecutor()->add(
-    [self = self, evb, marker, maxKeys, prefix, startAfter, delimiter, bucket]()
+    [self = self, evb, marker, maxKeys, prefix, startAfter, delimiter, bucket, bucketId]()
     {
-        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, startAfter, delimiter, bucket, true);
+        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, startAfter, delimiter, bucketId, true, bucket);
     });
 }
 
@@ -816,28 +888,16 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers)
                 if(self->request_type == RequestType::HeadObject)
                     flags |= SingleFileStorage::ReadMetaOnly;
                 
-                std::string_view keyStr;
-                int64_t ver;
-                std::string_view findPath;
-                std::string findPathStr;
+                std::string findPath;
 
-                if(self->withBucketVersioning)
+                if(self->withBucketVersioning && self->keyInfo.version==0)
                 {
-                    const auto extVer = extractObjectVersion(self->fpath);
-                    keyStr = extVer.first;
-                    const auto ver = extVer.second;
-
-                    if(ver==0)
-                    {
-                        flags |= SingleFileStorage::ReadNewest;
-                        findPathStr = addObjectVersion(std::string(keyStr), std::numeric_limits<int64_t>::max());
-                        findPath = findPathStr;
-                    }
+                    flags |= SingleFileStorage::ReadNewest;
+                    findPath = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
                 }
                 else
                 {
-                    keyStr = self->fpath;
-                    findPath = keyStr;
+                    findPath = make_key(self->keyInfo);
                 }
 
                 auto res = self->sfs.read_prepare(findPath, flags);
@@ -910,13 +970,13 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers)
 
                     if(self->request_type==RequestType::HeadObject)
                     {
-                        XLOGF(DBG0, "Content length {} bytes for readObject HEAD of {}", total_len, self->fpath);
+                        XLOGF(DBG0, "Content length {} bytes for readObject HEAD of {}", total_len, self->keyInfo.key);
                         resp.sendWithEOM();
                         return;
                     }
                     else
                     {
-                        XLOGF(DBG0, "Content length {} bytes for readObject GET of {}", total_len, self->fpath);
+                        XLOGF(DBG0, "Content length {} bytes for readObject GET of {}", total_len, self->keyInfo.key);
                         resp.send();
                     }
                                               });
@@ -951,14 +1011,10 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                     return;
                 }
 
-
-                int64_t versionNum = 0;
-                std::string fpath = self->fpath;
                 if(self->withBucketVersioning)
-                {
-                    versionNum = self->sfs.get_next_version();
-                    fpath = addObjectVersion(self->fpath, versionNum);
-                }
+                    self->keyInfo.version = self->sfs.get_next_version();
+
+                const auto fpath = make_key(self->keyInfo);
 
                 auto res = self->sfs.write_prepare(fpath, self->put_remaining);
                 if (res.err != 0)
@@ -978,23 +1034,7 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                 std::lock_guard lock(self->extents_mutex);
                 self->extents = std::move(res.extents);
                 self->extents_cond.notify_all();
-                self->objectVersion = versionNum;
-                self->fpath = fpath;
             });
-}
-
-std::pair<std::string, std::string> getBucketAndKey(const std::string& fpath)
-{
-    auto slash_idx = fpath.find('/');
-    if(slash_idx != std::string::npos)
-    {
-        return std::make_pair(fpath.substr(0, slash_idx), 
-            fpath.substr(slash_idx+1));
-    }
-    else
-    {
-        return std::make_pair(fpath, fpath);
-    }
 }
 
 std::pair<std::string, std::string> splitUploadId(const std::string& uploadId)
@@ -1031,8 +1071,10 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                     return;
                 }
 
-                const auto [bucket, key] = getBucketAndKey(self->fpath);
-                auto readRes = self->sfs.read_prepare(addObjectVersion("/" + bucket + "/" + uploadIdToStr(uploadId), 1), 0);
+                const auto bucketId = self->buckets.getPartialUploadsBucket(self->keyInfo.bucketId);
+
+                auto readRes = self->sfs.read_prepare(make_key({.key = uploadIdToStr(uploadId), .version = 0, 
+                    .bucketId = bucketId}), 0);
                 if(readRes.err!=0)
                 {
                     evb->runInEventBaseThread([self = self, readRes]()
@@ -1052,7 +1094,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                 std::string dataPath, dataUploadVerId;
 
                 if(!rdata.getStr2(&dataPath) || !rdata.getStr2(&dataUploadVerId) ||
-                    dataPath != self->fpath || dataUploadVerId!=uploadVerId)
+                    dataPath != make_key(self->keyInfo) || dataUploadVerId!=uploadVerId)
                 {
                     evb->runInEventBaseThread([self = self, readRes]()
                                               {
@@ -1066,8 +1108,9 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                     return;
                 }
 
-                self->fpath = addObjectVersion("/" + bucket + "/" + uploadIdToStr(uploadId) +"."+uploadIdToStr(partNumber), 1);
-                auto res = self->sfs.write_prepare(self->fpath, self->put_remaining);
+                self->keyInfo = {.key = uploadIdToStr(uploadId) +"."+uploadIdToStr(partNumber), .version = 0, 
+                    .bucketId = bucketId};
+                auto res = self->sfs.write_prepare(make_key(self->keyInfo), self->put_remaining);
                 if (res.err != 0)
                 {                    
                     evb->runInEventBaseThread([self = self, res]()
@@ -1102,20 +1145,20 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb]()
             {
-                const auto [bucket, key] = getBucketAndKey(self->fpath);
                 auto [uploadId, uploadIdEnc] = self->sfs.get_next_partid();
                 auto uploadVerId = random_uuid_binary();
 
                 CWData data;
-                data.addString2(self->fpath);
+                data.addString2(make_key(self->keyInfo));
                 data.addString2(uploadVerId);
 
                 std::string md5sum(data.getDataPtr(), data.getDataSize());
+                const auto bucketId = self->buckets.getPartialUploadsBucket(self->keyInfo.bucketId);
 
-                auto rc = self->sfs.write(addObjectVersion("/" + bucket+ "/" +uploadIdToStr(uploadId), 1), data.getDataPtr(), 0, 0, 0, md5sum,  false, false);
-
+                auto rc = self->sfs.write(make_key({.key = uploadIdToStr(uploadId), .version = 0, 
+                    .bucketId = bucketId}), nullptr, 0, 0, 0, md5sum,  false, false);
          
-                evb->runInEventBaseThread([rc=rc, bucket=bucket, key=key, uploadIdEnc = uploadIdEnc, uploadVerId, self = self]()
+                evb->runInEventBaseThread([rc=rc, uploadIdEnc = uploadIdEnc, uploadVerId, self = self]()
                                   {   
                                     if(rc!=0)        
                                     {
@@ -1131,7 +1174,7 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
    "\t<Bucket>{}</Bucket>"
    "\t<Key>{}</Key>"
    "\t<UploadId>{}-{}</UploadId>"
-"</InitiateMultipartUploadResult>", bucket, key, folly::hexlify(uploadIdEnc), folly::hexlify(uploadVerId));
+"</InitiateMultipartUploadResult>", self->buckets.getBucketName(self->keyInfo.bucketId), self->keyInfo.key, folly::hexlify(uploadIdEnc), folly::hexlify(uploadVerId));
 
                                        ResponseBuilder(self->downstream_)
                         .status(200, "OK")
@@ -1150,14 +1193,16 @@ void S3Handler::finalizeMultipartUpload()
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb, multiPartData = this->multiPartUploadData.get()]()
             {
-                const auto [bucket, key] = getBucketAndKey(self->fpath);
-                auto readRes = self->sfs.read_prepare(addObjectVersion("/" + bucket + "/" + uploadIdToStr(multiPartData->uploadId), 1), 0);
+                const auto bucketId = self->buckets.getPartialUploadsBucket(self->keyInfo.bucketId);
+                auto readRes = self->sfs.read_prepare(
+                    make_key({.key = uploadIdToStr(multiPartData->uploadId), .version = 0, 
+                    .bucketId = bucketId}), 0);
                 CRData uploadData(readRes.md5sum.data(), readRes.md5sum.size());
                 std::string uploadFPath;
                 std::string uploadVerId;
                 if(readRes.err != 0 ||
                     !uploadData.getStr2(&uploadFPath) ||
-                    uploadFPath!=self->fpath ||
+                    uploadFPath!=make_key(self->keyInfo) ||
                     !uploadData.getStr2(&uploadVerId) ||
                     uploadVerId!=multiPartData->verId )
                 {
@@ -1171,11 +1216,10 @@ void S3Handler::finalizeMultipartUpload()
                     return;
                 }
 
-                int64_t versionNum = 0;
                 if(self->withBucketVersioning)
                 {
-                    versionNum = self->sfs.get_next_version();
-                    uploadFPath = addObjectVersion(uploadFPath, versionNum);
+                    self->keyInfo.version = self->sfs.get_next_version();
+                    uploadFPath = make_key(self->keyInfo);
                 }
 
                 MultiPartDownloadData::PartExt lastExt = {-1, 0, 0};
@@ -1206,7 +1250,9 @@ void S3Handler::finalizeMultipartUpload()
                     if(part.partNumber==7)
                         int abc=5;
 
-                    auto readPartRes = self->sfs.read_prepare(addObjectVersion("/"+bucket+"/"+uploadIdToStr(multiPartData->uploadId)+"."+uploadIdToStr(part.partNumber), 1), SingleFileStorage::ReadSkipAddReading);
+                    auto readPartRes = self->sfs.read_prepare(
+                        make_key({.key = uploadIdToStr(multiPartData->uploadId)+"."+uploadIdToStr(part.partNumber), .version = 0, 
+                            .bucketId = bucketId}), SingleFileStorage::ReadSkipAddReading);
 
                     if(readPartRes.err!=0)
                     {
@@ -1273,7 +1319,9 @@ void S3Handler::finalizeMultipartUpload()
                         return;
                 }
 
-                auto delRes = self->sfs.del(addObjectVersion("/"+bucket+"/"+uploadIdToStr(multiPartData->uploadId), 1), SingleFileStorage::DelAction::Del, false);
+                auto delRes = self->sfs.del(
+                    make_key({.key = uploadIdToStr(multiPartData->uploadId), .version = 0, 
+                        .bucketId = bucketId}), SingleFileStorage::DelAction::Del, false);
 
                 if(delRes)
                 {
@@ -1289,7 +1337,7 @@ void S3Handler::finalizeMultipartUpload()
 
                 evb->runInEventBaseThread([self = self, etagBin, numParts = multiPartData->parts.size()]()
                                               {
-                        auto [bucket, key] = getBucketAndKey(self->fpath);
+                                                const auto bucket = self->buckets.getBucketName(self->keyInfo.bucketId);
                         ResponseBuilder(self->downstream_)
                             .status(200, "OK")
                             .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -1298,7 +1346,7 @@ void S3Handler::finalizeMultipartUpload()
              "\t<Bucket>{}</Bucket>\n"
              "\t<Key>{}</Key>\n"
              "\t<ETag>\"{}-{}\"</ETag>\n"
-            "</CompleteMultipartUploadResult>", self->serverUrl, bucket, key, bucket, key, folly::hexlify(etagBin), numParts))
+            "</CompleteMultipartUploadResult>", self->serverUrl, bucket, self->keyInfo.key, bucket, self->keyInfo.key, folly::hexlify(etagBin), numParts))
                             .sendWithEOM();
                         self->finished_ = true; });
                         return;
@@ -1307,41 +1355,23 @@ void S3Handler::finalizeMultipartUpload()
 
 void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
 {
-    fpath = std::string(headers.getPathAsStringPiece().subpiece(1));
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     folly::getGlobalCPUExecutor()->add(
         [self = this->self, evb]()
         {
-            XLOGF(INFO, "Removing object {}", self->fpath);
+            XLOGF(INFO, "Removing object {}", self->keyInfo.key);
 
-            std::string_view currPath;
-            std::string_view keyStr;
-            std::string currPathStr;
             bool delNewest = false;
             
 
-            if(self->withBucketVersioning)
+            if(self->withBucketVersioning && self->keyInfo.version==0)
             {
-                const auto extVer = extractObjectVersion(self->fpath);
-                keyStr = extVer.first;
-                if(extVer.second==0)
-                {
-                    delNewest = true;                    
-                    currPathStr = addObjectVersion(std::string(keyStr), std::numeric_limits<int64_t>::max());
-                    currPath = currPathStr;
-                }
-                else
-                {
-                    currPath = self->fpath;
-                }
-            }
-            else
-            {
-                currPath = self->fpath;
-                keyStr = currPath;
+                self->keyInfo.version = std::numeric_limits<int64_t>::max();
+                delNewest = true;
             }
 
+            const auto currPath = make_key(self->keyInfo);
             int res;
 
             if(delNewest)
@@ -1350,8 +1380,8 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
 
                 if(res==0)
                 {
-                    const auto versionNum = self->sfs.get_next_version();
-                    const auto writePath = addObjectVersion(std::string(keyStr), versionNum);
+                    self->keyInfo.version = self->sfs.get_next_version();
+                    const auto writePath = make_key(self->keyInfo);
                     std::string md5sum(1, metadata_tombstone);
                     res = self->sfs.write(writePath, nullptr, 0, 0, 0, md5sum, false, false);
                 }
@@ -1370,7 +1400,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                                             {
                     if(res==ENOENT)
                     {
-                        XLOGF(INFO, "Removing object '{}' not found", self->fpath);
+                        XLOGF(INFO, "Removing object '{}' not found", self->keyInfo.key);
                         ResponseBuilder(self->downstream_)
                             .status(404, "Not found")
                             .body(fmt::format("Object not found"))
@@ -1378,7 +1408,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                     }
                     else if(res!=0)
                     {
-                        XLOGF(INFO, "Removing object '{}' err {}", self->fpath, res);
+                        XLOGF(INFO, "Removing object '{}' err {}", self->keyInfo.key, res);
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(fmt::format("Storage is dead"))
@@ -1443,12 +1473,14 @@ int S3Handler::seekMultipartExt(int64_t offset)
 
 int S3Handler::readMultipartExt(int64_t offset)
 {
-    const auto [bucket, key] = getBucketAndKey(fpath);
     auto partNum = multiPartDownloadData->currExt.start;
-    auto res = self->sfs.read_prepare(addObjectVersion("/"+bucket+"/"+uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), 1), 0);
+    const auto bucketId = self->buckets.getPartialUploadsBucket(self->keyInfo.bucketId);
+    auto res = self->sfs.read_prepare(
+        make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
+                    .bucketId = bucketId}), 0);
     if (res.err != 0)
     {
-        XLOGF(WARN, "Error reading next multipart object meta-information uploadid {} partnum {} for key {}", multiPartDownloadData->uploadId, partNum, fpath);
+        XLOGF(WARN, "Error reading next multipart object meta-information uploadid {} partnum {} for key {}", multiPartDownloadData->uploadId, partNum, self->keyInfo.key);
         return EIO;
     }
 
@@ -1505,8 +1537,10 @@ int S3Handler::readNextMultipartExt(int64_t offset)
             assert(ext.obj_offset>=multiPartDownloadData->currOffset );
             ext.obj_offset-=multiPartDownloadData->currOffset;
         }
-        const auto [bucket, key] = getBucketAndKey(fpath);
-        const auto rc = self->sfs.read_finalize(addObjectVersion("/"+bucket+"/"+uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(lastPartNum), 1), extents, 0);
+        const auto bucketId = self->buckets.getPartialUploadsBucket(self->keyInfo.bucketId);
+        const auto rc = self->sfs.read_finalize(
+            make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(lastPartNum), .version = 0, 
+                    .bucketId = bucketId}), extents, 0);
         assert(rc==0);
     }
 
@@ -1522,7 +1556,7 @@ int S3Handler::finalizeMultiPart()
     if(!multiPartDownloadData || multiPartDownloadData->extIdx == std::string::npos)
         return ENOENT;
 
-    const auto [bucket, key] = getBucketAndKey(fpath);
+    const auto bucketId = self->buckets.getPartialUploadsBucket(self->keyInfo.bucketId);
     auto partNum = multiPartDownloadData->currExt.start;
 
     if(!extents.empty() && extents[0].len>0)
@@ -1533,7 +1567,8 @@ int S3Handler::finalizeMultiPart()
             ext.obj_offset-=multiPartDownloadData->currOffset;
         }
         
-        const auto rc = self->sfs.read_finalize(addObjectVersion("/"+bucket+"/"+uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), 1), extents, 0);
+        const auto rc = self->sfs.read_finalize(make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
+                    .bucketId = bucketId}), extents, 0);
         assert(rc==0);
     }
 
@@ -1567,7 +1602,7 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
     {
         if (self->paused_)
         {
-            XLOGF(DBG0, "Sending of {} paused at {} done bytes. Finished={} Running={}", self->fpath, self->done_bytes, self->finished_, self->running);
+            XLOGF(DBG0, "Sending of {} paused at {} done bytes. Finished={} Running={}", self->keyInfo.key, self->done_bytes, self->finished_, self->running);
             did_pause = true;
             break;
         }
@@ -1623,11 +1658,11 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
     
         if(multiPartDownloadData)
         {
-            XLOGF(DBG0, "Sending body len {} of fpath {} total_len {} part {}", res.buf->length(), self->fpath, put_remaining.load(std::memory_order_relaxed), multiPartDownloadData->currExt.start);
+            XLOGF(DBG0, "Sending body len {} of fpath {} total_len {} part {}", res.buf->length(), self->keyInfo.key, put_remaining.load(std::memory_order_relaxed), multiPartDownloadData->currExt.start);
         }
         else
         {
-            XLOGF(DBG0, "Sending body len {} of fpath {} total_len {}", res.buf->length(), self->fpath, put_remaining.load(std::memory_order_relaxed));
+            XLOGF(DBG0, "Sending body len {} of fpath {} total_len {}", res.buf->length(), self->keyInfo.key, put_remaining.load(std::memory_order_relaxed));
         }
 
         evb->runInEventBaseThread([self = self, body = std::move(res.buf), total_len = put_remaining.load(std::memory_order_relaxed)]() mutable
@@ -1658,7 +1693,7 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
                                 {
             if(self->finished_)
             {
-                auto rc = self->sfs.read_finalize(self->fpath, self->extents, 0);
+                auto rc = self->sfs.read_finalize(make_key(self->keyInfo), self->extents, 0);
                 assert(rc==0);
                 return;
             }
@@ -1680,33 +1715,33 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
     }
     else
     {
-        auto rc = sfs.read_finalize(self->fpath, self->extents, 0);
+        auto rc = sfs.read_finalize(make_key(self->keyInfo), self->extents, 0);
         assert(rc==0);
     }
 }
 
 void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& marker,
     const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter,
-    const std::string& delimiter, const std::string& bucket,
-    const bool listV2)
+    const std::string& delimiter, const int64_t bucketId,
+    const bool listV2, const std::string& bucketName)
 {
     SingleFileStorage::IterData iter_data = {};
     std::string iterStartVal;
     if(!marker.empty())
     {
         if(startAfter && *startAfter>marker)
-            iterStartVal = bucket + "/" + *startAfter;
+            iterStartVal = make_key({.key = *startAfter, .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId});
         else
-            iterStartVal = bucket + "/" + marker;
+            iterStartVal = make_key({.key = marker, .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId});
     }
     else
     {
         if(startAfter)
-            iterStartVal = bucket + "/" + *startAfter;
+            iterStartVal = make_key({.key = *startAfter, .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId});
         else if(prefix)
-            iterStartVal = bucket + "/" + *prefix;
+            iterStartVal = make_key({.key = *prefix, .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId});
         else
-            iterStartVal = bucket + "/";
+            iterStartVal = make_key({.key = {}, .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId});
     }
 
     if(!sfs.iter_start(iterStartVal, false, iter_data))
@@ -1722,7 +1757,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
     std::string val_data;
     std::vector<std::string> commonPrefixes;
-    const size_t prefixSize = bucket.size() + (prefix ? prefix->size() : 0) + 1;
+    const size_t prefixSize = prefix ? prefix->size() : 0;
 
     int i;
     bool truncated = true;
@@ -1731,22 +1766,24 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     int skippedKeys = 0;
     for(i=0;i<maxKeys + skippedKeys;++i)
     {
-        std::string key, md5sum;
+        std::string keyBin, md5sum;
         int64_t offset, size, last_modified;
         std::vector<SingleFileStorage::SPunchItem> extra_exts;
-        if(!sfs.iter_curr_val(key, offset, size, extra_exts, last_modified, md5sum, iter_data))
+        if(!sfs.iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
         {
             truncated = false;
             break;
         }
 
-        if(prefix && !key.starts_with(bucket + "/" + *prefix))
+        const auto keyInfo = extractKeyInfoView(keyBin);
+
+        if(prefix && !keyInfo.key.starts_with(*prefix))
         {
             truncated = false;
             break;
         }
 
-        if(!key.starts_with(bucket + "/"))
+        if(keyInfo.bucketId != bucketId)
         {
             truncated = false;
             break;
@@ -1754,8 +1791,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
         bool outputKey = true;
 
-        const auto [keyStr, ver] = extractObjectVersion(key);
-        if(keyStr == lastKeyStr)
+        if(keyInfo.key == lastKeyStr)
         {
             ++skippedKeys;
             outputKey = false;
@@ -1766,14 +1802,14 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             outputKey = false;
         }
 
-        lastKeyStr = keyStr;        
+        lastKeyStr = keyInfo.key;        
 
         if(!delimiter.empty())
         {
-            const size_t delimPos = key.find_first_of(delimiter[0], prefixSize);
+            const size_t delimPos = keyInfo.key.find_first_of(delimiter[0], prefixSize);
             if(delimPos != std::string::npos)
             {
-                commonPrefixes.push_back(key.substr(prefixSize, delimPos - prefixSize + 1));
+                commonPrefixes.push_back(std::string(keyInfo.key.substr(prefixSize, delimPos - prefixSize + 1)));
                 outputKey = false;
             }
         }
@@ -1785,10 +1821,6 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 size += ext.len;
             }
 
-            // Remove bucket name
-            const auto slash_idx = keyStr.find('/');
-            const auto keyWithoutBucket = slash_idx != std::string::npos ? keyStr.substr(slash_idx+1) : keyStr;
-
             val_data += fmt::format("\t<Contents>\n"
                 "\t\t<Key>{}</Key>\n"
                 "\t\t<LastModified>2009-10-12T17:50:30.000Z</LastModified>\n"
@@ -1799,7 +1831,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 "\t\t\t<ID>75aa57f09aa0c8caeab4f8c24e99d10f8e7faeebf76c078efc7c6caea54ba06a</ID>\n"
                 "\t\t\t<DisplayName>mtd@amazon.com</DisplayName>\n"
                 "\t\t</Owner>\n"
-                "\t</Contents>", escapeXML(keyWithoutBucket), folly::hexlify(md5sum), size);
+                "\t</Contents>", escapeXML(keyInfo.key), folly::hexlify(md5sum), size);
             ++keyCount;
         }
 
@@ -1834,7 +1866,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         "<ListBucketResult>\n"
         "\t<Name>{}</Name>\n"
         "\t<IsTruncated>{}</IsTruncated>\n"
-        "\t<MaxKeys>{}</MaxKeys>\n", escapeXML(bucket), truncated ? "true" : "false", maxKeys);
+        "\t<MaxKeys>{}</MaxKeys>\n", escapeXML(bucketName), truncated ? "true" : "false", maxKeys);
 
 
     if(!listV2)
@@ -1909,14 +1941,13 @@ void S3Handler::onEgressResumed() noexcept
     XLOG(DBG0) << "S3Handler resumed";
     paused_ = false;
     // If readFileScheduled_, it will reschedule itself
-    if (!running && !fpath.empty() && !finished_)
+    if (!running && keyInfo.bucketId!=0 && !finished_)
     {
         running = true;
-        XLOGF(DBG0, "Starting readObject of {} offset {}", fpath, done_bytes);
+        XLOGF(DBG0, "Starting readObject of {} offset {}", keyInfo.key, done_bytes);
         folly::getGlobalCPUExecutor()->add(
             [self = self, evb = folly::EventBaseManager::get()->getEventBase(), offset = done_bytes]()
             {
-                std::string fpath = self->fpath;
                 self->readObject(evb, std::move(self), offset);
             });
     }
@@ -2118,9 +2149,9 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
 
         if(!extents.empty())
-            XLOGF(INFO, "Finalize object {} ext off {} len {}", fpath, extents[0].data_file_offset, extents[0].len);
+            XLOGF(INFO, "Finalize object {} ext off {} len {}", self->keyInfo.key, extents[0].data_file_offset, extents[0].len);
 
-        auto rc = sfs.write_finalize(fpath, extents, 0, md5sum, false, true);
+        auto rc = sfs.write_finalize(make_key(self->keyInfo), extents, 0, md5sum, false, true);
 
         if (rc != 0)
         {
@@ -2156,9 +2187,9 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
                     ResponseBuilder resp(self->downstream_);
                     resp.status(200, "OK");
                     resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, fmt::format("\"{}\"", folly::hexlify(md5sum)));
-                    if(self->objectVersion != 0)
+                    if(self->keyInfo.version != 0)
                     {
-                        resp.header("x-amz-version-id", self->sfs.encrypt_id(self->objectVersion));
+                        resp.header("x-amz-version-id", self->sfs.encrypt_id(self->keyInfo.version));
                         
                     }
                     resp.sendWithEOM();

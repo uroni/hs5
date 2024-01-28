@@ -78,7 +78,8 @@ public:
 		AssertQueueEmpty = 5
 	};
 
-	typedef std::string_view(*common_prefix_func_t)(const std::string_view);
+	typedef std::string(*common_prefix_func_t)(const std::string_view);
+	typedef size_t(*common_prefix_hash_func_t)(const std::string_view);
 
 	struct SFSOptions
 	{
@@ -97,6 +98,7 @@ public:
 		int64_t data_file_chunk_size = 10LL * 1024 * 1024 * 1024 * 1024;
 		MDB_cmp_func* key_compare_func = nullptr;
 		common_prefix_func_t common_prefix_func = nullptr;
+		common_prefix_hash_func_t common_prefix_hash_func = nullptr;
 	};
 
 	SingleFileStorage(SFSOptions options);
@@ -597,6 +599,7 @@ private:
 	MDB_cmp_func* key_compare_func;
 
 	common_prefix_func_t common_prefix_func;
+	common_prefix_hash_func_t common_prefix_hash_func;
 
 	int64_t curr_version = 0;
 };
