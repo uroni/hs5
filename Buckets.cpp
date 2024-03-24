@@ -41,9 +41,7 @@ std::string Buckets::getBucketName(int64_t bucketId)
 }
 
 int64_t Buckets::nextId()
-{
-    std::scoped_lock lock{mutex};
-    
+{   
     auto ret = currMaxId;
     currMaxId+=2;
     return ret;

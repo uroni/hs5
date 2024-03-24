@@ -119,7 +119,7 @@ int main(int argc, char* argv[])
       XLOGF(INFO, "Listening on {}", ip.address.describe());
     }
 
-    XLOGF(INFO,"Bucket versioning: {}, Punch holes: {}, Stop on error: {}, Manual commit: ", FLAGS_with_bucket_versioning, FLAGS_punch_holes, FLAGS_stop_on_error, FLAGS_manual_commit);
+    XLOGF(INFO,"Bucket versioning: {}, Punch holes: {}, Stop on error: {}, Manual commit: {}", FLAGS_with_bucket_versioning, FLAGS_punch_holes, FLAGS_stop_on_error, FLAGS_manual_commit);
 
     std::thread t([&]() { server.start(); });
     t.join();    
