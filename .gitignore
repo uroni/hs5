@@ -9,3 +9,4 @@ __pycache__
 test/.venv/*
 builds
 vcpkg
+vcpkg_installed
