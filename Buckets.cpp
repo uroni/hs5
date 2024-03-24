@@ -1,4 +1,4 @@
-#include "buckets.h"
+#include "Buckets.h"
 #include <mutex>
 
 const bool autogenBuckets = true;
@@ -25,6 +25,7 @@ std::optional<int64_t> Buckets::getBucket(const std::string_view bucketName)
 
 int64_t Buckets::getPartialUploadsBucket(int64_t bucketId)
 {
+    // Create documentation
     return bucketId + 1;
 }
 
@@ -41,6 +42,8 @@ std::string Buckets::getBucketName(int64_t bucketId)
 
 int64_t Buckets::nextId()
 {
+    std::scoped_lock lock{mutex};
+    
     auto ret = currMaxId;
     currMaxId+=2;
     return ret;
