@@ -6,6 +6,7 @@
     "proxygen",
     "zstd",
     "expat",
-    "libsodium"
+    "libsodium",
+    "sqlite-cpp-sqlgen"
   ]
 }
