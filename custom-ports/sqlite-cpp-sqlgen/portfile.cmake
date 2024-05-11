@@ -29,9 +29,9 @@
 # 	See additional helpful variables in /docs/maintainers/vcpkg_common_definitions.md
 
 vcpkg_download_distfile(ARCHIVE
-    URLS "https://github.com/uroni/sqlite-cpp-sqlgen/archive/refs/tags/0.3.1.zip"
-    FILENAME "0.3.1.zip"
-    SHA512 2779d08b6f9c61c79a7718937100f93f02d58787054004d571480fc37f8a670e6675155514fd4e310c8663c1b4f97123323cb9d1ad0dcbc383d3ef32a3782208
+    URLS "https://github.com/uroni/sqlite-cpp-sqlgen/archive/refs/tags/0.4.zip"
+    FILENAME "0.4.zip"
+    SHA512 24905615d01568036f241ab9ae55f9864c0028822c672dc334adbbb59d707213cdffb25370f9e2d7740edc31e447594d6562302ceeb04c43cde1d7cb3d22d936
 )
 
 vcpkg_extract_source_archive_ex(

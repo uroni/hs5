@@ -2,23 +2,12 @@
 
 #include <string>
 #include <optional>
-#include <map>
-#include <mutex>
 
-class Buckets
-{
-public:
-    std::optional<int64_t> getBucket(const std::string_view bucketName);
+void refreshBucketCache();
 
-    int64_t getPartialUploadsBucket(int64_t bucketId);
+std::optional<int64_t> getBucket(const std::string_view bucketName);
 
-    std::string getBucketName(int64_t bucketId);
+int64_t getPartialUploadsBucket(int64_t bucketId);
 
-private:
-    int64_t nextId();
+std::string getBucketName(int64_t bucketId);
 
-    std::map<std::string, int64_t> buckets;
-    std::map<int64_t, std::map<std::string, int64_t>::iterator> bucketNames;
-    int64_t currMaxId = 1;
-    std::mutex mutex;
-};

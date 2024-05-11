@@ -1,0 +1,39 @@
+openapi: '3.1.0'
+info:
+  title: HS5 API
+  version: '1.0'
+paths:
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/login:
+    post:
+      description: Login with username and password to service
+      parameters:
+        -in: query
+         name: data
+         contents:
+          application/json:
+            schema:
+              $ref: 'schemas/LoginParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/EmptyResp.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/adduser:
+    post:
+      description: Adds a user
+      paramers:
+        -in: query
+         name: data
+         contents:
+          application/json:
+            schema:
+              $ref: 'schemas/AddUserParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/EmptyResp.json'

@@ -1,0 +1,22 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "error" : {
+            "type": "string",
+            "enum": ["argon_encoding", 
+                "user_already_exists",
+                "user_not_found",
+                "unknown_password_hashing",
+                "password_wrong",
+                "session_required",
+                "session_not_found"
+            ]
+        },
+        "msg" : {
+            "type": "string"
+        }        
+    },
+    "required": ["error", "msg"]
+}
+

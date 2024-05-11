@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 #include "s3handler.h"
+#include "ApiHandler.h"
 #include "SingleFileStorage.h"
 #include <algorithm>
 #include <asm-generic/errno-base.h>
@@ -24,16 +25,19 @@
 #include <folly/lang/Bits.h>
 #include <folly/hash/Hash.h>
 #include <limits>
+#include <memory>
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
 #include <openssl/md5.h>
 #include <openssl/types.h>
+#include <optional>
 #include <proxygen/lib/http/HTTPCommonHeaders.h>
 #include <proxygen/lib/http/HTTPMethod.h>
 #include "data.h"
 #include "utils.h"
 #include <limits.h>
 #include <string_view>
+#include "Auth.h"
 
 using namespace proxygen;
 
@@ -44,7 +48,7 @@ const char metadata_object = 0;
 const char metadata_multipart_object = 1;
 const char metadata_tombstone = 2;
 
-std::string hashSha256Hex(const std::string &payload)
+std::string hashSha256Hex(const std::string_view payload)
 {
     unsigned char md[SHA256_DIGEST_LENGTH];
     SHA256(reinterpret_cast<const unsigned char *>(payload.data()),
@@ -70,11 +74,10 @@ std::string currDate()
 {
     time_t t = toTimeT(getCurrentTime<SteadyClock>());
     struct tm final_tm;
-    localtime_r(&t, &final_tm);
-    std::string ret;
-    ret.resize(8);
-    strftime(&ret[0], ret.size(), "%Y%m%d", &final_tm);
-    return ret;
+    gmtime_r(&t, &final_tm);
+    std::array<char, 10> buffer;
+    strftime(buffer.data(), buffer.size(), "%Y%m%d", &final_tm);
+    return buffer.data();
 }
 
 
@@ -108,17 +111,19 @@ std::string uploadIdToStr(int64_t uploadId)
 	return key;
 }
 
-bool checkSig(HTTPMessage &headers, const std::string &secretKey,
-              const folly::StringPiece &authorization,
-              const std::string &payload)
+std::optional<std::string> checkSig(HTTPMessage &headers,
+              const folly::StringPiece authorization,
+              const std::string_view payload,
+              const std::string_view ressource,
+              const std::string_view action)
 {
     const char alg_name[] = "AWS4-HMAC-SHA256";
-    const char alg[] = "AWS4-HMAC-SHA256 ";
+    constexpr std::string_view alg = "AWS4-HMAC-SHA256 ";
     if (authorization.find(alg) != 0)
-        return false;
+        return std::nullopt;
 
     std::vector<folly::StringPiece> authorizationVec;
-    folly::split(',', authorization.subpiece(sizeof(alg)), authorizationVec);
+    folly::split(',', authorization.subpiece(alg.size()), authorizationVec);
 
     std::map<folly::StringPiece, folly::StringPiece> authorizationMap;
 
@@ -128,30 +133,41 @@ bool checkSig(HTTPMessage &headers, const std::string &secretKey,
         if (eq != std::string::npos)
         {
             authorizationMap.insert(
-                std::make_pair(ave.subpiece(0, eq), ave.subpiece(eq + 1)));
+                std::make_pair(trimWhitespace(ave.subpiece(0, eq)), trimWhitespace(ave.subpiece(eq + 1))));
         }
     }
 
     const char signedHeadersKey[] = "SignedHeaders";
     auto itSignedHeaders = authorizationMap.find(signedHeadersKey);
     if (itSignedHeaders == authorizationMap.end())
-        return false;
+        return std::nullopt;
 
     const char credentialHeaderKey[] = "Credential";
     auto itCredential = authorizationMap.find(credentialHeaderKey);
     if (itCredential == authorizationMap.end())
-        return false;
+        return std::nullopt;
 
     const char signatureHeaderKey[] = "Signature";
     auto itSignature = authorizationMap.find(signatureHeaderKey);
     if (itSignature == authorizationMap.end())
-        return false;
+        return std::nullopt;
 
     std::vector<folly::StringPiece> credentialScopeToks;
     folly::split('/', itCredential->second, credentialScopeToks);
 
     if (credentialScopeToks.size() != 5)
-        return false;
+        return std::nullopt;
+
+    const auto& accessKey = credentialScopeToks[0];
+
+    // TODO: get from credentialScopeToks[0]
+    const auto& secretKey = getSecretKey(accessKey);
+
+    if(secretKey.empty())
+        return std::nullopt;
+
+    if(!isAuthorized(ressource, action, accessKey))
+        return std::nullopt;
 
     std::vector<folly::StringPiece> signedHeadersVec;
     folly::split(';', itSignedHeaders->second, signedHeadersVec);
@@ -161,9 +177,9 @@ bool checkSig(HTTPMessage &headers, const std::string &secretKey,
     bool hasHost = false;
     for (auto signedHeader : signedHeadersVec)
     {
-        if (prevSignedHeader && prevSignedHeader >= signedHeader)
+        if (prevSignedHeader && *prevSignedHeader >= signedHeader)
         {
-            return false;
+            return std::nullopt;
         }
         auto fullVal = headers.getHeaders().getSingleOrEmpty(signedHeader);
         auto val = folly::trimWhitespace(fullVal);
@@ -174,7 +190,7 @@ bool checkSig(HTTPMessage &headers, const std::string &secretKey,
     }
 
     if (!hasHost)
-        return false;
+        return std::nullopt;
 
     auto params = headers.getQueryParams();
     std::string canonicalParamStr;
@@ -186,30 +202,31 @@ bool checkSig(HTTPMessage &headers, const std::string &secretKey,
                              folly::uriEscape<std::string>(
                                  param.second, folly::UriEscapeMode::QUERY);
     }
-    std::string canonicalRequest = folly::sformat(
-        "{}\n{}\n{}\n{}\n{}\n{}\n", headers.getMethodString(),
+    const auto canonicalRequest = folly::sformat(
+        "{}\n{}\n{}\n{}\n{}\n{}", headers.getMethodString(),
         headers.getPathAsStringPiece(), canonicalParamStr, canonicalHeaders,
         itSignedHeaders->second, hashSha256Hex(payload));
 
-    std::string hashedCanonicalRequest = hashSha256Hex(canonicalRequest);
-    std::string requestDateTime =
+    const auto hashedCanonicalRequest = hashSha256Hex(canonicalRequest);
+    const auto requestDateTime =
         headers.getHeaders().getSingleOrEmpty("X-Amz-Date");
 
-    std::string stringToSign = folly::sformat(
-        "{}\n{}\n{}{}{}{}\n{}\n", alg_name, requestDateTime,
+    const auto stringToSign = folly::sformat(
+        "{}\n{}\n{}/{}/{}/{}\n{}", alg_name, requestDateTime,
         credentialScopeToks[1], credentialScopeToks[2], credentialScopeToks[3],
         credentialScopeToks[4], hashedCanonicalRequest);
 
-    std::string signingKey = hmacSha256Binary(
-        hmacSha256Binary(
-            hmacSha256Binary(hmacSha256Binary("AWS4" + secretKey, currDate()),
-                             credentialScopeToks[1].toString()),
-            credentialScopeToks[2].toString()),
-        "aws4_request");
+    const auto dateKey = hmacSha256Binary("AWS4" + secretKey, currDate());
+    const auto dateRegionKey = hmacSha256Binary(dateKey, credentialScopeToks[2].toString());
+    const auto dateRegionServiceKey = hmacSha256Binary(dateRegionKey, credentialScopeToks[3].toString());
+    const auto signingKey = hmacSha256Binary(dateRegionServiceKey, "aws4_request");
 
     std::string sig = folly::hexlify(hmacSha256Binary(signingKey, stringToSign));
 
-    return sig == itSignature->second;
+    if(sig != itSignature->second)
+        return std::nullopt;
+
+    return std::string(accessKey);
 }
 
 
@@ -420,8 +437,6 @@ static void multiPartUploadXmlCharData(void *userData,
     }
 }
 
-
-
 /**
  * Handles requests by serving the file named in path.  Only supports GET.
  * reads happen in a CPU thread pool since read(2) is blocking.
@@ -449,12 +464,40 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         const auto header_path = headers->getPathAsStringPiece();
 
+        if(header_path.empty())
+        {
+            ResponseBuilder(downstream_)
+                        .status(500, "Internal error")
+                        .body("Path is empty")
+                        .sendWithEOM();
+            return;
+        }
+
         running = true;
 
-        if(!header_path.empty() && header_path.find('/', 1)==std::string::npos)
+        if(header_path.find('/', 1)==std::string::npos)
         {
-            listObjects(*headers, std::string(header_path.subpiece(1)));
+            const auto bucketName = header_path.subpiece(1);
+            if(!checkSig(*headers, headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_AUTHORIZATION), "", fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket"))
+            {
+                ResponseBuilder(downstream_)
+                    .status(401, "Unauthorized")
+                    .body("Verifying request authorization failed")
+                    .sendWithEOM();
+                return;
+            }
+            listObjects(*headers, std::string(bucketName));
             return;
+        }   
+
+        const auto accessKey = checkSig(*headers, headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_AUTHORIZATION), "", fmt::format("arn:aws:s3:::{}", header_path.subpiece(1)), "s3:GetObject");   
+        if(!accessKey)
+        {
+             ResponseBuilder(downstream_)
+                    .status(401, "Unauthorized")
+                    .body("Verifying request authorization failed")
+                    .sendWithEOM();
+                return;
         }
 
         if(header_path.find(c_commit_uuid)!=std::string::npos)
@@ -466,7 +509,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         if(!setKeyInfoFromPath(header_path))
             return;
         
-        getObject(*headers);
+        getObject(*headers, *accessKey);
         return;
     }
     else if (headers->getMethod() == HTTPMethod::PUT)
@@ -569,6 +612,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     }
     else if(headers->getMethod() == HTTPMethod::POST)
     {
+        if(handleApiCall(*headers))
+            return;
+
         if(!setKeyInfoFromPath(headers->getPathAsStringPiece()))
             return;
 
@@ -636,6 +682,41 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     }
 }
 
+bool S3Handler::handleApiCall(proxygen::HTTPMessage& headers)
+{
+    const std::string_view path(headers.getPathAsStringPiece());
+    if(path.empty())
+        return false;
+
+    const auto bucketEnd = path.find_first_of('/', 1);
+    if(bucketEnd == std::string::npos)
+        return false;
+
+    const auto bucketName = path.substr(1, bucketEnd);
+
+    if(bucketName!="api-v1-b64be512-4b03-4028-a589-13931942e205/")
+        return false;
+
+    const auto keyStr = path.substr(bucketEnd+1);
+
+    std::string cl = headers.getHeaders().getSingleOrEmpty(
+                    proxygen::HTTP_HEADER_CONTENT_LENGTH);
+    if (cl.empty())
+    {
+        ResponseBuilder(downstream_)
+            .status(500, "Internal error")
+            .body("Content-Length header not set")
+            .sendWithEOM();
+        return true;
+    }
+
+    put_remaining = std::atoll(cl.c_str());
+
+    apiHandler = std::make_unique<ApiHandler>(keyStr, headers.getCookie("ses"));
+
+    return true;
+}
+
 bool S3Handler::setKeyInfoFromPath(const std::string_view path)
 {
     if(path.empty())
@@ -658,10 +739,10 @@ bool S3Handler::setKeyInfoFromPath(const std::string_view path)
         return false;
     }
 
-    const auto bucketName = path.substr(1, bucketEnd);
+    const auto bucketName = path.substr(1, bucketEnd-1);
     const auto keyStr = path.substr(bucketEnd+1);
 
-    const auto bucketId = buckets.getBucket(bucketName);
+    const auto bucketId = getBucket(bucketName);
     if(!bucketId)
     {
         ResponseBuilder(downstream_)
@@ -680,7 +761,7 @@ bool S3Handler::setKeyInfoFromPath(const std::string_view path)
 
 void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& bucket)
 {
-    auto bucketId = buckets.getBucket(bucket);
+    auto bucketId = getBucket(bucket);
     if(!bucketId)
     {
         ResponseBuilder(self->downstream_)
@@ -878,11 +959,11 @@ void S3Handler::commit(proxygen::HTTPMessage& headers)
     });
 }
 
-void S3Handler::getObject(proxygen::HTTPMessage& headers)
+void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& accessKey)
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = self, evb]()
+            [self = self, evb, accessKey]()
             { 
                 unsigned int flags = 0;
                 if(self->request_type == RequestType::HeadObject)
@@ -904,15 +985,26 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers)
 
                 if (res.err != 0)
                 {
-                    evb->runInEventBaseThread([self = self, res]()
+                    evb->runInEventBaseThread([self = self, res, accessKey]()
                                               {
 
                         if(res.err==ENOENT)
                         {
-                             ResponseBuilder(self->downstream_)
-                                .status(404, "Not found")
-                                .body(fmt::format("Object not found"))
-                                .sendWithEOM();
+                            const auto bucketName = getBucketName(self->keyInfo.bucketId);
+                            if(isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket", accessKey))
+                            {
+                                ResponseBuilder(self->downstream_)
+                                    .status(404, "Not found")
+                                    .body(fmt::format("Object not found"))
+                                    .sendWithEOM();
+                            }
+                            else
+                            {
+                                ResponseBuilder(self->downstream_)
+                                    .status(403, "Forbidden")
+                                    .body(fmt::format("Access is forbidden"))
+                                    .sendWithEOM();
+                            }
                         }
                         else if(res.err==ENOTRECOVERABLE)
                         {
@@ -946,13 +1038,27 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers)
 
                 if(res.md5sum.size()==1 && res.md5sum[0] == metadata_tombstone)
                 {
-                    evb->runInEventBaseThread([self = self, res]()
+                    const auto bucketName = getBucketName(self->keyInfo.bucketId);
+                    if(isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket", accessKey))
                     {
-                        ResponseBuilder(self->downstream_)
-                                    .status(404, "Not found")
-                                    .body(fmt::format("Object not found"))
+                        evb->runInEventBaseThread([self = self, res]()
+                        {
+                            ResponseBuilder(self->downstream_)
+                                        .status(404, "Not found")
+                                        .body(fmt::format("Object not found"))
+                                        .sendWithEOM();
+                        });
+                    }
+                    else
+                    {
+                        evb->runInEventBaseThread([self = self, res]()
+                        {
+                            ResponseBuilder(self->downstream_)
+                                    .status(403, "Forbidden")
+                                    .body(fmt::format("Access is forbidden"))
                                     .sendWithEOM();
-                    });
+                        });
+                    }
                     return;
                 }
 
@@ -1071,7 +1177,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                     return;
                 }
 
-                const auto bucketId = self->buckets.getPartialUploadsBucket(self->keyInfo.bucketId);
+                const auto bucketId = getPartialUploadsBucket(self->keyInfo.bucketId);
 
                 auto readRes = self->sfs.read_prepare(make_key({.key = uploadIdToStr(uploadId), .version = 0, 
                     .bucketId = bucketId}), 0);
@@ -1153,7 +1259,7 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
                 data.addString2(uploadVerId);
 
                 std::string md5sum(data.getDataPtr(), data.getDataSize());
-                const auto bucketId = self->buckets.getPartialUploadsBucket(self->keyInfo.bucketId);
+                const auto bucketId = getPartialUploadsBucket(self->keyInfo.bucketId);
 
                 auto rc = self->sfs.write(make_key({.key = uploadIdToStr(uploadId), .version = 0, 
                     .bucketId = bucketId}), nullptr, 0, 0, 0, md5sum,  false, false);
@@ -1174,7 +1280,7 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
    "\t<Bucket>{}</Bucket>"
    "\t<Key>{}</Key>"
    "\t<UploadId>{}-{}</UploadId>"
-"</InitiateMultipartUploadResult>", self->buckets.getBucketName(self->keyInfo.bucketId), self->keyInfo.key, folly::hexlify(uploadIdEnc), folly::hexlify(uploadVerId));
+"</InitiateMultipartUploadResult>", getBucketName(self->keyInfo.bucketId), self->keyInfo.key, folly::hexlify(uploadIdEnc), folly::hexlify(uploadVerId));
 
                                        ResponseBuilder(self->downstream_)
                         .status(200, "OK")
@@ -1193,7 +1299,7 @@ void S3Handler::finalizeMultipartUpload()
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb, multiPartData = this->multiPartUploadData.get()]()
             {
-                const auto bucketId = self->buckets.getPartialUploadsBucket(self->keyInfo.bucketId);
+                const auto bucketId = getPartialUploadsBucket(self->keyInfo.bucketId);
                 auto readRes = self->sfs.read_prepare(
                     make_key({.key = uploadIdToStr(multiPartData->uploadId), .version = 0, 
                     .bucketId = bucketId}), 0);
@@ -1337,7 +1443,7 @@ void S3Handler::finalizeMultipartUpload()
 
                 evb->runInEventBaseThread([self = self, etagBin, numParts = multiPartData->parts.size()]()
                                               {
-                                                const auto bucket = self->buckets.getBucketName(self->keyInfo.bucketId);
+                                                const auto bucket = getBucketName(self->keyInfo.bucketId);
                         ResponseBuilder(self->downstream_)
                             .status(200, "OK")
                             .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -1474,7 +1580,7 @@ int S3Handler::seekMultipartExt(int64_t offset)
 int S3Handler::readMultipartExt(int64_t offset)
 {
     auto partNum = multiPartDownloadData->currExt.start;
-    const auto bucketId = self->buckets.getPartialUploadsBucket(self->keyInfo.bucketId);
+    const auto bucketId = getPartialUploadsBucket(self->keyInfo.bucketId);
     auto res = self->sfs.read_prepare(
         make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
                     .bucketId = bucketId}), 0);
@@ -1537,7 +1643,7 @@ int S3Handler::readNextMultipartExt(int64_t offset)
             assert(ext.obj_offset>=multiPartDownloadData->currOffset );
             ext.obj_offset-=multiPartDownloadData->currOffset;
         }
-        const auto bucketId = self->buckets.getPartialUploadsBucket(self->keyInfo.bucketId);
+        const auto bucketId = getPartialUploadsBucket(self->keyInfo.bucketId);
         const auto rc = self->sfs.read_finalize(
             make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(lastPartNum), .version = 0, 
                     .bucketId = bucketId}), extents, 0);
@@ -1556,7 +1662,7 @@ int S3Handler::finalizeMultiPart()
     if(!multiPartDownloadData || multiPartDownloadData->extIdx == std::string::npos)
         return ENOENT;
 
-    const auto bucketId = self->buckets.getPartialUploadsBucket(self->keyInfo.bucketId);
+    const auto bucketId = getPartialUploadsBucket(self->keyInfo.bucketId);
     auto partNum = multiPartDownloadData->currExt.start;
 
     if(!extents.empty() && extents[0].len>0)
@@ -2018,6 +2124,56 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     size_t body_bytes = body->length();
+
+    if(apiHandler)
+    {
+        done_bytes += body_bytes;
+        bool isFinal = put_remaining.fetch_sub(body->length(), std::memory_order_release) == body->length();
+
+        if(!apiHandler->onBody(body->data(), body->length()))
+        {
+            ResponseBuilder(self->downstream_)
+                .status(500, "Internal error")
+                .body("Write ext error")
+                .sendWithEOM();
+            finished_ = true; 
+            return;
+        }
+
+        if(isFinal)
+        {
+            folly::getGlobalCPUExecutor()->add(
+                [self = this->self, evb]()
+                {
+                    const auto response = self->apiHandler->runRequest();
+
+                    evb->runInEventBaseThread([self = self, response]()
+                                              {
+                        auto statusMesg = response.code == 200 ? "OK" : "Internal error";
+                        
+                        ResponseBuilder respBuilder(self->downstream_);
+                        respBuilder.status(response.code, statusMesg);
+                        respBuilder.body(response.contentType ? response.body : escapeXML(response.body));
+
+                        if(response.setCookie)
+                        {
+                            respBuilder.header(HTTPHeaderCode::HTTP_HEADER_SET_COOKIE, fmt::format("ses={}; SameSite=Strict; HttpOnly", *response.setCookie));
+                        }
+
+                        if(response.contentType)
+                        {
+                            respBuilder.header(HTTPHeaderCode::HTTP_HEADER_CONTENT_TYPE, *response.contentType);
+                        }
+
+                        respBuilder.sendWithEOM();
+
+                        self->finished_ = true; });
+                }
+            );
+        }
+
+        return;
+    }
 
     if(request_type == RequestType::CompleteMultipartUpload)
     {

@@ -11,3 +11,4 @@ builds
 vcpkg
 vcpkg_installed
 /homepage/_site
+*.sqlgenbackup

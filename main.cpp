@@ -2,6 +2,7 @@
  * Copyright Martin Raiber. All Rights Reserved.
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
+#include <exception>
 #include <folly/String.h>
 #include <gflags/gflags.h>
 #include <iostream>
@@ -20,16 +21,19 @@
 #include <proxygen/httpserver/HTTPServer.h>
 #include <proxygen/httpserver/RequestHandlerFactory.h>
 #include <proxygen/lib/http/session/HTTPSessionBase.h>
+#include "Auth.h"
 #include "s3handler.h"
 #include "SingleFileStorage.h"
 #include <chrono>
+#include "DbDao.h"
+#include "ApiHandler.h"
+#include "Buckets.h"
 
 using namespace std::chrono_literals;
 
 DEFINE_int32(http_port, 11000, "Port to listen on with HTTP protocol");
 DEFINE_int32(h2_port, -1, "Port to listen on with HTTP/2 protocol (-1 if disabled)");
 DEFINE_string(ip, "localhost", "IP/Hostname to bind to");
-DEFINE_string(root_key, "", "Secret access key for 'root'");
 DEFINE_int64(data_file_size_limit_mb, 0, "Max data file size (0 for unlimited)");
 DEFINE_int64(data_file_alloc_chunk_size, 512*1024*1024, "Data file chunk allocation size");
 DEFINE_int32(threads,
@@ -47,11 +51,9 @@ DEFINE_bool(with_bucket_versioning, true, "Enable bucket versioning");
 namespace {
 class S3HandlerFactory : public proxygen::RequestHandlerFactory {
    SingleFileStorage sfs;
-   std::string root_key;
  public:
   S3HandlerFactory(SingleFileStorage::SFSOptions sfsoptions)
-   : sfs(std::move(sfsoptions)),
-   root_key(FLAGS_root_key)
+   : sfs(std::move(sfsoptions))
   {
     sfs.start_thread(sfs.get_transid());
   }
@@ -63,15 +65,27 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
   }
 
   proxygen::RequestHandler* onRequest(proxygen::RequestHandler*, proxygen::HTTPMessage*) noexcept override {
-    return new S3Handler(sfs, root_key, FLAGS_server_url, FLAGS_with_bucket_versioning);
+    return new S3Handler(sfs, FLAGS_server_url, FLAGS_with_bucket_versioning);
   }
 };
 }
 
 int main(int argc, char* argv[])
 {
-    folly::init(&argc, &argv, true);
+    folly::Init init(&argc, &argv, true);
     SingleFileStorage::init_mutex();
+    try
+    {
+      DbDao::init();
+      ApiHandler::init();
+      refreshAuthCache();
+      refreshBucketCache();
+    }
+    catch(const std::exception& e)
+    {
+      XLOGF(ERR, "Error during initialization {}: {}", typeid(e).name(), e.what());
+      return 1;
+    }
 
     if(FLAGS_server_url.empty())
       FLAGS_server_url = "http://example.com";
@@ -125,4 +139,5 @@ int main(int argc, char* argv[])
     t.join();    
     return 0;
 }
+
 

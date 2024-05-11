@@ -4,12 +4,14 @@ from pathlib import Path
 from shutil import rmtree
 import subprocess
 import sys
+import time
 import uuid
 import botocore
 import pytest
 import os
 import boto3
 from mypy_boto3_s3.client import S3Client
+import requests
 
 curr_port = 11000
 
@@ -46,13 +48,13 @@ class Hs5Runner:
                 "127.0.0.1",
                 "--http_port",
             str(curr_port),
-            "--root_key",
-            self._root_key,
             "--data_file_size_limit_mb",
             str(data_file_size_limit_mb),
             "--data_file_alloc_chunk_size",
             data_file_alloc_chunk_size,
-            "--logging", "DBG0"]
+            "--logging", "DBG0",
+            "--init_root_password", self._root_key,
+            "--autogen_buckets", "true"]
         
         if self.manual_commit:
             args.append("--manual_commit")
@@ -63,7 +65,16 @@ class Hs5Runner:
             stderr=sys.stderr,
             cwd=workdir
         )
-        pass
+
+        self._wait_for_startup()
+
+    def _wait_for_startup(self) -> None:
+        while True:
+            try:
+                resp = requests.get(self.get_url(), timeout=0.5)
+                break
+            except:
+                time.sleep(0.01)
 
     def stop(self) -> None:
 
@@ -77,6 +88,9 @@ class Hs5Runner:
 
     def get_url(self) -> str:
         return f"http://127.0.0.1:{self._port}"
+    
+    def get_api_url(self) -> str:
+        return f"http://127.0.0.1:{self._port}/api-v1-b64be512-4b03-4028-a589-13931942e205/"
 
     def get_s3_client(self) -> S3Client:
         return boto3.client('s3', endpoint_url=self.get_url(), aws_access_key_id="root", aws_secret_access_key=self._root_key)
@@ -87,7 +101,8 @@ class Hs5Runner:
 
         s3.put_object(Bucket="foo", Key="a711e93e-93b4-4a9e-8a0b-688797470002", Body="")
 
-
+    def get_root_key(self):
+        return self._root_key
 
 @pytest.fixture
 def hs5(tmpdir: Path):

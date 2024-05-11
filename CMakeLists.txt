@@ -10,6 +10,34 @@ add_custom_command(
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
 )
 
+set(APIGEN_SCHEMAS
+  AddUserParams
+  LoginParams
+  LoginResp
+  ApiError
+  AddUserResp
+  )
+
+add_custom_target(apigen)
+foreach(SCHEMA ${APIGEN_SCHEMAS})
+  add_custom_command(
+    TARGET   apigen
+    COMMAND  "quicktype" "-s" "schema" "schemas/${SCHEMA}.json" "-o" "apigen/${SCHEMA}.cpp" "--include-location" "global-include" "--type-style" "pascal-case" "--member-style" "camel-case"  "--enumerator-style" "camel-case" "--no-boost" "--source-style" "multi-source" "--namespace" "Api" "--code-format" "with-struct"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+  )
+  add_custom_command(TARGET apigen
+                   COMMAND ${CMAKE_COMMAND} -E rename
+                   "apigen/Generators.hpp"
+                   "apigen/Generators${SCHEMA}.hpp"
+                   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
+endforeach()
+
+set(SCHEMA_SOURCES "")
+foreach(SCHEMA ${APIGEN_SCHEMAS})
+  if(EXISTS "apigen/${SCHEMA}.cpp")
+    list(APPEND SCHEMA_SOURCES "apigen/${SCHEMA}.cpp")
+  endif()
+endforeach()
 
 add_executable(hs5
     lmdb/midl.cpp
@@ -24,20 +52,32 @@ add_executable(hs5
     crypt.cpp
     File.cpp
     Buckets.cpp
-    DbDao.cpp)
+    DbDao.cpp
+    Policy.cpp
+    Auth.cpp
+    ApiHandler.cpp
+    Session.cpp
+    ${SCHEMA_SOURCES})
+
 
 #set(GCC_COVERAGE_COMPILE_FLAGS "-fcoroutines")
 
 add_definitions(${GCC_COVERAGE_COMPILE_FLAGS})
 
+find_package(fmt CONFIG REQUIRED)
 find_package(folly CONFIG REQUIRED)
 find_package(proxygen CONFIG REQUIRED)
 find_package(zstd CONFIG REQUIRED)
 find_package(expat CONFIG REQUIRED)
 find_package(unofficial-sodium CONFIG REQUIRED)
 find_package(sqlite-cpp-sqlgen CONFIG REQUIRED)
+find_package(nlohmann_json  CONFIG REQUIRED)
 target_link_libraries(hs5 PRIVATE $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static> Folly::folly Folly::folly_deps Folly::follybenchmark Folly::folly_test_util
-  proxygen::proxygen proxygen::proxygencurl proxygen::proxygenhttpserver expat::expat unofficial-sodium::sodium SqliteCppGen::SqliteCppGen)
+  proxygen::proxygen proxygen::proxygencurl proxygen::proxygenhttpserver expat::expat unofficial-sodium::sodium SqliteCppGen::SqliteCppGen nlohmann_json::nlohmann_json fmt::fmt)
 
+
+add_compile_options(-fsanitize=address)
+add_link_options(-fsanitize=address)
 
 target_compile_features(hs5 PUBLIC cxx_std_20)
+

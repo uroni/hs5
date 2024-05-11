@@ -9,11 +9,14 @@
 #include <proxygen/httpserver/RequestHandlerFactory.h>
 #include <proxygen/httpserver/ResponseBuilder.h>
 #include <proxygen/lib/http/HTTPHeaders.h>
+#include <proxygen/lib/http/HTTPMessage.h>
 #include <proxygen/lib/http/ProxygenErrorEnum.h>
 #include <vector>
 #include <thread>
 #include <expat.h>
 #include <openssl/evp.h>
+
+#include "ApiHandler.h"
 
 class ExpatXmlParser
 {
@@ -72,11 +75,10 @@ struct KeyInfoView
 class S3Handler : public proxygen::RequestHandler
 {
     SingleFileStorage &sfs;
-	const std::string& root_key;
     bool withBucketVersioning;
 
 public:
-    S3Handler(SingleFileStorage &sfs, const std::string& root_key, const std::string& serverUrl, bool withBucketVersioning) : sfs(sfs), self(this), root_key(root_key), serverUrl(serverUrl), withBucketVersioning(withBucketVersioning) {}
+    S3Handler(SingleFileStorage &sfs, const std::string& serverUrl, bool withBucketVersioning) : sfs(sfs), self(this), serverUrl(serverUrl), withBucketVersioning(withBucketVersioning) {}
 
     void
     onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexcept override;
@@ -148,7 +150,7 @@ private:
     void listObjects(proxygen::HTTPMessage& headers, const std::string& bucket);
     void listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId);
     void getCommitObject(proxygen::HTTPMessage& headers);
-    void getObject(proxygen::HTTPMessage& headers);
+    void getObject(proxygen::HTTPMessage& headers, const std::string& accessKey);
     void putObject(proxygen::HTTPMessage& headers);
     void putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId);
     void commit(proxygen::HTTPMessage& headers);
@@ -167,6 +169,7 @@ private:
     int readMultipartExt(int64_t offset);
     void readBodyThread(folly::EventBase *evb);
     bool setKeyInfoFromPath(const std::string_view path);
+    bool handleApiCall(proxygen::HTTPMessage& headers);
 
 	enum class RequestType
 	{
@@ -212,5 +215,5 @@ private:
     bool hasBodyThread = false;
     std::queue<BodyObj> bodyQueue;
 
-    Buckets buckets;
+    std::unique_ptr<ApiHandler> apiHandler;
 };

@@ -7,6 +7,9 @@
     "zstd",
     "expat",
     "libsodium",
-    "sqlite-cpp-sqlgen"
+    "sqlite-cpp-sqlgen",
+    "nlohmann-json",
+    "fmt",
+    "argon2"
   ]
 }

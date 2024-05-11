@@ -2,3 +2,4 @@ boto3
 pytest
 pytest-sugar
 boto3-stubs[s3]
+requests
