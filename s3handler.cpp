@@ -70,13 +70,10 @@ std::string hmacSha256Binary(const std::string &key,
     return ret;
 }
 
-std::string currDate()
+std::string getDate(const std::tm& final_tm)
 {
-    time_t t = toTimeT(getCurrentTime<SteadyClock>());
-    struct tm final_tm;
-    gmtime_r(&t, &final_tm);
     std::array<char, 10> buffer;
-    strftime(buffer.data(), buffer.size(), "%Y%m%d", &final_tm);
+    std::strftime(buffer.data(), buffer.size(), "%Y%m%d", &final_tm);
     return buffer.data();
 }
 
@@ -208,15 +205,34 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
         itSignedHeaders->second, hashSha256Hex(payload));
 
     const auto hashedCanonicalRequest = hashSha256Hex(canonicalRequest);
-    const auto requestDateTime =
+    auto requestDateTime =
         headers.getHeaders().getSingleOrEmpty("X-Amz-Date");
+
+    if(requestDateTime.empty())
+    {
+        requestDateTime = headers.getHeaders().getSingleOrEmpty(HTTP_HEADER_DATE);
+    }
+    
+    if(requestDateTime.empty())
+        return std::nullopt;
+
+    std::tm t = {};
+    std::istringstream ss(requestDateTime);
+    ss >> std::get_time(&t, "%Y%m%dT%H%M%SZ");
+    struct tm tm = t;
+    const auto requestTime = timegm(&tm);
+    const auto currTime = std::time(nullptr);
+    const auto timeDist = requestTime > currTime ? (requestTime - currTime ) : (currTime - requestTime);
+
+    if(timeDist > 8*60)
+        return std::nullopt;
 
     const auto stringToSign = folly::sformat(
         "{}\n{}\n{}/{}/{}/{}\n{}", alg_name, requestDateTime,
         credentialScopeToks[1], credentialScopeToks[2], credentialScopeToks[3],
         credentialScopeToks[4], hashedCanonicalRequest);
 
-    const auto dateKey = hmacSha256Binary("AWS4" + secretKey, currDate());
+    const auto dateKey = hmacSha256Binary("AWS4" + secretKey, getDate(t));
     const auto dateRegionKey = hmacSha256Binary(dateKey, credentialScopeToks[2].toString());
     const auto dateRegionServiceKey = hmacSha256Binary(dateRegionKey, credentialScopeToks[3].toString());
     const auto signingKey = hmacSha256Binary(dateRegionServiceKey, "aws4_request");
