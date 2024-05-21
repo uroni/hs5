@@ -43,11 +43,6 @@ using namespace proxygen;
 
 const char* c_commit_uuid = "a711e93e-93b4-4a9e-8a0b-688797470002";
 
-
-const char metadata_object = 0;
-const char metadata_multipart_object = 1;
-const char metadata_tombstone = 2;
-
 std::string hashSha256Hex(const std::string_view payload)
 {
     unsigned char md[SHA256_DIGEST_LENGTH];
@@ -728,7 +723,7 @@ bool S3Handler::handleApiCall(proxygen::HTTPMessage& headers)
 
     put_remaining = std::atoll(cl.c_str());
 
-    apiHandler = std::make_unique<ApiHandler>(keyStr, headers.getCookie("ses"));
+    apiHandler = std::make_unique<ApiHandler>(keyStr, headers.getCookie("ses"), *this);
 
     return true;
 }
@@ -1884,7 +1879,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     int i;
     bool truncated = true;
     size_t keyCount = 0;
-    std::string lastKeyStr;
+    std::string lastOutputKeyStr;
     int skippedKeys = 0;
     for(i=0;i<maxKeys + skippedKeys;++i)
     {
@@ -1913,7 +1908,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
         bool outputKey = true;
 
-        if(keyInfo.key == lastKeyStr)
+        if(keyInfo.key == lastOutputKeyStr)
         {
             ++skippedKeys;
             outputKey = false;
@@ -1924,20 +1919,23 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             outputKey = false;
         }
 
-        lastKeyStr = keyInfo.key;        
-
-        if(!delimiter.empty())
+        if(outputKey && !delimiter.empty())
         {
             const size_t delimPos = keyInfo.key.find_first_of(delimiter[0], prefixSize);
             if(delimPos != std::string::npos)
             {
-                commonPrefixes.push_back(std::string(keyInfo.key.substr(prefixSize, delimPos - prefixSize + 1)));
+                const auto commonKey = std::string(keyInfo.key.substr(prefixSize, delimPos - prefixSize + 1));
+                if(commonKey!=lastOutputKeyStr)                
+                    commonPrefixes.push_back(commonKey);
                 outputKey = false;
+                lastOutputKeyStr = commonKey;
             }
         }
 
         if (outputKey)
         {
+            lastOutputKeyStr = keyInfo.key;
+
             for(const auto& ext: extra_exts)
             {
                 size += ext.len;
@@ -1974,12 +1972,11 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     if(truncated)
     {
         std::string data;
-        sfs.iter_curr_val(nextMarker, data, iter_data);
+        std::string keyBin;
+        sfs.iter_curr_val(keyBin, data, iter_data);
 
-        // Remove bucket name
-        const auto slash_idx = nextMarker.find('/');
-        if(slash_idx != std::string::npos)
-            nextMarker = nextMarker.substr(slash_idx+1);
+        const auto keyInfo = extractKeyInfoView(keyBin);
+        nextMarker = keyInfo.key;
     }
 
     sfs.iter_stop(iter_data);

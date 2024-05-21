@@ -14,12 +14,19 @@ set(APIGEN_SCHEMAS
   AddUserParams
   LoginParams
   LoginResp
-  ApiError
+  HapiError
   AddUserResp
+  ListParams
+  ListResp
   )
 
 add_custom_target(apigen)
 foreach(SCHEMA ${APIGEN_SCHEMAS})
+  add_custom_command(
+    TARGET   apigen
+    COMMAND  "echo" "Generating ${SCHEMA}..."
+    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+  )
   add_custom_command(
     TARGET   apigen
     COMMAND  "quicktype" "-s" "schema" "schemas/${SCHEMA}.json" "-o" "apigen/${SCHEMA}.cpp" "--include-location" "global-include" "--type-style" "pascal-case" "--member-style" "camel-case"  "--enumerator-style" "camel-case" "--no-boost" "--source-style" "multi-source" "--namespace" "Api" "--code-format" "with-struct"

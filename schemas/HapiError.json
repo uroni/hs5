@@ -2,7 +2,7 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",
     "properties": {
-        "error" : {
+        "herror" : {
             "type": "string",
             "enum": ["argon_encoding", 
                 "user_already_exists",
@@ -10,13 +10,19 @@
                 "unknown_password_hashing",
                 "password_wrong",
                 "session_required",
-                "session_not_found"
+                "session_not_found",
+                "no_such_function",
+                "unexpected_continuation_token",
+                "bucket_not_found",
+                "error_starting_listing",
+                "invalid_path",
+                "error_listing_in_iteration"
             ]
         },
         "msg" : {
             "type": "string"
         }        
     },
-    "required": ["error", "msg"]
+    "required": ["herror", "msg"]
 }
 

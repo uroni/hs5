@@ -8,17 +8,25 @@
 #include <folly/String.h>
 #include <nlohmann/json.hpp>
 #include "DbDao.h"
-#include "apigen/Error.hpp"
+#include "apigen/HapiError.hpp"
+#include "apigen/Herror.hpp"
 #include "apigen/GeneratorsAddUserParams.hpp"
 #include "apigen/GeneratorsAddUserResp.hpp"
 #include "apigen/GeneratorsLoginResp.hpp"
 #include "apigen/GeneratorsLoginParams.hpp"
-#include "apigen/GeneratorsApiError.hpp"
+#include "apigen/GeneratorsHapiError.hpp"
+#include "apigen/GeneratorsListResp.hpp"
+#include "apigen/GeneratorsListParams.hpp"
 #include <argon2.h>
 #include <folly/Random.h>
 #include <iostream>
 #include <gflags/gflags.h>
 #include <folly/logging/xlog.h>
+#include "Buckets.h"
+#include "apigen/Object.hpp"
+#include "s3handler.h"
+#include "SingleFileStorage.h"
+#include "folly/ScopeGuard.h"
 
 DEFINE_string(init_root_password, "", "Initial password of root account");
 DEFINE_string(init_root_access_key, "", "Initial name of access key of root account. Default: root");
@@ -66,7 +74,7 @@ void ApiHandler::init()
 
         const auto rc = argon2i_hash_encoded(4, 1<<16, 2, password.data(), password.size(), salt, sizeof(salt), 32, encoded, sizeof(encoded)); 
         if(rc!=ARGON2_OK)
-            throw ApiError(Api::Error::argonEncoding, "Error encoding password via argon2i");
+            throw ApiError(Api::Herror::argonEncoding, "Error encoding password via argon2i");
 
         const auto rootUserId = dao.addUser("root", 0, encoded, 1);
 
@@ -116,11 +124,12 @@ void ApiHandler::init()
     }
 }
 
-ApiHandler::ApiHandler(const std::string_view func, const std::string_view cookieSes)
- : func(func), cookieSes(cookieSes)
+ApiHandler::ApiHandler(const std::string_view func, const std::string_view cookieSes, S3Handler& s3handler)
+ : func(func), cookieSes(cookieSes), s3handler(s3handler)
 {
     if(func!="adduser"
-        && func!="login")
+        && func!="login"
+        && func!="list")
         throw FunctionNotFoundError(fmt::format("Api function \"{}\" not found", func));
 }
 
@@ -147,14 +156,16 @@ ApiHandler::ApiResponse ApiHandler::runRequest()
             auto params = json::parse(body);
 
             if(!params.contains("ses") || !params["ses"].is_string())
-                throw ApiError(Api::Error::sessionRequired);
+                throw ApiError(Api::Herror::sessionRequired);
 
             auto session = getSession(params["ses"].get<std::string>(), cookieSes);
             if(!session)
-                throw ApiError(Api::Error::sessionNotFound);
+                throw ApiError(Api::Herror::sessionNotFound);
             
             if(func=="adduser")
                 resp = addUser(params, *session);
+            else if(func=="list")
+                resp = list(params, *session);
         }
         
     }
@@ -165,7 +176,7 @@ ApiHandler::ApiResponse ApiHandler::runRequest()
     catch(const ApiError& e)
     {
         json resp = e.response();
-        if( e.response().error == Api::Error::sessionNotFound)
+        if( e.response().herror == Api::Herror::sessionNotFound)
             return ApiResponse{.code=401, .body=resp.dump(), .contentType="application/json"};
 
         return ApiResponse{.code=400, .body=resp.dump(), .contentType="application/json"};
@@ -189,10 +200,10 @@ Api::AddUserResp ApiHandler::addUser(const Api::AddUserParams& params, const Api
 
     const auto rc = argon2i_hash_encoded(4, 1<<16, 2, params.password.data(), params.password.size(), salt, sizeof(salt), 32, encoded, sizeof(encoded)); 
     if(rc!=ARGON2_OK)
-        throw ApiError(Api::Error::argonEncoding, "Error encoding password via argon2i");
+        throw ApiError(Api::Herror::argonEncoding, "Error encoding password via argon2i");
 
     if(dao.getUserByName(params.username).exists)
-        throw ApiError(Api::Error::userAlreadyExists, fmt::format("User {} already exists", params.username));
+        throw ApiError(Api::Herror::userAlreadyExists, fmt::format("User {} already exists", params.username));
 
     dao.addUser(params.username, 0, encoded, 0);
 
@@ -203,14 +214,14 @@ std::pair<Api::LoginResp, std::string> ApiHandler::login(const Api::LoginParams&
 {
     auto user = dao.getUserByName(params.username);
     if(!user.exists)
-        throw ApiError(Api::Error::userNotFound, fmt::format("User {} not found", params.username));
+        throw ApiError(Api::Herror::userNotFound, fmt::format("User {} not found", params.username));
 
     if(user.password_state!=0)
-        throw ApiError(Api::Error::unknownPasswordHashing);
+        throw ApiError(Api::Herror::unknownPasswordHashing);
 
     const auto rc = argon2i_verify(user.password.c_str(), params.password.data(), params.password.size());
     if(rc != ARGON2_OK)
-        throw ApiError(Api::Error::passwordWrong, fmt::format("Supplied password for user {} wrong", params.username));
+        throw ApiError(Api::Herror::passwordWrong, fmt::format("Supplied password for user {} wrong", params.username));
 
     char jsSes[16];
     folly::Random::secureRandom(jsSes, sizeof(jsSes));
@@ -226,4 +237,127 @@ std::pair<Api::LoginResp, std::string> ApiHandler::login(const Api::LoginParams&
     newSession(resp.ses, cookieSesHex, std::move(apiSessionStorage));
 
     return std::make_pair(resp, cookieSesHex);
+}
+
+Api::ListResp ApiHandler::list(const Api::ListParams& params, const ApiSessionStorage& sessionStorage)
+{
+    if(params.path.empty() || params.path[0]!='/')
+        throw ApiError(Api::Herror::invalidPath);
+    if(params.path=="/")
+        return listBuckets(params, sessionStorage);
+
+    const auto& path = params.path;
+    const size_t bucketNameEnd = path.find('/', 1);
+
+    const auto bucketName = bucketNameEnd==std::string::npos ? path : path.substr(1, bucketNameEnd);
+    const auto prefix = bucketNameEnd==std::string::npos ? std::string() : path.substr(bucketNameEnd+1);
+
+    if(!prefix.empty() && prefix[prefix.size()-1]!='/')
+        throw ApiError(Api::Herror::invalidPath);
+
+    const auto bucketIdOpt = getBucket(bucketName);
+    if(!bucketIdOpt)
+        throw ApiError(Api::Herror::bucketNotFound);
+    const auto bucketId = *bucketIdOpt;
+    auto& sfs = s3handler.sfs;
+    const auto iterStartVal = make_key({.key = params.continuationToken ? *params.continuationToken : prefix, .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId});
+
+    SingleFileStorage::IterData iterData = {};
+    if(!sfs.iter_start(iterStartVal, false, iterData))
+        throw ApiError(Api::Herror::errorStartingListing);
+
+    auto guard = folly::makeGuard([&] { sfs.iter_stop(iterData); });
+
+    Api::ListResp resp;
+    resp.isTruncated = true;
+    std::string lastOutputKeyStr;
+
+    while(resp.objects.size()<1000)
+    {
+        std::string keyBin, md5sum;
+        int64_t offset, size, last_modified;
+        std::vector<SingleFileStorage::SPunchItem> extra_exts;
+        if(!sfs.iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iterData))
+        {
+            resp.isTruncated = false;
+            break;
+        }
+
+        const auto keyInfo = extractKeyInfoView(keyBin);
+
+        if(!keyInfo.key.starts_with(prefix))
+        {
+            resp.isTruncated = false;
+            break;
+        }
+
+        if(keyInfo.bucketId != bucketId)
+        {
+            resp.isTruncated = false;
+            break;
+        }
+
+        bool outputKey = true;
+
+        if(keyInfo.key == lastOutputKeyStr)
+        {
+            outputKey = false;
+        }
+        else if(md5sum.size() == 1 && md5sum[0] == metadata_tombstone)
+        {
+            outputKey = false;
+        }
+
+        const size_t delimPos = keyInfo.key.find_first_of('/', prefix.size());
+        if(outputKey && delimPos != std::string::npos)
+        {
+            Api::Object obj;
+            obj.name = std::string(keyInfo.key.substr(prefix.size(), delimPos - prefix.size() + 1));
+            obj.size = 0;
+            obj.type = 2;
+            if(obj.name!=lastOutputKeyStr)
+                resp.objects.emplace_back(std::move(obj));
+            outputKey = false;
+            lastOutputKeyStr = obj.name;
+        }
+
+        if (outputKey)
+        {
+            lastOutputKeyStr = keyInfo.key;
+            
+            for(const auto& ext: extra_exts)
+            {
+                size += ext.len;
+            }
+
+            Api::Object obj;
+            obj.name = std::string(keyInfo.key.substr(prefix.size()));
+            obj.size = size;
+            obj.type = 3;
+            resp.objects.emplace_back(std::move(obj));
+        }
+
+        if(!sfs.iter_next(iterData))
+            throw ApiError(Api::Herror::errorListingInIteration);
+    }
+
+    if(resp.isTruncated)
+    {
+        std::string data;
+        std::string keyBin;
+        sfs.iter_curr_val(keyBin, data, iterData);
+
+        const auto keyInfo = extractKeyInfoView(keyBin);
+        resp.nextMarker = keyInfo.key;
+    }
+
+    return resp;
+}
+
+Api::ListResp ApiHandler::listBuckets(const Api::ListParams& params, const ApiSessionStorage& sessionStorage)
+{
+    if(params.continuationToken)
+        throw ApiError(Api::Herror::unexpectedContinuationToken);
+
+    return getBucketNames();
 }

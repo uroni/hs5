@@ -72,12 +72,20 @@ struct KeyInfoView
     int64_t bucketId;
 };
 
+std::string make_key(const std::string_view key, const int64_t bucketId, const int64_t version);
+std::string make_key(const KeyInfo& keyInfo);
+KeyInfoView extractKeyInfoView(const std::string_view key);
+
+const char metadata_object = 0;
+const char metadata_multipart_object = 1;
+const char metadata_tombstone = 2;
+
 class S3Handler : public proxygen::RequestHandler
 {
-    SingleFileStorage &sfs;
-    bool withBucketVersioning;
-
 public:
+    const bool withBucketVersioning;
+    SingleFileStorage &sfs;
+
     S3Handler(SingleFileStorage &sfs, const std::string& serverUrl, bool withBucketVersioning) : sfs(sfs), self(this), serverUrl(serverUrl), withBucketVersioning(withBucketVersioning) {}
 
     void

@@ -4,6 +4,7 @@
  */
  #include "Buckets.h"
 #include "DbDao.h"
+#include "apigen/Object.hpp"
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -101,4 +102,24 @@ std::string getBucketName(int64_t bucketId)
         return {};
 
     return it->second->first;
+}
+
+Api::ListResp getBucketNames()
+{
+    Api::ListResp resp;
+    std::scoped_lock lock{mutex};
+
+    resp.objects.reserve(bucketNames.size());
+
+    for(auto it=bucketNames.begin();it!=bucketNames.end();++it)
+    {
+        Api::Object obj;
+        obj.name = it->second->second;
+        obj.type = 0;
+        resp.objects.emplace_back(std::move(obj));
+    }
+
+    resp.isTruncated = false;
+
+    return resp;
 }

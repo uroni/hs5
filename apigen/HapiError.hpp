@@ -4,14 +4,22 @@
 //
 //  Then include this file, and then do
 //
-//     ApiError.cpp data = nlohmann::json::parse(jsonString);
+//     HapiError.hpp data = nlohmann::json::parse(jsonString);
 
 #pragma once
 
 #include <nlohmann/json.hpp>
 #include "helper.hpp"
 
-#include "Error.hpp"
-#include "ApiError.hpp"
 namespace Api {
+    enum class Herror : int;
+}
+
+namespace Api {
+    using nlohmann::json;
+
+    struct HapiError {
+        Herror herror;
+        std::string msg;
+    };
 }

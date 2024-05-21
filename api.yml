@@ -1,4 +1,4 @@
-openapi: '3.1.0'
+openapi: '3.0.2'
 info:
   title: HS5 API
   version: '1.0'
@@ -6,10 +6,8 @@ paths:
   /api-v1-b64be512-4b03-4028-a589-13931942e205/login:
     post:
       description: Login with username and password to service
-      parameters:
-        -in: query
-         name: data
-         contents:
+      requestBody:
+        content:
           application/json:
             schema:
               $ref: 'schemas/LoginParams.json'
@@ -19,14 +17,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: 'schemas/EmptyResp.json'
+                $ref: 'schemas/LoginResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/adduser:
     post:
       description: Adds a user
-      paramers:
-        -in: query
-         name: data
-         contents:
+      requestBody:
+        content:
           application/json:
             schema:
               $ref: 'schemas/AddUserParams.json'
@@ -36,4 +38,31 @@ paths:
           content:
             application/json:
               schema:
-                $ref: 'schemas/EmptyResp.json'
+                $ref: 'schemas/AddUserResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/list:
+    post:
+      description: List objects at location
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/ListParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/ListResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
