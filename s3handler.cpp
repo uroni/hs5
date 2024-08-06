@@ -103,6 +103,31 @@ std::string uploadIdToStr(int64_t uploadId)
 	return key;
 }
 
+std::string encodeUriAws(const std::string_view str)
+{
+    static char hexValues[] = "0123456789ABCDEF";
+
+    std::string ret;
+    ret.reserve(str.size());
+    for(const auto& ch: str)
+    {
+        if((ch>='A' && ch<='Z') ||
+            (ch>='a' && ch<='z') ||
+            (ch>='0' && ch<='9') ||
+            ch=='-' || ch=='.' || ch=='_' || ch=='~')
+        {
+            ret+=ch;   
+        }
+        else
+        {
+            ret+='%';
+            ret += hexValues[(ch >> 4) & 0xf];
+            ret += hexValues[ch & 0xf];
+        }
+    }
+    return ret;
+}
+
 std::optional<std::string> checkSig(HTTPMessage &headers,
               const folly::StringPiece authorization,
               const std::string_view payload,
@@ -185,15 +210,35 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
         return std::nullopt;
 
     auto params = headers.getQueryParams();
-    std::string canonicalParamStr;
+    
+    std::vector<std::string> encodedParams;
+    encodedParams.reserve(params.size());
+    size_t paramsStrLen=0;
     for (auto param : params)
+    {   
+        try
+        {
+            encodedParams.emplace_back(encodeUriAws(param.first) + "=" +
+                             encodeUriAws(
+                                 folly::uriUnescape<std::string>(param.second, folly::UriEscapeMode::QUERY)));
+            paramsStrLen+=encodedParams.back().size()+1;
+        } catch (const std::exception& ex) {
+            XLOGF(WARN, "Invalid escaped query param: {}", folly::exceptionStr(ex));
+        }
+    }
+
+    std::sort(encodedParams.begin(), encodedParams.end());
+
+    std::string canonicalParamStr;
+    canonicalParamStr.reserve(paramsStrLen);
+    for(const auto param: encodedParams)
     {
         if (!canonicalParamStr.empty())
             canonicalParamStr += "&";
-        canonicalParamStr += param.first + "=" +
-                             folly::uriEscape<std::string>(
-                                 param.second, folly::UriEscapeMode::QUERY);
+        
+        canonicalParamStr += param;
     }
+
     const auto canonicalRequest = folly::sformat(
         "{}\n{}\n{}\n{}\n{}\n{}", headers.getMethodString(),
         headers.getPathAsStringPiece(), canonicalParamStr, canonicalHeaders,
