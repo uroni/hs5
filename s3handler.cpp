@@ -1915,6 +1915,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         }
         else if(md5sum.size() == 1 && md5sum[0] == metadata_tombstone)
         {
+            lastOutputKeyStr = keyInfo.key;
             ++skippedKeys;
             outputKey = false;
         }
