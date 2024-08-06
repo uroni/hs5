@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 from concurrent.futures import thread
 from dataclasses import dataclass
+import datetime
 from distutils.command.upload import upload
 import json
 import logging
@@ -62,6 +63,10 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     assert not list_resp["IsTruncated"]
     objs = list_resp["Contents"]
     assert len(objs) == 1
+    lm = objs[0]["LastModified"]
+    now = datetime.datetime.now(tz=lm.tzinfo)
+    diff = now - lm
+    assert diff.total_seconds() < 60
     assert "Key" in objs[0] and objs[0]["Key"] == "upload.txt"
     assert "Size" in objs[0] and objs[0]["Size"] == len(fdata)
     

@@ -1468,7 +1468,12 @@ void S3Handler::finalizeMultipartUpload()
 
                 std::string etagBin(wdata.getDataPtr() + md5sumOffset, wdata.getDataPtr() + md5sumOffset + MD5_DIGEST_LENGTH);
                 std::string md5sum(wdata.getDataPtr(), wdata.getDataSize());
-                auto writeRes = self->sfs.write_finalize(uploadFPath, {SingleFileStorage::Ext(0, 0, 0)}, 0, md5sum, false, true);
+
+                const auto tnow = std::chrono::system_clock::now();
+                const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   tnow.time_since_epoch()).count();
+
+                auto writeRes = self->sfs.write_finalize(uploadFPath, {SingleFileStorage::Ext(0, 0, 0)}, lastModified, md5sum, false, true);
                 if(writeRes)
                 {
                      evb->runInEventBaseThread([self = self, writeRes]()
@@ -1987,9 +1992,15 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 size += ext.len;
             }
 
+            constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
+            const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(last_modified));
+
+            char datebuf[sizeof("2011-10-08T07:07:09Z")];
+            std::strftime(datebuf, sizeof(datebuf), "%FT%TZ", std::gmtime(&lastModifiedTp));
+
             val_data += fmt::format("\t<Contents>\n"
                 "\t\t<Key>{}</Key>\n"
-                "\t\t<LastModified>2009-10-12T17:50:30.000Z</LastModified>\n"
+                "\t\t<LastModified>{}</LastModified>\n"
                 "\t\t<ETag>\"{}\"</ETag>\n"
                 "\t\t<Size>{}</Size>\n"
                 "\t\t<StorageClass>STANDARD</StorageClass>\n"
@@ -1997,7 +2008,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 "\t\t\t<ID>75aa57f09aa0c8caeab4f8c24e99d10f8e7faeebf76c078efc7c6caea54ba06a</ID>\n"
                 "\t\t\t<DisplayName>mtd@amazon.com</DisplayName>\n"
                 "\t\t</Owner>\n"
-                "\t</Contents>", escapeXML(keyInfo.key), folly::hexlify(md5sum), size);
+                "\t</Contents>", escapeXML(keyInfo.key), lastModifiedTp, folly::hexlify(md5sum), size);
             ++keyCount;
         }
 
@@ -2366,7 +2377,11 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         if(!extents.empty())
             XLOGF(INFO, "Finalize object {} ext off {} len {}", self->keyInfo.key, extents[0].data_file_offset, extents[0].len);
 
-        auto rc = sfs.write_finalize(make_key(self->keyInfo), extents, 0, md5sum, false, true);
+        const auto tnow = std::chrono::system_clock::now();
+        const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   tnow.time_since_epoch()).count();
+
+        auto rc = sfs.write_finalize(make_key(self->keyInfo), extents, lastModified, md5sum, false, true);
 
         if (rc != 0)
         {
