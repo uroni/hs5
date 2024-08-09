@@ -2135,6 +2135,9 @@ void S3Handler::onEgressResumed() noexcept
 
 void S3Handler::readBodyThread(folly::EventBase *evb)
 {
+    if(!self)
+        return;
+        
     std::unique_lock lock{self->bodyMutex};
     bool unpause = false;
     size_t cnt = 0;
