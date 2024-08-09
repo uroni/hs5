@@ -2135,13 +2135,13 @@ void S3Handler::onEgressResumed() noexcept
 
 void S3Handler::readBodyThread(folly::EventBase *evb)
 {
-    if(!self)
+    if(finished_)
         return;
-        
-    std::unique_lock lock{self->bodyMutex};
+
+    std::unique_lock lock{bodyMutex};
     bool unpause = false;
     size_t cnt = 0;
-    while(!self->bodyQueue.empty())
+    while(!bodyQueue.empty())
     {
         if(cnt>2)
         {
@@ -2149,44 +2149,56 @@ void S3Handler::readBodyThread(folly::EventBase *evb)
 
             if(unpause)
             {
-                evb->runInEventBaseThread([self = self]()
+                evb->runInEventBaseThread([self = this->self]()
                 {
+                    if(!self)
+                        return;
+
                     self->downstream_->resumeIngress();
                 });
             }
             folly::getGlobalCPUExecutor()->add(
                 [self = this->self, evb]() mutable
                 {
+                    if(!self)
+                        return;
+
                     self->readBodyThread(evb);
                 });
             return;
         }
 
-        BodyObj obj = std::move(self->bodyQueue.front());
-        self->bodyQueue.pop();
+        BodyObj obj = std::move(bodyQueue.front());
+        bodyQueue.pop();
         lock.unlock();
-        self->onBodyCPU(evb, obj.offset, std::move(obj.body));
+        onBodyCPU(evb, obj.offset, std::move(obj.body));
         if(obj.unpause)
             unpause = true;
         lock.lock();
 
-        if(self->bodyQueue.size()<4 && unpause)
+        if(bodyQueue.size()<4 && unpause)
         {
-            evb->runInEventBaseThread([self = self]()
+            evb->runInEventBaseThread([self = this->self]()
             {
+                if(!self)
+                    return;
+
                 self->downstream_->resumeIngress();
             });
             unpause=false;
         }
     }
-    self->hasBodyThread = false;
+    hasBodyThread = false;
 
     lock.unlock();
 
     if(unpause)
     {
-        evb->runInEventBaseThread([self = self]()
+        evb->runInEventBaseThread([self = this->self]()
         {
+            if(!self)
+                return;
+
             self->downstream_->resumeIngress();
         });
     }
@@ -2348,7 +2360,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         auto rc = sfs.write_ext(curr_ext, reinterpret_cast<const char*>(data), wlen);
         if (rc != 0)
         {
-            evb->runInEventBaseThread([self = self]()
+            evb->runInEventBaseThread([self = this->self]()
                                   {  
                     if(!self)
                         return;
@@ -2388,8 +2400,10 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
         if (rc != 0)
         {
-            evb->runInEventBaseThread([self = self]()
+            evb->runInEventBaseThread([self = this->self]()
                                   {           
+                    if(!self)
+                        return;
                     ResponseBuilder(self->downstream_)
                         .status(500, "Internal error")
                         .body("Write finalization error")
@@ -2404,8 +2418,10 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
             
             if(!b)
             {
-                evb->runInEventBaseThread([self = self]()
+                evb->runInEventBaseThread([self = this->self]()
                                     {           
+                        if(!self)
+                            return;
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body("Commit error")
@@ -2415,8 +2431,10 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
             }
         }
 
-        evb->runInEventBaseThread([self = self, md5sum]()
+        evb->runInEventBaseThread([self = this->self, md5sum]()
                                   {      
+                    if(!self)
+                        return;
                     ResponseBuilder resp(self->downstream_);
                     resp.status(200, "OK");
                     resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, fmt::format("\"{}\"", folly::hexlify(md5sum)));
