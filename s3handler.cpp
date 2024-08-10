@@ -501,6 +501,8 @@ static void multiPartUploadXmlCharData(void *userData,
 
 void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 {
+    headers->dumpMessage(static_cast<int>(folly::LogLevel::DBG0));
+
     if (headers->getMethod() != HTTPMethod::PUT &&
         headers->getMethod() != HTTPMethod::GET &&
         headers->getMethod() != HTTPMethod::HEAD &&
@@ -2390,13 +2392,13 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
 
         if(!extents.empty())
-            XLOGF(INFO, "Finalize object {} ext off {} len {}", self->keyInfo.key, extents[0].data_file_offset, extents[0].len);
+            XLOGF(INFO, "Finalize object {} ext off {} len {}", keyInfo.key, extents[0].data_file_offset, extents[0].len);
 
         const auto tnow = std::chrono::system_clock::now();
         const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
                    tnow.time_since_epoch()).count();
 
-        auto rc = sfs.write_finalize(make_key(self->keyInfo), extents, lastModified, md5sum, false, true);
+        auto rc = sfs.write_finalize(make_key(keyInfo), extents, lastModified, md5sum, false, true);
 
         if (rc != 0)
         {
