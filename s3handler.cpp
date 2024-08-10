@@ -538,12 +538,14 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const auto bucketName = header_path.subpiece(1);
             if(!checkSig(*headers, headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_AUTHORIZATION), "", fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket"))
             {
+                XLOGF(INFO, "Unauthorized list bucket: {}", bucketName);
                 ResponseBuilder(downstream_)
                     .status(401, "Unauthorized")
                     .body("Verifying request authorization failed")
                     .sendWithEOM();
                 return;
             }
+            XLOGF(INFO, "List bucket {}", bucketName);
             listObjects(*headers, std::string(bucketName));
             return;
         }   
@@ -551,6 +553,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         const auto accessKey = checkSig(*headers, headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_AUTHORIZATION), "", fmt::format("arn:aws:s3:::{}", header_path.subpiece(1)), "s3:GetObject");   
         if(!accessKey)
         {
+            XLOGF(INFO, "Get object unauthorized: {}", header_path);
              ResponseBuilder(downstream_)
                     .status(401, "Unauthorized")
                     .body("Verifying request authorization failed")
@@ -560,6 +563,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         if(header_path.find(c_commit_uuid)!=std::string::npos)
         {
+            XLOGF(INFO, "Getting commit object");
             getCommitObject(*headers);
             return;
         }
@@ -567,6 +571,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         if(!setKeyInfoFromPath(header_path))
             return;
         
+        XLOGF(INFO, "Get object {}", header_path);
         getObject(*headers, *accessKey);
         return;
     }
@@ -624,6 +629,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             if(uploadId<0 || uploadVerId.empty())
             {
+                XLOGF(INFO, "UploadId param not set in multi-part upload of {}", headers->getPathAsStringPiece());
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
                     .body("uploadId parameter not set")
@@ -633,6 +639,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             if(partNumber<=0 || partNumber>10000)
             {
+                XLOGF(INFO, "PartNumber {} out of range in multi-part upload of {}", partNumber, headers->getPathAsStringPiece());
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
                     .body("partNumber parameter out of range")
@@ -666,6 +673,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         if(!setKeyInfoFromPath(headers->getPathAsStringPiece()))
             return;
 
+        XLOGF(INFO, "Delete object {}", headers->getPathAsStringPiece());
         deleteObject(*headers);
     }
     else if(headers->getMethod() == HTTPMethod::POST)
@@ -680,6 +688,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         
         if(headers->getQueryStringAsStringPiece() == uploadsStr)
         {
+            XLOGF(INFO, "Multi-part upload of {}", keyInfo.key);
             createMultipartUpload(*headers);
             return;
         }
@@ -779,6 +788,7 @@ bool S3Handler::setKeyInfoFromPath(const std::string_view path)
 {
     if(path.empty())
     {
+        XLOGF(INFO, "Path empty when getting key info");
         ResponseBuilder(downstream_)
                     .status(500, "Internal error")
                     .body("Path is empty")
@@ -790,6 +800,7 @@ bool S3Handler::setKeyInfoFromPath(const std::string_view path)
 
     if(bucketEnd == std::string::npos)
     {
+        XLOGF(INFO, "Could not find bucket in path {}", path);
         ResponseBuilder(downstream_)
                     .status(500, "Internal error")
                     .body("Could not find bucket in path")
@@ -803,6 +814,7 @@ bool S3Handler::setKeyInfoFromPath(const std::string_view path)
     const auto bucketId = getBucket(bucketName);
     if(!bucketId)
     {
+        XLOGF(INFO, "Bucket of {} not found", path);
         ResponseBuilder(downstream_)
                     .status(404, "Not found")
                     .body("Bucket not found")
@@ -1043,6 +1055,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
                 if (res.err != 0)
                 {
+                    XLOGF(INFO, "Object {} err {}", self->keyInfo.key, res.err);
                     evb->runInEventBaseThread([self = self, res, accessKey]()
                                               {
 
