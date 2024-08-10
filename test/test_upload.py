@@ -50,11 +50,25 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
         s3_client.put_object(Bucket="testbucket", Key="upload.txt", Body=upload_file)
 
+    obj_info = s3_client.head_object(Bucket="testbucket", Key="upload.txt")
+    assert obj_info["ContentLength"] == len(fdata)
+
+    obj_range = s3_client.get_object(Bucket="testbucket", Key="upload.txt", Range="bytes=0-9")
+    bdata = obj_range["Body"].read()
+    assert len(bdata) == 10
+    assert bdata == fdata[:10]
+
+    obj_range = s3_client.get_object(Bucket="testbucket", Key="upload.txt", Range="bytes=10-19")
+    assert obj_range["Body"].read() == fdata[10:20]
+
     dl_path = tmp_path / "download.txt"
     s3_client.download_file("testbucket", "upload.txt", str(dl_path))
+    assert os.stat(dl_path).st_size == len(fdata)
 
     with open(dl_path, "rb") as f:
-        assert f.read() == fdata
+        rdata = f.read()
+        assert len(rdata) == len(fdata)
+        assert rdata == fdata
 
     hs5.commit_storage(s3_client)
 

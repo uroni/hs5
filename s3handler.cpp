@@ -571,7 +571,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         if(!setKeyInfoFromPath(header_path))
             return;
         
-        XLOGF(INFO, "Get object {}", header_path);
+        XLOGF(INFO, "Get object {} range {}", header_path, headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_RANGE));
         getObject(*headers, *accessKey);
         return;
     }
@@ -1046,11 +1046,53 @@ void S3Handler::commit(proxygen::HTTPMessage& headers)
     });
 }
 
+std::pair<int64_t, int64_t> parseRange(const std::string_view range, int64_t fileSize)
+{
+    int64_t start = -1;
+    int64_t end = -1;
+    if(!range.starts_with("bytes="))
+        return std::make_pair(start, end);
+
+    const auto byteRange = range.substr(6);
+    const auto dashPos = byteRange.find("-");
+    if(dashPos==std::string::npos)
+        return std::make_pair(start, end);
+
+    try
+    {
+        auto startStr = std::string(byteRange.substr(0, dashPos));
+        auto endStr = std::string(byteRange.substr(dashPos+1));
+        if(startStr.empty() && !endStr.empty())
+        {
+            start = 0;
+            end = fileSize - std::stoll(endStr);
+        }
+        else if(!startStr.empty() && endStr.empty())
+        {
+            start =  std::stoll(startStr);
+            end = fileSize;
+        }
+        else
+        {
+            start = std::stoll(startStr);
+            end = std::stoll(endStr) + 1;
+        }
+    }
+    catch(const std::exception&)
+    {
+        XLOGF(INFO, "Error parsing range header {}", range);
+        start = -1;
+        return std::make_pair(start, end);
+    }
+    
+    return std::make_pair(start, end);
+}
+
 void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& accessKey)
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = self, evb, accessKey]()
+            [self = self, evb, accessKey, range=headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_RANGE)]()
             { 
                 unsigned int flags = 0;
                 if(self->request_type == RequestType::HeadObject)
@@ -1156,21 +1198,33 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                 const auto md5sum = (!res.md5sum.empty() && res.md5sum[0] == metadata_object ) ? res.md5sum.substr(1) : "";
                 #endif
 
-                evb->runInEventBaseThread([self = self, total_len = res.total_len, md5sum]()
+                auto [rangeStart, rangeEnd] = parseRange(range, res.total_len);
+
+                if(rangeStart<0 || rangeEnd<0 || rangeStart>=rangeEnd || rangeEnd > res.total_len)
+                {
+                    rangeStart = 0;
+                    rangeEnd = res.total_len;
+                }
+
+                evb->runInEventBaseThread([self = self, rangeStart, rangeEnd, md5sum]()
                                               {
                     auto resp = std::move(ResponseBuilder(self->downstream_).status(200, "OK")
-                        .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(total_len))
-                        .header(proxygen::HTTP_HEADER_ETAG, self->getEtag(md5sum)));
+                        .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(rangeEnd-rangeStart))
+                        .header(proxygen::HTTP_HEADER_ETAG, self->getEtag(md5sum))
+                        .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "binary/octet-stream"));
 
                     if(self->request_type==RequestType::HeadObject)
                     {
-                        XLOGF(DBG0, "Content length {} bytes for readObject HEAD of {}", total_len, self->keyInfo.key);
-                        resp.sendWithEOM();
+                        XLOGF(DBG0, "Content length {} bytes for readObject HEAD of {}", rangeEnd, self->keyInfo.key);
+                        // .send() sets the content length to the body length (which is zero)
+                        auto respHeaders = *resp.getHeaders();
+                        self->downstream_->sendHeaders(respHeaders);
+                        self->downstream_->sendEOM();
                         return;
                     }
                     else
                     {
-                        XLOGF(DBG0, "Content length {} bytes for readObject GET of {}", total_len, self->keyInfo.key);
+                        XLOGF(DBG0, "Content length {} bytes for readObject GET of {}", rangeEnd, self->keyInfo.key);
                         resp.send();
                     }
                                               });
@@ -1179,9 +1233,10 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     return;
 
                 self->extents = std::move(res.extents);
-                self->put_remaining.store(res.total_len, std::memory_order_relaxed);
+                self->done_bytes = rangeStart;
+                self->put_remaining.store(rangeEnd, std::memory_order_relaxed);
 
-                self->readObject(evb, std::move(self), 0);
+                self->readObject(evb, std::move(self), rangeStart);
             });
 }
 
@@ -1836,9 +1891,9 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
         
         int64_t ext_offset = offset - it->obj_offset;
         auto curr_ext = SingleFileStorage::Ext(it->obj_offset + ext_offset, it->data_file_offset + ext_offset, it->len - ext_offset);
-        int64_t rlen = std::min(static_cast<int64_t>(bufsize), curr_ext.len);
+        int64_t rlen = std::min(static_cast<int64_t>(bufsize), put_remaining.load(std::memory_order_relaxed) - offset);
 
-        auto res = sfs.read_ext(curr_ext, 0, bufsize, buf);
+        auto res = sfs.read_ext(curr_ext, 0, static_cast<size_t>(rlen), buf);
 
         if(res.err!=0)
         {
@@ -1852,17 +1907,17 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
             has_error = true;
             break;
         }
-
-        offset += res.buf->length();
     
         if(multiPartDownloadData)
         {
-            XLOGF(DBG0, "Sending body len {} of fpath {} total_len {} part {}", res.buf->length(), self->keyInfo.key, put_remaining.load(std::memory_order_relaxed), multiPartDownloadData->currExt.start);
+            XLOGF(DBG0, "Sending body off {} len {} of fpath {} total_len {} part {}", offset, res.buf->length(), self->keyInfo.key, put_remaining.load(std::memory_order_relaxed), multiPartDownloadData->currExt.start);
         }
         else
         {
-            XLOGF(DBG0, "Sending body len {} of fpath {} total_len {}", res.buf->length(), self->keyInfo.key, put_remaining.load(std::memory_order_relaxed));
+            XLOGF(DBG0, "Sending body off {} len {} of fpath {} total_len {}", offset, res.buf->length(), self->keyInfo.key, put_remaining.load(std::memory_order_relaxed));
         }
+
+        offset += res.buf->length();
 
         evb->runInEventBaseThread([self = self, body = std::move(res.buf), total_len = put_remaining.load(std::memory_order_relaxed)]() mutable
                                       {
@@ -1870,6 +1925,7 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
                 return;
 
             self->done_bytes += body->length();
+            XLOGF(DBG0, "Done bytes {}", self->done_bytes);
             auto resp = std::move(ResponseBuilder(self->downstream_).body(std::move(body)));
             if(self->done_bytes == total_len)
             {

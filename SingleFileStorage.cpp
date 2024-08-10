@@ -2257,7 +2257,9 @@ SingleFileStorage::ReadExtResult SingleFileStorage::read_ext(const Ext& ext, con
 
 	buf.postallocate(read);
 	
-	return ReadExtResult{0, buf.move()};
+	auto ret = ReadExtResult{0, buf.move()};
+	assert(ret.buf->length()==read);
+	return ret;
 }
 
 int SingleFileStorage::read_finalize(const std::string& fn, const std::vector<Ext>& extents, unsigned int flags)
