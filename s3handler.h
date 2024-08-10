@@ -178,6 +178,7 @@ private:
     void readBodyThread(folly::EventBase *evb);
     bool setKeyInfoFromPath(const std::string_view path);
     bool handleApiCall(proxygen::HTTPMessage& headers);
+    void sendExpected(proxygen::HTTPMessage& headers);
 
 	enum class RequestType
 	{
