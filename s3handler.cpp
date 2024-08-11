@@ -1048,9 +1048,14 @@ void S3Handler::commit(proxygen::HTTPMessage& headers)
 
 std::pair<int64_t, int64_t> parseRange(const std::string_view range, int64_t fileSize)
 {
+    if(range.empty())
+        return std::make_pair(0, fileSize);
+
     int64_t start = -1;
     int64_t end = -1;
     if(!range.starts_with("bytes="))
+        return std::make_pair(start, end);
+    if(range.find(',')!=std::string::npos)
         return std::make_pair(start, end);
 
     const auto byteRange = range.substr(6);
@@ -1198,17 +1203,23 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                 const auto md5sum = (!res.md5sum.empty() && res.md5sum[0] == metadata_object ) ? res.md5sum.substr(1) : "";
                 #endif
 
-                auto [rangeStart, rangeEnd] = parseRange(range, res.total_len);
+                const auto [rangeStart, rangeEnd] = parseRange(range, res.total_len);
 
-                if(rangeStart<0 || rangeEnd<0 || rangeStart>=rangeEnd || rangeEnd > res.total_len)
+                if(!range.empty() && 
+                    (rangeStart<0 || rangeEnd<0 || rangeStart>=rangeEnd || rangeEnd > res.total_len) )
                 {
-                    rangeStart = 0;
-                    rangeEnd = res.total_len;
+                    evb->runInEventBaseThread([self = self, res]()
+                        {
+                            ResponseBuilder(self->downstream_)
+                                    .status(416, "Range Not Satisfiable")
+                                    .sendWithEOM();
+                        });
+                    return;
                 }
 
-                evb->runInEventBaseThread([self = self, rangeStart, rangeEnd, md5sum]()
+                evb->runInEventBaseThread([self = self, hasRange=!range.empty(), rangeStart, rangeEnd, md5sum]()
                                               {
-                    auto resp = std::move(ResponseBuilder(self->downstream_).status(200, "OK")
+                    auto resp = std::move(ResponseBuilder(self->downstream_).status(hasRange ? 206 : 200, hasRange ? "Partial Content" : "OK")
                         .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(rangeEnd-rangeStart))
                         .header(proxygen::HTTP_HEADER_ETAG, self->getEtag(md5sum))
                         .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "binary/octet-stream"));
