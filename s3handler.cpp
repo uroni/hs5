@@ -647,8 +647,6 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            sendExpected(*headers);
-
             XLOGF(DBG0, "PutObjectPart {} part {} uploadId {} length {}", headers->getPathAsStringPiece(), partNumber, uploadId, remaining);
 
             putObjectPart(*headers, partNumber, uploadId, uploadVerId);
@@ -689,8 +687,6 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
 
         const std::string uploadsStr = "uploads";
-
-        sendExpected(*headers);
         
         if(headers->getQueryStringAsStringPiece() == uploadsStr)
         {
@@ -788,17 +784,6 @@ bool S3Handler::handleApiCall(proxygen::HTTPMessage& headers)
     apiHandler = std::make_unique<ApiHandler>(keyStr, headers.getCookie("ses"), *this);
 
     return true;
-}
-
-void S3Handler::sendExpected(proxygen::HTTPMessage& headers)
-{
-    const auto expect = headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_EXPECT);
-    if(!expect.empty() && expect=="100-continue")
-    {
-        ResponseBuilder(downstream_)
-        .status(100, "Continue")
-        .send();
-    }
 }
 
 bool S3Handler::setKeyInfoFromPath(const std::string_view path)
