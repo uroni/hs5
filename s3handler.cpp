@@ -658,6 +658,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             XLOGF(DBG0, "PutObject {} COMMIT", headers->getPathAsStringPiece());
 
             commit(*headers);
+            // Don't handle EOM
+            request_type = RequestType::HeadObject;
             return;
         }
 
@@ -2302,7 +2304,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
     if(apiHandler)
     {
         done_bytes += body_bytes;
-        bool isFinal = put_remaining.fetch_sub(body->length(), std::memory_order_release) == body->length();
+        put_remaining.fetch_sub(body->length(), std::memory_order_release);
 
         if(!apiHandler->onBody(body->data(), body->length()))
         {
@@ -2314,45 +2316,13 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
             return;
         }
 
-        if(isFinal)
-        {
-            folly::getGlobalCPUExecutor()->add(
-                [self = this->self, evb]()
-                {
-                    const auto response = self->apiHandler->runRequest();
-
-                    evb->runInEventBaseThread([self = self, response]()
-                                              {
-                        auto statusMesg = response.code == 200 ? "OK" : "Internal error";
-                        
-                        ResponseBuilder respBuilder(self->downstream_);
-                        respBuilder.status(response.code, statusMesg);
-                        respBuilder.body(response.contentType ? response.body : escapeXML(response.body));
-
-                        if(response.setCookie)
-                        {
-                            respBuilder.header(HTTPHeaderCode::HTTP_HEADER_SET_COOKIE, fmt::format("ses={}; SameSite=Strict; HttpOnly", *response.setCookie));
-                        }
-
-                        if(response.contentType)
-                        {
-                            respBuilder.header(HTTPHeaderCode::HTTP_HEADER_CONTENT_TYPE, *response.contentType);
-                        }
-
-                        respBuilder.sendWithEOM();
-
-                        self->finished_ = true; });
-                }
-            );
-        }
-
         return;
     }
 
     if(request_type == RequestType::CompleteMultipartUpload)
     {
         done_bytes += body_bytes;
-        bool isFinal = put_remaining.fetch_sub(body->length(), std::memory_order_release) == body->length();
+        const auto isFinal = put_remaining.fetch_sub(body->length(), std::memory_order_release) == body->length();
         auto rc = XML_Parse(xmlBody.parser, reinterpret_cast<const char*>(body->data()), body->length(), isFinal ? 1 : 0);
         if(rc!=XML_STATUS_OK)
         {                 
@@ -2363,12 +2333,6 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
             finished_ = true; 
             return;
         }
-
-        if(isFinal)
-        {
-            finalizeMultipartUpload();
-        }
-
         return;
     }
 
@@ -2406,6 +2370,90 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         {
             return;
         }
+    }
+
+    if(!body)
+    {
+        if(put_remaining!=0)
+        {
+            evb->runInEventBaseThread([self = this]()
+                                {           
+                    if(!self)
+                        return;
+                    ResponseBuilder(self->downstream_)
+                        .status(500, "Internal error")
+                        .body("Expecting more data")
+                        .sendWithEOM();
+                    self->finished_ = true; 
+                                });
+            return;
+        }
+
+        std::string md5sum;
+        md5sum.resize(MD5_DIGEST_LENGTH+1);
+        md5sum[0] = metadata_object;
+        EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&md5sum[1]), nullptr);
+
+
+        if(!extents.empty())
+            XLOGF(INFO, "Finalize object {} ext off {} len {}", keyInfo.key, extents[0].data_file_offset, extents[0].len);
+        else 
+            XLOGF(INFO, "Finalize empty object {}", keyInfo.key);
+
+        const auto tnow = std::chrono::system_clock::now();
+        const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                tnow.time_since_epoch()).count();
+
+        auto rc = sfs.write_finalize(make_key(keyInfo), extents, lastModified, md5sum, false, true);
+
+        if (rc != 0)
+        {
+            evb->runInEventBaseThread([self = this]()
+                                {           
+                    if(!self)
+                        return;
+                    ResponseBuilder(self->downstream_)
+                        .status(500, "Internal error")
+                        .body("Write finalization error")
+                        .sendWithEOM();
+                    self->finished_ = true; });
+            return;
+        }
+
+        if(!sfs.get_manual_commit())
+        {
+            bool b = sfs.commit(false, -1);
+            
+            if(!b)
+            {
+                evb->runInEventBaseThread([self = this]()
+                                    {           
+                        if(!self)
+                            return;
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body("Commit error")
+                            .sendWithEOM();
+                        self->finished_ = true; });
+                return;
+            }
+        }
+
+        evb->runInEventBaseThread([self = this, md5sum]()
+                                {      
+                    if(!self)
+                        return;
+                    ResponseBuilder resp(self->downstream_);
+                    resp.status(200, "OK");
+                    resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, fmt::format("\"{}\"", folly::hexlify(md5sum)));
+                    if(self->keyInfo.version != 0)
+                    {
+                        resp.header("x-amz-version-id", self->sfs.encrypt_id(self->keyInfo.version));
+                        
+                    }
+                    resp.sendWithEOM();
+                    self->finished_ = true; });
+        return;
     }
 
     if(extents.size()>1)
@@ -2470,74 +2518,96 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
     assert(data_size == 0);
 
-    if (put_remaining.fetch_sub(body->length(), std::memory_order_release) == body->length())
+    put_remaining.fetch_sub(body->length(), std::memory_order_release);
+}
+
+void S3Handler::onEOM() noexcept
+{
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+
+    if(apiHandler)
     {
-        std::string md5sum;
-        md5sum.resize(MD5_DIGEST_LENGTH+1);
-        md5sum[0] = metadata_object;
-        EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&md5sum[1]), nullptr);
+        if(finished_)
+            return;
 
-
-        if(!extents.empty())
-            XLOGF(INFO, "Finalize object {} ext off {} len {}", keyInfo.key, extents[0].data_file_offset, extents[0].len);
-
-        const auto tnow = std::chrono::system_clock::now();
-        const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                   tnow.time_since_epoch()).count();
-
-        auto rc = sfs.write_finalize(make_key(keyInfo), extents, lastModified, md5sum, false, true);
-
-        if (rc != 0)
+        if(put_remaining!=0)
         {
-            evb->runInEventBaseThread([self = this->self]()
-                                  {           
-                    if(!self)
-                        return;
-                    ResponseBuilder(self->downstream_)
-                        .status(500, "Internal error")
-                        .body("Write finalization error")
-                        .sendWithEOM();
-                    self->finished_ = true; });
+            ResponseBuilder(self->downstream_)
+                .status(500, "Internal error")
+                .body("Expecting more data")
+                .sendWithEOM();
+            finished_ = true; 
             return;
         }
 
-        if(!sfs.get_manual_commit())
-        {
-            bool b = sfs.commit(false, -1);
-            
-            if(!b)
+        folly::getGlobalCPUExecutor()->add(
+            [self = this->self, evb]()
             {
-                evb->runInEventBaseThread([self = this->self]()
-                                    {           
-                        if(!self)
-                            return;
-                        ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
-                            .body("Commit error")
-                            .sendWithEOM();
-                        self->finished_ = true; });
-                return;
+                const auto response = self->apiHandler->runRequest();
+
+                evb->runInEventBaseThread([self = self, response]()
+                                            {
+                    auto statusMesg = response.code == 200 ? "OK" : "Internal error";
+                    
+                    ResponseBuilder respBuilder(self->downstream_);
+                    respBuilder.status(response.code, statusMesg);
+                    respBuilder.body(response.contentType ? response.body : escapeXML(response.body));
+
+                    if(response.setCookie)
+                    {
+                        respBuilder.header(HTTPHeaderCode::HTTP_HEADER_SET_COOKIE, fmt::format("ses={}; SameSite=Strict; HttpOnly", *response.setCookie));
+                    }
+
+                    if(response.contentType)
+                    {
+                        respBuilder.header(HTTPHeaderCode::HTTP_HEADER_CONTENT_TYPE, *response.contentType);
+                    }
+
+                    respBuilder.sendWithEOM();
+
+                    self->finished_ = true; });
             }
+        );
+        return;
+    }
+
+    if(request_type == RequestType::CompleteMultipartUpload)
+    {
+        if(finished_)
+            return;
+
+        if(put_remaining!=0)
+        {
+            ResponseBuilder(self->downstream_)
+                .status(500, "Internal error")
+                .body("Expecting more data")
+                .sendWithEOM();
+            finished_ = true; 
+            return;
         }
 
-        evb->runInEventBaseThread([self = this->self, md5sum]()
-                                  {      
-                    if(!self)
-                        return;
-                    ResponseBuilder resp(self->downstream_);
-                    resp.status(200, "OK");
-                    resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, fmt::format("\"{}\"", folly::hexlify(md5sum)));
-                    if(self->keyInfo.version != 0)
-                    {
-                        resp.header("x-amz-version-id", self->sfs.encrypt_id(self->keyInfo.version));
-                        
-                    }
-                    resp.sendWithEOM();
-                    self->finished_ = true; });
+        finalizeMultipartUpload();
+        return;
+    }
+    else if(request_type == RequestType::PutObject)
+    {
+        if(finished_)
+            return;
+
+        std::scoped_lock lock{bodyMutex};
+        bodyQueue.emplace(BodyObj{.offset = done_bytes, .body = {}, .unpause = false});
+
+        if(!hasBodyThread)
+        {
+            hasBodyThread = true;
+            folly::getGlobalCPUExecutor()->add(
+                [self = this->self, evb]() mutable
+                {
+                    self->readBodyThread(evb);
+                });
+        }
     }
 }
-
-void S3Handler::onEOM() noexcept {}
 
 void S3Handler::onUpgrade(UpgradeProtocol /*protocol*/) noexcept
 {

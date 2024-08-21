@@ -119,6 +119,23 @@ def add_objects(tmp_path: Path, hs5: Hs5Runner) -> set[str]:
 
     return ul_files
 
+def test_put_empty(tmp_path: Path, hs5: Hs5Runner):
+    fdata = ""
+    with open(tmp_path / "upload.txt", "w") as upload_file:
+        upload_file.write(fdata)
+    
+    s3_client = hs5.get_s3_client()
+    with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
+        s3_client.put_object(Bucket="testbucket", Key="upload.txt", Body=upload_file)
+
+    obj_info = s3_client.head_object(Bucket="testbucket", Key="upload.txt")
+    assert obj_info["ContentLength"] == len(fdata)
+
+    dl_path = tmp_path / "download.txt"
+    s3_client.download_file("testbucket", "upload.txt", str(dl_path))
+    assert os.stat(dl_path).st_size == len(fdata)
+
+
 def test_multipage_list(tmp_path: Path, hs5: Hs5Runner):
 
     ul_files = add_objects(tmp_path, hs5)
