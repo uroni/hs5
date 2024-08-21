@@ -1299,7 +1299,10 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                 }
 
                 std::lock_guard lock(self->extents_mutex);
-                self->extents = std::move(res.extents);
+                
+                if(!res.extents.empty())
+                    self->extents = std::move(res.extents);
+
                 self->extents_cond.notify_all();
             });
 }
@@ -2379,19 +2382,6 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
 void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr<folly::IOBuf> body)
 {
-    {
-        std::unique_lock lock(extents_mutex);
-        while (extents.empty() && !finished_)
-        {
-            extents_cond.wait(lock);
-        }
-
-        if (finished_)
-        {
-            return;
-        }
-    }
-
     if(!body)
     {
         if(put_remaining!=0)
@@ -2474,6 +2464,19 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
                     resp.sendWithEOM();
                     self->finished_ = true; });
         return;
+    }
+
+    {
+        std::unique_lock lock(extents_mutex);
+        while (extents.empty() && !finished_)
+        {
+            extents_cond.wait(lock);
+        }
+
+        if (finished_)
+        {
+            return;
+        }
     }
 
     if(extents.size()>1)

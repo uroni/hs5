@@ -17,7 +17,7 @@ curr_port = 11000
 
 class Hs5Runner:
     manual_commit = False
-    with_heaptrack = True
+    with_heaptrack = False
 
     def __init__(self, workdir : Path, data_file_size_limit_mb: int) -> None:
         global curr_port
