@@ -693,30 +693,10 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 
 	unsigned int mdb_flags = MDB_NOSUBDIR;
 
-	with_rewrite = true;
-
-    std::error_code ec;
-	if ( (db_path != options.data_path
-		|| use_dm_cache) 
-		&& !std::filesystem::exists("/var/urbackup/sfs_with_readahead", ec) )
-	{
-		mdb_flags |= MDB_NORDAHEAD;
-	}
-
-	if (db_path != options.data_path
-		|| std::filesystem::exists("/var/urbackup/sfs_no_rewrite", ec))
-	{
-		with_rewrite = false;
-	}
-	if (std::filesystem::exists("/var/urbackup/sfs_with_rewrite", ec))
-	{
-		with_rewrite = true;
-	}
-
-	if (std::filesystem::exists("/var/urbackup/sfs_use_lmdb_writemap", ec))
-	{
-		mdb_flags |= MDB_WRITEMAP;
-	}
+	// TODO: Make this configurable
+	with_rewrite = false;
+	mdb_flags |= MDB_NORDAHEAD;
+	//mdb_flags |= MDB_WRITEMAP;
 
 	rc = mdb_env_open(db_env, index_lmdb_fn.c_str(), mdb_flags, 0664);
 
