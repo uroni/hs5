@@ -342,7 +342,7 @@ int	mdb_cmp_s3key(const MDB_val *a, const MDB_val *b)
     const auto keyInfoB = extractKeyInfoView(keyB);
 
     if(keyInfoA.bucketId != keyInfoB.bucketId)
-        return keyInfoA.bucketId < keyInfoB.bucketId;
+        return keyInfoA.bucketId < keyInfoB.bucketId ? 1 : -1;
 
     int cmp = keyInfoA.key.compare(keyInfoB.key);
     if(cmp!=0)
@@ -1713,7 +1713,7 @@ int S3Handler::seekMultipartExt(int64_t offset)
         
         if(numSeek>multiPartDownloadData->currExt.len)
         {
-            seekOffset+=multiPartDownloadData->currExt.size*multiPartDownloadData->currExt.size;
+            seekOffset+=multiPartDownloadData->currExt.size*multiPartDownloadData->currExt.len;
             XLOGF(DBG0, "Seeking forward to next multi-part ext seekOffset {}", seekOffset);            
             ++multiPartDownloadData->extIdx;
             if(multiPartDownloadData->extIdx>=multiPartDownloadData->exts.size())
@@ -1753,10 +1753,15 @@ int S3Handler::readMultipartExt(int64_t offset)
 
     multiPartDownloadData->currOffset = offset;
 
+    int64_t size = 0;
+
     for(auto& ext: extents)
     {
         ext.obj_offset+=offset;
+        size += ext.len;
     }
+
+    XLOGF(DBG0, "Multi-part key {} ext offset {} partNum {} extents {} size {}", self->keyInfo.key, offset, partNum, extents.size(), size);
 
     return 0;
 }
@@ -1784,9 +1789,9 @@ int S3Handler::readNextMultipartExt(int64_t offset)
 
     while(multiPartDownloadData->currExt.len<=0)
     {
-        if(multiPartDownloadData->extIdx >= multiPartDownloadData->exts.size())
+        if(multiPartDownloadData->extIdx + 1 >= multiPartDownloadData->exts.size())
         {
-            XLOGF(WARN, "Out of multi-part parts size {}", multiPartDownloadData->exts.size());
+            XLOGF(WARN, "Out of multi-part parts size {} while seeking to offset {}", multiPartDownloadData->exts.size(), offset);
             return ENOENT;
         }
         
@@ -1883,7 +1888,7 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
                 const int rc = readNextMultipartExt(offset);
                 if(rc)
                 {
-                    XLOGF(WARN, "Error reading next part code {}", rc);
+                    XLOGF(WARN, "Error reading next part code {} while reading object {}", rc, self->keyInfo.key);
                     evb->runInEventBaseThread([self = self]() mutable
                                       {
                         self->downstream_->sendAbort();
