@@ -268,6 +268,26 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):
 
     assert filecmp.cmp(upload_file.name, dl_path)
 
+    obj_range = s3_client.get_object(Bucket="testbucket", Key="upload.txt", Range="bytes=0-9")
+    bdata = obj_range["Body"].read()
+    assert len(bdata) == 10
+
+    obj_range = s3_client.get_object(Bucket="testbucket", Key="upload.txt", Range="bytes=10-19")
+    bdata = obj_range["Body"].read()
+    assert len(bdata) == 10
+
+    off = 20*1024*1024
+    obj_range = s3_client.get_object(Bucket="testbucket", Key="upload.txt", Range=f"bytes={off}-{off+9}")
+    bdata = obj_range["Body"].read()
+    assert len(bdata) == 10
+
+    off = 20*1024*1024
+    size = off
+    obj_range = s3_client.get_object(Bucket="testbucket", Key="upload.txt", Range=f"bytes={off}-{off+size -1}")
+    bdata = obj_range["Body"].read()
+    assert len(bdata) == size
+
+
 
 def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
     tmpfile = tmp_path / "ulfile.dat"
