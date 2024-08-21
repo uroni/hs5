@@ -49,6 +49,8 @@ DEFINE_string(server_url, "serverurl", "URL of server");
 DEFINE_bool(with_bucket_versioning, true, "Enable bucket versioning");
 
 namespace {
+  std::unique_ptr<proxygen::HTTPServer> server;
+
 class S3HandlerFactory : public proxygen::RequestHandlerFactory {
    SingleFileStorage sfs;
  public:
@@ -68,6 +70,11 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
     return new S3Handler(sfs, FLAGS_server_url, FLAGS_with_bucket_versioning);
   }
 };
+}
+
+void stopServer()
+{
+  server->stop();
 }
 
 int main(int argc, char* argv[])
@@ -125,8 +132,8 @@ int main(int argc, char* argv[])
         proxygen::RequestHandlerChain().addThen<S3HandlerFactory>(sfsoptions).build();
     options.h2cEnabled = true;
 
-    proxygen::HTTPServer server(std::move(options));
-    server.bind(IPs);
+    server = std::make_unique<proxygen::HTTPServer>(std::move(options));
+    server->bind(IPs);
 
     for(const auto& ip: IPs)
     {
@@ -135,8 +142,11 @@ int main(int argc, char* argv[])
 
     XLOGF(INFO,"Bucket versioning: {}, Punch holes: {}, Stop on error: {}, Manual commit: {}", FLAGS_with_bucket_versioning, FLAGS_punch_holes, FLAGS_stop_on_error, FLAGS_manual_commit);
 
-    std::thread t([&]() { server.start(); });
-    t.join();    
+    std::thread t([&]() {
+      server->start();
+      server.reset();
+      });
+    t.join();
     return 0;
 }
 

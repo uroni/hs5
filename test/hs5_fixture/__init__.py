@@ -17,6 +17,7 @@ curr_port = 11000
 
 class Hs5Runner:
     manual_commit = False
+    with_heaptrack = True
 
     def __init__(self, workdir : Path, data_file_size_limit_mb: int) -> None:
         global curr_port
@@ -54,10 +55,14 @@ class Hs5Runner:
             data_file_alloc_chunk_size,
             "--logging", "DBG0",
             "--init_root_password", self._root_key,
-            "--autogen_buckets", "true"]
+            "--autogen_buckets", "true",
+            "--with_stop_command", "true"]
         
         if self.manual_commit:
             args.append("--manual_commit")
+
+        if self.with_heaptrack:
+            args.insert(0, "heaptrack")
 
         self._process = subprocess.Popen(
             args,
@@ -81,10 +86,15 @@ class Hs5Runner:
         with pytest.raises(subprocess.TimeoutExpired):
             self._process.wait(0.001)
 
-        self._process.kill()
+        if self.with_heaptrack:
+            self.stop_server()
+        else:
+            self._process.kill()
+
         self._process.wait()
 
-        rmtree(self._workdir)
+        if not self.with_heaptrack:
+            rmtree(self._workdir)
 
     def get_url(self) -> str:
         return f"http://127.0.0.1:{self._port}"
@@ -100,6 +110,13 @@ class Hs5Runner:
             return
 
         s3.put_object(Bucket="foo", Key="a711e93e-93b4-4a9e-8a0b-688797470002", Body="")
+
+    def stop_server(self):
+        s3 = self.get_s3_client()
+        try:
+            s3.put_object(Bucket="foo", Key="3db7da22-8ce2-4420-a8ca-f09f0b8e0e61", Body="")
+        except:
+            pass
 
     def get_root_key(self):
         return self._root_key

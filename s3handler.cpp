@@ -38,10 +38,14 @@
 #include <limits.h>
 #include <string_view>
 #include "Auth.h"
+#include "main.h"
 
 using namespace proxygen;
 
 const char* c_commit_uuid = "a711e93e-93b4-4a9e-8a0b-688797470002";
+const char* c_stop_uuid = "3db7da22-8ce2-4420-a8ca-f09f0b8e0e61";
+
+DEFINE_bool(with_stop_command, false, "Allow stopping via putting to stop object");
 
 std::string hashSha256Hex(const std::string_view payload)
 {
@@ -663,7 +667,21 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        sendExpected(*headers);
+        if(FLAGS_with_stop_command &&
+             headers->getPathAsStringPiece().find(c_stop_uuid)!=std::string::npos)
+        {
+            XLOGF(DBG0, "PutObject {} STOP", headers->getPathAsStringPiece());
+            folly::getGlobalCPUExecutor()->add([]{
+                stopServer();
+            });
+            ResponseBuilder(downstream_)
+                    .status(200, "OK")
+                    .body("Server is stopping")
+                    .sendWithEOM();
+            // Don't handle EOM
+            request_type = RequestType::HeadObject;
+            return;
+        }
 
         XLOGF(DBG0, "PutObject {} length {}", headers->getPathAsStringPiece(), remaining);
 
@@ -749,6 +767,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             XML_SetElementHandler(xmlBody.parser, multiPartUploadXmlElementStart, multiPartUploadXmlElementEnd);
             XML_SetCharacterDataHandler(xmlBody.parser, multiPartUploadXmlCharData);
+
+            XLOGF(INFO, "Complete multi-part upload of {} uploadId {}", keyInfo.key, uploadId);
         }
     }
 }

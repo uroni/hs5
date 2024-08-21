@@ -866,6 +866,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 		throw std::runtime_error("LMDB: Error getting data file max size (SIGBUS)");
 	}
 
+	std::error_code ec;
 	if (rc != MDB_NOTFOUND)
 	{
 		if (size_out.mv_size == sizeof(data_file_offset) * 5 || 
@@ -1167,6 +1168,7 @@ SingleFileStorage::SingleFileStorage()
 
 SingleFileStorage::~SingleFileStorage()
 {
+	XLOGF(INFO, "Shutting down SingleFileStorage...");
 	if(commit_thread_h.joinable())
 	{
 		{
@@ -1770,7 +1772,7 @@ int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<E
 	wait_queue(lock, false, true);
 	wait_defrag(fn, lock);
 
-	SFragInfo curr_frag(extents[0].data_file_offset, extents[0].len);
+	SFragInfo curr_frag(extents.empty() ? 0 : extents[0].data_file_offset, extents.empty() ? 0 : extents[0].len);
 	for (size_t i = 1; i < extents.size(); ++i)
 	{
 		assert(extents[0].len>0);
@@ -5987,6 +5989,12 @@ SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, cons
 			return SFragInfo();
 		}
 	}
+	else if(fn != std::string_view(reinterpret_cast<char*>(tkey.mv_data), tkey.mv_size) )
+	{
+		XLOG(ERR) << "Wrong key retrieved from LMDB fn " << fn;
+		return SFragInfo();
+	}
+
 
 	if(!parse_data)
 	{
