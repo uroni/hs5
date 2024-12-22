@@ -1,0 +1,258 @@
+---
+---
+
+$header-height: 75px;
+$header-padding-right: 50px;
+$header-background-color: #EEEEFB;
+$link-text-color: hsl(0, 0%, 40%);
+$footer-background-color: $header-background-color;
+$link-color: #253566;
+
+// Base color used for links and buttons
+$base-hue: 200;
+
+// Tables, download and view buttons background and hover colors
+$button-shade1: hsl($base-hue, 100%, 50%);
+$button-shade2: hsl(($base-hue + 20), 100%, 60%);
+$button-shadow: hsl(0, 0%, 60%);
+$button-text-shadow: darken($button-shade1, 10%);
+
+$page-background-color: #FFF;
+
+/*****************************************************************************/
+/*
+/* Common
+/*
+/*****************************************************************************/
+
+/* Global Reset */
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html, body { height: 100%; }
+
+body {
+  background-color: $page-background-color;
+  font: 13.34px Helvetica, Arial, sans-serif;
+  font-size: normal;
+  text-align: left;
+}
+
+
+h1 { margin-bottom: 1em; }
+p { margin: 1em 0; }
+
+a {
+	color: $link-color;
+	text-decoration: none;
+	transition: .35s ease;
+}
+a:hover {
+	color: #5C85FF;
+}
+
+.content {
+	font-size: 1.2em;
+}
+
+.content a {
+	color: #647ECC;
+	transition: .35s ease;
+}
+
+.content a:hover {
+	color: #5C85FF;
+}
+
+hr {
+	background-color: $header-background-color;
+	background: linear-gradient(to right, #FFF 0%,$header-background-color 20%,$header-background-color 70%, #FFF 100%);
+	height: 3px;
+	margin: 3em auto;
+	border: 0px;
+}
+
+/*****************************************************************************/
+/*
+/* Home
+/*
+/*****************************************************************************/
+.posts {
+  list-style-type: none;
+  margin-bottom: 2em;
+}
+
+.posts li {
+  line-height: 1.75em;
+}
+
+.posts span {
+  color: #aaa;
+  font-family: Monaco, "Courier New", monospace;
+  font-size: 80%;
+}
+
+.button a {
+	padding: 0.6em 0em;
+	margin: 1em 0em;
+	color: #ffffff;
+	font-weight: bold;
+	text-align: center;
+	background-color: $button-shade1;
+	display: block;
+}
+
+.button a:hover {
+	color: $link-color;
+}
+
+.box {
+	padding-right: 1em;
+}
+
+/*****************************************************************************/
+/*
+/* Site
+/*
+/*****************************************************************************/
+
+.site {
+  font-size: 115%;
+  text-align: justify;
+  width: 42em;
+  margin: 3em auto 2em;
+  line-height: 1.5em;
+}
+
+.wrapper {
+	max-width: 920px;
+	margin: 0px auto 0px auto;
+	padding: 0px 32px;
+}
+
+.header {
+	background-color: $header-background-color;
+	font-size: 1.2em;
+}
+
+.header a#urbackup_home {
+  line-height: $header-height;
+	padding-right: $header-padding-right;
+	float: left;
+	color: $link-text-color;
+	font-size: 2.0em;
+}
+
+.navigation {
+	float: right;
+}
+
+.navigation a {
+	margin-left: 2em;
+	line-height: $header-height;
+}
+
+.navigation .active {
+	margin-left: 2em;
+	line-height: $header-height;
+	font-weight: bold;
+}
+
+.title {
+  display: inline-block;
+  margin-bottom: 2em;
+}
+
+.title a {
+  color: #a00;
+}
+
+.title a:hover {
+  color: #000;
+}
+
+.header a.extra {
+  color: #aaa;
+  margin-left: 1em;
+}
+
+.header a.extra:hover {
+  color: #000;
+}
+
+.meta {
+  color: #aaa;
+}
+
+.footer {
+	font-size: 0.9em;
+	padding: 3em 0em;
+	background-color: $footer-background-color;
+	text-align: left;
+}
+
+.footer ul {
+	list-style-type: none;
+	padding-left: 0;
+}
+
+.admin_guide hr {
+	background-color: black;
+	background: black;
+	border: 0px;
+	height: 1px;
+}
+
+
+td, th {
+	padding: 0.1em;
+}
+
+.admin_guide {
+	overflow-wrap: break-word;
+}
+
+.admin_guide td, th {
+	padding: 0px;
+}
+
+
+/*****************************************************************************/
+/*
+/* Posts
+/*
+/*****************************************************************************/
+
+/* standard */
+.post pre {
+  border: 1px solid #ddd;
+  background-color: #eef;
+  padding: 0 .4em;
+}
+
+.post ul, .post ol {
+  margin-left: 1.35em;
+}
+
+.post code {
+  border: 1px solid #ddd;
+  background-color: #eef;
+  padding: 0 .2em;
+}
+
+.post pre code {
+  border: none;
+}
+
+/* terminal */
+.post pre.terminal {
+  border: 1px solid #000;
+  background-color: #333;
+  color: #FFF;
+}
+
+.post pre.terminal code {
+  background-color: #333;
+}

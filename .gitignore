@@ -10,3 +10,4 @@ test/.venv/*
 builds
 vcpkg
 vcpkg_installed
+/homepage/_site
