@@ -1610,6 +1610,23 @@ void S3Handler::finalizeMultipartUpload()
                         return;
                 }
 
+                if(!self->sfs.get_manual_commit())
+                {
+                    const bool b = self->sfs.commit(false, -1);
+                    
+                    if(!b)
+                    {
+                        evb->runInEventBaseThread([self = self]()
+                                            {           
+                                ResponseBuilder(self->downstream_)
+                                    .status(500, "Internal error")
+                                    .body("Commit error")
+                                    .sendWithEOM();
+                                self->finished_ = true; });
+                        return;
+                    }
+                }
+
                 evb->runInEventBaseThread([self = self, etagBin, numParts = multiPartData->parts.size()]()
                                               {
                                                 const auto bucket = getBucketName(self->keyInfo.bucketId);
