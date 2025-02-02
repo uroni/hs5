@@ -7,6 +7,7 @@ import sys
 import time
 import uuid
 import botocore
+import botocore.config
 import pytest
 import os
 import boto3
@@ -102,8 +103,9 @@ class Hs5Runner:
     def get_api_url(self) -> str:
         return f"http://127.0.0.1:{self._port}/api-v1-b64be512-4b03-4028-a589-13931942e205/"
 
-    def get_s3_client(self) -> S3Client:
-        return boto3.client('s3', endpoint_url=self.get_url(), aws_access_key_id="root", aws_secret_access_key=self._root_key)
+    def get_s3_client(self, sig_v2: bool = False) -> S3Client:
+        config = botocore.config.Config(signature_version='s3v4') if not sig_v2 else None
+        return boto3.client('s3', endpoint_url=self.get_url(), aws_access_key_id="root", aws_secret_access_key=self._root_key, config=config)
     
     def commit_storage(self, s3: S3Client):
         if not self.manual_commit:

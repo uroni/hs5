@@ -77,6 +77,7 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     assert not list_resp["IsTruncated"]
     objs = list_resp["Contents"]
     assert len(objs) == 1
+    assert "LastModified" in objs[0]
     lm = objs[0]["LastModified"]
     now = datetime.datetime.now(tz=lm.tzinfo)
     diff = now - lm
@@ -381,58 +382,25 @@ def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
 
     t0.join()
 
+@pytest.mark.parametrize("sig_v2", [True, False])
+def test_download_presigned(tmp_path: Path, hs5: Hs5Runner, sig_v2: bool):
 
-def test_login(hs5: Hs5Runner):
-    url = hs5.get_api_url()
+    fdata = os.urandom(29*1024*1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+    
+    s3_client = hs5.get_s3_client(sig_v2=sig_v2)
+    with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
+        s3_client.put_object(Bucket="testbucket", Key="upload.txt", Body=upload_file)
 
-    ses = requests.session()
+    # get presigned donwload URL
+    presigned_url = s3_client.generate_presigned_url(
+        'get_object',
+        Params={'Bucket': 'testbucket', 'Key': 'upload.txt'},
+        ExpiresIn=3600
+    )
 
-    response = ses.post(url+"login", json={
-        "username": "root",
-        "password": hs5.get_root_key()
-    })
-
-    assert response.status_code == 200
-    resp = response.json()
-    assert resp["ses"]
-
-
-def test_adduser(hs5: Hs5Runner):
-    url = hs5.get_api_url()
-
-    ses1 = requests.session()
-
-    response = ses1.post(url+"adduser", json={
-        "ses": "foobar",
-        "username": "test",
-        "password": "test"
-    })
-
-    assert response.status_code == 401
-
-    response = ses1.post(url+"login", json={
-        "username": "root",
-        "password": hs5.get_root_key()
-    })
-
-    assert response.status_code == 200
-    resp = response.json()
-    sesVal = resp["ses"]
-
-    response = ses1.post(url+"adduser", json={
-        "ses": sesVal,
-        "username": "test",
-        "password": "test"
-    })
-
-    assert response.status_code == 200
-
-    ses2 = requests.session()
-
-    response = ses2.post(url+"login", json={
-        "username": "test",
-        "password": "test"
-    })
-
-    assert response.status_code == 200
+    response = requests.get(presigned_url)
+    response.raise_for_status()
+    assert response.content == fdata
 

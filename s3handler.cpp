@@ -24,6 +24,7 @@
 #include <folly/Uri.h>
 #include <folly/lang/Bits.h>
 #include <folly/hash/Hash.h>
+#include <folly/base64.h>
 #include <limits>
 #include <memory>
 #include <openssl/hmac.h>
@@ -46,6 +47,7 @@ const char* c_commit_uuid = "a711e93e-93b4-4a9e-8a0b-688797470002";
 const char* c_stop_uuid = "3db7da22-8ce2-4420-a8ca-f09f0b8e0e61";
 
 DEFINE_bool(with_stop_command, false, "Allow stopping via putting to stop object");
+DEFINE_bool(allow_sig_v2, true, "Allow aws sig v2");
 
 std::string hashSha256Hex(const std::string_view payload)
 {
@@ -66,6 +68,21 @@ std::string hmacSha256Binary(const std::string &key,
          reinterpret_cast<const unsigned char *>(payload.data()), payload.size(),
          reinterpret_cast<unsigned char *>(&ret[0]), &len);
     assert(len == SHA256_DIGEST_LENGTH);
+    return ret;
+}
+
+const size_t SHA1_DIGEST_LENGTH = 20;
+
+std::string hmacSha1Binary(const std::string &key,
+                             const std::string &payload)
+{
+    std::string ret;
+    ret.resize(SHA1_DIGEST_LENGTH);
+    unsigned int len = SHA1_DIGEST_LENGTH;
+    HMAC(EVP_sha1(), key.data(), key.size(),
+         reinterpret_cast<const unsigned char *>(payload.data()), payload.size(),
+         reinterpret_cast<unsigned char *>(&ret[0]), &len);
+    assert(len == SHA1_DIGEST_LENGTH);
     return ret;
 }
 
@@ -133,48 +150,116 @@ std::string encodeUriAws(const std::string_view str)
 }
 
 std::optional<std::string> checkSig(HTTPMessage &headers,
-              const folly::StringPiece authorization,
               const std::string_view payload,
               const std::string_view ressource,
-              const std::string_view action)
+              const std::string_view action,
+              const bool allowPresigned)
 {
     const char alg_name[] = "AWS4-HMAC-SHA256";
     constexpr std::string_view alg = "AWS4-HMAC-SHA256 ";
-    if (authorization.find(alg) != 0)
-        return std::nullopt;
 
-    std::vector<folly::StringPiece> authorizationVec;
-    folly::split(',', authorization.subpiece(alg.size()), authorizationVec);
+    const auto& authorization = headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_AUTHORIZATION);
 
-    std::map<folly::StringPiece, folly::StringPiece> authorizationMap;
-
-    for (auto ave : authorizationVec)
+    std::map<std::string, std::string> unescapedParams;   
+    for(auto& param:  headers.getQueryParams())
     {
-        size_t eq = ave.find_first_of('=');
-        if (eq != std::string::npos)
+        try
         {
-            authorizationMap.insert(
-                std::make_pair(trimWhitespace(ave.subpiece(0, eq)), trimWhitespace(ave.subpiece(eq + 1))));
+            unescapedParams[param.first] = folly::uriUnescape<std::string>(param.second, folly::UriEscapeMode::QUERY);
+        } catch (const std::invalid_argument& ex) {
+            XLOGF(WARN, "Invalid escaped query param: {}", folly::exceptionStr(ex));
         }
     }
 
-    const char signedHeadersKey[] = "SignedHeaders";
-    auto itSignedHeaders = authorizationMap.find(signedHeadersKey);
-    if (itSignedHeaders == authorizationMap.end())
-        return std::nullopt;
-
-    const char credentialHeaderKey[] = "Credential";
-    auto itCredential = authorizationMap.find(credentialHeaderKey);
-    if (itCredential == authorizationMap.end())
-        return std::nullopt;
-
-    const char signatureHeaderKey[] = "Signature";
-    auto itSignature = authorizationMap.find(signatureHeaderKey);
-    if (itSignature == authorizationMap.end())
-        return std::nullopt;
-
+    folly::StringPiece requestSignature;
     std::vector<folly::StringPiece> credentialScopeToks;
-    folly::split('/', itCredential->second, credentialScopeToks);
+    std::vector<folly::StringPiece> signedHeadersVec;
+    folly::StringPiece signedHeaders;
+    std::string requestDateTime;
+    long long expires = 0;
+    
+    const bool presignedRequest = authorization.empty() && allowPresigned;
+    if (presignedRequest)
+    {
+        const auto itAlg = unescapedParams.find("X-Amz-Algorithm");
+        if(itAlg==unescapedParams.end() || itAlg->second != alg_name)
+            return std::nullopt;
+
+        const auto itCredential = unescapedParams.find("X-Amz-Credential");
+        if(itCredential==unescapedParams.end())
+            return std::nullopt;
+
+        folly::split('/', itCredential->second, credentialScopeToks);
+
+        const auto itDate = unescapedParams.find("X-Amz-Date");
+        if(itDate==unescapedParams.end())
+            return std::nullopt;
+        
+        requestDateTime = itDate->second;
+
+        const auto itExpires = unescapedParams.find("X-Amz-Expires");
+        if(itExpires==unescapedParams.end())
+            return std::nullopt;
+
+        expires = std::stoll(itExpires->second);
+        if(expires<1 || expires>604800)
+            return std::nullopt;
+
+        const auto itSignedHeaders = unescapedParams.find("X-Amz-SignedHeaders");
+        if(itSignedHeaders==unescapedParams.end())
+            return std::nullopt;
+
+        signedHeaders = itSignedHeaders->second;
+        folly::split(';', signedHeaders, signedHeadersVec);
+
+        const auto itSignature = unescapedParams.find("X-Amz-Signature");
+        if(itSignature==unescapedParams.end())
+            return std::nullopt;
+
+        requestSignature = itSignature->second;
+    }
+    else
+    {
+        if (authorization.find(alg) != 0)
+            return std::nullopt;
+
+        std::vector<folly::StringPiece> authorizationVec;
+        folly::split(',', std::string_view(authorization).substr(alg.size()), authorizationVec);
+
+        std::map<folly::StringPiece, folly::StringPiece> authorizationMap;
+
+        for (auto ave : authorizationVec)
+        {
+            size_t eq = ave.find_first_of('=');
+            if (eq != std::string::npos)
+            {
+                authorizationMap.insert(
+                    std::make_pair(trimWhitespace(ave.subpiece(0, eq)), trimWhitespace(ave.subpiece(eq + 1))));
+            }
+        }
+
+        const char signedHeadersKey[] = "SignedHeaders";
+        auto itSignedHeaders = authorizationMap.find(signedHeadersKey);
+        if (itSignedHeaders == authorizationMap.end())
+            return std::nullopt;
+
+        signedHeaders = itSignedHeaders->second;
+        folly::split(';', signedHeaders, signedHeadersVec);
+
+        const char credentialHeaderKey[] = "Credential";
+        auto itCredential = authorizationMap.find(credentialHeaderKey);
+        if (itCredential == authorizationMap.end())
+            return std::nullopt;
+
+        folly::split('/', itCredential->second, credentialScopeToks);
+
+        const char signatureHeaderKey[] = "Signature";
+        auto itSignature = authorizationMap.find(signatureHeaderKey);
+        if (itSignature == authorizationMap.end())
+            return std::nullopt;
+
+        requestSignature = itSignature->second;        
+    }
 
     if (credentialScopeToks.size() != 5)
         return std::nullopt;
@@ -189,9 +274,6 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
 
     if(!isAuthorized(ressource, action, accessKey))
         return std::nullopt;
-
-    std::vector<folly::StringPiece> signedHeadersVec;
-    folly::split(';', itSignedHeaders->second, signedHeadersVec);
 
     std::string canonicalHeaders;
     std::optional<folly::Range<const char *> > prevSignedHeader;
@@ -212,21 +294,21 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
 
     if (!hasHost)
         return std::nullopt;
-
-    auto params = headers.getQueryParams();
     
     std::vector<std::string> encodedParams;
-    encodedParams.reserve(params.size());
+    encodedParams.reserve(unescapedParams.size());
     size_t paramsStrLen=0;
-    for (auto param : params)
+    for (auto param : unescapedParams)
     {   
+        if(presignedRequest && param.first == "X-Amz-Signature")
+            continue;
+
         try
         {
             encodedParams.emplace_back(encodeUriAws(param.first) + "=" +
-                             encodeUriAws(
-                                 folly::uriUnescape<std::string>(param.second, folly::UriEscapeMode::QUERY)));
+                             encodeUriAws(param.second));
             paramsStrLen+=encodedParams.back().size()+1;
-        } catch (const std::exception& ex) {
+        } catch (const std::invalid_argument& ex) {
             XLOGF(WARN, "Invalid escaped query param: {}", folly::exceptionStr(ex));
         }
     }
@@ -246,15 +328,18 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
     const auto canonicalRequest = folly::sformat(
         "{}\n{}\n{}\n{}\n{}\n{}", headers.getMethodString(),
         headers.getPathAsStringPiece(), canonicalParamStr, canonicalHeaders,
-        itSignedHeaders->second, hashSha256Hex(payload));
+        signedHeaders, presignedRequest ? "UNSIGNED-PAYLOAD" : hashSha256Hex(payload));
 
     const auto hashedCanonicalRequest = hashSha256Hex(canonicalRequest);
-    auto requestDateTime =
-        headers.getHeaders().getSingleOrEmpty("X-Amz-Date");
-
     if(requestDateTime.empty())
     {
-        requestDateTime = headers.getHeaders().getSingleOrEmpty(HTTP_HEADER_DATE);
+        requestDateTime =
+            headers.getHeaders().getSingleOrEmpty("X-Amz-Date");
+
+        if(requestDateTime.empty())
+        {
+            requestDateTime = headers.getHeaders().getSingleOrEmpty(HTTP_HEADER_DATE);
+        }
     }
     
     if(requestDateTime.empty())
@@ -266,10 +351,25 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
     struct tm tm = t;
     const auto requestTime = timegm(&tm);
     const auto currTime = std::time(nullptr);
-    const auto timeDist = requestTime > currTime ? (requestTime - currTime ) : (currTime - requestTime);
+    
+    if(presignedRequest)
+    {
+        if(expires==0)
+            return std::nullopt;
 
-    if(timeDist > 8*60)
-        return std::nullopt;
+        if(requestTime + expires < currTime)
+            return std::nullopt;
+    }
+    else
+    {
+        if(expires!=0)
+            return std::nullopt;
+
+        const auto timeDist = requestTime > currTime ? (requestTime - currTime ) : (currTime - requestTime);
+
+        if(timeDist > 8*60)
+            return std::nullopt;
+    }
 
     const auto stringToSign = folly::sformat(
         "{}\n{}\n{}/{}/{}/{}\n{}", alg_name, requestDateTime,
@@ -281,14 +381,169 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
     const auto dateRegionServiceKey = hmacSha256Binary(dateRegionKey, credentialScopeToks[3].toString());
     const auto signingKey = hmacSha256Binary(dateRegionServiceKey, "aws4_request");
 
-    std::string sig = folly::hexlify(hmacSha256Binary(signingKey, stringToSign));
+    const auto calculatedSignature = folly::hexlify(hmacSha256Binary(signingKey, stringToSign));
 
-    if(sig != itSignature->second)
+    if(calculatedSignature != requestSignature)
         return std::nullopt;
 
     return std::string(accessKey);
 }
 
+std::string asciiToLower(std::string str)
+{
+    std::transform(str.begin(), str.end(), str.begin(),
+        [](auto c) { return std::tolower(c); });
+    return str;
+}
+
+std::string getCanonicalizedAmzHeaders(const HTTPHeaders& headers)
+{
+    std::map<std::string, std::string> amzHeaders;
+    headers.forEach([&](const std::string& header, const std::string& val) {
+        const auto& headerLower = asciiToLower(header);
+        if (headerLower.find("x-amz-") == 0)
+        {
+            amzHeaders[headerLower] = val;
+        }
+    });
+
+    std::string canonicalizedAmzHeaders;
+
+    for (const auto& header : amzHeaders)
+    {
+        canonicalizedAmzHeaders += header.first + ":" + header.second + "\n";
+    }
+
+    return canonicalizedAmzHeaders;
+}
+
+std::string getCanonicalizedResource(const HTTPMessage& headers)
+{
+    std::string canonicalizedResource;
+    canonicalizedResource += headers.getPathAsStringPiece();
+    const auto& queryParams = headers.getQueryParams();
+
+    const static std::vector<std::string> resources = {"acl", "lifecycle", "location", "logging", "notification", "partNumber", "policy", 
+        "requestPayment", "uploadId", "uploads", "versionId", "versioning", "versions", "website"};
+
+    bool hasResource = false;
+    for(const auto& resource: resources)    
+    {
+        auto it = queryParams.find(resource);
+        if(it!=queryParams.end())
+        {
+            if(!hasResource)
+            {
+                canonicalizedResource += "?";
+                hasResource = true;
+            }
+            else
+            {
+                canonicalizedResource += "&";
+            }
+            canonicalizedResource += resource;
+            if(!it->second.empty())
+                canonicalizedResource += "=" + it->second;
+        }
+    }
+
+    // Include  response-content-type, response-content-language, response-expires, response-cache-control, response-content-disposition, and response-content-encoding.
+    const static std::vector<std::string> responseParams = {"response-content-type", "response-content-language", "response-expires", "response-cache-control", "response-content-disposition", "response-content-encoding"};
+    for(const auto& responseParam: responseParams)
+    {
+        auto it = queryParams.find(responseParam);
+        if(it!=queryParams.end())
+        {
+            if(!hasResource)
+            {
+                canonicalizedResource += "?";
+                hasResource = true;
+            }
+            else
+            {
+                canonicalizedResource += "&";
+            }
+            canonicalizedResource += responseParam + "=" + it->second;
+        }
+    }
+
+    // Include delete param
+    auto it = queryParams.find("delete");
+    if(it!=queryParams.end())
+    {
+        if(!hasResource)
+        {
+            canonicalizedResource += "?";
+            hasResource = true;
+        }
+        else
+        {
+            canonicalizedResource += "&";
+        }
+        canonicalizedResource += "delete=" + it->second;
+    }
+    return canonicalizedResource;
+}
+
+std::optional<std::string> checkSigQueryStringV2(HTTPMessage &headers, const std::string_view httpVerb, const std::string_view ressource,
+              const std::string_view action)
+{
+    if(!FLAGS_allow_sig_v2)
+        return std::nullopt;
+
+    const auto& queryParams = headers.getQueryParams();
+    const auto itAccessKey = queryParams.find("AWSAccessKeyId");
+    if(itAccessKey==queryParams.end())
+        return std::nullopt;
+
+    const auto& accessKey = itAccessKey->second;
+
+    const auto& secretKey = getSecretKey(accessKey);
+
+    if(secretKey.empty())
+        return std::nullopt;
+
+    if(!isAuthorized(ressource, action, accessKey))
+        return std::nullopt;
+
+    const auto itExpires = queryParams.find("Expires");
+    if(itExpires==queryParams.end())
+        return std::nullopt;
+
+    const auto expires = std::stoll(itExpires->second);
+
+    if(expires < std::time(nullptr))
+        return std::nullopt;
+
+    const auto itSignature = queryParams.find("Signature");
+    if(itSignature==queryParams.end())
+        return std::nullopt;
+
+    const auto signature = itSignature->second;
+
+    const auto canonicalizedAmzHeaders = getCanonicalizedAmzHeaders(headers.getHeaders());
+
+    const auto canonicalizedResource = getCanonicalizedResource(headers);
+
+    const auto stringToSign = folly::sformat(
+        "{}\n{}\n{}\n{}\n{}{}", httpVerb, headers.getHeaders().getSingleOrEmpty("Content-MD5"),
+        headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_CONTENT_LENGTH), expires, canonicalizedAmzHeaders,
+        canonicalizedResource);
+
+    const auto urlSig = folly::base64Encode(hmacSha1Binary(secretKey, stringToSign));
+
+    try
+    {
+        if(urlSig != folly::uriUnescape<std::string>(signature))
+            return std::nullopt;
+    }
+    catch(std::invalid_argument&)
+    {
+        return std::nullopt;
+    }
+    
+    return itAccessKey->second;
+}
 
 
 KeyInfoView extractKeyInfoView(const std::string_view key)
@@ -540,7 +795,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         if(header_path.find('/', 1)==std::string::npos)
         {
             const auto bucketName = header_path.subpiece(1);
-            if(!checkSig(*headers, headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_AUTHORIZATION), "", fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket"))
+            if(!checkSig(*headers, "", fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket", false))
             {
                 XLOGF(INFO, "Unauthorized list bucket: {}", bucketName);
                 ResponseBuilder(downstream_)
@@ -554,7 +809,15 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }   
 
-        const auto accessKey = checkSig(*headers, headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_AUTHORIZATION), "", fmt::format("arn:aws:s3:::{}", header_path.subpiece(1)), "s3:GetObject");   
+        const auto resource = fmt::format("arn:aws:s3:::{}", header_path.subpiece(1));
+        const auto action = headers->getMethod() == HTTPMethod::GET ? "s3:GetObject" : "s3:HeadObject";
+
+        auto accessKey = checkSig(*headers, "", resource, action, true);   
+        if(!accessKey)
+        {
+            accessKey = checkSigQueryStringV2(*headers, headers->getMethod() == HTTPMethod::GET ? "GET" : "HEAD", resource, action);
+        }
+
         if(!accessKey)
         {
             XLOGF(INFO, "Get object unauthorized: {}", header_path);
