@@ -222,6 +222,7 @@ def test_list_prefix(tmp_path: Path, hs5: Hs5Runner):
     objs = res["Contents"]
     assert objs is not None
     assert len(objs) == 1
+    assert "Key" in objs[0]
     assert objs[0]["Key"] == "a/2.txt"
 
 
@@ -242,10 +243,14 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
     objs = res["Contents"]
     assert objs is not None
     assert len(objs) == 1
+    assert "Key" in objs[0]
     assert objs[0]["Key"] == "1.txt"
 
     common_prefixes = res["CommonPrefixes"]
-    prefixes = [pre["Prefix"] for pre in common_prefixes]
+    prefixes = list[str]()
+    for pre in common_prefixes:
+        assert "Prefix" in pre
+        prefixes.append(pre["Prefix"])
 
     assert len(prefixes) == 2
     assert "a/" in prefixes

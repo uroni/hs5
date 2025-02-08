@@ -43,8 +43,9 @@
 
 using namespace proxygen;
 
-const char* c_commit_uuid = "a711e93e-93b4-4a9e-8a0b-688797470002";
-const char* c_stop_uuid = "3db7da22-8ce2-4420-a8ca-f09f0b8e0e61";
+const char c_commit_uuid[] = "a711e93e-93b4-4a9e-8a0b-688797470002";
+const char c_stop_uuid[] = "3db7da22-8ce2-4420-a8ca-f09f0b8e0e61";
+const char unsigned_payload[] = "UNSIGNED-PAYLOAD";
 
 DEFINE_bool(with_stop_command, false, "Allow stopping via putting to stop object");
 DEFINE_bool(allow_sig_v2, true, "Allow aws sig v2");
@@ -57,6 +58,8 @@ std::string hashSha256Hex(const std::string_view payload)
     return folly::hexlify<std::string>(
         folly::ByteRange(md, SHA256_DIGEST_LENGTH));
 }
+
+const std::string emptyPayloadHash = hashSha256Hex("");
 
 std::string hmacSha256Binary(const std::string &key,
                              const std::string &payload)
@@ -149,6 +152,161 @@ std::string encodeUriAws(const std::string_view str)
     return ret;
 }
 
+std::string asciiToLower(std::string str)
+{
+    std::transform(str.begin(), str.end(), str.begin(),
+        [](auto c) { return std::tolower(c); });
+    return str;
+}
+
+std::string getCanonicalizedAmzHeaders(const HTTPHeaders& headers)
+{
+    std::map<std::string, std::string> amzHeaders;
+    headers.forEach([&](const std::string& header, const std::string& val) {
+        const auto& headerLower = asciiToLower(header);
+        if (headerLower.find("x-amz-") == 0)
+        {
+            amzHeaders[headerLower] = val;
+        }
+    });
+
+    std::string canonicalizedAmzHeaders;
+
+    for (const auto& header : amzHeaders)
+    {
+        canonicalizedAmzHeaders += header.first + ":" + header.second + "\n";
+    }
+
+    return canonicalizedAmzHeaders;
+}
+
+std::string getCanonicalizedResource(const HTTPMessage& headers)
+{
+    std::string canonicalizedResource;
+    canonicalizedResource += headers.getPathAsStringPiece();
+    const auto& queryParams = headers.getQueryParams();
+
+    const static std::vector<std::string> resources = {"acl", "lifecycle", "location", "logging", "notification", "partNumber", "policy", 
+        "requestPayment", "uploadId", "uploads", "versionId", "versioning", "versions", "website"};
+
+    bool hasResource = false;
+    for(const auto& resource: resources)    
+    {
+        auto it = queryParams.find(resource);
+        if(it!=queryParams.end())
+        {
+            if(!hasResource)
+            {
+                canonicalizedResource += "?";
+                hasResource = true;
+            }
+            else
+            {
+                canonicalizedResource += "&";
+            }
+            canonicalizedResource += resource;
+            if(!it->second.empty())
+                canonicalizedResource += "=" + it->second;
+        }
+    }
+
+    // Include  response-content-type, response-content-language, response-expires, response-cache-control, response-content-disposition, and response-content-encoding.
+    const static std::vector<std::string> responseParams = {"response-content-type", "response-content-language", "response-expires", "response-cache-control", "response-content-disposition", "response-content-encoding"};
+    for(const auto& responseParam: responseParams)
+    {
+        auto it = queryParams.find(responseParam);
+        if(it!=queryParams.end())
+        {
+            if(!hasResource)
+            {
+                canonicalizedResource += "?";
+                hasResource = true;
+            }
+            else
+            {
+                canonicalizedResource += "&";
+            }
+            canonicalizedResource += responseParam + "=" + it->second;
+        }
+    }
+
+    // Include delete param
+    auto it = queryParams.find("delete");
+    if(it!=queryParams.end())
+    {
+        if(!hasResource)
+        {
+            canonicalizedResource += "?";
+            hasResource = true;
+        }
+        else
+        {
+            canonicalizedResource += "&";
+        }
+        canonicalizedResource += "delete=" + it->second;
+    }
+    return canonicalizedResource;
+}
+
+std::optional<std::string> checkSigQueryStringV2(HTTPMessage &headers, const std::string_view ressource,
+              const std::string_view action)
+{
+    const auto httpVerb = headers.getMethodString(); 
+
+    const auto& queryParams = headers.getQueryParams();
+    const auto itAccessKey = queryParams.find("AWSAccessKeyId");
+    if(itAccessKey==queryParams.end())
+        return std::nullopt;
+
+    const auto& accessKey = itAccessKey->second;
+
+    const auto& secretKey = getSecretKey(accessKey);
+
+    if(secretKey.empty())
+        return std::nullopt;
+
+    if(!isAuthorized(ressource, action, accessKey))
+        return std::nullopt;
+
+    const auto itExpires = queryParams.find("Expires");
+    if(itExpires==queryParams.end())
+        return std::nullopt;
+
+    const auto expires = std::stoll(itExpires->second);
+
+    if(expires < std::time(nullptr))
+        return std::nullopt;
+
+    const auto itSignature = queryParams.find("Signature");
+    if(itSignature==queryParams.end())
+        return std::nullopt;
+
+    const auto signature = itSignature->second;
+
+    const auto canonicalizedAmzHeaders = getCanonicalizedAmzHeaders(headers.getHeaders());
+
+    const auto canonicalizedResource = getCanonicalizedResource(headers);
+
+    const auto stringToSign = folly::sformat(
+        "{}\n{}\n{}\n{}\n{}{}", httpVerb, headers.getHeaders().getSingleOrEmpty("Content-MD5"),
+        headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_CONTENT_LENGTH), expires, canonicalizedAmzHeaders,
+        canonicalizedResource);
+
+    const auto urlSig = folly::base64Encode(hmacSha1Binary(secretKey, stringToSign));
+
+    try
+    {
+        if(urlSig != folly::uriUnescape<std::string>(signature))
+            return std::nullopt;
+    }
+    catch(std::invalid_argument&)
+    {
+        return std::nullopt;
+    }
+    
+    return itAccessKey->second;
+}
+
 std::optional<std::string> checkSig(HTTPMessage &headers,
               const std::string_view payload,
               const std::string_view ressource,
@@ -183,7 +341,12 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
     {
         const auto itAlg = unescapedParams.find("X-Amz-Algorithm");
         if(itAlg==unescapedParams.end() || itAlg->second != alg_name)
-            return std::nullopt;
+        {
+            if(!FLAGS_allow_sig_v2)
+                return std::nullopt;
+
+            return checkSigQueryStringV2(headers, ressource, action);
+        }
 
         const auto itCredential = unescapedParams.find("X-Amz-Credential");
         if(itCredential==unescapedParams.end())
@@ -328,7 +491,7 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
     const auto canonicalRequest = folly::sformat(
         "{}\n{}\n{}\n{}\n{}\n{}", headers.getMethodString(),
         headers.getPathAsStringPiece(), canonicalParamStr, canonicalHeaders,
-        signedHeaders, presignedRequest ? "UNSIGNED-PAYLOAD" : hashSha256Hex(payload));
+        signedHeaders, (presignedRequest || payload.empty()) ? unsigned_payload : payload);
 
     const auto hashedCanonicalRequest = hashSha256Hex(canonicalRequest);
     if(requestDateTime.empty())
@@ -386,163 +549,9 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
     if(calculatedSignature != requestSignature)
         return std::nullopt;
 
+    XLOGF(INFO, "Signature OK for {}?{} method {} access key {} resource {} action {} payload hash {}", headers.getPathAsStringPiece(), headers.getQueryStringAsStringPiece(), headers.getMethodString(), accessKey, ressource, action, payload);
+
     return std::string(accessKey);
-}
-
-std::string asciiToLower(std::string str)
-{
-    std::transform(str.begin(), str.end(), str.begin(),
-        [](auto c) { return std::tolower(c); });
-    return str;
-}
-
-std::string getCanonicalizedAmzHeaders(const HTTPHeaders& headers)
-{
-    std::map<std::string, std::string> amzHeaders;
-    headers.forEach([&](const std::string& header, const std::string& val) {
-        const auto& headerLower = asciiToLower(header);
-        if (headerLower.find("x-amz-") == 0)
-        {
-            amzHeaders[headerLower] = val;
-        }
-    });
-
-    std::string canonicalizedAmzHeaders;
-
-    for (const auto& header : amzHeaders)
-    {
-        canonicalizedAmzHeaders += header.first + ":" + header.second + "\n";
-    }
-
-    return canonicalizedAmzHeaders;
-}
-
-std::string getCanonicalizedResource(const HTTPMessage& headers)
-{
-    std::string canonicalizedResource;
-    canonicalizedResource += headers.getPathAsStringPiece();
-    const auto& queryParams = headers.getQueryParams();
-
-    const static std::vector<std::string> resources = {"acl", "lifecycle", "location", "logging", "notification", "partNumber", "policy", 
-        "requestPayment", "uploadId", "uploads", "versionId", "versioning", "versions", "website"};
-
-    bool hasResource = false;
-    for(const auto& resource: resources)    
-    {
-        auto it = queryParams.find(resource);
-        if(it!=queryParams.end())
-        {
-            if(!hasResource)
-            {
-                canonicalizedResource += "?";
-                hasResource = true;
-            }
-            else
-            {
-                canonicalizedResource += "&";
-            }
-            canonicalizedResource += resource;
-            if(!it->second.empty())
-                canonicalizedResource += "=" + it->second;
-        }
-    }
-
-    // Include  response-content-type, response-content-language, response-expires, response-cache-control, response-content-disposition, and response-content-encoding.
-    const static std::vector<std::string> responseParams = {"response-content-type", "response-content-language", "response-expires", "response-cache-control", "response-content-disposition", "response-content-encoding"};
-    for(const auto& responseParam: responseParams)
-    {
-        auto it = queryParams.find(responseParam);
-        if(it!=queryParams.end())
-        {
-            if(!hasResource)
-            {
-                canonicalizedResource += "?";
-                hasResource = true;
-            }
-            else
-            {
-                canonicalizedResource += "&";
-            }
-            canonicalizedResource += responseParam + "=" + it->second;
-        }
-    }
-
-    // Include delete param
-    auto it = queryParams.find("delete");
-    if(it!=queryParams.end())
-    {
-        if(!hasResource)
-        {
-            canonicalizedResource += "?";
-            hasResource = true;
-        }
-        else
-        {
-            canonicalizedResource += "&";
-        }
-        canonicalizedResource += "delete=" + it->second;
-    }
-    return canonicalizedResource;
-}
-
-std::optional<std::string> checkSigQueryStringV2(HTTPMessage &headers, const std::string_view httpVerb, const std::string_view ressource,
-              const std::string_view action)
-{
-    if(!FLAGS_allow_sig_v2)
-        return std::nullopt;
-
-    const auto& queryParams = headers.getQueryParams();
-    const auto itAccessKey = queryParams.find("AWSAccessKeyId");
-    if(itAccessKey==queryParams.end())
-        return std::nullopt;
-
-    const auto& accessKey = itAccessKey->second;
-
-    const auto& secretKey = getSecretKey(accessKey);
-
-    if(secretKey.empty())
-        return std::nullopt;
-
-    if(!isAuthorized(ressource, action, accessKey))
-        return std::nullopt;
-
-    const auto itExpires = queryParams.find("Expires");
-    if(itExpires==queryParams.end())
-        return std::nullopt;
-
-    const auto expires = std::stoll(itExpires->second);
-
-    if(expires < std::time(nullptr))
-        return std::nullopt;
-
-    const auto itSignature = queryParams.find("Signature");
-    if(itSignature==queryParams.end())
-        return std::nullopt;
-
-    const auto signature = itSignature->second;
-
-    const auto canonicalizedAmzHeaders = getCanonicalizedAmzHeaders(headers.getHeaders());
-
-    const auto canonicalizedResource = getCanonicalizedResource(headers);
-
-    const auto stringToSign = folly::sformat(
-        "{}\n{}\n{}\n{}\n{}{}", httpVerb, headers.getHeaders().getSingleOrEmpty("Content-MD5"),
-        headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_CONTENT_LENGTH), expires, canonicalizedAmzHeaders,
-        canonicalizedResource);
-
-    const auto urlSig = folly::base64Encode(hmacSha1Binary(secretKey, stringToSign));
-
-    try
-    {
-        if(urlSig != folly::uriUnescape<std::string>(signature))
-            return std::nullopt;
-    }
-    catch(std::invalid_argument&)
-    {
-        return std::nullopt;
-    }
-    
-    return itAccessKey->second;
 }
 
 
@@ -752,6 +761,49 @@ static void multiPartUploadXmlCharData(void *userData,
     }
 }
 
+std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& message)
+{
+    const auto payload = message.getHeaders().getSingleOrEmpty("x-amz-content-sha256");
+
+    std::string payloadBin;
+    if(!folly::unhexlify(payload, payloadBin))
+    {
+        XLOGF(INFO, "Invalid payload hash: {}", payload);
+        ResponseBuilder(downstream_)
+            .status(400, "Bad request")
+            .body("Invalid payload hash")
+            .sendWithEOM();
+        return std::nullopt;
+    }
+
+    if(!payload.empty())
+    {
+        payloadHash = std::make_unique<PayloadHash>();
+        payloadHash->method = PayloadHash::Method::Sha256;
+        payloadHash->expectedHash = payloadBin;
+        if(!payloadHash->evpMdCtx.init(EVP_sha256()))
+        {
+            XLOGF(INFO, "Failed to init sha256 context");
+            ResponseBuilder(downstream_)
+                .status(500, "Internal error")
+                .body("Failed to init sha256 context")
+                .sendWithEOM();
+            return std::nullopt;
+        }
+        if(!payloadHash->checkSize())
+        {
+            XLOGF(INFO, "Payload hash size mismatch");
+            ResponseBuilder(downstream_)
+                .status(400, "Bad request")
+                .body("Payload hash size mismatch")
+                .sendWithEOM();
+            return std::nullopt;
+        }
+    }
+
+    return payload;
+}
+
 /**
  * Handles requests by serving the file named in path.  Only supports GET.
  * reads happen in a CPU thread pool since read(2) is blocking.
@@ -795,7 +847,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         if(header_path.find('/', 1)==std::string::npos)
         {
             const auto bucketName = header_path.subpiece(1);
-            if(!checkSig(*headers, "", fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket", false))
+            if(!checkSig(*headers, emptyPayloadHash, fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket", false))
             {
                 XLOGF(INFO, "Unauthorized list bucket: {}", bucketName);
                 ResponseBuilder(downstream_)
@@ -812,11 +864,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         const auto resource = fmt::format("arn:aws:s3:::{}", header_path.subpiece(1));
         const auto action = headers->getMethod() == HTTPMethod::GET ? "s3:GetObject" : "s3:HeadObject";
 
-        auto accessKey = checkSig(*headers, "", resource, action, true);   
-        if(!accessKey)
-        {
-            accessKey = checkSigQueryStringV2(*headers, headers->getMethod() == HTTPMethod::GET ? "GET" : "HEAD", resource, action);
-        }
+        auto accessKey = checkSig(*headers, emptyPayloadHash, resource, action, true);
 
         if(!accessKey)
         {
@@ -860,6 +908,12 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         if(!setKeyInfoFromPath(headers->getPathAsStringPiece()))
             return;
+
+        const auto resource = fmt::format("arn:aws:s3:::{}", headers->getPathAsStringPiece().substr(1));
+        const auto payloadOpt = initPayloadHash(*headers);
+        if(!payloadOpt)
+            return;
+        const auto payload = *payloadOpt;
 
         if(!headers->getQueryStringAsStringPiece().empty())
         {
@@ -916,7 +970,31 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             XLOGF(DBG0, "PutObjectPart {} part {} uploadId {} length {}", headers->getPathAsStringPiece(), partNumber, uploadId, remaining);
 
+            const auto action = "s3:PutObjectPart";
+
+            if(!checkSig(*headers, payload, resource, action, true))
+            {
+                XLOGF(INFO, "Unauthorized putObjectPart: {}", headers->getPathAsStringPiece());
+                ResponseBuilder(downstream_)
+                    .status(401, "Unauthorized")
+                    .body("Verifying request authorization failed")
+                    .sendWithEOM();
+                return;
+            }
+
             putObjectPart(*headers, partNumber, uploadId, uploadVerId);
+            return;
+        }
+
+        const auto action = "s3:PutObject";
+
+        if(!checkSig(*headers, payload, resource, action, true))
+        {
+            XLOGF(INFO, "Unauthorized putObject: {}", headers->getPathAsStringPiece());
+            ResponseBuilder(downstream_)
+                .status(401, "Unauthorized")
+                .body("Verifying request authorization failed")
+                .sendWithEOM();
             return;
         }
 
@@ -928,7 +1006,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             // Don't handle EOM
             request_type = RequestType::HeadObject;
             return;
-        }
+        }        
 
         if(FLAGS_with_stop_command &&
              headers->getPathAsStringPiece().find(c_stop_uuid)!=std::string::npos)
@@ -958,6 +1036,20 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         if(!setKeyInfoFromPath(headers->getPathAsStringPiece()))
             return;
 
+        const auto resource = fmt::format("arn:aws:s3:::{}", headers->getPathAsStringPiece().substr(1));
+        const auto action = "s3:DeleteObject";
+
+        //TODO: Double-check that pre-signed delete is possible
+        if(!checkSig(*headers, emptyPayloadHash, resource, action, true))
+        {
+            XLOGF(INFO, "Unauthorized delete object: {}", headers->getPathAsStringPiece());
+            ResponseBuilder(downstream_)
+                .status(401, "Unauthorized")
+                .body("Verifying request authorization failed")
+                .sendWithEOM();
+            return;
+        }
+
         XLOGF(INFO, "Delete object {}", headers->getPathAsStringPiece());
         deleteObject(*headers);
     }
@@ -973,12 +1065,30 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         
         if(headers->getQueryStringAsStringPiece() == uploadsStr)
         {
+            const auto resource = fmt::format("arn:aws:s3:::{}", headers->getPathAsStringPiece().substr(1));
+            const auto action = "s3:CreateMultipartUpload";
+
+            if(!checkSig(*headers, emptyPayloadHash, resource, action, true))
+            {
+                XLOGF(INFO, "Unauthorized create multi-part upload: {}", headers->getPathAsStringPiece());
+                ResponseBuilder(downstream_)
+                    .status(401, "Unauthorized")
+                    .body("Verifying request authorization failed")
+                    .sendWithEOM();
+                return;
+            }
+
             XLOGF(INFO, "Multi-part upload of {}", keyInfo.key);
             createMultipartUpload(*headers);
             return;
         }
         else
         {
+            const auto payloadOpt = initPayloadHash(*headers);
+            if(!payloadOpt)
+                return;
+            const auto payload = *payloadOpt;
+
             std::string uploadIdHex, uploadVerIdHex;
             std::string uploadIdStr, uploadVerId;
             const auto uploadIdIt = headers->getQueryParams().find("uploadId");
@@ -1527,7 +1637,7 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb]()
             {
-                if(!self->evpMdCtx.init())
+                if(!self->evpMdCtx.init(EVP_md5()))
                 {
                     evb->runInEventBaseThread([self = self]()
                                               {
@@ -1590,7 +1700,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb, partNumber, uploadId, uploadVerId]()
             {
-                if(!self->evpMdCtx.init())
+                if(!self->evpMdCtx.init(EVP_md5()))
                 {
                     evb->runInEventBaseThread([self = self]()
                                               {
@@ -2624,8 +2734,22 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
     if(request_type == RequestType::CompleteMultipartUpload)
     {
+        if(payloadHash)
+            EVP_DigestUpdate(payloadHash->evpMdCtx.ctx, body->data(), body->length());
+
         done_bytes += body_bytes;
         const auto isFinal = put_remaining.fetch_sub(body->length(), std::memory_order_release) == body->length();
+
+        if(isFinal && payloadHash && !payloadHash->isFinalExpected())
+        {
+            ResponseBuilder(self->downstream_)
+                .status(500, "Internal error")
+                .body("Payload hash not as expected")
+                .sendWithEOM();
+            finished_ = true; 
+            return;
+        }
+
         auto rc = XML_Parse(xmlBody.parser, reinterpret_cast<const char*>(body->data()), body->length(), isFinal ? 1 : 0);
         if(rc!=XML_STATUS_OK)
         {                 
@@ -2684,6 +2808,19 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         md5sum[0] = metadata_object;
         EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&md5sum[1]), nullptr);
 
+        if(payloadHash && !payloadHash->isFinalExpected())
+        {
+            evb->runInEventBaseThread([self = this]()
+                                {           
+                if(!self)
+                    return;
+                ResponseBuilder(self->downstream_)
+                    .status(400, "Bad request")
+                    .body("Invalid hash")
+                    .sendWithEOM();
+                self->finished_ = true; });
+            return;
+        }
 
         if(!extents.empty())
             XLOGF(INFO, "Finalize object {} ext off {} len {}", keyInfo.key, extents[0].data_file_offset, extents[0].len);
@@ -2773,6 +2910,11 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
     size_t data_size = body->length();
 
     EVP_DigestUpdate(evpMdCtx.ctx, data, data_size);
+
+    if(payloadHash)
+    {
+        EVP_DigestUpdate(payloadHash->evpMdCtx.ctx, data, data_size);
+    }
 
     while(data_size > 0)
     {

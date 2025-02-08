@@ -39,13 +39,13 @@ class EvpMdCtx
 public:
     EVP_MD_CTX* ctx = nullptr;
 
-    bool init() {
+    bool init(const EVP_MD *type) {
         assert(ctx==nullptr);
         ctx = EVP_MD_CTX_new();
         if(ctx==nullptr)
             return false;
         
-        return EVP_DigestInit(ctx, EVP_md5())==1;
+        return EVP_DigestInit(ctx, type)==1;
     }
     
     ~EvpMdCtx() {
@@ -151,6 +151,50 @@ public:
         std::vector<PartExt> exts;
     };
 
+    struct PayloadHash
+    {
+        enum class Method
+        {
+            Sha256
+        };
+        Method method;
+        std::string expectedHash;
+        EvpMdCtx evpMdCtx;
+
+        bool checkSize()
+        {
+            if(method==Method::Sha256)
+                return expectedHash.size() == SHA256_DIGEST_LENGTH;
+
+            return true;
+        }
+
+        std::string final()
+        {
+            std::string binHash;
+            switch(method)
+            {
+                case Method::Sha256:
+                    binHash.resize(SHA256_DIGEST_LENGTH);
+                    break;
+                default:
+                    return std::string();
+            }
+            EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&binHash[0]), nullptr);
+            return binHash;
+        }
+
+        bool isFinalExpected()
+        {
+            const bool ok = expectedHash == final();
+            if(ok)
+            {
+                XLOGF(INFO, "Payload hash {} ok", folly::hexlify(expectedHash));
+            }
+            return ok;
+        }
+    };
+
 private:
     void readFile(folly::EventBase *evb);
     void readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> self, int64_t offset);
@@ -178,6 +222,7 @@ private:
     void readBodyThread(folly::EventBase *evb);
     bool setKeyInfoFromPath(const std::string_view path);
     bool handleApiCall(proxygen::HTTPMessage& headers);
+    std::optional<std::string> initPayloadHash(proxygen::HTTPMessage& message);
 
 	enum class RequestType
 	{
@@ -211,6 +256,7 @@ private:
 
 	std::vector<SingleFileStorage::Ext> extents;
     EvpMdCtx evpMdCtx;
+    std::unique_ptr<PayloadHash> payloadHash;
 
     struct BodyObj
     {
