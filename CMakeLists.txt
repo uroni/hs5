@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 project(hs5 VERSION 0.1.0 LANGUAGES CXX C)
+set(PACKAGE_VERSION "0.1.0")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -46,6 +47,21 @@ foreach(SCHEMA ${APIGEN_SCHEMAS})
   endif()
 endforeach()
 
+# Get the current git revision
+execute_process(
+  COMMAND git rev-parse --short HEAD
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  OUTPUT_VARIABLE GIT_REVISION
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+# Configure config.h
+configure_file(
+  ${CMAKE_SOURCE_DIR}/config.h.in
+  ${CMAKE_BINARY_DIR}/config.h
+  @ONLY
+)
+
 add_executable(hs5
     lmdb/midl.cpp
     lmdb/mdb.c
@@ -64,8 +80,11 @@ add_executable(hs5
     Auth.cpp
     ApiHandler.cpp
     Session.cpp
+    cmd.cpp
     ${SCHEMA_SOURCES})
 
+# Include the generated config.h
+target_include_directories(hs5 PRIVATE ${CMAKE_BINARY_DIR})
 
 #set(GCC_COVERAGE_COMPILE_FLAGS "-fcoroutines")
 
@@ -79,6 +98,8 @@ find_package(expat CONFIG REQUIRED)
 find_package(unofficial-sodium CONFIG REQUIRED)
 find_package(sqlite-cpp-sqlgen CONFIG REQUIRED)
 find_package(nlohmann_json  CONFIG REQUIRED)
+find_path(TCLAP_INCLUDE_DIRS "tclap/Arg.h")
+target_include_directories(hs5 PRIVATE ${TCLAP_INCLUDE_DIRS})
 target_link_libraries(hs5 PRIVATE $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static> Folly::folly Folly::folly_deps Folly::follybenchmark Folly::folly_test_util
   proxygen::proxygen proxygen::proxygencurl proxygen::proxygenhttpserver expat::expat unofficial-sodium::sodium SqliteCppGen::SqliteCppGen nlohmann_json::nlohmann_json fmt::fmt)
 

@@ -13,6 +13,7 @@
     "sqlite-cpp-sqlgen",
     "nlohmann-json",
     "fmt",
-    "argon2"
+    "argon2",
+    "tclap"
   ]
 }

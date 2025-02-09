@@ -46,6 +46,7 @@ class Hs5Runner:
         assert hs5_loc is not None
 
         args = [str(hs5_loc),
+                "internal",
                 "--ip",
                 "127.0.0.1",
                 "--http_port",
