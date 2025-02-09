@@ -27,6 +27,10 @@
 #include "s3handler.h"
 #include "SingleFileStorage.h"
 #include "folly/ScopeGuard.h"
+#include <proxygen/httpserver/ResponseBuilder.h>
+#include "utils.h"
+
+using namespace proxygen;
 
 DEFINE_string(init_root_password, "", "Initial password of root account");
 DEFINE_string(init_root_access_key, "", "Initial name of access key of root account. Default: root");
@@ -124,19 +128,149 @@ void ApiHandler::init()
     }
 }
 
-ApiHandler::ApiHandler(const std::string_view func, const std::string_view cookieSes, S3Handler& s3handler)
- : func(func), cookieSes(cookieSes), s3handler(s3handler)
+ApiHandler::ApiHandler(SingleFileStorage &sfs)
+ : sfs(sfs), self(this)
 {
+}
+
+void ApiHandler::onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexcept
+{
+    if (headers->getMethod() != HTTPMethod::POST)
+    {
+        ResponseBuilder(downstream_)
+            .status(400, "Bad method")
+            .body("Only POST is supported")
+            .sendWithEOM();
+        return;
+    }
+
+    const std::string_view path(headers->getPathAsStringPiece());
+    if(path.empty())
+        return;
+
+    const auto bucketEnd = path.find_first_of('/', 1);
+    if(bucketEnd == std::string::npos)
+        return;
+
+    func = path.substr(bucketEnd+1);
+
+    std::string cl = headers->getHeaders().getSingleOrEmpty(
+                    proxygen::HTTP_HEADER_CONTENT_LENGTH);
+    if (cl.empty())
+    {
+        ResponseBuilder(downstream_)
+            .status(500, "Internal error")
+            .body("Content-Length header not set")
+            .sendWithEOM();
+        finished = true;
+        return;
+    }
+
     if(func!="adduser"
         && func!="login"
         && func!="list")
-        throw FunctionNotFoundError(fmt::format("Api function \"{}\" not found", func));
+    {
+        ResponseBuilder(downstream_)
+            .status(404, "Not found")
+            .body("Function not found")
+            .sendWithEOM();
+        finished = true;
+        return;
+    }
+
+    putRemaining = std::atoll(cl.c_str());
+
+    cookieSes = headers->getCookie("ses");
+}
+
+void ApiHandler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
+{
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+
+    const auto bodyBytes = body->length();
+
+    doneBytes += bodyBytes;
+    putRemaining -= bodyBytes;
+
+    if(!onBody(body->data(), body->length()))
+    {
+        ResponseBuilder(downstream_)
+            .status(500, "Internal error")
+            .body("Write ext error")
+            .sendWithEOM();
+        finished = true;
+        return;
+    }
 }
 
 bool ApiHandler::onBody(const uint8_t* data, size_t dataSize)
 {
     body.append(reinterpret_cast<const char*>(data), dataSize);
     return true;
+}
+
+void ApiHandler::onEOM() noexcept
+{
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+
+    if(finished)
+        return;
+
+    if(putRemaining!=0)
+    {
+        ResponseBuilder(downstream_)
+            .status(500, "Internal error")
+            .body("Expecting more data")
+            .sendWithEOM();
+        finished = true; 
+        return;
+    }
+
+    folly::getGlobalCPUExecutor()->add(
+        [this, evb]()
+        {
+            const auto response = runRequest();
+
+            evb->runInEventBaseThread([this, response]()
+                                        {
+                auto statusMesg = response.code == 200 ? "OK" : "Internal error";
+                
+                ResponseBuilder respBuilder(downstream_);
+                respBuilder.status(response.code, statusMesg);
+                respBuilder.body(response.contentType ? response.body : escapeXML(response.body));
+
+                if(response.setCookie)
+                {
+                    respBuilder.header(HTTPHeaderCode::HTTP_HEADER_SET_COOKIE, fmt::format("ses={}; SameSite=Strict; HttpOnly", *response.setCookie));
+                }
+
+                if(response.contentType)
+                {
+                    respBuilder.header(HTTPHeaderCode::HTTP_HEADER_CONTENT_TYPE, *response.contentType);
+                }
+
+                respBuilder.sendWithEOM();
+
+                finished = true; });
+        }
+    );
+}
+
+void ApiHandler::onUpgrade(UpgradeProtocol /*protocol*/) noexcept
+{
+    // handler doesn't support upgrades
+}
+
+void ApiHandler::requestComplete() noexcept
+{
+    finished = true;
+    self.reset();
+}
+
+void ApiHandler::onError(proxygen::ProxygenError) noexcept
+{
+    finished = true;
+    self.reset();
 }
 
 ApiHandler::ApiResponse ApiHandler::runRequest()
@@ -259,7 +393,6 @@ Api::ListResp ApiHandler::list(const Api::ListParams& params, const ApiSessionSt
     if(!bucketIdOpt)
         throw ApiError(Api::Herror::bucketNotFound);
     const auto bucketId = *bucketIdOpt;
-    auto& sfs = s3handler.sfs;
     const auto iterStartVal = make_key({.key = params.continuationToken ? *params.continuationToken : prefix, .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId});
 
     SingleFileStorage::IterData iterData = {};

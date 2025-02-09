@@ -1055,9 +1055,6 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     }
     else if(headers->getMethod() == HTTPMethod::POST)
     {
-        if(handleApiCall(*headers))
-            return;
-
         if(!setKeyInfoFromPath(headers->getPathAsStringPiece()))
             return;
 
@@ -1144,41 +1141,6 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             XLOGF(INFO, "Complete multi-part upload of {} uploadId {}", keyInfo.key, uploadId);
         }
     }
-}
-
-bool S3Handler::handleApiCall(proxygen::HTTPMessage& headers)
-{
-    const std::string_view path(headers.getPathAsStringPiece());
-    if(path.empty())
-        return false;
-
-    const auto bucketEnd = path.find_first_of('/', 1);
-    if(bucketEnd == std::string::npos)
-        return false;
-
-    const auto bucketName = path.substr(1, bucketEnd);
-
-    if(bucketName!="api-v1-b64be512-4b03-4028-a589-13931942e205/")
-        return false;
-
-    const auto keyStr = path.substr(bucketEnd+1);
-
-    std::string cl = headers.getHeaders().getSingleOrEmpty(
-                    proxygen::HTTP_HEADER_CONTENT_LENGTH);
-    if (cl.empty())
-    {
-        ResponseBuilder(downstream_)
-            .status(500, "Internal error")
-            .body("Content-Length header not set")
-            .sendWithEOM();
-        return true;
-    }
-
-    put_remaining = std::atoll(cl.c_str());
-
-    apiHandler = std::make_unique<ApiHandler>(keyStr, headers.getCookie("ses"), *this);
-
-    return true;
 }
 
 bool S3Handler::setKeyInfoFromPath(const std::string_view path)
@@ -2714,24 +2676,6 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
     size_t body_bytes = body->length();
 
-    if(apiHandler)
-    {
-        done_bytes += body_bytes;
-        put_remaining.fetch_sub(body->length(), std::memory_order_release);
-
-        if(!apiHandler->onBody(body->data(), body->length()))
-        {
-            ResponseBuilder(self->downstream_)
-                .status(500, "Internal error")
-                .body("Write ext error")
-                .sendWithEOM();
-            finished_ = true; 
-            return;
-        }
-
-        return;
-    }
-
     if(request_type == RequestType::CompleteMultipartUpload)
     {
         if(payloadHash)
@@ -2969,52 +2913,6 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 void S3Handler::onEOM() noexcept
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
-
-    if(apiHandler)
-    {
-        if(finished_)
-            return;
-
-        if(put_remaining!=0)
-        {
-            ResponseBuilder(self->downstream_)
-                .status(500, "Internal error")
-                .body("Expecting more data")
-                .sendWithEOM();
-            finished_ = true; 
-            return;
-        }
-
-        folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb]()
-            {
-                const auto response = self->apiHandler->runRequest();
-
-                evb->runInEventBaseThread([self = self, response]()
-                                            {
-                    auto statusMesg = response.code == 200 ? "OK" : "Internal error";
-                    
-                    ResponseBuilder respBuilder(self->downstream_);
-                    respBuilder.status(response.code, statusMesg);
-                    respBuilder.body(response.contentType ? response.body : escapeXML(response.body));
-
-                    if(response.setCookie)
-                    {
-                        respBuilder.header(HTTPHeaderCode::HTTP_HEADER_SET_COOKIE, fmt::format("ses={}; SameSite=Strict; HttpOnly", *response.setCookie));
-                    }
-
-                    if(response.contentType)
-                    {
-                        respBuilder.header(HTTPHeaderCode::HTTP_HEADER_CONTENT_TYPE, *response.contentType);
-                    }
-
-                    respBuilder.sendWithEOM();
-
-                    self->finished_ = true; });
-            }
-        );
-        return;
-    }
 
     if(request_type == RequestType::CompleteMultipartUpload)
     {

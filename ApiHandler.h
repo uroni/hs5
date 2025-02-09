@@ -13,22 +13,29 @@
 #include "apigen/ListResp.hpp"
 #include "apigen/ListParams.hpp"
 #include "Session.h"
+#include <proxygen/httpserver/RequestHandler.h>
 
-class S3Handler;
 
-class FunctionNotFoundError : std::runtime_error
+class SingleFileStorage;
+
+class ApiHandler : public proxygen::RequestHandler
 {
 public:
-    FunctionNotFoundError(const std::string& msg)
-        : std::runtime_error(msg) {}
-}; 
+    ApiHandler(SingleFileStorage &sfs);
 
-class ApiHandler
-{
-public:
-    ApiHandler(const std::string_view func, const std::string_view cookieSes, S3Handler& s3handler);
+    void onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexcept override;
 
     bool onBody(const uint8_t* data, size_t dataSize);
+
+    void onBody(std::unique_ptr<folly::IOBuf> body) noexcept override;
+
+    void onEOM() noexcept override;
+
+    void onUpgrade(proxygen::UpgradeProtocol proto) noexcept override;
+
+    void requestComplete() noexcept override;
+
+    void onError(proxygen::ProxygenError err) noexcept override;
 
     struct ApiResponse
     {
@@ -52,9 +59,15 @@ private:
     std::string body;
     std::string cookieSes;
 
-    S3Handler& s3handler;
+    SingleFileStorage &sfs;
 
     static thread_local DbDao dao;
+
+    int64_t putRemaining = -1;
+    int64_t doneBytes = 0;
+    bool finished = false;
+
+    std::unique_ptr<ApiHandler> self;
 };
 
 class ApiError : std::runtime_error

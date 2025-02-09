@@ -81,6 +81,8 @@ add_executable(hs5
     ApiHandler.cpp
     Session.cpp
     cmd.cpp
+    StaticHandler.cpp
+    wwwgen/www_files.cpp
     ${SCHEMA_SOURCES})
 
 # Include the generated config.h

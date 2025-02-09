@@ -221,7 +221,6 @@ private:
     int readMultipartExt(int64_t offset);
     void readBodyThread(folly::EventBase *evb);
     bool setKeyInfoFromPath(const std::string_view path);
-    bool handleApiCall(proxygen::HTTPMessage& headers);
     std::optional<std::string> initPayloadHash(proxygen::HTTPMessage& message);
 
 	enum class RequestType
@@ -268,6 +267,4 @@ private:
     std::mutex bodyMutex;
     bool hasBodyThread = false;
     std::queue<BodyObj> bodyQueue;
-
-    std::unique_ptr<ApiHandler> apiHandler;
 };

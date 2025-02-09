@@ -29,6 +29,7 @@
 #include "ApiHandler.h"
 #include "Buckets.h"
 #include "config.h"
+#include "StaticHandler.h"
 
 using namespace std::chrono_literals;
 
@@ -67,7 +68,53 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
   void onServerStop() noexcept override {
   }
 
-  proxygen::RequestHandler* onRequest(proxygen::RequestHandler*, proxygen::HTTPMessage*) noexcept override {
+  bool isApiCall(const std::string_view path)
+  {
+    if(path.empty())
+      return false;
+    
+    const auto bucketEnd = path.find_first_of('/', 1);
+    if(bucketEnd == std::string::npos)
+        return false;
+    const auto bucketName = path.substr(1, bucketEnd);
+
+    if(bucketName!="api-v1-b64be512-4b03-4028-a589-13931942e205/")
+        return false;
+
+    return true;
+  }
+
+  bool isStaticFile(const std::string_view path)
+  {
+    if(path.empty())
+      return true;
+    
+    if(path.size() == 1 && path[0]=='/')
+      return true;
+
+    const auto bucketEnd = path.find_first_of('/', 1);
+    if(bucketEnd == std::string::npos)
+        return true;
+
+    const auto bucketName = path.substr(1, bucketEnd);
+
+    if(bucketName=="admin-b64be5124b034028a58913931942e205/")
+        return true;
+
+    return false;
+  }
+
+  proxygen::RequestHandler* onRequest(proxygen::RequestHandler*, proxygen::HTTPMessage* message) noexcept override
+  {
+    const std::string_view path(message->getPathAsStringPiece());
+    
+    if(message->getMethod() == proxygen::HTTPMethod::POST &&
+       isApiCall(path))
+      return new ApiHandler(sfs);
+    if(message->getMethod() == proxygen::HTTPMethod::GET &&
+        isStaticFile(path))
+      return new StaticHandler();
+
     return new S3Handler(sfs, FLAGS_server_url, FLAGS_with_bucket_versioning);
   }
 };
