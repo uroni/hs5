@@ -42,6 +42,7 @@ class Hs5Runner:
         for loc in locs:
             if (Path(os.getcwd()) / loc).exists():
                 hs5_loc = Path(os.getcwd()) / loc
+                break
 
         assert hs5_loc is not None
 
