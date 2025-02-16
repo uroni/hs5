@@ -1318,7 +1318,7 @@ void SingleFileStorage::handle_mmap_read_error(void* addr)
 }
 
 int SingleFileStorage::write(const std::string & fn, const char* data, 
-	size_t data_size, const size_t data_alloc_size, int64_t last_modified, const std::string & md5sum,
+	size_t data_size, const size_t data_alloc_size, int64_t last_modified, const std::string & md5sum, const std::string& metadata,
 	bool no_del_old, bool is_fragment)
 {
 	if (is_dead)
@@ -1329,7 +1329,7 @@ int SingleFileStorage::write(const std::string & fn, const char* data,
 	if (fn.size() > 255)
 		return EINVAL;
 
-	return write_int(fn, data, data_size, data_alloc_size, last_modified, md5sum, true, no_del_old);
+	return write_int(fn, data, data_size, data_alloc_size, last_modified, md5sum, metadata, true, no_del_old);
 }
 
 int64_t SingleFileStorage::get_transid(int64_t disk_id)
@@ -1768,7 +1768,7 @@ int SingleFileStorage::write_ext(const Ext& ext, const char* data, size_t data_s
 }
 
 int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<Ext>& extents, int64_t last_modified, const std::string& md5sum,
-		bool no_del_old, bool is_fragment)
+		const std::string& metadata, bool no_del_old, bool is_fragment)
 {
 	std::unique_lock lock(mutex);
 	wait_queue(lock, false, true);
@@ -1785,6 +1785,7 @@ int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<E
 	curr_frag.fn = fn;
 	curr_frag.last_modified = last_modified;
 	curr_frag.md5sum = md5sum;
+	curr_frag.metadata = metadata;
 
 	++commit_items[common_prefix_hash_func(fn)];
 
@@ -1800,7 +1801,7 @@ int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<E
 }
 
 int SingleFileStorage::write_int(const std::string & fn, const char* data,
-	size_t data_size, const size_t data_alloc_size, int64_t last_modified, const std::string & md5sum, bool allow_defrag_lock,
+	size_t data_size, const size_t data_alloc_size, int64_t last_modified, const std::string & md5sum, const std::string& metadata, bool allow_defrag_lock,
 	bool no_del_old)
 {
 	std::string cfn = fn;
@@ -1981,6 +1982,7 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 	curr_frag.fn = cfn;
 	curr_frag.last_modified = last_modified;
 	curr_frag.md5sum = md5sum;
+	curr_frag.metadata = metadata;
 
 	++commit_items[common_prefix_hash_func(cfn)];
 
@@ -2578,7 +2580,7 @@ bool SingleFileStorage::iter_next(IterData& iter_data)
 
 bool SingleFileStorage::iter_curr_val(std::string & fn, int64_t& offset, int64_t & size,
 	std::vector<SingleFileStorage::SPunchItem>& extra_exts, int64_t & last_modified, std::string & md5sum,
-	IterData& iter_data)
+	const std::string& metadata, IterData& iter_data)
 {
 	if (iter_data.iter_key.mv_data == nullptr)
 		return false;

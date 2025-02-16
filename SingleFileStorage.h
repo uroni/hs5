@@ -126,11 +126,11 @@ public:
 	int write_ext(const Ext& ext, const char* data, size_t data_size);
 
 	int write_finalize(const std::string& fn, const std::vector<Ext>& extents, int64_t last_modified, const std::string& md5sum,
-		bool no_del_old, bool is_fragment);
+		const std::string& metadata, bool no_del_old, bool is_fragment);
 
 	int write(const std::string& fn,
 		const char* data, size_t data_size, const size_t data_alloc_size, 
-		int64_t last_modified, const std::string& md5sum,
+		int64_t last_modified, const std::string& md5sum, const std::string& metadata,
 		bool no_del_old, bool is_fragment);
 
 	const static unsigned int ReadWithReadahead = 1;
@@ -196,7 +196,8 @@ public:
 
 	bool iter_next(IterData& iter_data);
 
-	bool iter_curr_val(std::string& fn, int64_t& offset, int64_t& size, std::vector<SPunchItem>& exta_exts, int64_t& last_modified, std::string& md5sum, IterData& iter_data);
+	bool iter_curr_val(std::string& fn, int64_t& offset, int64_t& size, std::vector<SPunchItem>& exta_exts,
+		int64_t& last_modified, std::string& md5sum, const std::string& metadata, IterData& iter_data);
 
 	bool iter_curr_val(std::string& fn, std::string& data, IterData& iter_data);
 
@@ -292,7 +293,7 @@ public:
 private:
 
 	int write_int(const std::string& fn, const char* data, size_t data_size, const size_t data_alloc_size,
-		int64_t last_modified, const std::string& md5sum, bool allow_defrag_lock, bool no_del_old);
+		int64_t last_modified, const std::string& md5sum, const std::string& metadata, bool allow_defrag_lock, bool no_del_old);
 
 	int64_t remove_fn(const std::string& fn,
 		MDB_txn* txn, MDB_txn* freespace_txn, bool del_from_main, bool del_old, THREAD_ID tid);
@@ -470,6 +471,7 @@ private:
 		int64_t len;
 		int64_t last_modified;
 		std::string md5sum;
+		std::string metadata;
 		SCommitInfo* commit_info;
 		std::vector<SPunchItem> extra_exts;
 	};
