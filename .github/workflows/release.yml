@@ -1,6 +1,8 @@
 name: release
-on:
-  workflow_dispatch:
+on: 
+  push:
+    tags:
+    - '*'
 
 jobs:
   job:
@@ -49,25 +51,6 @@ jobs:
         run: echo "::set-output name=date::$(date +'%Y-%m-%d_%H-%M-%S')"
 
       - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: ncipollo/release-action@v1
         with:
-          tag_name: ${{ steps.date.outputs.date }}
-          release_name: Release ${{ steps.date.outputs.date }}
-          draft: true
-          prerelease: true
-
-      - name: Upload Release Asset
-        id: upload-release-asset 
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./hs5.xz
-          asset_name: hs5.xz
-          asset_content_type: application/octetstream
-
-      
+         artifacts: "hs5.xz"
