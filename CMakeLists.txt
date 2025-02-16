@@ -85,6 +85,8 @@ add_executable(hs5
     wwwgen/www_files.cpp
     ${SCHEMA_SOURCES})
 
+set_property(TARGET hs5 PROPERTY CXX_STANDARD 20)
+
 # Include the generated config.h
 target_include_directories(hs5 PRIVATE ${CMAKE_BINARY_DIR})
 
