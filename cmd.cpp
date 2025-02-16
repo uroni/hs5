@@ -9,6 +9,7 @@
 #include <set>
 #include <fstream>
 #include <tclap/CmdLine.h>
+#include <stdlib.h>
 #include "main.h"
 
 void showVersion()
@@ -250,20 +251,44 @@ int actionRun(std::vector<std::string> args)
         realArgs.push_back(serverUrlArg.getValue());
     }
 
-    if(!alreadySetArgs.contains("--data_path") 
-        && ( dataStoragePathArg.isSet()  || storagePathArg.isSet()) )
+    if(!alreadySetArgs.contains("--data_path"))
     {
-        const auto dataPath = dataStoragePathArg.isSet() ? dataStoragePathArg.getValue() : storagePathArg.getValue();
-        realArgs.push_back("--data_path");
-        realArgs.push_back(dataStoragePathArg.getValue());
+        if( dataStoragePathArg.isSet()  || storagePathArg.isSet()) 
+        {
+            const auto dataPath = dataStoragePathArg.isSet() ? dataStoragePathArg.getValue() : storagePathArg.getValue();
+            realArgs.push_back("--data_path");
+            realArgs.push_back(dataStoragePathArg.getValue());
+        }
+        else if(auto dataPath = getenv("DATA_PATH"); dataPath)
+        {
+            realArgs.push_back("--data_path");
+            realArgs.push_back(dataPath);
+        }
+        else if(auto dataPath = getenv("STORAGE_PATH"); dataPath)
+        {
+            realArgs.push_back("--data_path");
+            realArgs.push_back(dataPath);
+        }
     }
 
-    if(!alreadySetArgs.contains("--index_path") 
-        && ( metadataStoragePathArg.isSet()  || storagePathArg.isSet()) )
+    if(!alreadySetArgs.contains("--index_path"))
     {
-        const auto dataPath = metadataStoragePathArg.isSet() ? metadataStoragePathArg.getValue() : storagePathArg.getValue();
-        realArgs.push_back("--index_path");
-        realArgs.push_back(metadataStoragePathArg.getValue());
+        if( metadataStoragePathArg.isSet()  || storagePathArg.isSet()) 
+        {
+            const auto dataPath = metadataStoragePathArg.isSet() ? metadataStoragePathArg.getValue() : storagePathArg.getValue();
+            realArgs.push_back("--index_path");
+            realArgs.push_back(metadataStoragePathArg.getValue());
+        }
+        else if(auto metadataPath = getenv("METADATA_PATH"); metadataPath)
+        {
+            realArgs.push_back("--index_path");
+            realArgs.push_back(metadataPath);
+        }
+        else if(auto metadataPath = getenv("STORAGE_PATH"); metadataPath)
+        {
+            realArgs.push_back("--index_path");
+            realArgs.push_back(metadataPath);
+        }
     }
 
     if(!alreadySetArgs.contains("--ip"))
