@@ -220,7 +220,7 @@ int actionRun(std::vector<std::string> args)
 		"Server IP/hostname to bind to (default 0.0.0.0)",
 		false, "0.0.0.0", "ip", cmd);
 
-    TCLAP::ValueArg<std::string> initRootAccessKeyArg("", "init-root-secret",
+    TCLAP::ValueArg<std::string> initRootSecretArg("", "init-root-secret",
 		"Initial root access key secret",
 		false, "", "string", cmd);
 
@@ -299,8 +299,16 @@ int actionRun(std::vector<std::string> args)
 
     if(!alreadySetArgs.contains("--init_root_password"))
     {
-        realArgs.push_back("--init_root_password");
-        realArgs.push_back(ipArg.getValue());
+        if(initRootSecretArg.isSet())
+        {
+            realArgs.push_back("--init_root_password");
+            realArgs.push_back(initRootSecretArg.getValue());
+        }
+        else if(auto initRootSecret = getenv("INIT_ROOT_SECRET"); initRootSecret)
+        {
+            realArgs.push_back("--init_root_password");
+            realArgs.push_back(initRootSecret);
+        }
     }
 
     if(!alreadySetArgs.contains("--manual_commit")
