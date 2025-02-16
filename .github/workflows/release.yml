@@ -33,6 +33,11 @@ jobs:
         with:
           python-version: 3.11
 
+      - name: Setup system
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y linux-libc-dev liburing-dev
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
