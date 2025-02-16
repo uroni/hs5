@@ -2,7 +2,10 @@
   "name": "main",
   "version-string": "latest",
   "dependencies": [
-    "folly",
+    {
+	"name": "folly",
+	"features": ["liburing"]
+    },
     "proxygen",
     "zstd",
     "expat",
