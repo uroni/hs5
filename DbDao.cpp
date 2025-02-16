@@ -234,7 +234,8 @@ int64_t DbDao::addUser(const std::string& name, int password_state, const std::s
 	_addUser.bind(password);
 	_addUser.bind(system);
 	auto& cursor=_addUser.cursor();
-	assert(cursor.next());
+	const auto hasNext = cursor.next();
+	assert(hasNext);
 	int64_t ret;
 	cursor.get(0, ret);
 	_addUser.reset();
@@ -283,7 +284,8 @@ int64_t DbDao::addAccessKey(int64_t user_id, const std::string& description, con
 	_addAccessKey.bind(secret_key);
 	_addAccessKey.bind(system);
 	auto& cursor=_addAccessKey.cursor();
-	assert(cursor.next());
+	const auto hasNext = cursor.next();
+	assert(hasNext);
 	int64_t ret;
 	cursor.get(0, ret);
 	_addAccessKey.reset();
@@ -306,7 +308,8 @@ int64_t DbDao::addRole(const std::string& name, int system)
 	_addRole.bind(name);
 	_addRole.bind(system);
 	auto& cursor=_addRole.cursor();
-	assert(cursor.next());
+	const auto hasNext = cursor.next();
+	assert(hasNext);
 	int64_t ret;
 	cursor.get(0, ret);
 	_addRole.reset();
@@ -332,7 +335,8 @@ int64_t DbDao::addPolicy(const std::string& name, const std::string& description
 	_addPolicy.bind(data);
 	_addPolicy.bind(system);
 	auto& cursor=_addPolicy.cursor();
-	assert(cursor.next());
+	const auto hasNext = cursor.next();
+	assert(hasNext);
 	int64_t ret;
 	cursor.get(0, ret);
 	_addPolicy.reset();
@@ -357,7 +361,8 @@ int64_t DbDao::addUserRole(int64_t user_id, int64_t role_id, int system)
 	_addUserRole.bind(role_id);
 	_addUserRole.bind(system);
 	auto& cursor=_addUserRole.cursor();
-	assert(cursor.next());
+	const auto hasNext = cursor.next();
+	assert(hasNext);
 	int64_t ret;
 	cursor.get(0, ret);
 	_addUserRole.reset();
@@ -381,7 +386,8 @@ int64_t DbDao::addRolePolicy(int64_t role_id, int64_t policy_id, int system)
 	_addRolePolicy.bind(policy_id);
 	_addRolePolicy.bind(system);
 	auto& cursor=_addRolePolicy.cursor();
-	assert(cursor.next());
+	const auto hasNext = cursor.next();
+	assert(hasNext);
 	int64_t ret;
 	cursor.get(0, ret);
 	_addRolePolicy.reset();
@@ -492,7 +498,8 @@ int64_t DbDao::getMaxBucketId()
 		_getMaxBucketId=db.prepare("SELECT MAX(id) AS id FROM buckets");
 	}
 	auto& cursor=_getMaxBucketId.cursor();
-	assert(cursor.next());
+	const auto hasNext = cursor.next();
+	assert(hasNext);
 	int64_t ret;
 	cursor.get(0, ret);
 	return ret;
