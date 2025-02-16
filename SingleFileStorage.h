@@ -500,6 +500,8 @@ private:
 
 	bool setup_compare_funcs(MDB_txn* txn, MDB_txn* freespace_txn);
 
+	int add_new_object(MDB_txn* txn, const THREAD_ID tid, const std::string& fn);
+
 	bool with_rewrite;
 
 	std::unordered_set<std::string> defrag_skip_items;
@@ -535,6 +537,7 @@ private:
 	MDB_dbi dbi_old;
 	MDB_dbi dbi_holes;
 	MDB_dbi dbi_queue_del;
+	MDB_dbi dbi_new_objects;
 	MDB_env* cache_db_env;
 	MDB_dbi dbi_cache_size;
 	std::set<int64_t> curr_new_free_extents;

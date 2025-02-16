@@ -679,7 +679,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 		throw std::runtime_error("LMDB: Failed to set map size (" + (std::string)mdb_strerror(rc) + ")");
 	}
 
-	rc = mdb_env_set_maxdbs(db_env, 7);
+	rc = mdb_env_set_maxdbs(db_env, 8);
 
 	if (rc)
 	{
@@ -850,6 +850,22 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	if (has_mmap_read_error_reset(tid))
 	{
 		throw std::runtime_error("LMDB: Error opening queue_del dbi handle (SIGBUS)");
+	}
+
+	rc = mdb_dbi_open(txn, "new_objects", MDB_CREATE|MDB_DUPSORT, &dbi_new_objects);
+	if (rc)
+	{
+		throw std::runtime_error("LMDB: Error opening new_objects dbi handle (" + (std::string)mdb_strerror(rc) + ")");
+	}
+	if (has_mmap_read_error_reset(tid))
+	{
+		throw std::runtime_error("LMDB: Error opening new_objects dbi handle (SIGBUS)");
+	}
+
+	rc = mdb_set_compare(txn, dbi_new_objects, mdb_cmp_varint);
+	if (rc)
+	{
+		throw std::runtime_error("LMDB: Error setting new_objects comparison function (" + (std::string)mdb_strerror(rc) + ")");
 	}
 
 	MDB_val val;
@@ -7615,6 +7631,13 @@ bool SingleFileStorage::setup_compare_funcs(MDB_txn* txn, MDB_txn* freespace_txn
 		}
 	}
 
+	rc = mdb_set_compare(txn, dbi_new_objects, mdb_cmp_varint);
+	if (rc)
+	{
+		XLOG(ERR) << "Error setting dbi_new_objects comparison function (2) (" << mdb_strerror(rc) << ") sfs " << db_path;
+		ret = false;
+	}
+
 	return ret;
 }
 
@@ -8689,4 +8712,44 @@ int64_t SingleFileStorage::decrypt_id(const std::string& encdata)
 std::string SingleFileStorage::encrypt_id(const int64_t id)
 {
 	return cryptId(id, enckey);
+}
+
+namespace
+{
+	
+int64_t currentNanoseconds()
+{
+	return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+}
+
+} // anon namespace
+
+int SingleFileStorage::add_new_object(MDB_txn* txn, const THREAD_ID tid, const std::string& fn)
+{
+	CWData key_data;
+	key_data.addVarInt(currentNanoseconds());
+
+	MDB_val tkey = {.mv_size=key_data.getDataSize(), .mv_data=key_data.getDataPtr()};
+
+	CWData data;
+	data.addString2(fn);
+	data.addString2(std::string());
+
+	MDB_val tval = {.mv_size=data.getDataSize(), .mv_data=data.getDataPtr()};
+
+	const auto rc = mdb_put(txn, dbi_new_objects, &tkey, &tval, 0);
+
+	if (rc)
+	{
+		XLOG(ERR) << "Error adding new object to db (" << mdb_strerror(rc) << ") sfs " << db_path;
+		return 1;
+	}
+
+	if (has_mmap_read_error_reset(tid))
+	{
+		XLOG(ERR) << "Error adding new object to db (SIGBUS) sfs " << db_path;
+		return 1;
+	}
+
+	return 0;
 }
