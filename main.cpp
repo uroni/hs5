@@ -94,7 +94,7 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
 
     const auto bucketEnd = path.find_first_of('/', 1);
     if(bucketEnd == std::string::npos)
-        return true;
+        return path=="/favicon.ico" || path=="/index.html";
 
     const auto bucketName = path.substr(1, bucketEnd);
 
@@ -112,6 +112,7 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
        isApiCall(path))
       return new ApiHandler(sfs);
     if(message->getMethod() == proxygen::HTTPMethod::GET &&
+        message->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_AUTHORIZATION).empty() &&
         isStaticFile(path))
       return new StaticHandler();
 
