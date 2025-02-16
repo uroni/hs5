@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
 project(hs5 VERSION 0.1.0 LANGUAGES CXX C)
-set(PACKAGE_VERSION "0.1.0")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 

@@ -1,4 +1,4 @@
 #pragma once
 
-#define PACKAGE_VERSION "@PACKAGE_VERSION@"
+#define PACKAGE_VERSION "@hs5_VERSION@"
 #define GIT_REVISION "@GIT_REVISION@"
