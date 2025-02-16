@@ -15,6 +15,8 @@ cd ../wwwgen
 
 python wwwgen.py ../www/dist not-empty
 
+cd ..
+
 cmake --preset ninja-multi-vcpkg
 
 cmake --build --preset ninja-vcpkg-release
