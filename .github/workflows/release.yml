@@ -53,9 +53,16 @@ jobs:
       - name: Build
         run: bash build.sh
 
-      - name: Get current date
-        id: date
-        run: echo "::set-output name=date::$(date +'%Y-%m-%d_%H-%M-%S')"
+      - name: Install Python dependencies
+        run: pip install -r test/requirements.txt
+
+      - name: Install pytest dependencies
+        run: pip install pytest-md pytest-emoji
+
+      - uses: pavelzw/pytest-action@v2
+        with:
+          emoji: false
+          custom-arguments: -p no:sugar test
 
       - name: Create Release
         uses: ncipollo/release-action@v1
