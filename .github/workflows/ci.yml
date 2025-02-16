@@ -58,8 +58,8 @@ jobs:
         uses: lukka/run-cmake@v10
         with:
           configurePreset: 'ninja-multi-vcpkg'
-          buildPreset: 'ninja-vcpkg-release'
-          testPreset: 'test-release'
+          buildPreset: 'ninja-vcpkg-debug'
+          testPreset: 'test-debug'
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v4
