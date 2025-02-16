@@ -6,7 +6,6 @@
 #include <proxygen/httpserver/RequestHandler.h>
 #include <proxygen/httpserver/ResponseBuilder.h>
 #include <proxygen/lib/utils/CompressionFilterUtils.h>
-#include <proxygen/lib/utils/SafePathUtils.h>
 #include <folly/logging/xlog.h>
 
 using namespace proxygen;
