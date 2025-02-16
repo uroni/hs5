@@ -19,5 +19,5 @@ cmake --preset ninja-multi-vcpkg
 
 cmake --build --preset ninja-vcpkg-release
 
-
+xz -z -c ./builds/ninja-multi-vcpkg/Release/hs5 > ./hs5.xz
 
