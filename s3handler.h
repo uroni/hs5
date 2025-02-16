@@ -9,7 +9,6 @@
 #include <proxygen/httpserver/RequestHandlerFactory.h>
 #include <proxygen/httpserver/ResponseBuilder.h>
 #include <proxygen/lib/http/HTTPHeaders.h>
-#include <openssl/md5.h>
 #include <proxygen/lib/http/HTTPMessage.h>
 #include <proxygen/lib/http/ProxygenErrorEnum.h>
 #include <vector>
@@ -206,18 +205,6 @@ private:
 
     std::unique_ptr<MultiPartUploadData> multiPartUploadData;
     std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
-
-    struct Md5Scoped
-    {
-        EVP_MD_CTX* ctx = nullptr;
-        
-        ~Md5Scoped() {
-            if(ctx)
-                EVP_MD_CTX_free(ctx);
-        }
-    };
-
-    Md5Scoped md5_ctx;
 
 	std::mutex extents_mutex;
 	std::condition_variable extents_cond;

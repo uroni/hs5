@@ -12,7 +12,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <expat.h>
-#include <format>
 #include <folly/Format.h>
 #include <folly/Range.h>
 #include <folly/ScopeGuard.h>
@@ -34,6 +33,11 @@
 #include <optional>
 #include <proxygen/lib/http/HTTPCommonHeaders.h>
 #include <proxygen/lib/http/HTTPMethod.h>
+#include "data.h"
+#include "utils.h"
+#include <limits.h>
+#include <string_view>
+#include "Auth.h"
 
 using namespace proxygen;
 
@@ -1221,10 +1225,9 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                     return;
                 }
 
-        folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb]()
-            {
-                auto res = self->sfs.write_prepare(self->fpath, self->put_remaining, std::string::npos);
+                self->keyInfo = {.key = uploadIdToStr(uploadId) +"."+uploadIdToStr(partNumber), .version = 0, 
+                    .bucketId = bucketId};
+                auto res = self->sfs.write_prepare(make_key(self->keyInfo), self->put_remaining);
                 if (res.err != 0)
                 {                    
                     evb->runInEventBaseThread([self = self, res]()
@@ -1880,10 +1883,10 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     int skippedKeys = 0;
     for(i=0;i<maxKeys + skippedKeys;++i)
     {
-        std::string key, md5sum;
+        std::string keyBin, md5sum;
         int64_t offset, size, last_modified;
         std::vector<SingleFileStorage::SPunchItem> extra_exts;
-        if(!sfs.iter_curr_val(key, offset, size, extra_exts, last_modified, md5sum, iter_data))
+        if(!sfs.iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
         {
             truncated = false;
             break;
@@ -1933,22 +1936,24 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         {
             lastOutputKeyStr = keyInfo.key;
 
-        for(const auto& ext: extra_exts)
-        {
-            size += ext.len;
-        }
+            for(const auto& ext: extra_exts)
+            {
+                size += ext.len;
+            }
 
-        val_data += fmt::format("\t<Contents>\n"
-            "\t\t<Key>{}</Key>\n"
-            "\t\t<LastModified>2009-10-12T17:50:30.000Z</LastModified>\n"
-            "\t\t<ETag>\"{}\"</ETag>\n"
-            "\t\t<Size>{}</Size>\n"
-            "\t\t<StorageClass>STANDARD</StorageClass>\n"
-            "\t\t<Owner>\n"
-            "\t\t\t<ID>75aa57f09aa0c8caeab4f8c24e99d10f8e7faeebf76c078efc7c6caea54ba06a</ID>\n"
-            "\t\t\t<DisplayName>mtd@amazon.com</DisplayName>\n"
-            "\t\t</Owner>\n"
-            "\t</Contents>", key, folly::hexlify(md5sum), size);
+            val_data += fmt::format("\t<Contents>\n"
+                "\t\t<Key>{}</Key>\n"
+                "\t\t<LastModified>2009-10-12T17:50:30.000Z</LastModified>\n"
+                "\t\t<ETag>\"{}\"</ETag>\n"
+                "\t\t<Size>{}</Size>\n"
+                "\t\t<StorageClass>STANDARD</StorageClass>\n"
+                "\t\t<Owner>\n"
+                "\t\t\t<ID>75aa57f09aa0c8caeab4f8c24e99d10f8e7faeebf76c078efc7c6caea54ba06a</ID>\n"
+                "\t\t\t<DisplayName>mtd@amazon.com</DisplayName>\n"
+                "\t\t</Owner>\n"
+                "\t</Contents>", escapeXML(keyInfo.key), folly::hexlify(md5sum), size);
+            ++keyCount;
+        }
 
         if(!sfs.iter_next(iter_data))
         {
@@ -2280,8 +2285,6 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         auto curr_ext = SingleFileStorage::Ext(it->obj_offset + ext_offset, it->data_file_offset + ext_offset, it->len - ext_offset);
         int64_t wlen = std::min(static_cast<int64_t>(data_size), curr_ext.len);
 
-        EVP_DigestUpdate(md5_ctx.ctx, data, data_size);
-
         auto rc = sfs.write_ext(curr_ext, reinterpret_cast<const char*>(data), wlen);
         if (rc != 0)
         {
@@ -2308,7 +2311,16 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
     if (put_remaining.fetch_sub(body->length(), std::memory_order_release) == body->length())
     {
-        auto rc = sfs.write_finalize(fpath, extents, 0, std::string(), false, true);
+        std::string md5sum;
+        md5sum.resize(MD5_DIGEST_LENGTH+1);
+        md5sum[0] = metadata_object;
+        EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&md5sum[1]), nullptr);
+
+
+        if(!extents.empty())
+            XLOGF(INFO, "Finalize object {} ext off {} len {}", self->keyInfo.key, extents[0].data_file_offset, extents[0].len);
+
+        auto rc = sfs.write_finalize(make_key(self->keyInfo), extents, 0, md5sum, false, true);
 
         if (rc != 0)
         {
