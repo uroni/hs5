@@ -547,7 +547,10 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
     const auto calculatedSignature = folly::hexlify(hmacSha256Binary(signingKey, stringToSign));
 
     if(calculatedSignature != requestSignature)
+    {
+        XLOGF(INFO, "Signature mismatch for {}?{} method {} access key {} resource {} action {} payload hash {} expected {} got {}", headers.getPathAsStringPiece(), headers.getQueryStringAsStringPiece(), headers.getMethodString(), accessKey, ressource, action, payload, calculatedSignature, requestSignature);
         return std::nullopt;
+    }
 
     XLOGF(INFO, "Signature OK for {}?{} method {} access key {} resource {} action {} payload hash {}", headers.getPathAsStringPiece(), headers.getQueryStringAsStringPiece(), headers.getMethodString(), accessKey, ressource, action, payload);
 
