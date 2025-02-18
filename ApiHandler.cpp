@@ -112,9 +112,7 @@ void ApiHandler::init()
 
         dao.addRolePolicy(rootRoleId, rootPolicyId, 1);
         dao.addUserRole(rootUserId, rootRoleId, 1);
-
-        XLOGF(INFO, "Adding access key {} secret {}", initRootAccessKey, initSecretAccessKey);
-
+        
         dao.addAccessKey(rootUserId, "Root access key (can access everything)", initRootAccessKey, initSecretAccessKey, 1);
 
         trans.commit();
