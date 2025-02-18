@@ -17,13 +17,14 @@ Table of Contents
 =================
 
  * [When to use HS5?](#when-to-use-hs5)
+ * [How to use HS5?](#how-to-use-hs5)
  * [How the storage works](#how-the-storage-works)
  * [Durability guarantees](#durability-guarantees)
  * [Manual commit mode](#manual-commit-mode)
 
 # About HS5
 
-### When to use HS5? #
+## When to use HS5? #
 
 If you want someone else to take care of hosting your S3 data, there are many issues including the original AWS S3. If you want to self-host, when should you use hs5 compared to other Open Source S3 storage variants?
 
@@ -35,17 +36,68 @@ For a discussion about data durability see the "Durability guarantees" section.
  * [seaweedfs](https://github.com/seaweedfs/seaweedfs) Compared to HS5 can be used with multiple nodes. Data durability isn't [handled well](https://github.com/seaweedfs/seaweedfs/issues/297) but you might be able to enable [fsync](https://github.com/seaweedfs/seaweedfs/wiki/Path-Specific-Configuration). The main differentiating factor is that seaweedfs keep the [object -> disk] location index completely in memory. This is a trade-off with less disks accesses for reading and writing objects while incurring a scan at startup time and causing memory usage proportional to the number of objects. Because of the long startup time and memory usage it might be unsuited for testing purposes or in scarios where fast node restarts are necessary or where memory is shared with other applications.
  * [Ceph](https://ceph.io) (radosgw) Widely used distributed storage system that is well designed, tested and in production at several (large) cloud service providers. If you want to store a large amount of data on multiple nodes you should go with this one. There might still be scalability limits with the number of objects per bucket, but HS5 should not be better in that area.
 
- ### How the storage works #
+ ## How to use HS5? #
+
+ ### Via Docker
+
+Either directly via e.g.
+
+```bash
+docker run -d \
+  --name hs5 \
+  --restart unless-stopped \
+  -e INIT_ROOT_PASSWORD=password \
+  -v /path/to/metadata:/metadata \
+  -v /path/to/data:/data \
+  -p 8085:80 \
+  uroni/hs5:latest
+```
+
+or via docker compose
+
+```yml
+version: '3.8'
+
+volumes:
+  hs5-data:
+  hs5-metadata:
+
+services:
+  hs5:
+    image: uroni/hs5:latest
+    container_name: hs5
+    restart: unless-stopped
+    environment:
+      - INIT_ROOT_PASSWORD=password
+    volumes:
+      - hs5-metadata:/metadata
+      - hs5-data:/data
+    ports:
+      - "8085:80"
+```
+
+### On Linux (AMD64, glibc >= 2.35)
+
+Download the hs5 binary and run it:
+
+```bash
+wget https://github.com/uroni/hs5/releases/latest/download/hs5.xz -O - | xz -d > hs5
+chmod +x hs5
+./hs5 run
+```
+Data and metadata will be stored into the current directory by default. It'll print the randomly generated root password to stdout on first run.
+
+## How the storage works #
 
  The main object storage consists of (mostly) two files. One is a `index.lmdb` LMDB database file mapping object names to on-disk offsets and tracking free space in the data file. The other is a data file `data0` where the object contents reside.
 
  * On adding an object, HS5 will put the object contents to some free area in `data0`. If necessary it will make the file larger. Then it will put the object offsets into `index.lmdb` with the object name as key. Then it will sync `data0` to disk followed by syncing `index.lmdb` to disk.
- * On removing an object, HS5 will remove the object offset mapping from `index.lmdb` while keeping track of the free space in a sparate table. The `data0` file will not be touched.
+ * On removing an object, HS5 will remove the object offset mapping from `index.lmdb` while keeping track of the free space in a separate table. The `data0` file will not be touched.
  * When listing it will also only use the data in the `index.lmdb` file.
 
- `index.lmdb` and `data0` can be on different disks. E.g. you could put `index.lmdb` on an SSD and `data0` on a spinning disk. When only adding files to HS5 it will sequentially write to `data0`. Deletion would only involve the `SSD` but re-using freed space in `data0` will cause random writes.
+ `index.lmdb` and `data0` can be on different disks. E.g. you could put `index.lmdb` on an SSD and `data0` on a spinning disk. When only adding objects to HS5 it will sequentially write to `data0`. Deletion would only involve the metadata disk but re-using freed space in `data0` will cause random writes.
 
- ### Durability guarantees #
+ ## Durability guarantees #
 
  Per default if you put/delete some object on HS5 and you receive a success response the change is guaranteed to be persisted to disk. That means if you do e.g. a put object request and then immediately after receiving a success response the power to the server is cut, once the server reboots and HS5 is available again it will still have object you uploaded.
 
@@ -53,7 +105,9 @@ For a discussion about data durability see the "Durability guarantees" section.
 
  If you compare performance to Minio or Seaweedfs there is a HS5 setting to disable durability as well (Use the `--manual-commit` parameter -- see the "Manual commit mode" section).
 
- ### Manual commit mode #
+ HS5 has the same consistency guarantees as [AWS S3](https://aws.amazon.com/s3/consistency/) (no eventual consistency, strong read after write consistency).
+
+ ## Manual commit mode #
 
  If you start HS5 with `--manual-commit` parameter, objects will not be written to disk before returning a success response. In most cases one would still want to make sure the object is actually persisted. For this HS5 has a special object named `a711e93e-93b4-4a9e-8a0b-688797470002`. If you wanted to put objects `objA` and `objB` and make sure they are both on disk it would be done like this:
 
