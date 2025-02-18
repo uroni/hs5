@@ -10,6 +10,7 @@
 #include <folly/FileUtil.h>
 #include <folly/Range.h>
 #include <folly/io/IOBuf.h>
+#include <folly/portability/GFlags.h>
 #include <memory.h>
 #include <functional>
 #include <mutex>
@@ -38,6 +39,7 @@
 
 using namespace std::chrono_literals;
 
+DEFINE_bool(symlink_lockfile_to_tmpdir, false, "Symlink LMDB lockfile to /tmp");
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -492,7 +494,8 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 			}
 		}
 
-		if (!(os_get_file_type(db_path + os_file_sep() + "index.lmdb-lock") & EFileType_Symlink))
+		if (FLAGS_symlink_lockfile_to_tmpdir && 
+			!(os_get_file_type(db_path + os_file_sep() + "index.lmdb-lock") & EFileType_Symlink))
 		{
             std::filesystem::remove(db_path + os_file_sep() + "index.lmdb-lock");
 			if (symlink(("/tmp/index.lmdb-lock-" + random_uuid()).c_str(), (db_path + os_file_sep() + "index.lmdb-lock").c_str())!=0)
