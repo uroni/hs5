@@ -48,21 +48,21 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     
     s3_client = hs5.get_s3_client()
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-        s3_client.put_object(Bucket="testbucket", Key="upload.txt", Body=upload_file)
+        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
 
-    obj_info = s3_client.head_object(Bucket="testbucket", Key="upload.txt")
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj_info["ContentLength"] == len(fdata)
 
-    obj_range = s3_client.get_object(Bucket="testbucket", Key="upload.txt", Range="bytes=0-9")
+    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9")
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
     assert bdata == fdata[:10]
 
-    obj_range = s3_client.get_object(Bucket="testbucket", Key="upload.txt", Range="bytes=10-19")
+    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=10-19")
     assert obj_range["Body"].read() == fdata[10:20]
 
     dl_path = tmp_path / "download.txt"
-    s3_client.download_file("testbucket", "upload.txt", str(dl_path))
+    s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
     assert os.stat(dl_path).st_size == len(fdata)
 
     with open(dl_path, "rb") as f:
@@ -72,7 +72,7 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
 
     hs5.commit_storage(s3_client)
 
-    list_resp = s3_client.list_objects(Bucket="testbucket")
+    list_resp = s3_client.list_objects(Bucket=hs5.testbucketname())
 
     assert not list_resp["IsTruncated"]
     objs = list_resp["Contents"]
@@ -85,22 +85,22 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     assert "Key" in objs[0] and objs[0]["Key"] == "upload.txt"
     assert "Size" in objs[0] and objs[0]["Size"] == len(fdata)
     
-    s3_client.delete_object(Bucket="testbucket", Key="upload.txt")
+    s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     with pytest.raises(ClientError):
-        s3_client.delete_object(Bucket="testbucket", Key="upload_nonexistent.txt")
+        s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload_nonexistent.txt")
     with pytest.raises(ClientError):
-        s3_client.download_file("testbucket", "upload.txt", str(dl_path))
+        s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
 
     hs5.commit_storage(s3_client)
 
-    list_resp = s3_client.list_objects(Bucket="testbucket")
+    list_resp = s3_client.list_objects(Bucket=hs5.testbucketname())
     assert not list_resp["IsTruncated"]
     assert "Contents" not in list_resp
 
 def test_get_commit_obj(tmp_path: Path, hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     fpath = tmp_path / "commit_uuid.txt"
-    s3_client.download_file("testbucket", "a711e93e-93b4-4a9e-8a0b-688797470002", str(fpath))
+    s3_client.download_file(hs5.testbucketname(), "a711e93e-93b4-4a9e-8a0b-688797470002", str(fpath))
 
     with open(fpath, "r") as f:
         assert len(f.read())>30
@@ -113,7 +113,7 @@ def add_objects(tmp_path: Path, hs5: Hs5Runner) -> set[str]:
     ul_files = set[str]()
     for i in range(0, 210):
         s3name = f"{i}.txt"
-        s3_client.upload_file(upload_file.name, "testbucket", s3name)
+        s3_client.upload_file(upload_file.name, hs5.testbucketname(), s3name)
         ul_files.add(s3name)
 
     hs5.commit_storage(s3_client)
@@ -127,13 +127,13 @@ def test_put_empty(tmp_path: Path, hs5: Hs5Runner):
     
     s3_client = hs5.get_s3_client()
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-        s3_client.put_object(Bucket="testbucket", Key="upload.txt", Body=upload_file)
+        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
 
-    obj_info = s3_client.head_object(Bucket="testbucket", Key="upload.txt")
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj_info["ContentLength"] == len(fdata)
 
     dl_path = tmp_path / "download.txt"
-    s3_client.download_file("testbucket", "upload.txt", str(dl_path))
+    s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
     assert os.stat(dl_path).st_size == len(fdata)
 
 
@@ -146,9 +146,9 @@ def test_multipage_list(tmp_path: Path, hs5: Hs5Runner):
     marker : Optional[str]= None
     while True:
         if marker:
-            res = s3_client.list_objects(Bucket="testbucket", Marker=marker, MaxKeys=100)
+            res = s3_client.list_objects(Bucket=hs5.testbucketname(), Marker=marker, MaxKeys=100)
         else:
-            res = s3_client.list_objects(Bucket="testbucket", MaxKeys=100)
+            res = s3_client.list_objects(Bucket=hs5.testbucketname(), MaxKeys=100)
 
         objs = res["Contents"]
         assert len(objs)<=100
@@ -157,7 +157,7 @@ def test_multipage_list(tmp_path: Path, hs5: Hs5Runner):
             assert obj["Key"] in ul_files
             assert "Size" in obj and obj["Size"] == 3
             ul_files.remove(obj["Key"])
-            s3_client.delete_object(Bucket="testbucket", Key=obj["Key"])
+            s3_client.delete_object(Bucket=hs5.testbucketname(), Key=obj["Key"])
             marker = obj["Key"]
 
         if not res["IsTruncated"]:
@@ -167,7 +167,7 @@ def test_multipage_list(tmp_path: Path, hs5: Hs5Runner):
     
     hs5.commit_storage(s3_client)
 
-    res = s3_client.list_objects(Bucket="testbucket", MaxKeys=100)
+    res = s3_client.list_objects(Bucket=hs5.testbucketname(), MaxKeys=100)
     assert "Contents" not in res
 
 def test_multipage_list_v2(tmp_path: Path, hs5: Hs5Runner):
@@ -179,9 +179,9 @@ def test_multipage_list_v2(tmp_path: Path, hs5: Hs5Runner):
     continuation_token : Optional[str]= None
     while True:
         if continuation_token:
-            res = s3_client.list_objects_v2(Bucket="testbucket", ContinuationToken=continuation_token, MaxKeys=100)
+            res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), ContinuationToken=continuation_token, MaxKeys=100)
         else:
-            res = s3_client.list_objects_v2(Bucket="testbucket", MaxKeys=100)
+            res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), MaxKeys=100)
 
         objs = res["Contents"]
         assert len(objs)<=100
@@ -190,7 +190,7 @@ def test_multipage_list_v2(tmp_path: Path, hs5: Hs5Runner):
             assert obj["Key"] in ul_files
             assert "Size" in obj and obj["Size"] == 3
             ul_files.remove(obj["Key"])
-            s3_client.delete_object(Bucket="testbucket", Key=obj["Key"])
+            s3_client.delete_object(Bucket=hs5.testbucketname(), Key=obj["Key"])
 
         if not res["IsTruncated"]:
             break
@@ -201,7 +201,7 @@ def test_multipage_list_v2(tmp_path: Path, hs5: Hs5Runner):
     
     hs5.commit_storage(s3_client)
 
-    res = s3_client.list_objects(Bucket="testbucket", MaxKeys=100)
+    res = s3_client.list_objects(Bucket=hs5.testbucketname(), MaxKeys=100)
     assert "Contents" not in res
 
 
@@ -211,13 +211,13 @@ def test_list_prefix(tmp_path: Path, hs5: Hs5Runner):
 
     s3_client = hs5.get_s3_client()
 
-    s3_client.upload_file(upload_file.name, "testbucket", "1.txt")
-    s3_client.upload_file(upload_file.name, "testbucket", "a/2.txt")
-    s3_client.upload_file(upload_file.name, "testbucket", "b/3.txt")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "1.txt")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "a/2.txt")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "b/3.txt")
 
     hs5.commit_storage(s3_client)
 
-    res = s3_client.list_objects(Bucket="testbucket", Prefix="a/")
+    res = s3_client.list_objects(Bucket=hs5.testbucketname(), Prefix="a/")
 
     objs = res["Contents"]
     assert objs is not None
@@ -232,13 +232,13 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
 
     s3_client = hs5.get_s3_client()
 
-    s3_client.upload_file(upload_file.name, "testbucket", "1.txt")
-    s3_client.upload_file(upload_file.name, "testbucket", "a/2.txt")
-    s3_client.upload_file(upload_file.name, "testbucket", "b/3.txt")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "1.txt")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "a/2.txt")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "b/3.txt")
 
     hs5.commit_storage(s3_client)
 
-    res = s3_client.list_objects(Bucket="testbucket", Delimiter="/")
+    res = s3_client.list_objects(Bucket=hs5.testbucketname(), Delimiter="/")
 
     objs = res["Contents"]
     assert objs is not None
@@ -268,28 +268,28 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):
             size -= len(buf)
 
     s3_client = hs5.get_s3_client()
-    s3_client.upload_file(upload_file.name, "testbucket", "upload.txt")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "upload.txt")
     dl_path = tmp_path / "download.dat"
-    s3_client.download_file("testbucket", "upload.txt", str(dl_path))
+    s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
 
     assert filecmp.cmp(upload_file.name, dl_path)
 
-    obj_range = s3_client.get_object(Bucket="testbucket", Key="upload.txt", Range="bytes=0-9")
+    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9")
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
 
-    obj_range = s3_client.get_object(Bucket="testbucket", Key="upload.txt", Range="bytes=10-19")
+    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=10-19")
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
 
     off = 20*1024*1024
-    obj_range = s3_client.get_object(Bucket="testbucket", Key="upload.txt", Range=f"bytes={off}-{off+9}")
+    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range=f"bytes={off}-{off+9}")
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
 
     off = 20*1024*1024
     size = off
-    obj_range = s3_client.get_object(Bucket="testbucket", Key="upload.txt", Range=f"bytes={off}-{off+size -1}")
+    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range=f"bytes={off}-{off+size -1}")
     bdata = obj_range["Body"].read()
     assert len(bdata) == size
 
@@ -306,10 +306,10 @@ def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
     s3_client = hs5_large.get_s3_client()
 
     with open(tmpfile, "rb") as f:
-        s3_client.put_object(Bucket="testbucket", Key="upload.dat", Body=f)
+        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.dat", Body=f)
 
     dl_path = tmp_path / "download.dat"
-    s3_client.download_file("testbucket", "upload.dat", str(dl_path))
+    s3_client.download_file(hs5.testbucketname(), "upload.dat", str(dl_path))
 
     assert filecmp.cmp(tmpfile, dl_path)
 
@@ -329,14 +329,14 @@ def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
 
             config = TransferConfig(multipart_threshold=5*1024*1024*1024)
 
-            s3_client.upload_file(str(fpath), "testbucket", fname, Config=config)
+            s3_client.upload_file(str(fpath), hs5.testbucketname(), fname, Config=config)
 
             def del_thread(fpath):
-                s3_client.delete_object(Bucket="testbucket", Key=fname)
+                s3_client.delete_object(Bucket=hs5.testbucketname(), Key=fname)
 
             t = threading.Thread(target=del_thread, args=(fpath,))
 
-            resp = s3_client.get_object(Bucket="testbucket", Key=fname)
+            resp = s3_client.get_object(Bucket=hs5.testbucketname(), Key=fname)
             crc = 0
             body = resp["Body"]
             cl = resp["ContentLength"]
@@ -396,12 +396,12 @@ def test_download_presigned(tmp_path: Path, hs5: Hs5Runner, sig_v2: bool):
     
     s3_client = hs5.get_s3_client(sig_v2=sig_v2)
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-        s3_client.put_object(Bucket="testbucket", Key="upload.txt", Body=upload_file)
+        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
 
     # get presigned donwload URL
     presigned_url = s3_client.generate_presigned_url(
         'get_object',
-        Params={'Bucket': 'testbucket', 'Key': 'upload.txt'},
+        Params={'Bucket': hs5.testbucketname(), 'Key': 'upload.txt'},
         ExpiresIn=3600
     )
 
@@ -409,3 +409,23 @@ def test_download_presigned(tmp_path: Path, hs5: Hs5Runner, sig_v2: bool):
     response.raise_for_status()
     assert response.content == fdata
 
+
+def test_create_bucket(hs5: Hs5Runner, tmp_path: Path):
+
+    s3_client = hs5.get_s3_client()
+
+    bucketname = "testbucket_created"
+
+    s3_client.create_bucket(Bucket=bucketname)
+    with pytest.raises(ClientError):
+        s3_client.create_bucket(Bucket=bucketname)
+
+    fdata = os.urandom(2*1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+    
+    with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
+        s3_client.put_object(Bucket=bucketname, Key="upload.txt", Body=upload_file)
+
+    obj_info = s3_client.head_object(Bucket=bucketname, Key="upload.txt")
+    assert obj_info["ContentLength"] == len(fdata)

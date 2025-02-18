@@ -58,7 +58,6 @@ class Hs5Runner:
             data_file_alloc_chunk_size,
             "--logging", "DBG0",
             "--init_root_password", self._root_key,
-            "--autogen_buckets", "true",
             "--with_stop_command", "true"]
         
         if self.manual_commit:
@@ -75,6 +74,8 @@ class Hs5Runner:
         )
 
         self._wait_for_startup()
+
+        self.get_s3_client().create_bucket(Bucket=self.testbucketname())
 
     def _wait_for_startup(self) -> None:
         while True:
@@ -124,6 +125,9 @@ class Hs5Runner:
 
     def get_root_key(self):
         return self._root_key
+    
+    def testbucketname(self):
+        return "testbucket"
 
 @pytest.fixture
 def hs5(tmpdir: Path):

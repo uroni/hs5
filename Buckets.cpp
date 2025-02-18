@@ -50,7 +50,7 @@ void refreshBucketCache()
     }   
 }
 
-int64_t addBucket(const std::string_view bucketName)
+int64_t addBucket(const std::string_view bucketName, bool failIfAlreadyExists)
 {
     DbDao dao;
 
@@ -58,7 +58,12 @@ int64_t addBucket(const std::string_view bucketName)
 
     auto it = buckets.find(std::string(bucketName));
     if(it!=buckets.end())
+    {
+        if(failIfAlreadyExists)
+            return -1;
+
         return it->second;
+    }
 
     const auto id = nextId();
 
@@ -80,7 +85,7 @@ std::optional<int64_t> getBucket(const std::string_view bucketName)
         if(FLAGS_autogen_buckets)
         {
             lock.unlock();
-            return addBucket(bucketName);
+            return addBucket(bucketName, false);
         }
         return {};
     }

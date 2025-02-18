@@ -908,17 +908,22 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         }
         auto remaining = std::atoll(cl.c_str());
         put_remaining = remaining;
+        const auto path = headers->getPathAsStringPiece();
 
-        if(!setKeyInfoFromPath(headers->getPathAsStringPiece()))
+        const auto createBucket = !path.empty() && path.find_first_of('/', 1)==std::string::npos;
+
+        if(createBucket)
+            keyInfo.key = path.substr(1);
+        else if(!setKeyInfoFromPath(path))
             return;
 
-        const auto resource = fmt::format("arn:aws:s3:::{}", headers->getPathAsStringPiece().substr(1));
+        const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
         const auto payloadOpt = initPayloadHash(*headers);
         if(!payloadOpt)
             return;
         const auto payload = *payloadOpt;
 
-        if(!headers->getQueryStringAsStringPiece().empty())
+        if(!createBucket && !headers->getQueryStringAsStringPiece().empty())
         {
             int partNumber = 0;
             const auto& queryParams = headers->getQueryParams();
@@ -953,7 +958,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             if(uploadId<0 || uploadVerId.empty())
             {
-                XLOGF(INFO, "UploadId param not set in multi-part upload of {}", headers->getPathAsStringPiece());
+                XLOGF(INFO, "UploadId param not set in multi-part upload of {}", path);
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
                     .body("uploadId parameter not set")
@@ -963,7 +968,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             if(partNumber<=0 || partNumber>10000)
             {
-                XLOGF(INFO, "PartNumber {} out of range in multi-part upload of {}", partNumber, headers->getPathAsStringPiece());
+                XLOGF(INFO, "PartNumber {} out of range in multi-part upload of {}", partNumber, path);
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
                     .body("partNumber parameter out of range")
@@ -971,13 +976,13 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            XLOGF(DBG0, "PutObjectPart {} part {} uploadId {} length {}", headers->getPathAsStringPiece(), partNumber, uploadId, remaining);
+            XLOGF(DBG0, "PutObjectPart {} part {} uploadId {} length {}", path, partNumber, uploadId, remaining);
 
             const auto action = "s3:PutObjectPart";
 
             if(!checkSig(*headers, payload, resource, action, true))
             {
-                XLOGF(INFO, "Unauthorized putObjectPart: {}", headers->getPathAsStringPiece());
+                XLOGF(INFO, "Unauthorized putObjectPart: {}", path);
                 ResponseBuilder(downstream_)
                     .status(401, "Unauthorized")
                     .body("Verifying request authorization failed")
@@ -993,7 +998,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         if(!checkSig(*headers, payload, resource, action, true))
         {
-            XLOGF(INFO, "Unauthorized putObject: {}", headers->getPathAsStringPiece());
+            XLOGF(INFO, "Unauthorized putObject: {}", path);
             ResponseBuilder(downstream_)
                 .status(401, "Unauthorized")
                 .body("Verifying request authorization failed")
@@ -1001,9 +1006,15 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        if(headers->getPathAsStringPiece().find(c_commit_uuid)!=std::string::npos)
+        if(createBucket)
         {
-            XLOGF(DBG0, "PutObject {} COMMIT", headers->getPathAsStringPiece());
+            request_type = RequestType::CreateBucket;
+            return;
+        }
+
+        if(path.find(c_commit_uuid)!=std::string::npos)
+        {
+            XLOGF(DBG0, "PutObject {} COMMIT", path);
 
             commit(*headers);
             // Don't handle EOM
@@ -1012,9 +1023,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         }        
 
         if(FLAGS_with_stop_command &&
-             headers->getPathAsStringPiece().find(c_stop_uuid)!=std::string::npos)
+            path.find(c_stop_uuid)!=std::string::npos)
         {
-            XLOGF(DBG0, "PutObject {} STOP", headers->getPathAsStringPiece());
+            XLOGF(DBG0, "PutObject {} STOP", path);
             folly::getGlobalCPUExecutor()->add([]{
                 stopServer();
             });
@@ -1027,7 +1038,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        XLOGF(DBG0, "PutObject {} length {}", headers->getPathAsStringPiece(), remaining);
+        XLOGF(DBG0, "PutObject {} length {}", path, remaining);
 
         putObject(*headers);
         return;
@@ -1983,6 +1994,40 @@ void S3Handler::finalizeMultipartUpload()
             });    
 }
 
+void S3Handler::finalizeCreateBucket()
+{
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+    folly::getGlobalCPUExecutor()->add(
+            [self = this->self, evb]()
+            {
+                const auto bucketId = addBucket(self->keyInfo.key, true);
+
+                if(bucketId < 0)
+                {
+                    evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(409, "OK")
+                            .body("BucketAlreadyExists")
+                            .sendWithEOM();
+                        self->finished_ = true;
+                    });
+                    return;
+                }                
+
+                evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(200, "OK")
+                            .header(HTTPHeaderCode::HTTP_HEADER_LOCATION, fmt::format("/{}", self->keyInfo.key))
+                            .sendWithEOM();
+                        self->finished_ = true;
+                });
+                return;
+            }
+        );
+}
+
 void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
@@ -2709,6 +2754,38 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
         }
         return;
     }
+    else if(request_type == RequestType::CreateBucket)
+    {
+        if(payloadHash)
+            EVP_DigestUpdate(payloadHash->evpMdCtx.ctx, body->data(), body->length());
+
+        done_bytes += body_bytes;
+        const auto isFinal = put_remaining.fetch_sub(body->length(), std::memory_order_release) == body->length();
+
+        if(isFinal && payloadHash && !payloadHash->isFinalExpected())
+        {
+            ResponseBuilder(self->downstream_)
+                .status(500, "Internal error")
+                .body("Payload hash not as expected")
+                .sendWithEOM();
+            finished_ = true; 
+            return;
+        }
+        
+        if(bodyData.size() < 10*1024)
+        {
+            bodyData.append(reinterpret_cast<const char*>(body->data()), body->length());
+        }
+        else
+        {
+            ResponseBuilder(self->downstream_)
+                .status(500, "Internal error")
+                .body("Body too long")
+                .sendWithEOM();
+            finished_ = true; 
+        }
+        return;
+    }
 
     {
         std::scoped_lock lock{bodyMutex};
@@ -2952,6 +3029,14 @@ void S3Handler::onEOM() noexcept
                     self->readBodyThread(evb);
                 });
         }
+    }
+    else if(request_type == RequestType::CreateBucket)
+    {
+        if(finished_)
+            return;
+
+        finalizeCreateBucket();
+        return;
     }
 }
 

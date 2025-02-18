@@ -213,6 +213,7 @@ private:
         const bool listV2, const std::string& bucketName);
     void createMultipartUpload(proxygen::HTTPMessage& headers);
     void finalizeMultipartUpload();
+    void finalizeCreateBucket();
     bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen);
     std::string getEtag(const std::string& md5sum);
     int seekMultipartExt(int64_t offset);
@@ -231,7 +232,8 @@ private:
 		PutObject,
         DeleteObject,
         ListObjects,
-        CompleteMultipartUpload
+        CompleteMultipartUpload,
+        CreateBucket
 	};
 
 	std::shared_ptr<S3Handler> self;
@@ -244,6 +246,7 @@ private:
     bool finished_ = false;
 	std::atomic<int64_t> put_remaining = -1;
     ExpatXmlParser xmlBody;
+    std::string bodyData;
 
     std::string serverUrl;
 
