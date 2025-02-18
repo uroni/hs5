@@ -120,7 +120,7 @@ void ApiHandler::init()
         trans.commit();
 
         if(printSecretAccessKey)
-            std::cout << fmt::format("Added root account accesskey: name={} secret={}", initRootAccessKey, initSecretAccessKey) << std::endl;
+            std::cout << fmt::format("Added initial root account. Username: {} Password: {}", initRootAccessKey, initSecretAccessKey) << std::endl;
     }
     else
     {
