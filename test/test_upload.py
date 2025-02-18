@@ -306,10 +306,10 @@ def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
     s3_client = hs5_large.get_s3_client()
 
     with open(tmpfile, "rb") as f:
-        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.dat", Body=f)
+        s3_client.put_object(Bucket=hs5_large.testbucketname(), Key="upload.dat", Body=f)
 
     dl_path = tmp_path / "download.dat"
-    s3_client.download_file(hs5.testbucketname(), "upload.dat", str(dl_path))
+    s3_client.download_file(hs5_large.testbucketname(), "upload.dat", str(dl_path))
 
     assert filecmp.cmp(tmpfile, dl_path)
 
