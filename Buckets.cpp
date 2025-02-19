@@ -14,6 +14,9 @@
 
 DEFINE_bool(autogen_buckets, false, "Automatically create buckets when they are used");
 
+namespace buckets
+{
+
 namespace
 {
     std::map<std::string, int64_t> buckets;
@@ -92,6 +95,24 @@ std::optional<int64_t> getBucket(const std::string_view bucketName)
     return it->second;
 }
 
+bool deleteBucket(int64_t bucketId)
+{
+    DbDao dao;
+
+    std::scoped_lock lock{mutex};
+
+    auto it = bucketNames.find(bucketId);
+    if(it==bucketNames.end())
+        return false;
+
+    dao.deleteBucket(bucketId);
+
+    buckets.erase(it->second->first);
+    bucketNames.erase(it);
+
+    return true;
+}
+
 int64_t getPartialUploadsBucket(int64_t bucketId)
 {
     // Create documentation
@@ -128,3 +149,5 @@ Api::ListResp getBucketNames()
 
     return resp;
 }
+
+} // namespace buckets

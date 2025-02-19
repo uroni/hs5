@@ -387,7 +387,7 @@ Api::ListResp ApiHandler::list(const Api::ListParams& params, const ApiSessionSt
     if(!prefix.empty() && prefix[prefix.size()-1]!='/')
         throw ApiError(Api::Herror::invalidPath);
 
-    const auto bucketIdOpt = getBucket(bucketName);
+    const auto bucketIdOpt = buckets::getBucket(bucketName);
     if(!bucketIdOpt)
         throw ApiError(Api::Herror::bucketNotFound);
     const auto bucketId = *bucketIdOpt;
@@ -490,5 +490,5 @@ Api::ListResp ApiHandler::listBuckets(const Api::ListParams& params, const ApiSe
     if(params.continuationToken)
         throw ApiError(Api::Herror::unexpectedContinuationToken);
 
-    return getBucketNames();
+    return buckets::getBucketNames();
 }

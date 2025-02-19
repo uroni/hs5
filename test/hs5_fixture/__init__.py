@@ -58,7 +58,8 @@ class Hs5Runner:
             data_file_alloc_chunk_size,
             "--logging", "DBG0",
             "--init_root_password", self._root_key,
-            "--with_stop_command", "true"]
+            "--with_stop_command", "true",
+            "--bucket_versioning=false"]
         
         if self.manual_commit:
             args.append("--manual_commit")

@@ -48,7 +48,7 @@ DEFINE_string(data_path, ".", "Path where to put the data file");
 DEFINE_bool(stop_on_error, false, "Stop on write/read errors");
 DEFINE_bool(punch_holes, true, "Free up space if not enough free space is left by punching holes");
 DEFINE_string(server_url, "serverurl", "URL of server");
-DEFINE_bool(with_bucket_versioning, true, "Enable bucket versioning");
+DEFINE_bool(bucket_versioning, true, "Enable bucket versioning");
 
 namespace {
   std::unique_ptr<proxygen::HTTPServer> server;
@@ -116,7 +116,7 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
         isStaticFile(path))
       return new StaticHandler();
 
-    return new S3Handler(sfs, FLAGS_server_url, FLAGS_with_bucket_versioning);
+    return new S3Handler(sfs, FLAGS_server_url, FLAGS_bucket_versioning);
   }
 };
 }
@@ -138,7 +138,7 @@ int realMain(int argc, char* argv[])
       DbDao::init();
       ApiHandler::init();
       refreshAuthCache();
-      refreshBucketCache();
+      buckets::refreshBucketCache();
     }
     catch(const std::exception& e)
     {
@@ -192,7 +192,7 @@ int realMain(int argc, char* argv[])
       XLOGF(INFO, "Listening on {}", ip.address.describe());
     }
 
-    XLOGF(INFO, "Config: Bucket versioning: {}, Punch holes: {}, Stop on error: {}, Manual commit: {}", FLAGS_with_bucket_versioning, FLAGS_punch_holes, FLAGS_stop_on_error, FLAGS_manual_commit);
+    XLOGF(INFO, "Config: Bucket versioning: {}, Punch holes: {}, Stop on error: {}, Manual commit: {}", FLAGS_bucket_versioning, FLAGS_punch_holes, FLAGS_stop_on_error, FLAGS_manual_commit);
 
     std::thread t([&]() {
       server->start();

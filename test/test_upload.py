@@ -429,3 +429,10 @@ def test_create_bucket(hs5: Hs5Runner, tmp_path: Path):
 
     obj_info = s3_client.head_object(Bucket=bucketname, Key="upload.txt")
     assert obj_info["ContentLength"] == len(fdata)
+
+    with pytest.raises(ClientError):
+        s3_client.delete_bucket(Bucket=bucketname)
+
+    s3_client.delete_object(Bucket=bucketname, Key="upload.txt")
+
+    s3_client.delete_bucket(Bucket=bucketname)

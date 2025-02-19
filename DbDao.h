@@ -24,6 +24,7 @@ class DbDao
 	sqlgen::DatabaseQuery _getBuckets;
 	sqlgen::DatabaseQuery _addBucket;
 	sqlgen::DatabaseQuery _getMaxBucketId;
+	sqlgen::DatabaseQuery _deleteBucket;
 	//@-SQLGenVariablesEnd
 
 public:
@@ -80,5 +81,6 @@ public:
 	std::vector<Bucket> getBuckets();
 	void addBucket(int64_t id, const std::string& name);
 	int64_t getMaxBucketId();
+	void deleteBucket(int64_t id);
 	//@-SQLGenFunctionsEnd
 };

@@ -207,6 +207,7 @@ private:
     void putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId);
     void commit(proxygen::HTTPMessage& headers);
     void deleteObject(proxygen::HTTPMessage& headers);
+    void deleteBucket(proxygen::HTTPMessage& headers);
 
     void listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& continuationToken, 
         const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter, const std::string& delimiter, const int64_t bucket,
@@ -233,7 +234,8 @@ private:
         DeleteObject,
         ListObjects,
         CompleteMultipartUpload,
-        CreateBucket
+        CreateBucket,
+        DeleteBucket
 	};
 
 	std::shared_ptr<S3Handler> self;

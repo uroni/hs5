@@ -505,5 +505,22 @@ int64_t DbDao::getMaxBucketId()
 	return ret;
 }
 
+/**
+* @-SQLGenAccess
+* @func void DbDao::deleteBucket
+* @sql
+*      DELETE FROM buckets WHERE id=:id(int64)
+*/
+void DbDao::deleteBucket(int64_t id)
+{
+	if(!_deleteBucket.prepared())
+	{
+		_deleteBucket=db.prepare("DELETE FROM buckets WHERE id=?");
+	}
+	_deleteBucket.bind(id);
+	_deleteBucket.write();
+	_deleteBucket.reset();
+}
+
 
 //eof
