@@ -48,7 +48,7 @@ DEFINE_string(data_path, ".", "Path where to put the data file");
 DEFINE_bool(stop_on_error, false, "Stop on write/read errors");
 DEFINE_bool(punch_holes, true, "Free up space if not enough free space is left by punching holes");
 DEFINE_string(server_url, "serverurl", "URL of server");
-DEFINE_bool(bucket_versioning, true, "Enable bucket versioning");
+DEFINE_bool(bucket_versioning, false, "Enable bucket versioning");
 
 namespace {
   std::unique_ptr<proxygen::HTTPServer> server;
