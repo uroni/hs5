@@ -24,7 +24,6 @@
 #include <folly/logging/xlog.h>
 #include <folly/ScopeGuard.h>
 #include <folly/io/IOBufQueue.h>
-#include "lmdb/lmdb.h"
 #include "os_functions.h"
 #include "utils.h"
 #include <filesystem>

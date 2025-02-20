@@ -9,7 +9,7 @@
 #include <memory>
 #include <queue>
 #include <memory.h>
-#include "lmdb/lmdb.h"
+#include "../external/lmdb/lmdb.h"
 #include <assert.h>
 #include "relaxed_atomic.h"
 #include <sys/types.h>

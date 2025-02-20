@@ -19,6 +19,7 @@ set(APIGEN_SCHEMAS
   ListParams
   ListResp
   )
+  
 
 add_custom_target(apigen)
 foreach(SCHEMA ${APIGEN_SCHEMAS})
@@ -29,20 +30,20 @@ foreach(SCHEMA ${APIGEN_SCHEMAS})
   )
   add_custom_command(
     TARGET   apigen
-    COMMAND  "quicktype" "-s" "schema" "schemas/${SCHEMA}.json" "-o" "apigen/${SCHEMA}.cpp" "--include-location" "global-include" "--type-style" "pascal-case" "--member-style" "camel-case"  "--enumerator-style" "camel-case" "--no-boost" "--source-style" "multi-source" "--namespace" "Api" "--code-format" "with-struct"
+    COMMAND  "quicktype" "-s" "schema" "src/schemas/${SCHEMA}.json" "-o" "src/apigen/${SCHEMA}.cpp" "--include-location" "global-include" "--type-style" "pascal-case" "--member-style" "camel-case"  "--enumerator-style" "camel-case" "--no-boost" "--source-style" "multi-source" "--namespace" "Api" "--code-format" "with-struct"
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
   )
   add_custom_command(TARGET apigen
                    COMMAND ${CMAKE_COMMAND} -E rename
-                   "apigen/Generators.hpp"
-                   "apigen/Generators${SCHEMA}.hpp"
+                   "src/apigen/Generators.hpp"
+                   "src/apigen/Generators${SCHEMA}.hpp"
                    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}")
 endforeach()
 
 set(SCHEMA_SOURCES "")
 foreach(SCHEMA ${APIGEN_SCHEMAS})
-  if(EXISTS "apigen/${SCHEMA}.cpp")
-    list(APPEND SCHEMA_SOURCES "apigen/${SCHEMA}.cpp")
+  if(EXISTS "src/apigen/${SCHEMA}.cpp")
+    list(APPEND SCHEMA_SOURCES "src/apigen/${SCHEMA}.cpp")
   endif()
 endforeach()
 
@@ -56,31 +57,31 @@ execute_process(
 
 # Configure config.h
 configure_file(
-  ${CMAKE_SOURCE_DIR}/config.h.in
+  ${CMAKE_SOURCE_DIR}/src/config.h.in
   ${CMAKE_BINARY_DIR}/config.h
   @ONLY
 )
 
 add_executable(hs5
-    lmdb/midl.cpp
-    lmdb/mdb.c
-    lmdb/cppmidl.cpp
-    main.cpp
-    s3handler.cpp
-    SingleFileStorage.cpp
-    data.cpp
-    os_functions.cpp 
-    utils.cpp
-    crypt.cpp
-    File.cpp
-    Buckets.cpp
-    DbDao.cpp
-    Policy.cpp
-    Auth.cpp
-    ApiHandler.cpp
-    Session.cpp
-    cmd.cpp
-    StaticHandler.cpp
+    external/lmdb/midl.cpp
+    external/lmdb/mdb.c
+    external/lmdb/cppmidl.cpp
+    src/main.cpp
+    src/s3handler.cpp
+    src/SingleFileStorage.cpp
+    src/data.cpp
+    src/os_functions.cpp 
+    src/utils.cpp
+    src/crypt.cpp
+    src/File.cpp
+    src/Buckets.cpp
+    src/DbDao.cpp
+    src/Policy.cpp
+    src/Auth.cpp
+    src/ApiHandler.cpp
+    src/Session.cpp
+    src/cmd.cpp
+    src/StaticHandler.cpp
     wwwgen/www_files.cpp
     ${SCHEMA_SOURCES})
 

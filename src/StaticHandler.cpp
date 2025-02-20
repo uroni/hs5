@@ -1,5 +1,5 @@
 #include "StaticHandler.h"
-#include "wwwgen/www_files.h"
+#include "../wwwgen/www_files.h"
 #include <folly/FileUtil.h>
 #include <folly/executors/GlobalExecutor.h>
 #include <folly/io/async/EventBaseManager.h>
