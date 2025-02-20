@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(hs5 VERSION 0.1.4 LANGUAGES CXX C)
+project(hs5 VERSION 0.1.6 LANGUAGES CXX C)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -19,7 +19,7 @@ set(APIGEN_SCHEMAS
   ListParams
   ListResp
   )
-  
+
 
 add_custom_target(apigen)
 foreach(SCHEMA ${APIGEN_SCHEMAS})

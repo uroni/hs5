@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04]
+        os: [ubuntu-22.04, ubuntu-22.04-arm]
 
     steps:
       - uses: actions/checkout@v3
@@ -67,4 +67,4 @@ jobs:
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
-         artifacts: "hs5.xz"
+         artifacts: "hs5*.xz"

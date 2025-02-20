@@ -21,5 +21,12 @@ cmake --preset ninja-multi-vcpkg
 
 cmake --build --preset ninja-vcpkg-release
 
-xz -z -c ./builds/ninja-multi-vcpkg/Release/hs5 > ./hs5.xz
+OUT_FN=hs5.xz
+ARCH=$(uname -m)
+echo "ARCH: $ARCH"
+if [[ "$ARCH" == "aarch64" ]]; then
+  OUT_FN=hs5-arm64.xz
+fi
+
+xz -z -c ./builds/ninja-multi-vcpkg/Release/hs5 > ./$OUT_FN
 
