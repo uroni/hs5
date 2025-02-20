@@ -7,8 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "openapi-ts": "openapi-ts -i ../api.yml -o ./src/api/",
-    "errapigen": "quicktype -s schema ../schemas/HapiError.json -o src/errorapi/HapiError.ts"
+    "openapi-ts": "openapi-ts -i ../src/api.yml -o ./src/api/",
+    "errapigen": "quicktype -s schema ../src/schemas/HapiError.json -o src/errorapi/HapiError.ts"
   },
   "dependencies": {
     "@fluentui/react-components": "^9.18.3",
