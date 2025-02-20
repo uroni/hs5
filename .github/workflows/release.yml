@@ -80,4 +80,5 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: ncipollo/release-action@v1
         with:
+         allowUpdates: true
          artifacts: "hs5*.xz"
