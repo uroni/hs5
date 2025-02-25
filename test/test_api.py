@@ -20,7 +20,7 @@ def test_adduser(hs5: Hs5Runner):
 
     ses1 = requests.session()
 
-    response = ses1.post(url+"adduser", json={
+    response = ses1.post(url+"addUser", json={
         "ses": "foobar",
         "username": "test",
         "password": "test"
@@ -37,7 +37,7 @@ def test_adduser(hs5: Hs5Runner):
     resp = response.json()
     sesVal = resp["ses"]
 
-    response = ses1.post(url+"adduser", json={
+    response = ses1.post(url+"addUser", json={
         "ses": sesVal,
         "username": "test",
         "password": "test"
