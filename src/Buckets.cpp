@@ -135,12 +135,12 @@ Api::ListResp getBucketNames()
     Api::ListResp resp;
     std::scoped_lock lock{mutex};
 
-    resp.objects.reserve(bucketNames.size());
+    resp.objects.reserve(buckets.size());
 
-    for(auto it=bucketNames.begin();it!=bucketNames.end();++it)
+    for(const auto& bucket: buckets)
     {
         Api::Object obj;
-        obj.name = it->second->second;
+        obj.name = bucket.first;
         obj.type = 0;
         resp.objects.emplace_back(std::move(obj));
     }

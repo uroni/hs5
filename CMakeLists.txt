@@ -18,7 +18,10 @@ set(APIGEN_SCHEMAS
   AddUserResp
   ListParams
   ListResp
-  )
+  EmptyParams
+  AddBucketParams
+  EmptyResp # Must be last
+)  
 
 
 add_custom_target(apigen)

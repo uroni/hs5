@@ -17,6 +17,9 @@
 #include "apigen/GeneratorsHapiError.hpp"
 #include "apigen/GeneratorsListResp.hpp"
 #include "apigen/GeneratorsListParams.hpp"
+#include "apigen/GeneratorsEmptyParams.hpp"
+#include "apigen/GeneratorsEmptyResp.hpp"
+#include "apigen/GeneratorsAddBucketParams.hpp"
 #include <argon2.h>
 #include <folly/Random.h>
 #include <iostream>
@@ -29,6 +32,7 @@
 #include "folly/ScopeGuard.h"
 #include <proxygen/httpserver/ResponseBuilder.h>
 #include "utils.h"
+#include "Buckets.h"
 
 using namespace proxygen;
 
@@ -164,9 +168,11 @@ void ApiHandler::onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexc
         return;
     }
 
-    if(func!="adduser"
+    if(func!="addUser"
         && func!="login"
-        && func!="list")
+        && func!="list"
+        && func!="sessionCheck"
+        && func!="addBucket")
     {
         ResponseBuilder(downstream_)
             .status(404, "Not found")
@@ -294,10 +300,14 @@ ApiHandler::ApiResponse ApiHandler::runRequest()
             if(!session)
                 throw ApiError(Api::Herror::sessionNotFound);
             
-            if(func=="adduser")
+            if(func=="addUser")
                 resp = addUser(params, *session);
             else if(func=="list")
                 resp = list(params, *session);
+            else if(func=="sessionCheck")
+                resp = Api::EmptyResp();
+            else if(func=="addBucket")
+                resp = addBucket(params, *session);
         }
         
     }
@@ -359,14 +369,20 @@ std::pair<Api::LoginResp, std::string> ApiHandler::login(const Api::LoginParams&
     folly::Random::secureRandom(jsSes, sizeof(jsSes));
     char cookieSes[16];
     folly::Random::secureRandom(cookieSes, sizeof(cookieSes));
+    char accessKey[16];
+    folly::Random::secureRandom(accessKey, sizeof(accessKey));
+    char secretAccessKey[16];
+    folly::Random::secureRandom(secretAccessKey, sizeof(secretAccessKey));
 
     Api::LoginResp resp;
     resp.ses = folly::hexlify(folly::StringPiece(jsSes, sizeof(jsSes)));
 
-    auto cookieSesHex = folly::hexlify(folly::StringPiece(cookieSes, sizeof(cookieSes)));
+    const auto cookieSesHex = folly::hexlify(folly::StringPiece(cookieSes, sizeof(cookieSes)));
+    resp.accessKey = folly::hexlify(folly::StringPiece(accessKey, sizeof(accessKey)));
+    resp.secretAccessKey = folly::hexlify(folly::StringPiece(secretAccessKey, sizeof(secretAccessKey)));
 
     ApiSessionStorage apiSessionStorage{.userId = user.id};
-    newSession(resp.ses, cookieSesHex, std::move(apiSessionStorage));
+    newSession(resp.ses, cookieSesHex, resp.accessKey, resp.secretAccessKey, std::move(apiSessionStorage));
 
     return std::make_pair(resp, cookieSesHex);
 }
@@ -491,4 +507,16 @@ Api::ListResp ApiHandler::listBuckets(const Api::ListParams& params, const ApiSe
         throw ApiError(Api::Herror::unexpectedContinuationToken);
 
     return buckets::getBucketNames();
+}
+
+Api::EmptyResp ApiHandler::addBucket(const Api::AddBucketParams& params, const ApiSessionStorage& sessionStorage)
+{
+    if(params.bucketName.empty())
+        throw ApiError(Api::Herror::invalidParameters);;
+
+    const auto bucketId = buckets::addBucket(params.bucketName, true);
+    if(bucketId<0)
+        throw ApiError(Api::Herror::bucketAlreadyExists);
+
+    return {};
 }

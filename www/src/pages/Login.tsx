@@ -1,9 +1,9 @@
 import { FormEvent, Suspense, useState } from 'react';
-import { router, state } from '../App';
+import { Pages, router, saveSessionToLocalStorage, state } from '../App';
 import { Field } from "@fluentui/react-components";
 import { Button, Input, Label, Spinner } from '@fluentui/react-components';
-import { useQuery } from 'react-query';
-import { DefaultService } from '../api/services';
+import { useQuery } from "@tanstack/react-query";
+import { postApiV1B64Be5124B034028A58913931942E205Login } from '../api';
 import { useSnapshot } from 'valtio';
 import { ApiError } from '../api';
 import { HapiError, Herror } from '../errorapi/HapiError';
@@ -27,8 +27,13 @@ const Login = () => {
     
     try
     {
-      const loginRes = await DefaultService.postApiV1B64Be5124B034028A58913931942E205Login({requestBody: {username: username, password: password}});
+      const loginRes = await postApiV1B64Be5124B034028A58913931942E205Login({requestBody: {username: username, password: password}});
       state.session = loginRes.ses;
+      state.secretAccessKey = loginRes.secretAccessKey;
+      state.accessKey = loginRes.accessKey;
+      saveSessionToLocalStorage();
+      state.loggedIn = true;
+      await router.navigate(`/${state.pageAfterLogin}`);
     }
     catch(apiE)
     {

@@ -49,6 +49,7 @@ const char unsigned_payload[] = "UNSIGNED-PAYLOAD";
 
 DEFINE_bool(with_stop_command, false, "Allow stopping via putting to stop object");
 DEFINE_bool(allow_sig_v2, true, "Allow aws sig v2");
+DEFINE_string(host_override, "", "Override host for s3 requests");
 
 std::string hashSha256Hex(const std::string_view payload)
 {
@@ -441,6 +442,7 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
     std::string canonicalHeaders;
     std::optional<folly::Range<const char *> > prevSignedHeader;
     bool hasHost = false;
+    std::string usedHost;
     for (auto signedHeader : signedHeadersVec)
     {
         if (prevSignedHeader && *prevSignedHeader >= signedHeader)
@@ -449,10 +451,15 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
         }
         auto fullVal = headers.getHeaders().getSingleOrEmpty(signedHeader);
         auto val = folly::trimWhitespace(fullVal);
+        if (signedHeader == "host" && !val.empty())
+        {
+            hasHost = true;
+            if(!FLAGS_host_override.empty())
+                val = FLAGS_host_override;
+            usedHost = val;            
+        }
         canonicalHeaders += folly::sformat("{}:{}\n", signedHeader, val);
         prevSignedHeader = signedHeader;
-        if (signedHeader == "host" && !val.empty())
-            hasHost = true;
     }
 
     if (!hasHost)
@@ -548,11 +555,13 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
 
     if(calculatedSignature != requestSignature)
     {
-        XLOGF(INFO, "Signature mismatch for {}?{} method {} access key {} resource {} action {} payload hash {} expected {} got {}", headers.getPathAsStringPiece(), headers.getQueryStringAsStringPiece(), headers.getMethodString(), accessKey, ressource, action, payload, calculatedSignature, requestSignature);
+        XLOGF(INFO, "Signature mismatch for {}?{} method {} access key {} resource {} action {} payload hash {} expected {} got {} used host={}", headers.getPathAsStringPiece(),
+             headers.getQueryStringAsStringPiece(), headers.getMethodString(), accessKey, ressource, action, payload, calculatedSignature, requestSignature, usedHost);
         return std::nullopt;
     }
 
-    XLOGF(INFO, "Signature OK for {}?{} method {} access key {} resource {} action {} payload hash {}", headers.getPathAsStringPiece(), headers.getQueryStringAsStringPiece(), headers.getMethodString(), accessKey, ressource, action, payload);
+    XLOGF(INFO, "Signature OK for {}?{} method {} access key {} resource {} action {} payload hash {}", headers.getPathAsStringPiece(), headers.getQueryStringAsStringPiece(),
+         headers.getMethodString(), accessKey, ressource, action, payload);
 
     return std::string(accessKey);
 }

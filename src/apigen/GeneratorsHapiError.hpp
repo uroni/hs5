@@ -34,9 +34,11 @@ namespace Api {
 
     inline void from_json(const json & j, Herror & x) {
         if (j == "argon_encoding") x = Herror::argonEncoding;
+        else if (j == "bucket_already_exists") x = Herror::bucketAlreadyExists;
         else if (j == "bucket_not_found") x = Herror::bucketNotFound;
         else if (j == "error_listing_in_iteration") x = Herror::errorListingInIteration;
         else if (j == "error_starting_listing") x = Herror::errorStartingListing;
+        else if (j == "invalid_parameters") x = Herror::invalidParameters;
         else if (j == "invalid_path") x = Herror::invalidPath;
         else if (j == "no_such_function") x = Herror::noSuchFunction;
         else if (j == "password_wrong") x = Herror::passwordWrong;
@@ -52,9 +54,11 @@ namespace Api {
     inline void to_json(json & j, const Herror & x) {
         switch (x) {
             case Herror::argonEncoding: j = "argon_encoding"; break;
+            case Herror::bucketAlreadyExists: j = "bucket_already_exists"; break;
             case Herror::bucketNotFound: j = "bucket_not_found"; break;
             case Herror::errorListingInIteration: j = "error_listing_in_iteration"; break;
             case Herror::errorStartingListing: j = "error_starting_listing"; break;
+            case Herror::invalidParameters: j = "invalid_parameters"; break;
             case Herror::invalidPath: j = "invalid_path"; break;
             case Herror::noSuchFunction: j = "no_such_function"; break;
             case Herror::passwordWrong: j = "password_wrong"; break;

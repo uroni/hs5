@@ -4,8 +4,14 @@
     "properties": {
         "ses": {
             "type": "string"
+        },
+        "accessKey": {
+            "type": "string"
+        },
+        "secretAccessKey": {
+            "type": "string"
         }
     },
-    "required": ["ses"]
+    "required": ["ses", "accessKey", "secretAccessKey"]
 }
 

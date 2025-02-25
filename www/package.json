@@ -3,28 +3,37 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "packageManager": "pnpm@9.1.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "openapi-ts": "openapi-ts -i ../src/api.yml -o ./src/api/",
-    "errapigen": "quicktype -s schema ../src/schemas/HapiError.json -o src/errorapi/HapiError.ts"
+    "openapi-ts": "openapi-ts --client legacy/fetch -i ../src/api.yml -o ./src/api/",
+    "errapigen": "quicktype -s schema ../src/schemas/HapiError.json -o src/errorapi/HapiError.ts",
+    "format": "pnpm exec prettier . --write"
   },
   "dependencies": {
-    "@fluentui/react-components": "^9.18.3",
-    "@fluentui/react-icons": "^2.0.197",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-query": "^3.39.3",
+    "@fluentui/react-components": "^9.60.0",
+    "@fluentui/react-experiments": "^8.14.197",
+    "@fluentui/react-icons": "^2.0.239",
+    "@tanstack/react-query": "^5.56.2",
+    "@tanstack/react-query-devtools": "^5.61.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "react-router-dom": "^6.9.0",
-    "valtio": "^1.10.3"
+    "valtio": "^1.13.2"
   },
   "devDependencies": {
-    "@hey-api/openapi-ts": "0.38.1",
-    "@types/react": "^18.0.28",
-    "@types/react-dom": "^18.0.11",
-    "@vitejs/plugin-react": "^3.1.0",
-    "typescript": "^4.9.3",
-    "vite": "^4.2.0"
+    "@eslint/js": "^9.2.0",
+    "@hey-api/openapi-ts": "^0.64.5",
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "eslint": "^9.2.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "3.2.5",
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.24.1",
+    "vite": "^5.4.14"
   }
 }

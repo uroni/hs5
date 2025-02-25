@@ -12,11 +12,12 @@ struct ApiSessionStorage
 struct SessionStorage
 {
     ApiSessionStorage apiStorage;
+    std::string accessKey;
     std::chrono::time_point<std::chrono::steady_clock> usedAt = std::chrono::steady_clock::now();
     bool locked = false;
 };
 
-void newSession(const std::string_view jsSes, const std::string_view cookieSes, ApiSessionStorage apiSessionStorage);
+void newSession(const std::string_view jsSes, const std::string_view cookieSes, const std::string_view accessKey, const std::string_view secretAccessKey, ApiSessionStorage apiSessionStorage);
 
 void unlockSession(SessionStorage& storage);
 
@@ -65,5 +66,7 @@ public:
 };
 
 SessionScope getSession(const std::string_view jsSes, const std::string_view cookieSes);
+
+bool hasSession(const std::string_view accessKey);
 
 

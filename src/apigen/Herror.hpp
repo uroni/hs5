@@ -14,5 +14,5 @@
 namespace Api {
     using nlohmann::json;
 
-    enum class Herror : int { argonEncoding, bucketNotFound, errorListingInIteration, errorStartingListing, invalidPath, noSuchFunction, passwordWrong, sessionNotFound, sessionRequired, unexpectedContinuationToken, unknownPasswordHashing, userAlreadyExists, userNotFound };
+    enum class Herror : int { argonEncoding, bucketAlreadyExists, bucketNotFound, errorListingInIteration, errorStartingListing, invalidParameters, invalidPath, noSuchFunction, passwordWrong, sessionNotFound, sessionRequired, unexpectedContinuationToken, unknownPasswordHashing, userAlreadyExists, userNotFound };
 }

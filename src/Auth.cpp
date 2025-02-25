@@ -7,7 +7,7 @@
 #include <shared_mutex>
 #include <map>
 #include "DbDao.h"
-
+#include "Session.h"
 
 namespace
 {
@@ -38,6 +38,18 @@ void refreshAuthCache()
     }
 }
 
+void addAccessKey(const std::string_view accessKey, const std::string_view secretKey)
+{
+    std::scoped_lock lock{mutex};
+    accessKeys.insert(std::make_pair(std::string(accessKey), DbDao::AccessKey{.key = std::string(accessKey), .secret_key = std::string(secretKey)}));
+}
+
+void removeAccessKey(const std::string_view accessKey)
+{
+    std::scoped_lock lock{mutex};
+    accessKeys.erase(std::string(accessKey));
+}
+
 std::string getSecretKey(const std::string_view accessKey)
 {
     std::shared_lock lock{mutex};
@@ -45,6 +57,9 @@ std::string getSecretKey(const std::string_view accessKey)
     const auto it = accessKeys.find(std::string(accessKey));
 
     if(it==accessKeys.end())
+        return {};
+
+    if(it->second.id == 0 && !hasSession(accessKey))
         return {};
 
     return it->second.secret_key;

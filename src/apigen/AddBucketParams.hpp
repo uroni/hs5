@@ -4,7 +4,7 @@
 //
 //  Then include this file, and then do
 //
-//     LoginResp.hpp data = nlohmann::json::parse(jsonString);
+//     AddBucketParams.hpp data = nlohmann::json::parse(jsonString);
 
 #pragma once
 
@@ -14,9 +14,8 @@
 namespace Api {
     using nlohmann::json;
 
-    struct LoginResp {
-        std::string accessKey;
-        std::string secretAccessKey;
+    struct AddBucketParams {
+        std::string bucketName;
         std::string ses;
     };
 }

@@ -4,19 +4,18 @@
 //
 //  Then include this file, and then do
 //
-//     LoginResp.hpp data = nlohmann::json::parse(jsonString);
+//     EmptyResp.hpp data = nlohmann::json::parse(jsonString);
 
 #pragma once
 
+#include <optional>
 #include <nlohmann/json.hpp>
 #include "helper.hpp"
 
 namespace Api {
     using nlohmann::json;
 
-    struct LoginResp {
-        std::string accessKey;
-        std::string secretAccessKey;
-        std::string ses;
+    struct EmptyResp {
+        std::optional<std::string> dummy;
     };
 }

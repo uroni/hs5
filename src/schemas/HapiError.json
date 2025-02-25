@@ -16,7 +16,9 @@
                 "bucket_not_found",
                 "error_starting_listing",
                 "invalid_path",
-                "error_listing_in_iteration"
+                "error_listing_in_iteration",
+                "bucket_already_exists",
+                "invalid_parameters"
             ]
         },
         "msg" : {

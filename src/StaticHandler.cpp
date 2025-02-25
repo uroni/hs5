@@ -1,3 +1,7 @@
+/**
+ * Copyright Martin Raiber. All Rights Reserved.
+ * SPDX-License-Identifier: LGPL-3.0-or-later
+ */
 #include "StaticHandler.h"
 #include "../wwwgen/www_files.h"
 #include <folly/FileUtil.h>

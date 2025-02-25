@@ -24,7 +24,7 @@ paths:
             application/json:
               schema:
                 $ref: 'schemas/HapiError.json'
-  /api-v1-b64be512-4b03-4028-a589-13931942e205/adduser:
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/addUser:
     post:
       description: Adds a user
       requestBody:
@@ -66,3 +66,46 @@ paths:
             application/json:
               schema:
                 $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/sessionCheck:
+    post:
+      description: Check if session is ok
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/EmptyParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/EmptyResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/addBucket:
+    post:
+      description: Add new bucket
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/AddBucketParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/EmptyResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+    

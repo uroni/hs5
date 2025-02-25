@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 #include "Session.h"
+#include "Auth.h"
 #include <condition_variable>
 #include <mutex>
 #include <map>
@@ -17,24 +18,40 @@ namespace
     std::condition_variable unlockCond;
 
     std::map<std::string, SessionStorage> sessionData;
+    std::map<std::string, std::map<std::string, SessionStorage>::iterator> accessKeyToSession;
 
     constexpr std::chrono::minutes sessionTimeout = 15min;
 }
 
-
-void newSession(const std::string_view jsSes, const std::string_view cookieSes, ApiSessionStorage apiSessionStorage)
+std::map<std::string, SessionStorage>::iterator removeSession(std::map<std::string, SessionStorage>::iterator it)
 {
+    if(!it->second.accessKey.empty())
+    {
+        removeAccessKey(it->second.accessKey);
+    }
+
+    accessKeyToSession.erase(it->second.accessKey);
+
+    return sessionData.erase(it);
+}
+
+
+void newSession(const std::string_view jsSes, const std::string_view cookieSes, const std::string_view accessKey, const std::string_view secretAccessKey, ApiSessionStorage apiSessionStorage)
+{
+    addAccessKey(accessKey, secretAccessKey);
+
     std::scoped_lock lock{mutex};
 
-    SessionStorage sessionStorage = {.apiStorage = std::move(apiSessionStorage)};
+    SessionStorage sessionStorage = {.apiStorage = std::move(apiSessionStorage), .accessKey = std::string(accessKey)};
 
-    sessionData[fmt::format("{}{}",jsSes, cookieSes)] = std::move(sessionStorage);
+    auto itInsert = sessionData.insert(std::make_pair(fmt::format("{}{}", jsSes, cookieSes), std::move(sessionStorage)));
+    accessKeyToSession[std::string(accessKey)] = itInsert.first;
 
     auto now = std::chrono::steady_clock::now();
     for(auto it = sessionData.begin();it!=sessionData.end();)
     {
         if(!it->second.locked && now - it->second.usedAt > sessionTimeout)
-            it = sessionData.erase(it);
+            it = removeSession(it);
         else
             ++it;
     }
@@ -56,10 +73,10 @@ SessionScope getSession(const std::string_view jsSes, const std::string_view coo
             unlockCond.wait(lock);
         }
 
-        auto now = std::chrono::steady_clock::now();
+        const auto now = std::chrono::steady_clock::now();
         if(now - it->second.usedAt > sessionTimeout)
         {
-            sessionData.erase(it);
+            removeSession(it);
             return SessionScope(nullptr);
         }
 
@@ -77,4 +94,20 @@ void unlockSession(SessionStorage& storage)
     std::scoped_lock lock(mutex);
     storage.locked=false;
     unlockCond.notify_all();
+}
+
+bool hasSession(const std::string_view accessKey)
+{
+    std::scoped_lock lock(mutex);
+    const auto it = accessKeyToSession.find(std::string(accessKey));
+    if(it==accessKeyToSession.end())
+        return false;
+    
+    const auto now = std::chrono::steady_clock::now();
+    if(now - it->second->second.usedAt > sessionTimeout)
+        return false;
+
+    it->second->second.usedAt = now;
+
+    return true;
 }

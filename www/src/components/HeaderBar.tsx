@@ -1,4 +1,4 @@
-import logoImage from '../assets/urbackup.png'
+import logoImage from '../assets/hs5.png'
 import { useSnapshot } from 'valtio';
 import { state } from '../App';
 import { useStackStyles } from './StackStyles';
@@ -15,7 +15,7 @@ export const HeaderBar = () => {
           <Image src={logoImage} fit='contain' />
         </div>
         <div className={styles.item}>
-          UrBackup
+          HS5
         </div>
         <div className={styles.itemGrow}>
 
