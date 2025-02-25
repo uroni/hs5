@@ -49,7 +49,9 @@ export type PostApiV1B64Be5124B034028A58913931942E205SessionCheckData = {
     };
 };
 
-export type PostApiV1B64Be5124B034028A58913931942E205SessionCheckResponse = (__paths__1api_v1_b64be512_4b03_4028_a589_13931942e205_1addBucket_post_responses_200_content_application_1json_schema);
+export type PostApiV1B64Be5124B034028A58913931942E205SessionCheckResponse = ({
+    dummy?: string;
+});
 
 export type PostApiV1B64Be5124B034028A58913931942E205AddBucketData = {
     requestBody?: {

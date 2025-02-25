@@ -17,8 +17,8 @@
 #include "apigen/GeneratorsHapiError.hpp"
 #include "apigen/GeneratorsListResp.hpp"
 #include "apigen/GeneratorsListParams.hpp"
-#include "apigen/GeneratorsEmptyParams.hpp"
-#include "apigen/GeneratorsEmptyResp.hpp"
+#include "apigen/GeneratorsSessionCheckResp.hpp"
+#include "apigen/GeneratorsAddBucketResp.hpp"
 #include "apigen/GeneratorsAddBucketParams.hpp"
 #include <argon2.h>
 #include <folly/Random.h>
@@ -305,7 +305,7 @@ ApiHandler::ApiResponse ApiHandler::runRequest()
             else if(func=="list")
                 resp = list(params, *session);
             else if(func=="sessionCheck")
-                resp = Api::EmptyResp();
+                resp = Api::SessionCheckResp();
             else if(func=="addBucket")
                 resp = addBucket(params, *session);
         }
@@ -509,7 +509,7 @@ Api::ListResp ApiHandler::listBuckets(const Api::ListParams& params, const ApiSe
     return buckets::getBucketNames();
 }
 
-Api::EmptyResp ApiHandler::addBucket(const Api::AddBucketParams& params, const ApiSessionStorage& sessionStorage)
+Api::AddBucketResp ApiHandler::addBucket(const Api::AddBucketParams& params, const ApiSessionStorage& sessionStorage)
 {
     if(params.bucketName.empty())
         throw ApiError(Api::Herror::invalidParameters);;

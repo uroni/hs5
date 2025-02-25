@@ -66,7 +66,7 @@ export const postApiV1B64Be5124B034028A58913931942E205List = (data: PostApiV1B64
  * Check if session is ok
  * @param data The data for the request.
  * @param data.requestBody
- * @returns __paths__1api_v1_b64be512_4b03_4028_a589_13931942e205_1addBucket_post_responses_200_content_application_1json_schema OK
+ * @returns unknown OK
  * @throws ApiError
  */
 export const postApiV1B64Be5124B034028A58913931942E205SessionCheck = (data: PostApiV1B64Be5124B034028A58913931942E205SessionCheckData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205SessionCheckResponse> => {

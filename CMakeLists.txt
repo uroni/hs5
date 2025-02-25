@@ -11,17 +11,18 @@ add_custom_command(
 )
 
 set(APIGEN_SCHEMAS
-  AddUserParams
-  LoginParams
-  LoginResp
   HapiError
+  AddUserParams
   AddUserResp
+  LoginParams
+  LoginResp    
   ListParams
   ListResp
-  EmptyParams
   AddBucketParams
-  EmptyResp # Must be last
-)  
+  AddBucketResp
+  SessionCheckParams
+  SessionCheckResp # Must be last
+)
 
 
 add_custom_target(apigen)

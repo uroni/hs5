@@ -73,14 +73,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: 'schemas/EmptyParams.json'
+              $ref: 'schemas/SessionCheckParams.json'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: 'schemas/EmptyResp.json'
+                $ref: 'schemas/SessionCheckResp.json'
         '400':
           description: Error
           content:
@@ -101,7 +101,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: 'schemas/EmptyResp.json'
+                $ref: 'schemas/AddBucketResp.json'
         '400':
           description: Error
           content:

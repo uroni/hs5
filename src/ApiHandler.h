@@ -12,7 +12,7 @@
 #include "apigen/HapiError.hpp"
 #include "apigen/ListResp.hpp"
 #include "apigen/ListParams.hpp"
-#include "apigen/EmptyResp.hpp"
+#include "apigen/AddBucketResp.hpp"
 #include "apigen/AddBucketParams.hpp"
 #include "Session.h"
 #include <proxygen/httpserver/RequestHandler.h>
@@ -56,7 +56,7 @@ private:
     std::pair<Api::LoginResp, std::string> login(const Api::LoginParams& params);
     Api::ListResp list(const Api::ListParams& params, const ApiSessionStorage& sessionStorage);
     Api::ListResp listBuckets(const Api::ListParams& params, const ApiSessionStorage& sessionStorage);
-    Api::EmptyResp addBucket(const Api::AddBucketParams& params, const ApiSessionStorage& sessionStorage);
+    Api::AddBucketResp addBucket(const Api::AddBucketParams& params, const ApiSessionStorage& sessionStorage);
 
     std::string func;
     std::string body;
