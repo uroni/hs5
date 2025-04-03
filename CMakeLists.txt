@@ -6,6 +6,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_custom_target(sqlgen)
 add_custom_command(
   TARGET   sqlgen
+  PRE_LINK
   COMMAND  "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/sqlite-cpp-sqlgen" "template.db" "DbDao.cpp"
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
 )
@@ -29,15 +30,18 @@ add_custom_target(apigen)
 foreach(SCHEMA ${APIGEN_SCHEMAS})
   add_custom_command(
     TARGET   apigen
+    PRE_LINK
     COMMAND  "echo" "Generating ${SCHEMA}..."
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
   )
   add_custom_command(
     TARGET   apigen
+    PRE_LINK
     COMMAND  "quicktype" "-s" "schema" "src/schemas/${SCHEMA}.json" "-o" "src/apigen/${SCHEMA}.cpp" "--include-location" "global-include" "--type-style" "pascal-case" "--member-style" "camel-case"  "--enumerator-style" "camel-case" "--no-boost" "--source-style" "multi-source" "--namespace" "Api" "--code-format" "with-struct"
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
   )
   add_custom_command(TARGET apigen
+                   PRE_LINK
                    COMMAND ${CMAKE_COMMAND} -E rename
                    "src/apigen/Generators.hpp"
                    "src/apigen/Generators${SCHEMA}.hpp"
