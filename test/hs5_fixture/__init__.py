@@ -54,8 +54,7 @@ class Hs5Runner:
             str(curr_port),
             "--init_root_password", self._root_key,
             "--with_stop_command", "true",
-            "--bucket_versioning=false",
-            "--manual_commit"]
+            "--bucket_versioning=false"]
         
         if os.environ.get("ENABLE_WAL") == "1":
             args.append("--index_wal_path")
