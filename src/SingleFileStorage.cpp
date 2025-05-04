@@ -6783,6 +6783,17 @@ void SingleFileStorage::operator()()
 			defrag_restart = 0;
 		}
 
+		if (frag_info.action == FragAction::Add
+			|| frag_info.action == FragAction::AddNoDelOld
+			|| frag_info.action == FragAction::Del
+			|| frag_info.action == FragAction::DelOld
+			|| frag_info.action == FragAction::RestoreOld
+			|| frag_info.action==FragAction::DelWithQueued)
+		{
+			++mod_items;
+			--commit_items[common_prefix_hash_func(frag_info.fn)];
+		}
+
 		lock.unlock();
 
 		if (frag_info.action == FragAction::Commit
@@ -7186,7 +7197,23 @@ void SingleFileStorage::operator()()
 				}
 
 				if(commit_ok)
+				{
 					needs_wal_file_reset = false;
+
+					for(auto it=commit_items.begin();it!=commit_items.end();)
+					{
+						if(it->second==0)
+						{
+							auto it_prev=it;
+							++it;
+							commit_items.erase(it_prev);
+						}
+						else
+						{
+							++it;
+						}
+					}
+				}
 			}
 
 			if (has_commit_info
@@ -7225,20 +7252,6 @@ void SingleFileStorage::operator()()
 				if(!setup_compare_funcs(txn, freespace_txn))
 				{
 					++commit_errors;
-				}
-
-				for(auto it=commit_items.begin();it!=commit_items.end();)
-				{
-					if(it->second==0)
-					{
-						auto it_prev=it;
-						++it;
-						commit_items.erase(it_prev);
-					}
-					else
-					{
-						++it;
-					}
 				}
 
 				for(size_t ext_idx =0;ext_idx <num_reserved_extents;++ext_idx)
