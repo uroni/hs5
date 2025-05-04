@@ -18,6 +18,12 @@ on:
   push:
   pull_request:
 
+permissions:
+  # deployments permission to deploy GitHub pages website
+  deployments: write
+  # contents permission to update benchmark contents in gh-pages branch
+  contents: write
+
 jobs:
   job:
     name: ${{ matrix.os }}-${{ github.workflow }}
@@ -86,3 +92,8 @@ jobs:
         with:
           tool: 'pytest'
           output-file-path: output.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          comment-on-alert: true
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: homepage/dev/bench
+          auto-push: true
