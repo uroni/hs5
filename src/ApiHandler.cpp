@@ -409,6 +409,8 @@ Api::ListResp ApiHandler::list(const Api::ListParams& params, const ApiSessionSt
     const auto bucketId = *bucketIdOpt;
     const auto iterStartVal = make_key({.key = params.continuationToken ? *params.continuationToken : prefix, .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId});
 
+    sfs.list_commit();
+
     SingleFileStorage::IterData iterData = {};
     if(!sfs.iter_start(iterStartVal, false, iterData))
         throw ApiError(Api::Herror::errorStartingListing);

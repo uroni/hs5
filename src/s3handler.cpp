@@ -50,6 +50,7 @@ const char unsigned_payload[] = "UNSIGNED-PAYLOAD";
 DEFINE_bool(with_stop_command, false, "Allow stopping via putting to stop object");
 DEFINE_bool(allow_sig_v2, true, "Allow aws sig v2");
 DEFINE_string(host_override, "", "Override host for s3 requests");
+DEFINE_bool(pre_sync_commit, false, "Pre-sync data and index files before commit for potential performance gain");
 
 std::string hashSha256Hex(const std::string_view payload)
 {
@@ -1400,7 +1401,7 @@ void S3Handler::commit(proxygen::HTTPMessage& headers)
     folly::getGlobalCPUExecutor()->add(
     [self = this->self, evb]()
     {
-        bool b = self->sfs.commit(false, -1);
+        bool b = self->sfs.commit(false, -1, FLAGS_pre_sync_commit);
 
         evb->runInEventBaseThread([self = self, b]()
                                         {
@@ -1979,7 +1980,7 @@ void S3Handler::finalizeMultipartUpload()
 
                 if(!self->sfs.get_manual_commit())
                 {
-                    const bool b = self->sfs.commit(false, -1);
+                    const bool b = self->sfs.commit(false, -1, FLAGS_pre_sync_commit);
                     
                     if(!b)
                     {
@@ -2086,7 +2087,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
 
             if(res==0 && !self->sfs.get_manual_commit())
             {
-                res = self->sfs.commit(false, -1) ? 0 : 1;
+                res = self->sfs.commit(false, -1, FLAGS_pre_sync_commit) ? 0 : 1;
             }
 
             evb->runInEventBaseThread([self = self, res]()
@@ -2135,6 +2136,8 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
             {
                 const auto iterStartVal = make_key({.key = {}, .version=std::numeric_limits<int64_t>::max(), .bucketId = *bucketId});
                 SingleFileStorage::IterData iter_data = {};
+
+                self->sfs.list_commit();
                 
                 if(!self->sfs.iter_start(iterStartVal, false, iter_data))
                 {
@@ -2523,6 +2526,8 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         else
             iterStartVal = make_key({.key = {}, .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId});
     }
+
+    sfs.list_commit();
 
     if(!sfs.iter_start(iterStartVal, false, iter_data))
     {
@@ -2972,7 +2977,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
         if(!sfs.get_manual_commit())
         {
-            bool b = sfs.commit(false, -1);
+            bool b = sfs.commit(false, -1, FLAGS_pre_sync_commit);
             
             if(!b)
             {

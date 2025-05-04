@@ -29,8 +29,11 @@ using THREAD_ID = pid_t;
 
 constexpr int64_t sfs_block_size = 4096;
 
+class WalFile;
+
 class SingleFileStorage
 {
+	friend WalFile;
 public:
 
     struct SPunchItem
@@ -87,6 +90,7 @@ public:
 		std::string db_path;
 		std::string freespace_cache_path;
 		std::string dm_cache_path;
+		std::string wal_file_path;
 		int64_t dm_cache_size = 0;
 		bool use_direct_io = false;
 		int64_t data_file_size_limit_mb = 0;
@@ -168,11 +172,20 @@ public:
 	bool restore_old(const std::string& fn);
 
 
-	bool commit(bool background_queue, int64_t transid) {
-		return commit(background_queue, transid, 0);
+	bool commit(bool background_queue, int64_t transid, const bool pre_sync) {
+		return commit(background_queue, transid, 0, pre_sync);
 	}
 
-	bool commit(bool background_queue, int64_t transid, int64_t disk_id);
+	bool commit(bool background_queue, int64_t transid, int64_t disk_id, const bool pre_sync);
+
+	/**
+	 * For read after write consistency, when running with WAL, this commits to the LMDB if necessary
+	 * so the listings have read after write consistency.
+	 * 
+	 * This could be improved by merging the uncommited changes into the listing, but avoid doing that
+	 * work for now.
+	 */
+	bool list_commit();
 
 	bool empty_queue(bool background_queue);
 
@@ -566,6 +579,7 @@ private:
 	relaxed_atomic<bool> is_dead;
 	relaxed_atomic<bool> write_offline;
 
+	int64_t prev_transid;
 	int64_t curr_transid;
 
 	bool force_freespace_check;
@@ -605,6 +619,9 @@ private:
 	common_prefix_hash_func_t common_prefix_hash_func;
 
 	int64_t curr_version = 0;
+
+	std::unique_ptr<WalFile> wal_file;
+	bool needs_wal_file_reset = false;
 };
 
 

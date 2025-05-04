@@ -36,6 +36,13 @@
             "configuration": "Release"
         },
         {
+            "name": "ninja-vcpkg-release-with-debug-info",
+            "configurePreset": "ninja-multi-vcpkg",
+            "displayName": "Build (Release)",
+            "description": "Build with Ninja/vcpkg (Release with debug info)",
+            "configuration": "RelWithDebInfo"
+        },
+        {
             "name": "ninja-vcpkg",
             "configurePreset": "ninja-multi-vcpkg",
             "displayName": "Build",

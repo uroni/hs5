@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 #include "SingleFileStorage.h"
+#include "WalFile.h"
 #include <asm-generic/errno-base.h>
 #include <asm-generic/errno.h>
 #include <cstdint>
@@ -911,8 +912,12 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	}
 	else
 	{
+		// Use random initial transid to avoid applying mismatching wal files
+		curr_transid = folly::Random::rand32();
 		XLOG(INFO) << "New data file transid " << std::to_string(curr_transid) << " curr size "+folly::prettyPrint(index_file_size, folly::PRETTY_BYTES_IEC) << " fn " << data_file_path;
 	}
+
+	prev_transid = curr_transid;
 
 	ch = dbi_size_info_next_disk_id;
 	val.mv_data = &ch;
@@ -1154,6 +1159,24 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 			auto cb = new SingleFileStorageMigrate(this);
 			(*cb)();
 		});
+	}
+
+	if(!options.wal_file_path.empty())
+	{
+		XLOGF(INFO, "Opening WAL file at {}", options.wal_file_path);
+		wal_file = std::make_unique<WalFile>(options.wal_file_path);
+
+		const auto items = wal_file->read(curr_transid);
+
+		if(!items.empty())
+		{
+			XLOGF(INFO, "WAL file read {} items", items.size());
+		}
+
+		for(const auto& item : items)
+		{
+			commit_queue.push_back(item);
+		}
 	}
 }
 
@@ -2342,42 +2365,45 @@ bool SingleFileStorage::restore_old(const std::string & fn)
 	return true;
 }
 
-bool SingleFileStorage::commit(bool background_queue, int64_t transid, int64_t disk_id)
+bool SingleFileStorage::commit(bool background_queue, int64_t transid, int64_t disk_id, const bool pre_sync)
 {
 	if (is_dead)
 	{
 		return false;
 	}
 
-	if (data_file.fsyncNoInt()!=0)
+	if(pre_sync)
 	{
-		XLOG(ERR) << "Failed to sync data file " << data_file_path << ". " << folly::errnoStr(errno);
-		write_offline = true;
-		do_stop_on_error();
-		return false;
-	}
-
-	{
-		std::scoped_lock lock(mutex);
-		mdb_curr_sync = true;
-	}
-
-	if (mdb_env_sync(db_env, 0) != 0)
-	{
-		XLOG(ERR) << "mdb_env_sync on " << db_path << " failed. " << folly::errnoStr(errno);
-		write_offline = true;
-		do_stop_on_error();
-		return false;
-	}
-
-	if (cache_db_env != nullptr)
-	{
-		if (mdb_env_sync(cache_db_env, 0) != 0)
+		if (data_file.fsyncNoInt()!=0)
 		{
-			XLOG(ERR) << "mdb_env_sync on cache db failed. " << folly::errnoStr(errno);
+			XLOG(ERR) << "Failed to sync data file " << data_file_path << ". " << folly::errnoStr(errno);
 			write_offline = true;
 			do_stop_on_error();
 			return false;
+		}
+
+		{
+			std::scoped_lock lock(mutex);
+			mdb_curr_sync = true;
+		}
+
+		if (mdb_env_sync(db_env, 0) != 0)
+		{
+			XLOG(ERR) << "mdb_env_sync on " << db_path << " failed. " << folly::errnoStr(errno);
+			write_offline = true;
+			do_stop_on_error();
+			return false;
+		}
+
+		if (cache_db_env != nullptr)
+		{
+			if (mdb_env_sync(cache_db_env, 0) != 0)
+			{
+				XLOG(ERR) << "mdb_env_sync on cache db failed. " << folly::errnoStr(errno);
+				write_offline = true;
+				do_stop_on_error();
+				return false;
+			}
 		}
 	}
 
@@ -2386,7 +2412,7 @@ bool SingleFileStorage::commit(bool background_queue, int64_t transid, int64_t d
 	SCommitInfo commit_info;
 	SFragInfo frag_info;
 	frag_info.offset = transid;
-	frag_info.len = disk_id;
+	frag_info.len = 0;
 	frag_info.action = FragAction::Commit;
 	frag_info.commit_info = &commit_info;
 
@@ -2402,7 +2428,43 @@ bool SingleFileStorage::commit(bool background_queue, int64_t transid, int64_t d
 		commit_queue.push_back(frag_info);
 	}
 
-	mdb_curr_sync = false;
+	if(pre_sync)
+		mdb_curr_sync = false;
+
+	cond.notify_all();
+	commit_info.commit_done.wait(lock);
+
+	return commit_info.commit_errors == 0;
+}
+
+bool SingleFileStorage::list_commit()
+{
+	if (is_dead)
+	{
+		return false;
+	}
+
+	// Only necessary if using wal file
+	if(!wal_file)
+		return true;
+
+	std::unique_lock lock(mutex);
+
+	if(!needs_wal_file_reset)
+		return true;
+
+	SCommitInfo commit_info;
+	SFragInfo frag_info;
+	frag_info.offset = -1;
+	frag_info.len = 0;
+	frag_info.md5sum = "l";
+	frag_info.action = FragAction::Commit;
+	frag_info.commit_info = &commit_info;
+
+	if (is_dead)
+		return false;
+
+	commit_queue.push_back(frag_info);
 
 	cond.notify_all();
 	commit_info.commit_done.wait(lock);
@@ -6726,6 +6788,9 @@ void SingleFileStorage::operator()()
 		if (frag_info.action == FragAction::Commit
 			&& frag_info.offset != -1)
 		{
+			// This logic is for coordinating multiple files. Disable for now
+			assert(false);
+
 			int64_t disk_id = frag_info.len;
 			if (disk_id == 0)
 				curr_transid = frag_info.offset;
@@ -6751,7 +6816,49 @@ void SingleFileStorage::operator()()
 			mod_items += 2;
 		}
 
-		if (frag_info.action == FragAction::Commit )
+		if(wal_file && !wal_file->write(prev_transid, frag_info) )
+		{
+			XLOG(ERR) << "Failed to write to wal file. " << folly::errnoStr(errno);
+			++commit_errors;
+		}
+
+
+		if(frag_info.action == FragAction::Commit && 
+			frag_info.md5sum != "reset" &&
+			frag_info.md5sum != "l" &&
+			wal_file && wal_file->items() < 1000)
+		{
+			if (data_file.fsyncNoInt()!=0)
+			{
+				XLOG(ERR) << "Failed to sync data file " << data_file_path << ". " << folly::errnoStr(errno);
+				++commit_errors;
+			}
+
+			if (new_data_file
+				&& new_data_file.fsyncNoInt()!=0)
+			{
+				XLOG(ERR) << "Failed to sync new data file " << (data_file_path.parent_path() / "new_data") << ". " << folly::errnoStr(errno);
+				++commit_errors;
+			}
+
+			const auto commit_ok = wal_file->sync();
+			if(!commit_ok)
+			{
+				XLOG(ERR) << "Failed to sync wal file. " << folly::errnoStr(errno);
+				++commit_errors;
+			}
+
+			std::scoped_lock llock(mutex);
+			if (frag_info.commit_info != nullptr)
+			{
+				frag_info.commit_info->commit_errors = commit_errors;
+				frag_info.commit_info->commit_done.notify_all();
+				if(commit_ok)
+					commit_errors = 0;
+			}
+			needs_wal_file_reset = true;
+		}
+		else if (frag_info.action == FragAction::Commit )
 		{
 			if (frag_info.md5sum == "reset"
 				&& commit_errors>0)
@@ -7077,6 +7184,9 @@ void SingleFileStorage::operator()()
 					XLOG(INFO) << "Defrag ctr incremented. Defrag can continue...";
 					defrag_restart=0;
 				}
+
+				if(commit_ok)
+					needs_wal_file_reset = false;
 			}
 
 			if (has_commit_info
@@ -7087,6 +7197,14 @@ void SingleFileStorage::operator()()
 
 			if (commit_ok)
 			{
+				assert(frag_info.offset == -1);
+				prev_transid = curr_transid;
+				if(frag_info.offset == -1)
+					++curr_transid;
+
+				if(wal_file)
+					wal_file->reset();
+
 				int rc = mdb_txn_begin(db_env, NULL, 0, &txn);
 				if (rc)
 				{

@@ -49,6 +49,7 @@ DEFINE_bool(stop_on_error, false, "Stop on write/read errors");
 DEFINE_bool(punch_holes, true, "Free up space if not enough free space is left by punching holes");
 DEFINE_string(server_url, "serverurl", "URL of server");
 DEFINE_bool(bucket_versioning, false, "Enable bucket versioning");
+DEFINE_string(index_wal_path, "", "Path where to put the index WAL file. Disabled if empty");
 
 namespace {
   std::unique_ptr<proxygen::HTTPServer> server;
@@ -172,6 +173,7 @@ int realMain(int argc, char* argv[])
     sfsoptions.key_compare_func = mdb_cmp_s3key;
     sfsoptions.common_prefix_func = s3key_common_prefix;
     sfsoptions.common_prefix_hash_func = s3key_common_prefix_hash;
+    sfsoptions.wal_file_path = FLAGS_index_wal_path.empty() ? FLAGS_index_wal_path : (FLAGS_index_wal_path + os_file_sep() + "index.wal");
 
     proxygen::HTTPSessionBase::setMaxReadBufferSize(16*1024);
 

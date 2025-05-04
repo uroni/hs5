@@ -70,6 +70,12 @@ configure_file(
   @ONLY
 )
 
+# add_compile_options(-fno-omit-frame-pointer)
+# if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_CONFIGURATION_TYPES MATCHES ".*[dD]ebug.*")
+#   add_compile_options(-fsanitize=address)
+#   add_link_options(-fsanitize=address)
+# endif()
+
 add_executable(hs5
     external/lmdb/midl.cpp
     external/lmdb/mdb.c
@@ -90,6 +96,7 @@ add_executable(hs5
     src/Session.cpp
     src/cmd.cpp
     src/StaticHandler.cpp
+    src/WalFile.cpp
     wwwgen/www_files.cpp
     ${SCHEMA_SOURCES})
 
@@ -115,11 +122,6 @@ target_include_directories(hs5 PRIVATE ${TCLAP_INCLUDE_DIRS})
 target_link_libraries(hs5 PRIVATE $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static> Folly::folly Folly::folly_deps Folly::follybenchmark Folly::folly_test_util
   proxygen::proxygen proxygen::proxygencurl proxygen::proxygenhttpserver expat::expat unofficial-sodium::sodium SqliteCppGen::SqliteCppGen nlohmann_json::nlohmann_json fmt::fmt)
 
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_CONFIGURATION_TYPES MATCHES ".*[dD]ebug.*")
-  add_compile_options(-fsanitize=address)
-  add_link_options(-fsanitize=address)
-endif()
 
 target_compile_features(hs5 PUBLIC cxx_std_20)
 
