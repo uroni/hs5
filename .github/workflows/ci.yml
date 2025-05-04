@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        benchmark: [true, false]
+        benchmark: [0, 1]
         os: [ubuntu-latest]
 
     steps:
@@ -42,7 +42,7 @@ jobs:
           vcpkgGitCommitId: d5ec528843d29e3a52d745a64b469f810b2cedbf
 
       - name: Run CMake+vcpkg+Ninja+CTest to build debug packages and generate/build/test the code.
-        if: matrix.benchmark == 'false'
+        if: matrix.benchmark == 0
         uses: lukka/run-cmake@v10
         with:
           configurePreset: 'ninja-multi-vcpkg'
@@ -50,7 +50,7 @@ jobs:
           testPreset: 'test-debug'
       
       - name: Run CMake+vcpkg+Ninja+CTest to build release packages and generate/build/test the code.
-        if: matrix.benchmark == 'true'
+        if: matrix.benchmark == 1
         uses: lukka/run-cmake@v10
         with:
           configurePreset: 'ninja-multi-vcpkg'
@@ -69,20 +69,20 @@ jobs:
         run: pip install pytest-md pytest-emoji
 
       - uses: pavelzw/pytest-action@v2
-        if: matrix.benchmark == 'false'
+        if: matrix.benchmark == 0
         with:
           emoji: false
           custom-arguments: -p no:sugar --benchmark-skip test
 
       - uses: pavelzw/pytest-action@v2
-        if: matrix.benchmark == 'true'
+        if: matrix.benchmark == 1
         with:
           emoji: false
           custom-arguments: -p no:sugar --benchmark-only --benchmark-json output.json test
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
-        if: matrix.benchmark == 'true'
+        if: matrix.benchmark == 1
         with:
           tool: 'pytest'
           output-file-path: output.json
