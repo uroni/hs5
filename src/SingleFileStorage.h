@@ -462,6 +462,7 @@ private:
 			frag_info(nullptr)
 		{}
 		int64_t commit_errors;
+		std::mutex commit_done_mutex;
 		std::condition_variable commit_done;
 		int64_t new_datafile_offset;
 		int64_t new_datafile_offset_end;

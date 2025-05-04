@@ -62,8 +62,8 @@ def upload_many_files(get_s3_client, tmp_path: Path):
     s3_client : S3Client = get_s3_client()
     s3_client.create_bucket(Bucket=bname)
 
-    chunk_size = 200
     num_files = 10000
+    chunk_size = num_files//multiprocessing.cpu_count()
 
     def init_file_upload():
         global file_upload

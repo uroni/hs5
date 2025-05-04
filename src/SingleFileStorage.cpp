@@ -1405,9 +1405,11 @@ bool SingleFileStorage::set_write_offline(bool b)
 		write_offline = b;
 		do_stop_on_error();
 
+		SCommitInfo commit_info;
+		std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
+
 		std::unique_lock lock(mutex);
 
-		SCommitInfo commit_info;
 		SFragInfo frag_info;
 		frag_info.md5sum = "reset";
 		frag_info.action = FragAction::Commit;
@@ -1419,7 +1421,7 @@ bool SingleFileStorage::set_write_offline(bool b)
 		commit_queue.push_back(frag_info);
 
 		cond.notify_all();
-		commit_info.commit_done.wait(lock);
+		commit_info.commit_done.wait(commit_done_lock);
 
 		return commit_info.commit_errors == 0;
 	}
@@ -1455,19 +1457,23 @@ bool SingleFileStorage::reset_del_log(int64_t disk_id, int64_t reset_transid)
 		return false;
 	}
 
-	std::unique_lock lock(mutex);
-
 	SCommitInfo commit_info;
-	SFragInfo frag_info;
-	frag_info.offset = reset_transid;
-	frag_info.last_modified = disk_id;
-	frag_info.action = FragAction::ResetDelLog;
-	frag_info.commit_info = &commit_info;
+	std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
 
-	commit_queue.push_back(frag_info);
+	{
+		std::scoped_lock lock(mutex);
+		
+		SFragInfo frag_info;
+		frag_info.offset = reset_transid;
+		frag_info.last_modified = disk_id;
+		frag_info.action = FragAction::ResetDelLog;
+		frag_info.commit_info = &commit_info;
 
-	cond.notify_all();
-	commit_info.commit_done.wait(lock);
+		commit_queue.push_back(frag_info);
+
+		cond.notify_all();
+	}
+	commit_info.commit_done.wait(commit_done_lock);
 
 	return commit_info.commit_errors == 0;
 }
@@ -1479,19 +1485,23 @@ bool SingleFileStorage::reset_del_queue(int64_t disk_id, int64_t reset_transid)
 		return false;
 	}
 
-	std::unique_lock lock(mutex);
-
 	SCommitInfo commit_info;
-	SFragInfo frag_info;
-	frag_info.offset = reset_transid;
-	frag_info.last_modified = disk_id;
-	frag_info.action = FragAction::ResetDelQueue;
-	frag_info.commit_info = &commit_info;
+	std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
 
-	commit_queue.push_back(frag_info);
+	{
+		std::scoped_lock lock(mutex);
+		
+		SFragInfo frag_info;
+		frag_info.offset = reset_transid;
+		frag_info.last_modified = disk_id;
+		frag_info.action = FragAction::ResetDelQueue;
+		frag_info.commit_info = &commit_info;
 
-	cond.notify_all();
-	commit_info.commit_done.wait(lock);
+		commit_queue.push_back(frag_info);
+
+		cond.notify_all();
+	}
+	commit_info.commit_done.wait(commit_done_lock);
 
 	return commit_info.commit_errors == 0;
 }
@@ -1503,18 +1513,23 @@ int64_t SingleFileStorage::get_disk_id(const std::string & uuid)
 		return false;
 	}
 
-	std::unique_lock lock(mutex);
-
 	SCommitInfo commit_info;
-	SFragInfo frag_info;
-	frag_info.fn = uuid;
-	frag_info.action = FragAction::GetDiskId;
-	frag_info.commit_info = &commit_info;
+	std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
 
-	commit_queue.push_back(frag_info);
+	{
+		std::scoped_lock lock(mutex);
+	
+		SFragInfo frag_info;
+		frag_info.fn = uuid;
+		frag_info.action = FragAction::GetDiskId;
+		frag_info.commit_info = &commit_info;
 
-	cond.notify_all();
-	commit_info.commit_done.wait(lock);
+		commit_queue.push_back(frag_info);
+
+		cond.notify_all();
+	}
+
+	commit_info.commit_done.wait(commit_done_lock);
 
 	if (commit_info.commit_errors != 0)
 		return 0;
@@ -1672,24 +1687,28 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
 			{
 				XLOG(DBG) << "Current data offset " << std::to_string(data_file_offset) << " out of extent end (" << std::to_string(data_file_offset_end) << "). Searching for new free extent...";
 
-				std::unique_lock lock(mutex);
 				SCommitInfo commit_info;
-				SFragInfo frag_info;
-				frag_info.action = FragAction::FindFree;
-				frag_info.commit_info = &commit_info;
-				frag_info.offset = data_file_offset_end;
+				std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
 
-				if (is_dead)
-					return WritePrepareResult{EIO};
+				{
+					std::scoped_lock lock(mutex);
+					
+					SFragInfo frag_info;
+					frag_info.action = FragAction::FindFree;
+					frag_info.commit_info = &commit_info;
+					frag_info.offset = data_file_offset_end;
 
-				commit_queue.push_back(frag_info);
+					if (is_dead)
+						return WritePrepareResult{EIO};
 
-				cond.notify_all();
-				commit_info.commit_done.wait(lock);
+					commit_queue.push_back(frag_info);
+
+					cond.notify_all();
+				}
+				commit_info.commit_done.wait(commit_done_lock);
 
 				if (commit_info.commit_errors != 0)
 				{
-					lock.unlock();
 					free_extents(extents);
 					if (commit_info.commit_errors == LLONG_MAX)
 					{
@@ -1855,29 +1874,33 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 			{
 				XLOG(DBG) << "Current data offset " << std::to_string(data_file_offset) << " out of extent end (" << std::to_string(data_file_offset_end) << "). Searching for new free extent...";
 
-				std::unique_lock lock(mutex);
 				SCommitInfo commit_info;
-				SFragInfo frag_info;
-				frag_info.action = FragAction::FindFree;
-				frag_info.commit_info = &commit_info;
-				frag_info.offset = data_file_offset_end;
-				if (!allow_defrag_lock)
+				std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
+
 				{
-					//write in defrag
-					frag_info.len = 1;
+					std::scoped_lock lock(mutex);
+					
+					SFragInfo frag_info;
+					frag_info.action = FragAction::FindFree;
+					frag_info.commit_info = &commit_info;
+					frag_info.offset = data_file_offset_end;
+					if (!allow_defrag_lock)
+					{
+						//write in defrag
+						frag_info.len = 1;
+					}
+
+					if (is_dead)
+						return EIO;
+
+					commit_queue.push_back(frag_info);
+
+					cond.notify_all();
 				}
-
-				if (is_dead)
-					return EIO;
-
-				commit_queue.push_back(frag_info);
-
-				cond.notify_all();
-				commit_info.commit_done.wait(lock);
+				commit_info.commit_done.wait(commit_done_lock);
 
 				if (commit_info.commit_errors != 0)
 				{
-					lock.unlock();
 					free_extents(extents);
 					if (commit_info.commit_errors == LLONG_MAX)
 					{
@@ -2088,18 +2111,22 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 	{
 		SCommitInfo commit_info;
 		commit_info.frag_info = &frag_info;
+		std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
 		SFragInfo curr_frag;
 		curr_frag.action = FragAction::ReadFragInfo;
 		curr_frag.fn = fn;
 		curr_frag.commit_info = &commit_info;
 		curr_frag.offset = read_newest ? 1 : 0;
 
-		std::unique_lock lock(mutex);
-		wait_startup_finished(lock);
+		{
+			std::unique_lock lock(mutex);
+			wait_startup_finished(lock);
 
-		commit_queue.push_back(curr_frag);
-		cond.notify_all();
-		commit_info.commit_done.wait(lock);
+			commit_queue.push_back(curr_frag);
+			cond.notify_all();
+		}
+
+		commit_info.commit_done.wait(commit_done_lock);
 
 		if (frag_info.offset == -1)
 		{
@@ -2165,18 +2192,21 @@ int SingleFileStorage::check_existence(const std::string_view fn, unsigned int f
 		SFragInfo frag_info;
 		SCommitInfo commit_info;
 		commit_info.frag_info = &frag_info;
+		std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
 		SFragInfo curr_frag;
 		curr_frag.action =FragAction::ReadFragInfoWithoutParsing;
 		curr_frag.fn = fn;
 		curr_frag.commit_info = &commit_info;
 		curr_frag.offset = read_newest ? 1 : 0;
 
-		std::unique_lock lock(mutex);
-		wait_startup_finished(lock);
+		{
+			std::unique_lock lock(mutex);
+			wait_startup_finished(lock);
 
-		commit_queue.push_back(curr_frag);
-		cond.notify_all();
-		commit_info.commit_done.wait(lock);
+			commit_queue.push_back(curr_frag);
+			cond.notify_all();
+		}
+		commit_info.commit_done.wait(commit_done_lock);
 
 		if (frag_info.offset == -1)
 		{
@@ -2407,32 +2437,37 @@ bool SingleFileStorage::commit(bool background_queue, int64_t transid, int64_t d
 		}
 	}
 
-	std::unique_lock lock(mutex);
-
 	SCommitInfo commit_info;
-	SFragInfo frag_info;
-	frag_info.offset = transid;
-	frag_info.len = 0;
-	frag_info.action = FragAction::Commit;
-	frag_info.commit_info = &commit_info;
+	std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
 
-	if (is_dead)
-		return false;
-
-	if (background_queue)
 	{
-		commit_background_queue.push_back(frag_info);
-	}
-	else
-	{
-		commit_queue.push_back(frag_info);
+		std::unique_lock lock(mutex);
+		
+		SFragInfo frag_info;
+		frag_info.offset = transid;
+		frag_info.len = 0;
+		frag_info.action = FragAction::Commit;
+		frag_info.commit_info = &commit_info;
+
+		if (is_dead)
+			return false;
+
+		if (background_queue)
+		{
+			commit_background_queue.push_back(frag_info);
+		}
+		else
+		{
+			commit_queue.push_back(frag_info);
+		}
+
+		if(pre_sync)
+			mdb_curr_sync = false;
+
+		cond.notify_all();
 	}
 
-	if(pre_sync)
-		mdb_curr_sync = false;
-
-	cond.notify_all();
-	commit_info.commit_done.wait(lock);
+	commit_info.commit_done.wait(commit_done_lock);
 
 	return commit_info.commit_errors == 0;
 }
@@ -2448,26 +2483,31 @@ bool SingleFileStorage::list_commit()
 	if(!wal_file)
 		return true;
 
-	std::unique_lock lock(mutex);
-
-	if(!needs_wal_file_reset)
-		return true;
-
 	SCommitInfo commit_info;
-	SFragInfo frag_info;
-	frag_info.offset = -1;
-	frag_info.len = 0;
-	frag_info.md5sum = "l";
-	frag_info.action = FragAction::Commit;
-	frag_info.commit_info = &commit_info;
+	std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
 
-	if (is_dead)
-		return false;
+	{
+		std::scoped_lock lock(mutex);
 
-	commit_queue.push_back(frag_info);
+		if(!needs_wal_file_reset)
+			return true;
 
-	cond.notify_all();
-	commit_info.commit_done.wait(lock);
+		
+		SFragInfo frag_info;
+		frag_info.offset = -1;
+		frag_info.len = 0;
+		frag_info.md5sum = "l";
+		frag_info.action = FragAction::Commit;
+		frag_info.commit_info = &commit_info;
+
+		if (is_dead)
+			return false;
+
+		commit_queue.push_back(frag_info);
+
+		cond.notify_all();
+	}
+	commit_info.commit_done.wait(commit_done_lock);
 
 	return commit_info.commit_errors == 0;
 }
@@ -2479,24 +2519,28 @@ bool SingleFileStorage::empty_queue(bool background_queue)
 		return false;
 	}
 
-	std::unique_lock lock(mutex);
-
 	SCommitInfo commit_info;
-	SFragInfo frag_info;
-	frag_info.action = FragAction::EmptyQueue;
-	frag_info.commit_info = &commit_info;
+	std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
 
-	if (background_queue)
 	{
-		commit_background_queue.push_back(frag_info);
-	}
-	else
-	{
-		commit_queue.push_back(frag_info);
-	}
+		std::scoped_lock lock(mutex);
+		
+		SFragInfo frag_info;
+		frag_info.action = FragAction::EmptyQueue;
+		frag_info.commit_info = &commit_info;
 
-	cond.notify_all();
-	commit_info.commit_done.wait(lock);
+		if (background_queue)
+		{
+			commit_background_queue.push_back(frag_info);
+		}
+		else
+		{
+			commit_queue.push_back(frag_info);
+		}
+
+		cond.notify_all();
+	}
+	commit_info.commit_done.wait(commit_done_lock);
 
 	return commit_info.commit_errors == 0;
 }
@@ -6687,6 +6731,10 @@ void SingleFileStorage::operator()()
 
 	lock.lock();
 
+	std::deque<SFragInfo> pending_commits;
+	std::chrono::steady_clock::time_point last_commit_time = std::chrono::steady_clock::now();
+	bool can_skip_commit = false;
+
 	size_t mod_items = 0;
 
 	while (!do_quit
@@ -6699,7 +6747,7 @@ void SingleFileStorage::operator()()
 		}
 
 		int first_wait = 0;
-		while (commit_queue.empty()
+		while (pending_commits.empty() && commit_queue.empty()
 			&& (commit_background_queue.empty() || mdb_curr_sync )
 			&& !do_quit)
 		{
@@ -6727,6 +6775,7 @@ void SingleFileStorage::operator()()
 			break;
 		}
 
+		bool pending_commit = false;
 		SFragInfo frag_info;
 		/*if (mod_items > 100000)
 		{
@@ -6735,16 +6784,29 @@ void SingleFileStorage::operator()()
 		}
 		else
 		{*/
-			if (commit_queue.empty())
+			if(!pending_commits.empty() 
+				&& std::chrono::steady_clock::now() - last_commit_time > 100ms)
+			{
+				frag_info = pending_commits.front();
+				pending_commits.pop_front();
+				pending_commit=true;
+			}
+			else if (commit_queue.empty() && !commit_background_queue.empty())
 			{
 				assert(!commit_background_queue.empty());
 				frag_info = commit_background_queue.front();
 				commit_background_queue.pop_front();
 			}
-			else
+			else if(!commit_queue.empty())
 			{
 				frag_info = commit_queue.front();
 				commit_queue.pop_front();
+			}
+			else
+			{
+				frag_info = pending_commits.front();
+				pending_commits.pop_front();
+				pending_commit=true;
 			}
 		//}
 
@@ -6796,6 +6858,33 @@ void SingleFileStorage::operator()()
 
 		lock.unlock();
 
+		if (!pending_commit &&
+			frag_info.action == FragAction::Commit)
+		{
+			pending_commits.push_back(frag_info);
+			lock.lock();
+			continue;
+		}
+
+		auto finish_pending_commits = [&](int64_t commit_errors)
+		{
+			bool has_commit_info = false;
+			for (const auto& pending_commit: pending_commits)
+			{
+				if (pending_commit.commit_info != nullptr)
+				{
+					std::scoped_lock commit_done_lock(pending_commit.commit_info->commit_done_mutex);
+					pending_commit.commit_info->commit_errors = commit_errors;
+					pending_commit.commit_info->commit_done.notify_all();
+					has_commit_info=true;
+				}
+			}
+
+			pending_commits.clear();
+
+			return has_commit_info;
+		};
+
 		if (frag_info.action == FragAction::Commit
 			&& frag_info.offset != -1)
 		{
@@ -6807,17 +6896,6 @@ void SingleFileStorage::operator()()
 				curr_transid = frag_info.offset;
 			else
 				set_disk_trans_id(txn, tid, disk_id, frag_info.offset);
-		}
-
-		if (frag_info.action == FragAction::Add
-			|| frag_info.action == FragAction::AddNoDelOld
-			|| frag_info.action == FragAction::Del
-			|| frag_info.action == FragAction::DelOld
-			|| frag_info.action == FragAction::RestoreOld
-			|| frag_info.action==FragAction::DelWithQueued)
-		{
-			++mod_items;
-			--commit_items[common_prefix_hash_func(frag_info.fn)];
 		}
 
 		if (frag_info.action == FragAction::FindFree
@@ -6833,6 +6911,28 @@ void SingleFileStorage::operator()()
 			++commit_errors;
 		}
 
+		if(frag_info.action == FragAction::Commit)
+		{
+			if(can_skip_commit)
+			{
+				{
+					if (frag_info.commit_info != nullptr)
+					{
+						std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
+						frag_info.commit_info->commit_errors = 0;
+						frag_info.commit_info->commit_done.notify_all();
+					}
+					finish_pending_commits(commit_errors);
+				}
+
+				lock.lock();
+				continue;
+			}
+		}
+		else
+		{
+			can_skip_commit = false;
+		}
 
 		if(frag_info.action == FragAction::Commit && 
 			frag_info.md5sum != "reset" &&
@@ -6859,15 +6959,21 @@ void SingleFileStorage::operator()()
 				++commit_errors;
 			}
 
-			std::scoped_lock llock(mutex);
+			last_commit_time = std::chrono::steady_clock::now();
+
+			bool has_commit_info = false;
 			if (frag_info.commit_info != nullptr)
 			{
+				std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
 				frag_info.commit_info->commit_errors = commit_errors;
 				frag_info.commit_info->commit_done.notify_all();
-				if(commit_ok)
-					commit_errors = 0;
+				has_commit_info = true;
 			}
+			has_commit_info |= finish_pending_commits(commit_errors);
+			if(commit_ok && has_commit_info)
+				commit_errors = 0;
 			needs_wal_file_reset = true;
+			can_skip_commit=true;
 		}
 		else if (frag_info.action == FragAction::Commit )
 		{
@@ -7173,6 +7279,8 @@ void SingleFileStorage::operator()()
 					std::scoped_lock copy_lock(data_file_copy_mutex);
 					data_file_copy_done_sync = new_data_file_copy_done;
 				}
+
+				last_commit_time = std::chrono::steady_clock::now();
 			}
 			else
 			{
@@ -7182,13 +7290,17 @@ void SingleFileStorage::operator()()
 
 			bool has_commit_info = false;
 			{
-				std::scoped_lock llock(mutex);
 				if (frag_info.commit_info != nullptr)
 				{
+					std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
 					frag_info.commit_info->commit_errors = commit_errors;
 					frag_info.commit_info->commit_done.notify_all();
 					has_commit_info = true;
 				}
+
+				has_commit_info |= finish_pending_commits(commit_errors);
+
+				std::scoped_lock llock(mutex);
 
 				if (is_defragging)
 				{
@@ -7259,6 +7371,8 @@ void SingleFileStorage::operator()()
 					if(rm_tmp(ext_idx, txn, tid)>0)
 						commit_ok = false;
 				}
+
+				can_skip_commit=true;
 			}
 		}
 		else if (frag_info.action == FragAction::ResetDelLog)
@@ -7270,7 +7384,7 @@ void SingleFileStorage::operator()()
 
 			if (frag_info.commit_info != nullptr)
 			{
-				std::scoped_lock llock(mutex);
+				std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);				
 				frag_info.commit_info->commit_errors = commit_errors;
 				frag_info.commit_info->commit_done.notify_all();
 			}
@@ -7284,7 +7398,7 @@ void SingleFileStorage::operator()()
 
 			if (frag_info.commit_info != nullptr)
 			{
-				std::scoped_lock llock(mutex);
+				std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
 				frag_info.commit_info->commit_errors = commit_errors;
 				frag_info.commit_info->new_datafile_offset = disk_id;
 				frag_info.commit_info->commit_done.notify_all();
@@ -7294,7 +7408,7 @@ void SingleFileStorage::operator()()
 		{
 			if (frag_info.commit_info != nullptr)
 			{
-				std::scoped_lock llock(mutex);
+				std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
 				frag_info.commit_info->commit_errors = 0;
 				frag_info.commit_info->commit_done.notify_all();
 			}
@@ -7304,10 +7418,9 @@ void SingleFileStorage::operator()()
 		{
 			if (frag_info.commit_info != nullptr)
 			{
+				std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
+
 				frag_info.commit_info->commit_errors = 0;
-
-				std::scoped_lock llock(mutex);
-
 				if (frag_info.commit_info->frag_info != nullptr)
 				{
 					*frag_info.commit_info->frag_info = get_frag_info(txn, frag_info.fn, frag_info.action == FragAction::ReadFragInfo, frag_info.offset>0);
@@ -7624,7 +7737,7 @@ void SingleFileStorage::operator()()
 				}
 			}
 
-			std::scoped_lock llock(mutex);
+			std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
 			frag_info.commit_info->new_datafile_offset = curr_write_ext_start;
 			frag_info.commit_info->new_datafile_offset_end = curr_write_ext_end;
 			frag_info.commit_info->commit_done.notify_all();
@@ -7704,7 +7817,7 @@ void SingleFileStorage::operator()()
 
 			if (frag_info.commit_info != nullptr)
 			{
-				std::scoped_lock llock(mutex);
+				std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
 				frag_info.commit_info->commit_errors = 1;
 				frag_info.commit_info->commit_done.notify_all();
 			}
