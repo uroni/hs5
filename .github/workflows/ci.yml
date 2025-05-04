@@ -25,15 +25,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        benchmark: [true, false]
         os: [ubuntu-latest]
-    #env:
-    #
-    # [OPTIONAL] Define the vcpkg's triplet 
-    # you want to enforce, otherwise the default one 
-    # for the hosting system will be automatically
-    # choosen (x64 is the default on all platforms, 
-    # e.g. x64-osx).
-    # VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }} 
 
     steps:
       - uses: actions/checkout@v3
@@ -48,18 +41,21 @@ jobs:
           vcpkgJsonGlob: 'vcpkg.json'
           vcpkgGitCommitId: d5ec528843d29e3a52d745a64b469f810b2cedbf
 
-      # Note: if the preset misses the "configuration", it is possible to explicitly select the
-      # configuration with the additional `--config` flag, e.g.:
-      #   buildPreset: 'ninja-vcpkg'
-      #   buildPresetAdditionalArgs: "[`--config`, `Release`]"
-      #   testPreset: 'ninja-vcpkg'
-      #   testPresetAdditionalArgs: "[`--config`, `Release`]"
-      - name: Run CMake+vcpkg+Ninja+CTest to build packages and generate/build/test the code.
+      - name: Run CMake+vcpkg+Ninja+CTest to build debug packages and generate/build/test the code.
+        if: matrix.benchmark == 'false'
         uses: lukka/run-cmake@v10
         with:
           configurePreset: 'ninja-multi-vcpkg'
           buildPreset: 'ninja-vcpkg-debug'
           testPreset: 'test-debug'
+      
+      - name: Run CMake+vcpkg+Ninja+CTest to build release packages and generate/build/test the code.
+        if: matrix.benchmark == 'true'
+        uses: lukka/run-cmake@v10
+        with:
+          configurePreset: 'ninja-multi-vcpkg'
+          buildPreset: 'ninja-vcpkg-release'
+          testPreset: 'test-release'
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v4
@@ -73,6 +69,20 @@ jobs:
         run: pip install pytest-md pytest-emoji
 
       - uses: pavelzw/pytest-action@v2
+        if: matrix.benchmark == 'false'
         with:
           emoji: false
-          custom-arguments: -p no:sugar test
+          custom-arguments: -p no:sugar --benchmark-skip test
+
+      - uses: pavelzw/pytest-action@v2
+        if: matrix.benchmark == 'true'
+        with:
+          emoji: false
+          custom-arguments: -p no:sugar --benchmark-only --benchmark-json output.json test
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        if: matrix.benchmark == 'true'
+        with:
+          tool: 'pytest'
+          output-file-path: output.json

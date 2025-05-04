@@ -20,7 +20,7 @@ class Hs5Runner:
     manual_commit = False
     with_heaptrack = False
 
-    def __init__(self, workdir : Path, data_file_size_limit_mb: int) -> None:
+    def __init__(self, workdir : Path, data_file_size_limit_mb: int, perf: bool = False) -> None:
         global curr_port
 
         curr_port += 1
@@ -52,14 +52,25 @@ class Hs5Runner:
                 "127.0.0.1",
                 "--http_port",
             str(curr_port),
-            "--data_file_size_limit_mb",
-            str(data_file_size_limit_mb),
-            "--data_file_alloc_chunk_size",
-            data_file_alloc_chunk_size,
-            "--logging", "DBG0",
             "--init_root_password", self._root_key,
             "--with_stop_command", "true",
-            "--bucket_versioning=false"]
+            "--bucket_versioning=false",
+            "--manual_commit"]
+        
+        if os.environ.get("ENABLE_WAL") == "1":
+            args.append("--index_wal_path")
+            args.append(".")
+        
+        if perf:
+            args.append("--logging")
+            args.append("WARN")
+        else:
+            args.append("--data_file_size_limit_mb")
+            args.append(str(data_file_size_limit_mb))
+            args.append("--data_file_alloc_chunk_size")
+            args.append(data_file_alloc_chunk_size)
+            args.append("--logging")
+            args.append("DBG0")
         
         if self.manual_commit:
             args.append("--manual_commit")
@@ -133,6 +144,12 @@ class Hs5Runner:
 @pytest.fixture
 def hs5(tmpdir: Path):
     runner = Hs5Runner(tmpdir, data_file_size_limit_mb=100)
+    yield runner
+    runner.stop()
+
+@pytest.fixture
+def hs5_perf(tmpdir: Path):
+    runner = Hs5Runner(tmpdir, data_file_size_limit_mb=100, perf=True)
     yield runner
     runner.stop()
 
