@@ -139,6 +139,13 @@ class Hs5Runner:
     
     def testbucketname(self):
         return "testbucket"
+    
+    def get_datafile_size(self) -> int:
+        data_file_path = self._workdir / "data0"
+        if not data_file_path.exists():
+            return 0
+        return os.path.getsize(data_file_path)
+    
 
 @pytest.fixture
 def hs5(tmpdir: Path):

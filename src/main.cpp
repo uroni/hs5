@@ -38,6 +38,7 @@ DEFINE_int32(h2_port, -1, "Port to listen on with HTTP/2 protocol (-1 if disable
 DEFINE_string(ip, "localhost", "IP/Hostname to bind to");
 DEFINE_int64(data_file_size_limit_mb, 0, "Max data file size (0 for unlimited)");
 DEFINE_int64(data_file_alloc_chunk_size, 512*1024*1024, "Data file chunk allocation size");
+DEFINE_double(alloc_use_free_space_percent, 10, "If this amount of free space percentage is available in the data file, use free space in data file instead of extending data file. Use >100% to disable");
 DEFINE_int32(threads,
              0,
              "Number of threads to listen on. Numbers <= 0 "
@@ -164,6 +165,7 @@ int realMain(int argc, char* argv[])
     sfsoptions.db_path = FLAGS_index_path;
     sfsoptions.data_file_size_limit_mb = FLAGS_data_file_size_limit_mb;
     sfsoptions.alloc_chunk_size = FLAGS_data_file_alloc_chunk_size;
+    sfsoptions.alloc_use_free_space_percent = FLAGS_alloc_use_free_space_percent/100.f;
     std::vector<unsigned char> runtime_id(32);
     folly::Random::secureRandom(runtime_id.data(), runtime_id.size());
     sfsoptions.runtime_id = folly::hexlify<std::string>(folly::ByteRange(runtime_id.data(), runtime_id.size()));

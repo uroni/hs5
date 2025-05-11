@@ -95,6 +95,10 @@ public:
 		bool use_direct_io = false;
 		int64_t data_file_size_limit_mb = 0;
 		int64_t alloc_chunk_size = 512 * 1024 * 1024;
+		// If this amount of free space is available in the data file, 
+		// use free space in data file instead of extending data file
+		// Use >1 to disable
+		float alloc_use_free_space_percent = 0.1;
 		std::string runtime_id;
 		bool manual_commit = false;
 		bool stop_on_error = false;
@@ -218,6 +222,12 @@ public:
 	int64_t get_free_space_in_data_file();
 
 	int64_t get_free_space_real();
+
+	/**
+	 * Get amount of free space in the data file as percentage of data
+	 * file size. Underreports a bit (compared to get_free_space_in_data_file() )
+	 */
+	float get_free_space_percent();
 
 	int64_t get_total_space();
 
@@ -604,6 +614,7 @@ private:
 
 	int64_t data_file_size_limit;
 	int64_t alloc_chunk_size;
+	float alloc_use_free_space_percent;
 	int64_t data_file_chunk_size;
 
 	std::string runtime_id;

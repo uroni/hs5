@@ -105,13 +105,13 @@ def test_get_commit_obj(tmp_path: Path, hs5: Hs5Runner):
     with open(fpath, "r") as f:
         assert len(f.read())>30
 
-def add_objects(tmp_path: Path, hs5: Hs5Runner) -> set[str]:
-    with open(tmp_path / "upload.txt", "w") as upload_file:
-        upload_file.write("abc")
+def add_objects(tmp_path: Path, hs5: Hs5Runner, num_objects : int = 210, object_data = b"abc") -> set[str]:
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(object_data)
 
     s3_client = hs5.get_s3_client()
     ul_files = set[str]()
-    for i in range(0, 210):
+    for i in range(0, num_objects):
         s3name = f"{i}.txt"
         s3_client.upload_file(upload_file.name, hs5.testbucketname(), s3name)
         ul_files.add(s3name)
@@ -119,6 +119,18 @@ def add_objects(tmp_path: Path, hs5: Hs5Runner) -> set[str]:
     hs5.commit_storage(s3_client)
 
     return ul_files
+
+def delete_all_objects(hs5: Hs5Runner, bucket: str):
+    s3_client = hs5.get_s3_client()
+    res = s3_client.list_objects(Bucket=bucket)
+    assert not res["IsTruncated"]
+    # TODO: Use multi-page listing
+    if "Contents" in res:
+        for obj in res["Contents"]:
+            assert "Key" in obj
+            s3_client.delete_object(Bucket=bucket, Key=obj["Key"])
+
+    hs5.commit_storage(s3_client)
 
 def test_put_empty(tmp_path: Path, hs5: Hs5Runner):
     fdata = ""
@@ -467,3 +479,20 @@ def test_upload_long_key(hs5: Hs5Runner, tmp_path: Path):
     list = s3_client.list_objects(Bucket=hs5.testbucketname())
     assert not list["IsTruncated"]
     assert "Contents" not in list
+
+def test_datafile_space_reused(hs5_large: Hs5Runner):
+    """
+    Make sure that the datafile space is reused after a delete
+    """
+    hs5 = hs5_large
+
+    def add_remove():
+        mb_data = os.urandom(1024*1024)
+
+        add_objects(hs5._workdir, hs5, 100, mb_data)
+        delete_all_objects(hs5, hs5.testbucketname())
+
+    for _ in range(0, 2):
+        add_remove()
+
+    assert hs5.get_datafile_size() < 120*1024*1024

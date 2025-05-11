@@ -418,6 +418,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	force_freespace_check(true), stop_defrag(false), allow_defrag(true), next_disk_id(1), data_file_copy_done(-1), data_file_copy_max(0), data_file_copy_done_sync(0),
 	stop_data_file_copy(false), references(0), 	db_env(nullptr), freespace_cache_path(options.freespace_cache_path), cache_db_env(nullptr), regen_freespace_cache(false),
 	sync_freespace_cache(true), mdb_curr_sync(false), data_file_size_limit(options.data_file_size_limit_mb*1024*1024), alloc_chunk_size(options.alloc_chunk_size),
+	alloc_use_free_space_percent(options.alloc_use_free_space_percent),
 	runtime_id(options.runtime_id), manual_commit(options.manual_commit), stop_on_error(options.stop_on_error), punch_holes(options.punch_holes),
 	data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func),
 	common_prefix_hash_func(options.common_prefix_hash_func)
@@ -7609,7 +7610,12 @@ void SingleFileStorage::operator()()
 
 			bool search_for_free_space = true;
 			bool add_remaining_ext = true;
-			if (curr_write_ext_start == data_file_max_size)
+			if(curr_write_ext_start == data_file_max_size
+				&& get_free_space_percent() >= alloc_use_free_space_percent )
+			{
+				search_for_free_space = true;
+			}
+			else if (curr_write_ext_start == data_file_max_size)
 			{
 				add_remaining_ext = false;
 				int64_t free_space = os_free_space(data_file_path.parent_path().string());
@@ -7626,12 +7632,13 @@ void SingleFileStorage::operator()()
 				else
 				{
 					XLOG(WARN) << "Volume full (" << folly::prettyPrint(free_space, folly::PRETTY_BYTES_IEC) << " free space). Switching to using free space in data file";
+					// Assume we won't get more free space in this run
+					force_freespace_check = false;
 				}
 			}
-			else if (force_freespace_check)
+			else if (force_freespace_check 
+				&& get_free_space_percent() < alloc_use_free_space_percent)
 			{
-				force_freespace_check = false;
-
 				if (curr_write_ext_end - curr_write_ext_start >= block_size
 					&& add_remaining_ext)
 				{
@@ -7651,6 +7658,11 @@ void SingleFileStorage::operator()()
 					curr_write_ext_start = data_file_max_size;
 					curr_write_ext_end = curr_write_ext_start + alloc_chunk_size;
 					search_for_free_space = false;
+				}
+				else
+				{
+					// Assume we won't get more free space in this run
+					force_freespace_check = false;					
 				}
 			}
 			
@@ -7912,6 +7924,16 @@ int64_t SingleFileStorage::get_free_space_real()
 	free_space += (std::max)((int64_t)0, data_file_free_space);
 
 	return free_space;
+}
+
+float SingleFileStorage::get_free_space_percent()
+{
+	const auto dsize = get_data_file_size();
+	if(dsize==0)
+		return 0.f;
+
+	std::scoped_lock lock(freespace_mutex);
+	return float(data_file_free) / dsize;	
 }
 
 int64_t SingleFileStorage::get_total_space()
