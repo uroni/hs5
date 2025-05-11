@@ -436,3 +436,34 @@ def test_create_bucket(hs5: Hs5Runner, tmp_path: Path):
     s3_client.delete_object(Bucket=bucketname, Key="upload.txt")
 
     s3_client.delete_bucket(Bucket=bucketname)
+
+
+def test_upload_long_key(hs5: Hs5Runner, tmp_path: Path):
+    s3_client = hs5.get_s3_client()
+
+    key = "a" * 1024
+    with open(tmp_path / "upload.txt", "w") as upload_file:
+        upload_file.write("abc")
+
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), key)
+
+    with pytest.raises(ClientError):
+        with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
+            s3_client.put_object(Bucket=hs5.testbucketname(), Key= "a" * 1025, Body=upload_file)
+
+    dl_path = tmp_path / "download.txt"
+    s3_client.download_file(hs5.testbucketname(), key, str(dl_path))
+    assert os.stat(dl_path).st_size == 3
+    
+    list = s3_client.list_objects(Bucket=hs5.testbucketname())
+    assert not list["IsTruncated"]
+    assert "Contents" in list
+    objs = list["Contents"]
+    assert len(objs) == 1
+    assert "Key" in objs[0] and objs[0]["Key"] == key
+
+    s3_client.delete_object(Bucket=hs5.testbucketname(), Key=key)
+
+    list = s3_client.list_objects(Bucket=hs5.testbucketname())
+    assert not list["IsTruncated"]
+    assert "Contents" not in list

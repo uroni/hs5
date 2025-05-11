@@ -39,6 +39,9 @@
 
 using namespace std::chrono_literals;
 
+// Max number of bytes in file paths. S3 max is 1024, but leave 1 + 8 + 8 bytes for versioning
+const size_t c_max_path = 1024 + 1 + 8 + 8;
+
 DEFINE_bool(symlink_lockfile_to_tmpdir, false, "Symlink LMDB lockfile to /tmp");
 
 #ifndef _WIN32
@@ -1349,7 +1352,7 @@ int SingleFileStorage::write(const std::string & fn, const char* data,
 		return ENODEV;
 	}
 
-	if (fn.size() > 255)
+	if (fn.size() > c_max_path)
 		return EINVAL;
 
 	return write_int(fn, data, data_size, data_alloc_size, last_modified, md5sum, true, no_del_old);
@@ -1665,7 +1668,7 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
 		return WritePrepareResult{ENODEV};
 	}
 
-	if (fn.size() > 255)
+	if (fn.size() > c_max_path)
 		return WritePrepareResult{EINVAL};
 
 	if(data_size==0)

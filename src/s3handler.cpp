@@ -1649,6 +1649,20 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                 if(self->withBucketVersioning)
                     self->keyInfo.version = self->sfs.get_next_version();
 
+                if(self->keyInfo.key.size()>1024)
+                {
+                    evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(fmt::format("Key too long"))
+                            .sendWithEOM();
+                        std::lock_guard lock(self->extents_mutex);
+                        self->finished_ = true;
+                        self->extents_cond.notify_all(); });
+                    return;
+                }
+
                 const auto fpath = make_key(self->keyInfo);
 
                 auto res = self->sfs.write_prepare(fpath, self->put_remaining);
@@ -2920,7 +2934,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         {
             evb->runInEventBaseThread([self = this]()
                                 {           
-                    if(!self)
+                    if(!self || self->finished_)
                         return;
                     ResponseBuilder(self->downstream_)
                         .status(500, "Internal error")
@@ -2940,7 +2954,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         {
             evb->runInEventBaseThread([self = this]()
                                 {           
-                if(!self)
+                if(!self || self->finished_)
                     return;
                 ResponseBuilder(self->downstream_)
                     .status(400, "Bad request")
@@ -2965,7 +2979,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         {
             evb->runInEventBaseThread([self = this]()
                                 {           
-                    if(!self)
+                    if(!self || self->finished_)
                         return;
                     ResponseBuilder(self->downstream_)
                         .status(500, "Internal error")
@@ -2983,7 +2997,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
             {
                 evb->runInEventBaseThread([self = this]()
                                     {           
-                        if(!self)
+                        if(!self || self->finished_)
                             return;
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
@@ -3072,14 +3086,12 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         {
             evb->runInEventBaseThread([self = this->self]()
                                   {  
-                    if(!self)
-                        return;
-                    if(!self->finished_)         
-                        ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
-                            .body("Write ext error")
-                            .sendWithEOM();
-
+                    if(!self || self->finished_)
+                        return;     
+                    ResponseBuilder(self->downstream_)
+                        .status(500, "Internal error")
+                        .body("Write ext error")
+                        .sendWithEOM();
                     self->finished_ = true; });
             return;
         }
