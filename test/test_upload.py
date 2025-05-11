@@ -14,7 +14,7 @@ from uuid import uuid4
 import boto3
 from botocore.exceptions import ClientError
 import os
-from hs5_fixture import Hs5Runner, hs5, hs5_large
+from hs5_fixture import Hs5Runner, hs5, hs5_large, hs5_large_small_alloc_chunksize
 import pytest
 import threading
 import binascii
@@ -480,11 +480,11 @@ def test_upload_long_key(hs5: Hs5Runner, tmp_path: Path):
     assert not list["IsTruncated"]
     assert "Contents" not in list
 
-def test_datafile_space_reused(hs5_large: Hs5Runner):
+def test_datafile_space_reused(hs5_large_small_alloc_chunksize: Hs5Runner):
     """
     Make sure that the datafile space is reused after a delete
     """
-    hs5 = hs5_large
+    hs5 = hs5_large_small_alloc_chunksize
 
     def add_remove():
         mb_data = os.urandom(1024*1024)

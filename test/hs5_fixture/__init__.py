@@ -5,6 +5,7 @@ from shutil import rmtree
 import subprocess
 import sys
 import time
+from typing import Optional
 import uuid
 import botocore
 import botocore.config
@@ -20,7 +21,7 @@ class Hs5Runner:
     manual_commit = False
     with_heaptrack = False
 
-    def __init__(self, workdir : Path, data_file_size_limit_mb: int, perf: bool = False) -> None:
+    def __init__(self, workdir : Path, data_file_size_limit_mb: int, perf: bool = False, data_file_alloc_chunk_size: Optional[int] = None) -> None:
         global curr_port
 
         curr_port += 1
@@ -29,9 +30,12 @@ class Hs5Runner:
         self._workdir = workdir
         self._root_key = uuid.uuid4().hex
 
-        data_file_alloc_chunk_size = os.getenv("DATA_FILE_ALLOC_CHUNKSIZE")
         if data_file_alloc_chunk_size is None:
-            data_file_alloc_chunk_size = str(10*1024*1024)
+            data_file_alloc_chunk_size_str = os.getenv("DATA_FILE_ALLOC_CHUNKSIZE")
+            if data_file_alloc_chunk_size_str is None:
+                data_file_alloc_chunk_size = 10*1024*1024
+            else:
+                data_file_alloc_chunk_size = int(data_file_alloc_chunk_size_str)
 
         locs = [Path("builds/ninja-multi-vcpkg/Debug/hs5"),
                 Path("builds/ninja-multi-vcpkg/RelWithDebInfo/hs5"),
@@ -67,7 +71,7 @@ class Hs5Runner:
             args.append("--data_file_size_limit_mb")
             args.append(str(data_file_size_limit_mb))
             args.append("--data_file_alloc_chunk_size")
-            args.append(data_file_alloc_chunk_size)
+            args.append(str(data_file_alloc_chunk_size))
             args.append("--logging")
             args.append("DBG0")
         
@@ -162,5 +166,11 @@ def hs5_perf(tmpdir: Path):
 @pytest.fixture
 def hs5_large(tmpdir: Path):
     runner = Hs5Runner(tmpdir, data_file_size_limit_mb=5000)
+    yield runner
+    runner.stop()
+
+@pytest.fixture
+def hs5_large_small_alloc_chunksize(tmpdir: Path):
+    runner = Hs5Runner(tmpdir, data_file_size_limit_mb=5000, data_file_alloc_chunk_size=10*1024*1024)
     yield runner
     runner.stop()
