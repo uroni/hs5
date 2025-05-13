@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746991908151,
+  "lastUpdate": 1747169985276,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -152,6 +152,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0728855986830536",
             "extra": "mean: 14.748193205799907 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "ae7db50109f27136a1089c6852b0a56666feafac",
+          "message": "Make test more robust w.r.t. alloc chunk size changes",
+          "timestamp": "2025-05-11T20:54:43+02:00",
+          "tree_id": "a694e1bf33a443d10d2f815c0b29d2c62066ff83",
+          "url": "https://github.com/uroni/hs5/commit/ae7db50109f27136a1089c6852b0a56666feafac"
+        },
+        "date": 1747169984815,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.0745903486772582,
+            "unit": "iter/sec",
+            "range": "stddev: 0.07446306594608727",
+            "extra": "mean: 13.40656020160004 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06696499572888874,
+            "unit": "iter/sec",
+            "range": "stddev: 0.12330704994726016",
+            "extra": "mean: 14.933174998600043 sec\nrounds: 5"
           }
         ]
       }
