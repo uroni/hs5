@@ -34,6 +34,9 @@ jobs:
         benchmark: [0, 1]
         os: [ubuntu-latest]
 
+    env:
+      VCPKG_BINARY_SOURCES: "default"
+
     steps:
       - uses: actions/checkout@v3
         with:
