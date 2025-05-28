@@ -1325,7 +1325,7 @@ void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
                         .sendWithEOM();
 }
 
-bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen)
+bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData)
 {
 #ifdef ALLOW_LEGACY_MD5SUM
     if(md5sum.size()==MD5_DIGEST_LENGTH || md5sum.empty())
@@ -1534,7 +1534,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     return;
                 }
 
-                if(!self->parseMultipartInfo(res.md5sum, res.total_len))
+                if(!self->parseMultipartInfo(res.md5sum, res.total_len, self->multiPartDownloadData))
                 {
                     evb->runInEventBaseThread([self = self]()
                                               {
@@ -2217,9 +2217,9 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
     );
 }
 
-int S3Handler::seekMultipartExt(int64_t offset)
+int S3Handler::seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents)
 {
-    if(multiPartDownloadData->exts.empty())
+    if(multiPartDownloadData.exts.empty())
     {
         XLOG(WARN, "No multi-part parts found in seek");
         return ENOENT;
@@ -2227,57 +2227,59 @@ int S3Handler::seekMultipartExt(int64_t offset)
 
     XLOGF(DBG0, "Seeking multi-part to offset {}", offset);
 
-    multiPartDownloadData->extIdx = 0;
-    multiPartDownloadData->currExt = multiPartDownloadData->exts[multiPartDownloadData->extIdx];
+    multiPartDownloadData.extIdx = 0;
+    multiPartDownloadData.currExt = multiPartDownloadData.exts[multiPartDownloadData.extIdx];
 
     int64_t seekOffset = 0;
 
     while(seekOffset<offset)
     {        
         int64_t toSeek = offset - seekOffset;
-        int64_t numSeek = toSeek/multiPartDownloadData->currExt.size;
+        int64_t numSeek = toSeek/multiPartDownloadData.currExt.size;
         
-        if(numSeek>multiPartDownloadData->currExt.len)
+        if(numSeek>multiPartDownloadData.currExt.len)
         {
-            seekOffset+=multiPartDownloadData->currExt.size*multiPartDownloadData->currExt.len;
+            seekOffset+=multiPartDownloadData.currExt.size*multiPartDownloadData.currExt.len;
             XLOGF(DBG0, "Seeking forward to next multi-part ext seekOffset {}", seekOffset);            
-            ++multiPartDownloadData->extIdx;
-            if(multiPartDownloadData->extIdx>=multiPartDownloadData->exts.size())
+            ++multiPartDownloadData.extIdx;
+            if(multiPartDownloadData.extIdx>=multiPartDownloadData.exts.size())
             {
-                XLOGF(WARN, "Out of multi-part parts size {} in seek", multiPartDownloadData->exts.size());
+                XLOGF(WARN, "Out of multi-part parts size {} in seek", multiPartDownloadData.exts.size());
                 return ENOENT;
             }
-            multiPartDownloadData->currExt = multiPartDownloadData->exts[multiPartDownloadData->extIdx];
+            multiPartDownloadData.currExt = multiPartDownloadData.exts[multiPartDownloadData.extIdx];
         }
         else
         {
             XLOGF(DBG0, "Seeking forward {} exts in current multi-part ext", numSeek);
-            multiPartDownloadData->currExt.start += numSeek;
-            multiPartDownloadData->currExt.len -= numSeek;
-            seekOffset+=numSeek*multiPartDownloadData->currExt.size;
+            multiPartDownloadData.currExt.start += numSeek;
+            multiPartDownloadData.currExt.len -= numSeek;
+            seekOffset+=numSeek*multiPartDownloadData.currExt.size;
             break;
         }
     }
 
-    return readMultipartExt(seekOffset);
+    return readMultipartExt(sfs, seekOffset, bucketId, multiPartDownloadData, extents);
 }
 
-int S3Handler::readMultipartExt(int64_t offset)
+int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents)
 {
-    auto partNum = multiPartDownloadData->currExt.start;
-    const auto bucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
-    auto res = self->sfs.read_prepare(
-        make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
-                    .bucketId = bucketId}), 0);
+    auto partNum = multiPartDownloadData.currExt.start;
+    const auto partialBucketId = buckets::getPartialUploadsBucket(bucketId);
+    auto res = sfs.read_prepare(
+        make_key({.key = uploadIdToStr(multiPartDownloadData.uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
+                    .bucketId = partialBucketId}), 0);
     if (res.err != 0)
     {
-        XLOGF(WARN, "Error reading next multipart object meta-information uploadid {} partnum {} for key {}", multiPartDownloadData->uploadId, partNum, self->keyInfo.key);
+        XLOGF(WARN, "Error reading next multipart object meta-information uploadid {} partnum {}", multiPartDownloadData.uploadId, partNum);
         return EIO;
     }
 
+    multiPartDownloadData.needsFinalize = true;
+
     extents = std::move(res.extents);
 
-    multiPartDownloadData->currOffset = offset;
+    multiPartDownloadData.currOffset = offset;
 
     int64_t size = 0;
 
@@ -2287,86 +2289,95 @@ int S3Handler::readMultipartExt(int64_t offset)
         size += ext.len;
     }
 
-    XLOGF(DBG0, "Multi-part key {} ext offset {} partNum {} extents {} size {}", self->keyInfo.key, offset, partNum, extents.size(), size);
+    XLOGF(DBG0, "Multi-part ext offset {} partNum {} extents {} size {}", offset, partNum, extents.size(), size);
 
     return 0;
 }
 
-int S3Handler::readNextMultipartExt(int64_t offset)
+int S3Handler::readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents)
 {
     int lastPartNum = -1;
-    if(multiPartDownloadData->extIdx == std::string::npos)
+    if(multiPartDownloadData.extIdx == std::string::npos)
     {
-        if(multiPartDownloadData->exts.empty())
+        if(multiPartDownloadData.exts.empty())
         {
             XLOG(WARN, "No multi-part parts found");
             return ENOENT;
         }
 
-        multiPartDownloadData->extIdx = 0;
-        multiPartDownloadData->currExt = multiPartDownloadData->exts[multiPartDownloadData->extIdx];
+        multiPartDownloadData.extIdx = 0;
+        multiPartDownloadData.currExt = multiPartDownloadData.exts[multiPartDownloadData.extIdx];
     }
     else
     {
-        lastPartNum = multiPartDownloadData->currExt.start;
-        ++multiPartDownloadData->currExt.start;
-        --multiPartDownloadData->currExt.len;
+        lastPartNum = multiPartDownloadData.currExt.start;
+        ++multiPartDownloadData.currExt.start;
+        --multiPartDownloadData.currExt.len;
     }
 
-    while(multiPartDownloadData->currExt.len<=0)
+    while(multiPartDownloadData.currExt.len<=0)
     {
-        if(multiPartDownloadData->extIdx + 1 >= multiPartDownloadData->exts.size())
+        if(multiPartDownloadData.extIdx + 1 >= multiPartDownloadData.exts.size())
         {
-            XLOGF(WARN, "Out of multi-part parts size {} while seeking to offset {}", multiPartDownloadData->exts.size(), offset);
+            XLOGF(WARN, "Out of multi-part parts size {} while seeking to offset {}", multiPartDownloadData.exts.size(), offset);
             return ENOENT;
         }
         
-        ++multiPartDownloadData->extIdx;
-        multiPartDownloadData->currExt = multiPartDownloadData->exts[multiPartDownloadData->extIdx];
+        ++multiPartDownloadData.extIdx;
+        multiPartDownloadData.currExt = multiPartDownloadData.exts[multiPartDownloadData.extIdx];
     }
 
     
-    if(!extents.empty() && extents[0].len>0)
+    if(!extents.empty() && extents[0].len>0 && multiPartDownloadData.needsFinalize)
     {
         for(auto& ext: extents)
         {
-            assert(ext.obj_offset>=multiPartDownloadData->currOffset );
-            ext.obj_offset-=multiPartDownloadData->currOffset;
+            assert(ext.obj_offset>=multiPartDownloadData.currOffset );
+            ext.obj_offset-=multiPartDownloadData.currOffset;
         }
-        const auto bucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
-        const auto rc = self->sfs.read_finalize(
-            make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(lastPartNum), .version = 0, 
-                    .bucketId = bucketId}), extents, 0);
+        const auto partialBucketId = buckets::getPartialUploadsBucket(bucketId);
+        const auto rc = sfs.read_finalize(
+            make_key({.key = uploadIdToStr(multiPartDownloadData.uploadId)+"."+uploadIdToStr(lastPartNum), .version = 0, 
+                    .bucketId = partialBucketId}), extents, 0);
         assert(rc==0);
+        multiPartDownloadData.needsFinalize = false;
     }
 
-    const auto rc = readMultipartExt(offset);
+    const auto rc = readMultipartExt(sfs, offset, bucketId, multiPartDownloadData, extents);
     if(rc)
+    {
+        XLOGF(WARN, "Error reading next multipart extents code {}", rc);
         return rc;
+    }
 
     return 0;
 }
 
-int S3Handler::finalizeMultiPart()
+int S3Handler::finalizeMultiPart(SingleFileStorage& sfs, const int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents)
 {
-    if(!multiPartDownloadData || multiPartDownloadData->extIdx == std::string::npos)
+    if(multiPartDownloadData.extIdx == std::string::npos)
         return ENOENT;
 
-    const auto bucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
-    auto partNum = multiPartDownloadData->currExt.start;
+    if(!multiPartDownloadData.needsFinalize)
+        return 0;
+
+    const auto partialBucketId = buckets::getPartialUploadsBucket(bucketId);
+    const auto partNum = multiPartDownloadData.currExt.start;
 
     if(!extents.empty() && extents[0].len>0)
     {
         for(auto& ext: extents)
         {
-            assert(ext.obj_offset>multiPartDownloadData->currOffset );
-            ext.obj_offset-=multiPartDownloadData->currOffset;
+            assert(ext.obj_offset>multiPartDownloadData.currOffset );
+            ext.obj_offset-=multiPartDownloadData.currOffset;
         }
         
-        const auto rc = self->sfs.read_finalize(make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
+        const auto rc = sfs.read_finalize(make_key({.key = uploadIdToStr(multiPartDownloadData.uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
                     .bucketId = bucketId}), extents, 0);
         assert(rc==0);
     }
+
+    multiPartDownloadData.needsFinalize = false;
 
     return 0;
 }
@@ -2378,7 +2389,7 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
 
     if(multiPartDownloadData)
     {
-        const auto rc = seekMultipartExt(offset);
+        const auto rc = seekMultipartExt(self->sfs, offset, self->keyInfo.bucketId, *self->multiPartDownloadData, self->extents);
         if(rc)
         {
             XLOGF(WARN, "Error seeking to part rc {}", rc);
@@ -2411,7 +2422,7 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
         {
             if(multiPartDownloadData)
             {
-                const int rc = readNextMultipartExt(offset);
+                const int rc = readNextMultipartExt(self->sfs, offset, self->keyInfo.bucketId, *self->multiPartDownloadData, self->extents);
                 if(rc)
                 {
                     XLOGF(WARN, "Error reading next part code {} while reading object {}", rc, self->keyInfo.key);
@@ -2490,7 +2501,12 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
                                 {
             if(self->finished_)
             {
-                auto rc = self->sfs.read_finalize(make_key(self->keyInfo), self->extents, 0);
+                // TODO: Add some checks if the ref counting is correct
+                int rc;
+                if(self->multiPartDownloadData)
+                    rc = finalizeMultiPart(self->sfs, self->keyInfo.bucketId, *self->multiPartDownloadData, self->extents);
+                else
+                    rc = self->sfs.read_finalize(make_key(self->keyInfo), self->extents, 0);
                 assert(rc==0);
                 return;
             }
@@ -2512,7 +2528,11 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
     }
     else
     {
-        auto rc = sfs.read_finalize(make_key(self->keyInfo), self->extents, 0);
+        int rc;
+        if(multiPartDownloadData)
+            rc = finalizeMultiPart(self->sfs, self->keyInfo.bucketId, *self->multiPartDownloadData, self->extents);
+        else
+            rc = sfs.read_finalize(make_key(self->keyInfo), self->extents, 0);
         assert(rc==0);
     }
 }

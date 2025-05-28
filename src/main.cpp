@@ -21,6 +21,7 @@
 #include <proxygen/httpserver/HTTPServer.h>
 #include <proxygen/httpserver/RequestHandlerFactory.h>
 #include <proxygen/lib/http/session/HTTPSessionBase.h>
+#include <duckdb.hpp>
 #include "Auth.h"
 #include "s3handler.h"
 #include "SingleFileStorage.h"
@@ -30,6 +31,15 @@
 #include "Buckets.h"
 #include "config.h"
 #include "StaticHandler.h"
+#include "DuckDbFs.h"
+
+duckdb::DuckDB& getDuckDb()
+{
+    duckdb::DBConfig config;
+    config.options.allow_unsigned_extensions = true;
+    static duckdb::DuckDB db(nullptr, &config);
+    return db;
+}
 
 using namespace std::chrono_literals;
 
@@ -120,6 +130,11 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
 
     return new S3Handler(sfs, FLAGS_server_url, FLAGS_bucket_versioning);
   }
+
+  SingleFileStorage& getSfs()
+  {
+    return sfs;
+  }
 };
 }
 
@@ -186,6 +201,7 @@ int realMain(int argc, char* argv[])
     options.enableContentCompression = false;
     options.handlerFactories =
         proxygen::RequestHandlerChain().addThen<S3HandlerFactory>(sfsoptions).build();
+    auto& sfs = dynamic_cast<S3HandlerFactory*>(options.handlerFactories.back().get())->getSfs();
     options.h2cEnabled = true;
 
     server = std::make_unique<proxygen::HTTPServer>(std::move(options));
@@ -202,6 +218,36 @@ int realMain(int argc, char* argv[])
       server->start();
       server.reset();
       });
+
+    XLOGF(INFO, "Starting DuckDB...");
+
+    duckdb::Connection con(getDuckDb());
+
+    auto& fs =(getDuckDb().instance)->GetFileSystem();
+    fs.RegisterSubSystem(duckdb::make_uniq<DuckDbFs>(sfs, FLAGS_bucket_versioning));
+
+    auto res = con.Query("LOAD '/home/urpc/duckdb-ui/build/release/extension/ui/ui.duckdb_extension'");
+    if(res->HasError())
+    {
+      XLOGF(ERR, "Failed to load UI extension: {}", res->GetError());
+      return 1;
+    }
+    else
+    {
+      XLOGF(INFO, "UI extension loaded successfully {}", res->ToString());
+    }
+
+    res = con.Query("CALL start_ui_server()");
+    if(res->HasError())
+    {
+      XLOGF(ERR, "Failed to start UI server: {}", res->GetError());
+      return 1;
+    }
+    else
+    {
+      XLOGF(INFO, "UI server started successfully {}", res->ToString());
+    }
+    
     t.join();
     return 0;
 }

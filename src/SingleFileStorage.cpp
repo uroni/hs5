@@ -2303,6 +2303,55 @@ SingleFileStorage::ReadExtResult SingleFileStorage::read_ext(const Ext& ext, con
 	return ret;
 }
 
+int SingleFileStorage::read_ext(const Ext& ext, const unsigned int flags, const size_t bufsize, char* bufptr, ssize_t& read)
+{
+	if (is_dead)
+	{
+		return ENOTRECOVERABLE;
+	}
+
+	std::shared_lock copy_lock(data_file_copy_mutex);
+
+	auto sel_data_file = &data_file;
+	auto sel_data_file_dio = &data_file_dio;
+
+	size_t toread = std::min(static_cast<size_t>(ext.len), bufsize);
+
+	if (ext.data_file_offset+static_cast<int64_t>(toread) <= data_file_copy_done)
+	{
+		sel_data_file = &new_data_file;
+		sel_data_file_dio = &new_data_file_dio;
+	}
+
+	bool dio_read = (flags & ReadWithReadahead) == 0 && (flags & ReadUnsynced) == 0 && *sel_data_file_dio;
+	if (dio_read)
+	{
+		read = sel_data_file_dio->preadFull(bufptr, toread, ext.data_file_offset);
+	}
+	else
+	{
+		read = sel_data_file->preadFull(bufptr, toread, ext.data_file_offset);
+	}
+
+	if (read<ssize_t(toread))
+	{
+		if (dio_read)
+		{
+			read = sel_data_file->preadFull(bufptr, toread, ext.data_file_offset);
+		}
+		if (read < ssize_t(toread))
+		{
+			return errno;
+		}
+		else
+		{
+			XLOG(WARN) << "Read succeeded with non-dio";
+		}
+	}
+
+	return 0;
+}
+
 int SingleFileStorage::read_finalize(const std::string& fn, const std::vector<Ext>& extents, unsigned int flags)
 {
 	if(!extents.empty())

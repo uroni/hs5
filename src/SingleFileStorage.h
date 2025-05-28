@@ -168,6 +168,8 @@ public:
 
 	ReadExtResult read_ext(const Ext& ext, const unsigned int flags, const size_t bufsize, folly::IOBufQueue& buf);
 
+	int read_ext(const Ext& ext, const unsigned int flags, const size_t bufsize, char* bufptr, ssize_t& read);
+
 	int read_finalize(const std::string& fn, const std::vector<Ext>& extents, unsigned int flags);
 
 	int del(const std::string_view fn, DelAction da,

@@ -72,6 +72,25 @@ struct KeyInfoView
     int64_t bucketId;
 };
 
+struct MultiPartDownloadData
+{
+    struct PartExt
+    {
+        int64_t size;
+        int start;
+        int len;
+    };
+
+    std::string etag;
+    int64_t uploadId;
+    int64_t numParts;
+    size_t extIdx = std::string::npos;
+    int64_t currOffset = 0;
+    PartExt currExt;
+    bool needsFinalize = false;
+    std::vector<PartExt> exts;
+};
+
 std::string make_key(const std::string_view key, const int64_t bucketId, const int64_t version);
 std::string make_key(const KeyInfo& keyInfo);
 KeyInfoView extractKeyInfoView(const std::string_view key);
@@ -133,24 +152,6 @@ public:
         std::vector<PartData> parts;
     };
 
-    struct MultiPartDownloadData
-    {
-        struct PartExt
-        {
-            int64_t size;
-            int start;
-            int len;
-        };
-
-        std::string etag;
-        int64_t uploadId;
-        int64_t numParts;
-        size_t extIdx = std::string::npos;
-        int64_t currOffset = 0;
-        PartExt currExt;
-        std::vector<PartExt> exts;
-    };
-
     struct PayloadHash
     {
         enum class Method
@@ -195,6 +196,12 @@ public:
         }
     };
 
+    static bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData);
+    static int seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
+    static int readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
+    static int readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
+    static int finalizeMultiPart(SingleFileStorage& sfs, const int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
+
 private:
     void readFile(folly::EventBase *evb);
     void readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> self, int64_t offset);
@@ -215,12 +222,9 @@ private:
     void createMultipartUpload(proxygen::HTTPMessage& headers);
     void finalizeMultipartUpload();
     void finalizeCreateBucket();
-    bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen);
     std::string getEtag(const std::string& md5sum);
-    int seekMultipartExt(int64_t offset);
-    int readNextMultipartExt(int64_t offset);
-    int finalizeMultiPart();
-    int readMultipartExt(int64_t offset);
+    
+    
     void readBodyThread(folly::EventBase *evb);
     bool setKeyInfoFromPath(const std::string_view path);
     std::optional<std::string> initPayloadHash(proxygen::HTTPMessage& message);
