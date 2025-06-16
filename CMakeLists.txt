@@ -25,6 +25,33 @@ set(APIGEN_SCHEMAS
   SessionCheckResp # Must be last
 )
 
+# Checkout https://github.com/duckdb/duckdb-ui at revision 6cbef805772b2cc974b86ab01da3906a0d365fdb into subdir duckdb-ui, don't run CMake on it
+set(DUCKDB_UI_REVISION "6cbef805772b2cc974b86ab01da3906a0d365fdb")
+include(FetchContent)
+FetchContent_Declare(
+  duckdb-ui
+  GIT_REPOSITORY https://github.com/duckdb/duckdb-ui.git
+  GIT_TAG ${DUCKDB_UI_REVISION}
+  SOURCE_DIR ${CMAKE_SOURCE_DIR}/duckdb-ui
+  CONFIGURE_COMMAND "" # Prevent running CMake on duckdb-ui
+  BUILD_COMMAND ""     # Prevent building duckdb-ui
+  INSTALL_COMMAND ""   # Prevent installing duckdb-ui
+)
+FetchContent_Populate(duckdb-ui)
+
+
+set(DUCKDB_SRCS "duckdb-ui/src/event_dispatcher.cpp"
+  "duckdb-ui/src/http_server.cpp"
+  "duckdb-ui/src/settings.cpp"
+  "duckdb-ui/src/state.cpp"
+  "duckdb-ui/src/ui_extension.cpp"
+  "duckdb-ui/src/watcher.cpp"
+  "duckdb-ui/src/utils/encoding.cpp"
+  "duckdb-ui/src/utils/env.cpp"
+  "duckdb-ui/src/utils/helpers.cpp"
+  "duckdb-ui/src/utils/md_helpers.cpp"
+  "duckdb-ui/src/utils/serialization.cpp"
+)
 
 add_custom_target(apigen)
 foreach(SCHEMA ${APIGEN_SCHEMAS})
@@ -99,7 +126,8 @@ add_executable(hs5
     src/WalFile.cpp
     wwwgen/www_files.cpp
     src/DuckDbFs.cpp
-    ${SCHEMA_SOURCES})
+    ${SCHEMA_SOURCES}
+    ${DUCKDB_SRCS})
 
 set_property(TARGET hs5 PROPERTY CXX_STANDARD 20)
 
@@ -125,6 +153,9 @@ target_link_libraries(hs5 PRIVATE $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zst
   proxygen::proxygen proxygen::proxygencurl proxygen::proxygenhttpserver expat::expat unofficial-sodium::sodium SqliteCppGen::SqliteCppGen nlohmann_json::nlohmann_json fmt::fmt
   $<IF:$<TARGET_EXISTS:duckdb>,duckdb,duckdb_static>)
 
+# DuckDB UI
+target_compile_definitions(hs5 PRIVATE UI_EXTENSION_SEQ_NUM="1" UI_EXTENSION_GIT_SHA="${DUCKDB_UI_REVISION}")
+target_include_directories(hs5 PRIVATE ${CMAKE_SOURCE_DIR}/duckdb-ui/src/include ${CMAKE_SOURCE_DIR}/duckdb-ui/third_party/httplib)
 
 target_compile_features(hs5 PUBLIC cxx_std_20)
 

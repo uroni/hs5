@@ -32,6 +32,7 @@
 #include "config.h"
 #include "StaticHandler.h"
 #include "DuckDbFs.h"
+#include "ui_extension.hpp"
 
 duckdb::DuckDB& getDuckDb()
 {
@@ -61,6 +62,8 @@ DEFINE_bool(punch_holes, true, "Free up space if not enough free space is left b
 DEFINE_string(server_url, "serverurl", "URL of server");
 DEFINE_bool(bucket_versioning, false, "Enable bucket versioning");
 DEFINE_string(index_wal_path, "", "Path where to put the index WAL file. Disabled if empty");
+DEFINE_bool(run_duckdb, false, "Run DuckDB UI");
+DEFINE_int32(duckdb_port, 4213, "Port to listen on with DuckDB UI protocol");
 
 namespace {
   std::unique_ptr<proxygen::HTTPServer> server;
@@ -219,33 +222,37 @@ int realMain(int argc, char* argv[])
       server.reset();
       });
 
-    XLOGF(INFO, "Starting DuckDB...");
-
-    duckdb::Connection con(getDuckDb());
-
-    auto& fs =(getDuckDb().instance)->GetFileSystem();
-    fs.RegisterSubSystem(duckdb::make_uniq<DuckDbFs>(sfs, FLAGS_bucket_versioning));
-
-    auto res = con.Query("LOAD '/home/urpc/duckdb-ui/build/release/extension/ui/ui.duckdb_extension'");
-    if(res->HasError())
+    if(FLAGS_run_duckdb)
     {
-      XLOGF(ERR, "Failed to load UI extension: {}", res->GetError());
-      return 1;
-    }
-    else
-    {
-      XLOGF(INFO, "UI extension loaded successfully {}", res->ToString());
-    }
+      XLOGF(INFO, "Starting DuckDB...");
 
-    res = con.Query("CALL start_ui_server()");
-    if(res->HasError())
-    {
-      XLOGF(ERR, "Failed to start UI server: {}", res->GetError());
-      return 1;
-    }
-    else
-    {
-      XLOGF(INFO, "UI server started successfully {}", res->ToString());
+      duckdb::Connection con(getDuckDb());
+
+      auto& fs =(getDuckDb().instance)->GetFileSystem();
+      fs.RegisterSubSystem(duckdb::make_uniq<DuckDbFs>(sfs, FLAGS_bucket_versioning));
+
+      getDuckDb().LoadExtension<duckdb::UiExtension>();
+
+      auto res = con.Query("SET ui_local_port = "+std::to_string(FLAGS_duckdb_port));
+      if(res->HasError())
+      {
+        XLOGF(ERR, "Failed setting duckdb port: {}", res->GetError());
+        return 1;
+      }
+
+      res = con.Query("CALL start_ui_server()");
+      if(res->HasError())
+      {
+        XLOGF(ERR, "Failed to start UI server: {}", res->GetError());
+        return 1;
+      }
+      else
+      {
+        if(res->RowCount()==1)
+          XLOGF(INFO, "DuckDB UI server started successfully {}", res->GetValue(0, 0).ToString());  
+        else
+          XLOGF(INFO, "DuckDB UI server started successfully {}", res->ToString());
+      }
     }
     
     t.join();

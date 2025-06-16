@@ -227,6 +227,13 @@ int actionRun(std::vector<std::string> args)
     TCLAP::SwitchArg manualCommitArg("", "manual-commit",
         "Manual commit mode (default false)", cmd);
 
+    TCLAP::SwitchArg duckDbUi("", "duckdb-ui",
+        "Run DuckDB UI", cmd);
+
+    TCLAP::ValueArg<unsigned short> duckDbUiPort("", "duckdb-http-port",
+		"Specifies on which port DuckDB UI will run (default 4213)",
+		false, 4213, "port number", cmd);
+
     std::vector<std::string> realArgs;
 	realArgs.push_back(args[0]);
 
@@ -314,6 +321,13 @@ int actionRun(std::vector<std::string> args)
     {
         realArgs.push_back("--logging");
         realArgs.push_back(toFollyLoglevel(loglevelArg.getValue()));
+    }
+
+    if(duckDbUi.getValue())
+    {
+        realArgs.push_back("--run_duckdb");
+        realArgs.push_back("--duckdb_port");
+        realArgs.push_back(std::to_string(duckDbUiPort.getValue()));
     }
 
     return runRealMain(realArgs);

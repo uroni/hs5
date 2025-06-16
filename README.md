@@ -20,6 +20,7 @@ Table of Contents
  * [How the storage works](#how-the-storage-works)
  * [Durability guarantees](#durability-guarantees)
  * [Manual commit mode](#manual-commit-mode)
+ * [DuckDB](#duckdb-ui)
 
 # About HS5
 
@@ -115,4 +116,14 @@ The main object storage consists of (mostly) two files. One is an `index.lmdb` L
  5. Get contents of `a711e93e-93b4-4a9e-8a0b-688797470002` and compare them to the contents received in 1. If they differ, go back to 1. and repeat the whole procedure.
 
  Step 5 makes sure that we notice a restart of `hs5`. In that case, we have to re-upload the two objects since they might not be flushed to disk. If the comparison at step 5 fails, you could also abort, but `objA` and `objB` might be stored in the bucket. You might want to add some periodic task that checks for such orphaned objects or keep track of potentially orphaned objects somehow and clean them up regularly.
+
+## DuckDB UI #
+
+HS5 integrates with DuckDB. If you run hs5 with the switch `--duckdb-ui` it'll start the DuckDB UI on port 4213 per default. You can then directly query e.g. `parquet` files in HS5 buckets with the `hs5://` scheme. Currently only reading is supported. E.g. following DuckDB query:
+
+```sql
+SELECT MIN(arrival_time - departure_time)
+FROM "hs5://test/train_services.parquet"
+  WHERE arrival_time > departure_time;
+```
 
