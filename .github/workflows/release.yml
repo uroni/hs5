@@ -26,7 +26,7 @@ jobs:
       - name: Restore from cache and setup vcpkg executable and data files.
         uses: lukka/run-vcpkg@v11
         env:
-          VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org,rw"
+          VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org,readwrite"
         with:
           vcpkgJsonGlob: 'vcpkg.json'
           vcpkgGitCommitId: d5ec528843d29e3a52d745a64b469f810b2cedbf
@@ -55,7 +55,7 @@ jobs:
 
       - name: Build
         env:
-          VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org,rw"
+          VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org,readwrite"
         run: bash build.sh
 
       - name: Install Python dependencies
