@@ -54,7 +54,7 @@ jobs:
         if: matrix.benchmark == 0
         uses: lukka/run-cmake@v10
         env:
-          VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org"
+          VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org,rw"
         with:
           configurePreset: 'ninja-multi-vcpkg'
           buildPreset: 'ninja-vcpkg-debug'
@@ -64,7 +64,7 @@ jobs:
         if: matrix.benchmark == 1
         uses: lukka/run-cmake@v10
         env:
-          VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org"
+          VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org,rw"
         with:
           configurePreset: 'ninja-multi-vcpkg'
           buildPreset: 'ninja-vcpkg-release'
