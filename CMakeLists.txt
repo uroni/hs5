@@ -33,11 +33,9 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/duckdb/duckdb-ui.git
   GIT_TAG ${DUCKDB_UI_REVISION}
   SOURCE_DIR ${CMAKE_SOURCE_DIR}/duckdb-ui
-  CONFIGURE_COMMAND "" # Prevent running CMake on duckdb-ui
-  BUILD_COMMAND ""     # Prevent building duckdb-ui
-  INSTALL_COMMAND ""   # Prevent installing duckdb-ui
+  SOURCE_SUBDIR "does-not-exist"
 )
-FetchContent_Populate(duckdb-ui)
+FetchContent_MakeAvailable(duckdb-ui)
 
 
 set(DUCKDB_SRCS "duckdb-ui/src/event_dispatcher.cpp"
