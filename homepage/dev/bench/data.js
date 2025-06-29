@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751227584245,
+  "lastUpdate": 1751227626678,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -418,6 +418,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.09705657963610681",
             "extra": "mean: 15.182726216799983 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "ef8ef1ef5e442354a065ef5c0ac22cd0c4cf6051",
+          "message": "Experiment with using webdav cache",
+          "timestamp": "2025-06-29T21:11:32+02:00",
+          "tree_id": "3b73cfd9c28a75f45e8a5f03427e3198778546df",
+          "url": "https://github.com/uroni/hs5/commit/ef8ef1ef5e442354a065ef5c0ac22cd0c4cf6051"
+        },
+        "date": 1751227626110,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07026142291946187,
+            "unit": "iter/sec",
+            "range": "stddev: 0.26587117129827703",
+            "extra": "mean: 14.232561175800038 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06299162178542295,
+            "unit": "iter/sec",
+            "range": "stddev: 0.3060893261460906",
+            "extra": "mean: 15.875127067000085 sec\nrounds: 5"
           }
         ]
       }
