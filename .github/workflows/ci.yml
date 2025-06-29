@@ -70,6 +70,9 @@ jobs:
           buildPreset: 'ninja-vcpkg-release'
           testPreset: 'test-release'
 
+      - name: Cleaning
+        run: bash clean.sh
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:

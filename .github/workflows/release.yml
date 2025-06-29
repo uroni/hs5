@@ -56,7 +56,7 @@ jobs:
       - name: Build
         env:
           VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org,readwrite"
-        run: bash build.sh
+        run: bash build.sh && bash clean.sh
 
       - name: Install Python dependencies
         run: pip install -r test/requirements.txt
