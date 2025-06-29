@@ -1,8 +1,6 @@
 name: release
 on: 
   push:
-    branches:
-      - '*'
     tags:
       - '*'
 
@@ -19,39 +17,33 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-        if: startsWith(github.ref, 'refs/tags/')
         with:
           submodules: true
 
       - uses: lukka/get-cmake@v3.31.5
 
       - name: Restore from cache and setup vcpkg executable and data files.
-        if: startsWith(github.ref, 'refs/tags/')
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgJsonGlob: 'vcpkg.json'
           vcpkgGitCommitId: d5ec528843d29e3a52d745a64b469f810b2cedbf
 
       - name: Set up Python 3.11
-        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/setup-python@v4
         with:
           python-version: 3.11
 
       - name: Setup system
-        if: startsWith(github.ref, 'refs/tags/')
         run: |
           sudo apt-get update
           sudo apt-get install -y linux-libc-dev liburing-dev
 
       - name: Setup pnpm
-        if: startsWith(github.ref, 'refs/tags/')
         uses: pnpm/action-setup@v4
         with:
           version: 10
       
       - name: Install Node.js
-        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -59,25 +51,20 @@ jobs:
           cache-dependency-path: './www/pnpm-lock.yaml'
 
       - name: Build
-        if: startsWith(github.ref, 'refs/tags/')
         run: bash build.sh
 
       - name: Install Python dependencies
-        if: startsWith(github.ref, 'refs/tags/')
         run: pip install -r test/requirements.txt
 
       - name: Install pytest dependencies
-        if: startsWith(github.ref, 'refs/tags/')
         run: pip install pytest-md pytest-emoji
 
       - uses: pavelzw/pytest-action@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
           emoji: false
           custom-arguments: -p no:sugar --benchmark-skip test --timeout=300
 
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: ncipollo/release-action@v1
         with:
          allowUpdates: true
