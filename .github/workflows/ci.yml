@@ -28,6 +28,7 @@ jobs:
   job:
     name: ${{ matrix.os }}-${{ github.workflow }}
     runs-on: ${{ matrix.os }}
+    environment: vcpkg
     strategy:
       fail-fast: false
       matrix:
