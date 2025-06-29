@@ -433,6 +433,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 
     XLOGF(INFO, "Minimum free space: {}", folly::prettyPrint(min_free_space, folly::PRETTY_BYTES_IEC));
 
+	const int64_t total_space = os_total_space(options.data_path);
 	int64_t mapsize = total_space / 175;
 
 	if (mapsize < 1LL * 1024 * 1024 * 1024)
