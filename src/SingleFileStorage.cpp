@@ -43,6 +43,7 @@ using namespace std::chrono_literals;
 const size_t c_max_path = 1024 + 1 + 8 + 8;
 
 DEFINE_bool(symlink_lockfile_to_tmpdir, false, "Symlink LMDB lockfile to /tmp");
+DEFINE_int64(min_free_space, 0, "HS5 will try to keep at least this amount of MiB free on the data storage location");
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -413,7 +414,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
     : data_file(options.data_path + os_file_sep() + "data", options.data_file_chunk_size, O_RDWR|O_CREAT|O_CLOEXEC),
     data_file_path(options.data_path + os_file_sep() + "data"),
 	data_file_max_size(0), data_file_offset(0), data_file_offset_end(-1), data_file_free(0), do_quit(false), 
-	min_free_space(20LL * 1024 * 1024 * 1024), is_defragging(false), defrag_restart(0), db_path(options.db_path),
+	min_free_space(FLAGS_min_free_space*1024*1024), is_defragging(false), defrag_restart(0), db_path(options.db_path),
 	is_dead(false), write_offline(false), curr_transid(1), startup_finished(false),
 	force_freespace_check(true), stop_defrag(false), allow_defrag(true), next_disk_id(1), data_file_copy_done(-1), data_file_copy_max(0), data_file_copy_done_sync(0),
 	stop_data_file_copy(false), references(0), 	db_env(nullptr), freespace_cache_path(options.freespace_cache_path), cache_db_env(nullptr), regen_freespace_cache(false),
@@ -430,12 +431,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 
 	int64_t index_file_size = 0;
 
-	int64_t total_space = os_total_space(options.data_path);
-	if (total_space > 0 && total_space < 100LL * 1024 * 1024 * 1024)
-	{
-		min_free_space = 2LL * 1024 * 1024 * 1024;
-        XLOGF(INFO, "Minimum free space: {}", folly::prettyPrint(min_free_space, folly::PRETTY_BYTES_IEC));
-	}
+    XLOGF(INFO, "Minimum free space: {}", folly::prettyPrint(min_free_space, folly::PRETTY_BYTES_IEC));
 
 	int64_t mapsize = total_space / 175;
 
@@ -691,11 +687,6 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	if (rc)
 	{
 		throw std::runtime_error("LMDB: Failed to set max dbs (" + (std::string)mdb_strerror(rc) + ")");
-	}
-
-	if (mapsize + 2LL * 1024 * 1024 * 1024 > min_free_space)
-	{
-		min_free_space = mapsize + 2LL * 1024 * 1024 * 1024;
 	}
 
 	unsigned int mdb_flags = MDB_NOSUBDIR;
@@ -1186,7 +1177,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 
 SingleFileStorage::SingleFileStorage()
 	: data_file_max_size(0), data_file_offset(0), data_file_offset_end(-1), data_file_free(0), 
-	do_quit(false),	min_free_space(20LL * 1024 * 1024 * 1024), is_defragging(false), defrag_restart(0), db_path(std::string()),
+	do_quit(false),	min_free_space(0), is_defragging(false), defrag_restart(0), db_path(std::string()),
 	is_dead(true), write_offline(true), curr_transid(1), startup_finished(false),
 	force_freespace_check(true), stop_defrag(false), allow_defrag(false), next_disk_id(1), data_file_copy_done(-1), data_file_copy_max(0), data_file_copy_done_sync(0),
 	stop_data_file_copy(false), references(0),
