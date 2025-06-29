@@ -34,9 +34,6 @@ jobs:
         benchmark: [0, 1]
         os: [ubuntu-latest]
 
-    env:
-      VCPKG_BINARY_SOURCES: "default"
-
     steps:
       - uses: actions/checkout@v3
         with:
@@ -44,16 +41,10 @@ jobs:
 
       - uses: lukka/get-cmake@v3.31.5
 
-      - name: Restore vcpkg cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.cache/vcpkg/archives
-          key: hs5-${{ runner.os }}-vcpkg-${{ hashFiles('**/vcpkg.json') }}
-          restore-keys: |
-            hs5-${{ runner.os }}-vcpkg-
-
       - name: Restore from cache and setup vcpkg executable and data files.
         uses: lukka/run-vcpkg@v11
+        env:
+          VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg@${{ secrets.VCPKG_WEBDAV_PW }}:vcpkg.urbackup.org"
         with:
           vcpkgJsonGlob: 'vcpkg.json'
           vcpkgGitCommitId: d5ec528843d29e3a52d745a64b469f810b2cedbf
@@ -108,9 +99,3 @@ jobs:
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: homepage/dev/bench
           auto-push: true
-
-      - name: Save vcpkg cache
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.cache/vcpkg/archives
-          key: hs5-${{ runner.os }}-vcpkg-${{ hashFiles('**/vcpkg.json') }}
