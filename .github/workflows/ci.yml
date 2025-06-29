@@ -52,6 +52,8 @@ jobs:
       - name: Run CMake+vcpkg+Ninja+CTest to build debug packages and generate/build/test the code.
         if: matrix.benchmark == 0
         uses: lukka/run-cmake@v10
+        env:
+          VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg@${{ secrets.VCPKG_WEBDAV_PW }}:vcpkg.urbackup.org"
         with:
           configurePreset: 'ninja-multi-vcpkg'
           buildPreset: 'ninja-vcpkg-debug'
@@ -60,6 +62,8 @@ jobs:
       - name: Run CMake+vcpkg+Ninja+CTest to build release packages and generate/build/test the code.
         if: matrix.benchmark == 1
         uses: lukka/run-cmake@v10
+        env:
+          VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg@${{ secrets.VCPKG_WEBDAV_PW }}:vcpkg.urbackup.org"
         with:
           configurePreset: 'ninja-multi-vcpkg'
           buildPreset: 'ninja-vcpkg-release'
