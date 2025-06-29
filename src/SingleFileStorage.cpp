@@ -4007,38 +4007,8 @@ void SingleFileStorage::free_extents(const std::vector<Ext>& extents)
 
 int64_t SingleFileStorage::get_really_min_space(int64_t& index_file_size)
 {
-	index_file_size = 0;
-	{
-		int fd = open((db_path + os_file_sep() + "index.lmdb").c_str(), O_RDONLY|O_CLOEXEC);
-		if (fd!=-1)
-		{
-			index_file_size = fileSize(fd);
-			close(fd);
-		}
-		else
-		{
-			XLOG(ERR) << "Error opening lmdb file " << db_path << os_file_sep() << "index.lmdb to get real size " << folly::errnoStr(errno);
-			return false;
-		}
-	}
-
-	if (cache_db_env != nullptr)
-	{
-		int fd = open( (freespace_cache_path + os_file_sep() + "freespace.lmdb").c_str(), O_RDONLY|O_CLOEXEC);
-		if (fd!=-1)
-		{
-			index_file_size += fileSize(fd);
-			close(fd);
-		}
-		else
-		{
-			XLOG(ERR) << "Error opening lmdb file " << freespace_cache_path << os_file_sep() << "freespace.lmdb to get real size " << folly::errnoStr(errno);
-		}
-	}
-
-	int64_t really_min_space = index_file_size + 2LL * 1024 * 1024 * 1024;
-
-	return really_min_space;
+	// Way to really keep some space reserved. Currently unused
+	return 0;
 }
 
 int64_t SingleFileStorage::get_burn_in_data_size()
