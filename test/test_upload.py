@@ -496,3 +496,32 @@ def test_datafile_space_reused(hs5_large_small_alloc_chunksize: Hs5Runner):
         add_remove()
 
     assert hs5.get_datafile_size() < 120*1024*1024
+    
+def test_delete_multiple_objects(tmp_path: Path, hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    
+    # Create multiple objects
+    for i in range(5):
+        with open(tmp_path / f"upload_{i}.txt", "w") as upload_file:
+            upload_file.write(f"Content of file {i}")
+        s3_client.upload_file(str(tmp_path / f"upload_{i}.txt"), "testbucket", f"upload_{i}.txt")
+
+    hs5.commit_storage(s3_client)
+
+    # Delete objects
+    objects_to_delete = [{'Key': f'upload_{i}.txt'} for i in range(5)]
+    response = s3_client.delete_objects(
+        Bucket='testbucket',
+        Delete={
+            'Objects': objects_to_delete
+        }
+    )
+
+    # Check if all objects were deleted
+    assert response['ResponseMetadata']['HTTPStatusCode'] == 200
+    assert 'Deleted' in response and len(response['Deleted']) == 5
+
+    # Verify deletion
+    for i in range(5):
+        with pytest.raises(ClientError):
+            s3_client.head_object(Bucket='testbucket', Key=f'upload_{i}.txt')

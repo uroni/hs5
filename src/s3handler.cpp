@@ -267,7 +267,7 @@ std::optional<std::string> checkSigQueryStringV2(HTTPMessage &headers, const std
     if(secretKey.empty())
         return std::nullopt;
 
-    if(!isAuthorized(ressource, action, accessKey))
+    if(!ressource.empty() && !isAuthorized(ressource, action, accessKey))
         return std::nullopt;
 
     const auto itExpires = queryParams.find("Expires");
@@ -437,7 +437,7 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
     if(secretKey.empty())
         return std::nullopt;
 
-    if(!isAuthorized(ressource, action, accessKey))
+    if(!ressource.empty() && !isAuthorized(ressource, action, accessKey))
         return std::nullopt;
 
     std::string canonicalHeaders;
@@ -774,6 +774,170 @@ static void multiPartUploadXmlCharData(void *userData,
     }
 }
 
+static void deleteObjectsXmlElementStart(void *userData,
+                                                const XML_Char *name,
+                                                const XML_Char **atts)
+{
+    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
+
+    switch(deleteObjectsData->parseState)
+    {
+    case S3Handler::DeleteObjectsData::ParseState::Init:
+        {
+            if(strcmp(name, "Delete")==0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        } break;
+    case S3Handler::DeleteObjectsData::ParseState::InRoot:
+    {
+        if(strcmp(name, "Object")==0)
+        {
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InObject;
+            deleteObjectsData->objects.push_back({});
+        }
+        else if(strcmp(name, "Quiet") == 0)
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InQuiet;
+        else
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+    } break;
+    case S3Handler::DeleteObjectsData::ParseState::InObject:
+    {
+        if(strcmp(name, "ETag") == 0)
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InEtag;
+        else if(strcmp(name, "Key") == 0)
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InKey;
+        else if(strcmp(name, "LastModifiedTime") == 0)
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InLastModified;
+        else if(strcmp(name, "Size") == 0)
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InSize;
+        else if(strcmp(name, "VersionId") == 0)
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InVersionId;
+        else
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InUnknownObjectAttr;
+    } break;
+    default:
+        break;
+    }
+}
+
+static void deleteObjectsXmlElementEnd(void *userData,
+                                               const XML_Char *name)
+{
+    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
+
+    switch(deleteObjectsData->parseState)
+    {
+    case S3Handler::DeleteObjectsData::ParseState::InRoot:
+        {
+            if(strcmp(name, "Delete")==0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Finished;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        } break;
+    case S3Handler::DeleteObjectsData::ParseState::InObject:
+        {
+            if(strcmp(name, "Object")==0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        } break;
+    case S3Handler::DeleteObjectsData::ParseState::InEtag:
+    case S3Handler::DeleteObjectsData::ParseState::InKey:
+    case S3Handler::DeleteObjectsData::ParseState::InLastModified:
+    case S3Handler::DeleteObjectsData::ParseState::InSize:
+    case S3Handler::DeleteObjectsData::ParseState::InVersionId:
+    case S3Handler::DeleteObjectsData::ParseState::InUnknownObjectAttr:
+        {
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InObject;
+        } break;
+    case S3Handler::DeleteObjectsData::ParseState::InQuiet:
+        {
+            if(strcmp(name, "Quiet") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        }
+    default:
+        break;
+    }
+}
+
+static void deleteObjectsXmlCharData(void *userData,
+                                               const XML_Char *s, int len)
+{
+    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
+
+    std::string_view data(s, len);
+
+    switch(deleteObjectsData->parseState)
+    {
+        case S3Handler::DeleteObjectsData::ParseState::InKey:
+        {
+            auto& obj = deleteObjectsData->objects.back();
+            obj.key = std::string(data);
+        } break;
+        case S3Handler::DeleteObjectsData::ParseState::InEtag:
+        {
+            auto& obj = deleteObjectsData->objects.back();
+            obj.etag = std::string(data);
+        } break;
+        case S3Handler::DeleteObjectsData::ParseState::InLastModified:
+        {
+            auto& obj = deleteObjectsData->objects.back();
+            try
+            {
+                obj.lastModified = 0; //TODO //folly::parseUnixTimestamp(data);
+            }
+            catch(const std::exception& ex)
+            {
+                XLOGF(ERR, "Invalid last modified time {}: {}", data, folly::exceptionStr(ex));
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Invalid;
+            }
+        } break;
+        case S3Handler::DeleteObjectsData::ParseState::InSize:
+        {
+            auto& obj = deleteObjectsData->objects.back();
+            try
+            {
+                obj.size = std::stoll(data.data(), nullptr, 10);
+            }
+            catch(const std::exception& ex)
+            {
+                XLOGF(ERR, "Invalid size {}: {}", data, folly::exceptionStr(ex));
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Invalid;
+            }
+        } break;
+        case S3Handler::DeleteObjectsData::ParseState::InVersionId:
+        {
+            auto& obj = deleteObjectsData->objects.back();
+            try
+            {
+                obj.versionId = std::stoll(data.data(), nullptr, 10);
+            }
+            catch(const std::exception& ex)
+            {
+                XLOGF(ERR, "Invalid version id {}: {}", data, folly::exceptionStr(ex));
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Invalid;
+            }
+        } break;
+        case S3Handler::DeleteObjectsData::ParseState::InQuiet:
+        {
+            if(data == "true")
+            {
+                deleteObjectsData->quiet = true;
+            }
+            else
+            {
+                XLOGF(ERR, "Invalid quiet parameter for delete: ", data);
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Invalid;
+            }
+        } break;
+        default:
+            break;
+    }
+}
+
 std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& message)
 {
     const auto payload = message.getHeaders().getSingleOrEmpty("x-amz-content-sha256");
@@ -1088,6 +1252,99 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     }
     else if(headers->getMethod() == HTTPMethod::POST)
     {
+        if(headers->getQueryStringAsStringPiece() == "delete")
+        {
+            std::string cl = headers->getHeaders().getSingleOrEmpty(
+                    proxygen::HTTP_HEADER_CONTENT_LENGTH);
+            if (cl.empty())
+            {
+                ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("Content-Length header not set")
+                    .sendWithEOM();
+                return;
+            }
+
+            if(headers->getPathAsStringPiece().size()<=1)
+            {
+                ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("Bucket not found in path")
+                    .sendWithEOM();
+                return;
+            }
+
+            const auto resource = fmt::format("arn:aws:s3:::{}", headers->getPathAsStringPiece().substr(1));
+            const auto payloadOpt = initPayloadHash(*headers);
+            if(!payloadOpt)
+            {
+                ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("No payload hash present")
+                    .sendWithEOM();
+                return;
+            }
+            const auto payload = *payloadOpt;
+
+            const auto bucketName = headers->getPathAsStringPiece().substr(1);
+
+            const auto accessKey = checkSig(*headers, payload, std::string_view(), std::string_view(), true);
+            if(!accessKey)
+            {
+                XLOGF(INFO, "Unauthorized delete object: {}", headers->getPathAsStringPiece());
+                ResponseBuilder(downstream_)
+                    .status(401, "Unauthorized")
+                    .body("Verifying request authorization failed")
+                    .sendWithEOM();
+                return;
+            }
+
+            const auto bucketId = getBucket(bucketName);
+            if(!bucketId)
+            {
+                XLOGF(INFO, "Bucket {} not found", bucketName);
+                ResponseBuilder(downstream_)
+                            .status(404, "Not found")
+                            .body("Bucket not found")
+                            .sendWithEOM();
+                return;
+            }
+
+            keyInfo.bucketId = *bucketId;
+
+            if(!evpMdCtx.init(EVP_md5()) )
+            {
+                ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("Could not init MD5 content hash")
+                    .sendWithEOM();
+                return;
+            }
+
+            request_type = RequestType::DeleteObjects;
+            put_remaining = std::atoll(cl.c_str());
+
+            xmlBody.init();
+            if(xmlBody.parser == nullptr)
+            {
+                ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("Could not init XML parser")
+                    .sendWithEOM();
+                return;
+            }
+
+            deleteObjectsData = std::make_unique<DeleteObjectsData>();
+            deleteObjectsData->accessKey = *accessKey;
+            XML_SetUserData(xmlBody.parser, deleteObjectsData.get());
+
+            XML_SetElementHandler(xmlBody.parser, deleteObjectsXmlElementStart, deleteObjectsXmlElementEnd);
+            XML_SetCharacterDataHandler(xmlBody.parser, deleteObjectsXmlCharData);
+
+            XLOGF(INFO, "Delete objects in bucket {}", bucketName);
+            return;
+        }
+
         if(!setKeyInfoFromPath(headers->getPathAsStringPiece()))
             return;
 
@@ -2027,6 +2284,7 @@ void S3Handler::finalizeMultipartUpload()
             });    
 }
 
+
 void S3Handler::finalizeCreateBucket()
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
@@ -2057,6 +2315,105 @@ void S3Handler::finalizeCreateBucket()
                         self->finished_ = true;
                 });
                 return;
+            }
+        );
+}
+
+void S3Handler::deleteObjects()
+{
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+    folly::getGlobalCPUExecutor()->add(
+            [self = this->self, evb, deleteObjectsData = this->deleteObjectsData.get()]()
+            {
+                const auto bucketName = getBucketName(self->keyInfo.bucketId);
+
+                std::string resp = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                                    "<DeleteResult>\n";
+
+                for(const auto& obj: deleteObjectsData->objects)
+                {
+                    auto version = obj.versionId.value_or(0);
+                    const auto resource = fmt::format("arn:aws:s3:::{}/{}", bucketName, obj.key);
+                    const auto action = "s3:DeleteObject";
+
+                    if(!isAuthorized(resource, action, deleteObjectsData->accessKey))
+                    {
+                        resp += fmt::format("\t<Error>\n"
+                            "\t\t<Code>AccessDenied</Code>\n"
+                            "\t\t<Message>Access to object not authorized</Message>\n"
+                            "\t\t<Key>{}</Key>\n"
+                            "\t\t</Error>\n", obj.key);
+                        continue;
+                    }
+
+                    bool delNewest = false;
+
+                    if(self->withBucketVersioning && version==0)
+                    {
+                        version= std::numeric_limits<int64_t>::max();
+                        delNewest = true;
+                    }
+
+                    const auto currPath = make_key(obj.key, self->keyInfo.bucketId, version);
+
+                    int res;
+
+                    if(delNewest)
+                    {
+                        res = self->sfs.check_existence(currPath, SingleFileStorage::ReadNewest);
+
+                        if(res==0)
+                        {
+                            version = self->sfs.get_next_version();
+                            const auto writePath = make_key(obj.key, self->keyInfo.bucketId, version);
+                            std::string md5sum(1, metadata_tombstone);
+                            res = self->sfs.write(writePath, nullptr, 0, 0, 0, md5sum, false, false);
+                        }
+                    }
+                    else
+                    {
+                        res = self->sfs.del(currPath, SingleFileStorage::DelAction::Del, false);
+                    }
+
+                    if(res==0 && !self->sfs.get_manual_commit())
+                    {
+                        res = self->sfs.commit(false, -1) ? 0 : 1;
+                    }
+
+                    if(res==0)
+                    {
+                        resp += fmt::format("\t<Deleted>\n"
+                            "\t\t<Key>{}</Key>\n"
+                            "\t</Deleted>\n", obj.key);
+                    }
+                    else if(res==ENOENT)
+                    {
+                        resp += fmt::format("\t<Error>\n"
+                            "\t\t<Code>NoSuchKey</Code>\n"
+                            "\t\t<Message>Object not found</Message>\n"
+                            "\t\t<Key>{}</Key>\n"
+                            "\t</Error>\n", obj.key);
+                    }
+                    else
+                    {
+                        resp += fmt::format("\t<Error>\n"
+                            "\t\t<Code>InternalError</Code>\n"
+                            "\t\t<Message>Internal error {}</Message>\n"
+                            "\t\t<Key>{}</Key>\n"
+                            "\t</Error>\n", res, obj.key);
+                    }
+                }
+
+                resp += "</DeleteResult>";
+
+                 evb->runInEventBaseThread([self = self, resp = std::move(resp)] ()
+                 {
+                    ResponseBuilder(self->downstream_)
+                            .status(200, "OK")
+                            .body(resp)
+                            .sendWithEOM();
+                    self->finished_ = true;
+                 });
             }
         );
 }
@@ -2862,7 +3219,8 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
     size_t body_bytes = body->length();
 
-    if(request_type == RequestType::CompleteMultipartUpload)
+    if(request_type == RequestType::CompleteMultipartUpload ||
+        request_type == RequestType::DeleteObjects)
     {
         if(payloadHash)
             EVP_DigestUpdate(payloadHash->evpMdCtx.ctx, body->data(), body->length());
@@ -3172,6 +3530,24 @@ void S3Handler::onEOM() noexcept
             return;
 
         finalizeCreateBucket();
+        return;
+    }
+    else if(request_type == RequestType::DeleteObjects)
+    {
+        if(finished_)
+            return;
+
+        if(put_remaining!=0)
+        {
+            ResponseBuilder(self->downstream_)
+                .status(500, "Internal error")
+                .body("Expecting more data")
+                .sendWithEOM();
+            finished_ = true; 
+            return;
+        }
+
+        deleteObjects();
         return;
     }
 }

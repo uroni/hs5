@@ -152,6 +152,40 @@ public:
         std::vector<PartData> parts;
     };
 
+    struct DeleteObjectData
+    {
+        std::string etag;
+        std::string key;
+        std::optional<int64_t> lastModified = std::nullopt;
+        std::optional<int64_t> size = std::nullopt;
+        std::optional<int64_t> versionId = std::nullopt;
+    };
+
+    struct DeleteObjectsData
+    {
+        enum class ParseState
+        {
+            Init,
+            InRoot,
+            InObject,
+            InEtag,
+            InKey,
+            InLastModified,
+            InSize,
+            InVersionId,
+            InQuiet,
+            Unknown,
+            InUnknownObjectAttr,
+            Finished,
+            Invalid
+        };
+
+        ParseState parseState = ParseState::Init;
+        std::vector<DeleteObjectData> objects;
+        bool quiet = false;
+        std::string accessKey;
+    };
+
     struct PayloadHash
     {
         enum class Method
@@ -228,6 +262,7 @@ private:
     void readBodyThread(folly::EventBase *evb);
     bool setKeyInfoFromPath(const std::string_view path);
     std::optional<std::string> initPayloadHash(proxygen::HTTPMessage& message);
+    void deleteObjects();
 
 	enum class RequestType
 	{
@@ -239,6 +274,7 @@ private:
         ListObjects,
         CompleteMultipartUpload,
         CreateBucket,
+        DeleteObjects,
         DeleteBucket
 	};
 
@@ -258,6 +294,7 @@ private:
 
     std::unique_ptr<MultiPartUploadData> multiPartUploadData;
     std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
+    std::unique_ptr<DeleteObjectsData> deleteObjectsData;
 
 	std::mutex extents_mutex;
 	std::condition_variable extents_cond;
