@@ -89,7 +89,7 @@ jobs:
         if: matrix.benchmark == 0
         with:
           emoji: false
-          custom-arguments: -p no:sugar --benchmark-skip test
+          custom-arguments: -p no:sugar --benchmark-skip test --timeout=300
 
       - uses: pavelzw/pytest-action@v2
         if: matrix.benchmark == 1

@@ -74,7 +74,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           emoji: false
-          custom-arguments: -p no:sugar --benchmark-skip test
+          custom-arguments: -p no:sugar --benchmark-skip test --timeout=300
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
