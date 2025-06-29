@@ -1299,7 +1299,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            const auto bucketId = getBucket(bucketName);
+            const auto bucketId = buckets::getBucket(bucketName);
             if(!bucketId)
             {
                 XLOGF(INFO, "Bucket {} not found", bucketName);
@@ -2325,7 +2325,7 @@ void S3Handler::deleteObjects()
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb, deleteObjectsData = this->deleteObjectsData.get()]()
             {
-                const auto bucketName = getBucketName(self->keyInfo.bucketId);
+                const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
 
                 std::string resp = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                                     "<DeleteResult>\n";
@@ -2377,7 +2377,7 @@ void S3Handler::deleteObjects()
 
                     if(res==0 && !self->sfs.get_manual_commit())
                     {
-                        res = self->sfs.commit(false, -1) ? 0 : 1;
+                        res = self->sfs.commit(false, -1, FLAGS_pre_sync_commit) ? 0 : 1;
                     }
 
                     if(res==0)
@@ -2725,7 +2725,7 @@ int S3Handler::finalizeMultiPart(SingleFileStorage& sfs, const int64_t bucketId,
     {
         for(auto& ext: extents)
         {
-            assert(ext.obj_offset>multiPartDownloadData.currOffset );
+            assert(ext.obj_offset>=multiPartDownloadData.currOffset );
             ext.obj_offset-=multiPartDownloadData.currOffset;
         }
         
