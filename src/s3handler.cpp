@@ -3578,3 +3578,47 @@ void S3Handler::onError(ProxygenError /*err*/) noexcept
 
     self.reset();
 }
+
+
+std::vector<std::string> S3Handler::onDeleteCallback(const std::string& fn, const std::string& md5sum)
+{
+    const auto keyInfo = extractKeyInfoView(fn);
+    if(buckets::isPartialUploadsBucket(keyInfo.bucketId))
+    {
+        return {};
+    }
+
+    int64_t totalLen;
+    std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
+    if(!parseMultipartInfo(md5sum, totalLen, multiPartDownloadData))
+    {
+        XLOGF(WARN, "Error parsing multi-part upload for file {}", fn);
+        return {};
+    }
+
+    std::vector<std::string> ret;
+
+    if(multiPartDownloadData)
+    {
+        int parts = 0;
+        for(const auto& ext: multiPartDownloadData->exts)
+        {
+            parts+= ext.len;
+        }
+
+        XLOGF(INFO, "Multi-part upload found for object {} with total length {}. Deleting {} parts", keyInfo.key, totalLen, parts);
+        const auto partialBucketId = buckets::getPartialUploadsBucket(keyInfo.bucketId);
+
+        for(const auto& ext: multiPartDownloadData->exts)
+        {
+            for(auto partNum=ext.start; partNum<ext.start+ext.len; ++partNum)
+            {
+                const auto key = make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
+                            .bucketId = partialBucketId});
+                ret.push_back(key);
+            }
+        }
+    }
+
+    return ret;
+}

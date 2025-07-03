@@ -422,7 +422,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	alloc_use_free_space_percent(options.alloc_use_free_space_percent),
 	runtime_id(options.runtime_id), manual_commit(options.manual_commit), stop_on_error(options.stop_on_error), punch_holes(options.punch_holes),
 	data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func),
-	common_prefix_hash_func(options.common_prefix_hash_func)
+	common_prefix_hash_func(options.common_prefix_hash_func), on_delete_callback(options.on_delete_callback)
 {
 	if(common_prefix_func==nullptr)
 		common_prefix_func = common_prefix_passthrough;
@@ -2788,6 +2788,15 @@ int64_t SingleFileStorage::remove_fn(const std::string & fn, MDB_txn * txn, MDB_
 
 	SCOPE_EXIT{ mdb_cursor_close(mc); };
 
+	std::vector<std::string> del_other_fns;
+
+	SCOPE_EXIT{
+		for(const auto& del_fn: del_other_fns)
+		{
+			commit_errors += remove_fn(del_fn, txn, freespace_txn, del_from_main, del_old, tid);
+		}
+	};
+
 	if (has_mmap_read_error_reset(tid))
 	{
 		XLOG(ERR) << "LMDB: Failed  mdb_cursor_open in remove_fn (SIGBUS) ("
@@ -2845,6 +2854,22 @@ int64_t SingleFileStorage::remove_fn(const std::string & fn, MDB_txn * txn, MDB_
 				XLOG(ERR) << "LMDB: Error reading extra_exts " << db_path;
 				++commit_errors;
 				return commit_errors;
+			}
+
+			if (offset != -1)
+			{
+				int64_t last_modified;
+				std::string md5sum;
+				if(!rdata.getVarInt(&last_modified) ||
+					!rdata.getStr2(&md5sum) )
+				{
+					XLOG(WARN) << "LMDB: Error reading last_modified, md5sum txn=" << std::to_string(reinterpret_cast<int64_t>(txn)) << " sfs " << db_path;
+				}
+				
+				if(!md5sum.empty())
+				{
+					del_other_fns = on_delete_callback(fn, md5sum);
+				}
 			}
 
 			if(startup_finished)

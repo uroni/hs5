@@ -53,3 +53,6 @@ def test_adduser(hs5: Hs5Runner):
     })
 
     assert response.status_code == 200
+
+def test_stats(hs5: Hs5Runner):
+    hs5.get_stats()

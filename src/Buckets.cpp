@@ -119,6 +119,11 @@ int64_t getPartialUploadsBucket(int64_t bucketId)
     return bucketId + 1;
 }
 
+bool isPartialUploadsBucket(int64_t bucketId)
+{
+    return bucketId % 2 == 0;
+}
+
 std::string getBucketName(int64_t bucketId)
 {
     std::scoped_lock lock{mutex};

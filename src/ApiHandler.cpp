@@ -20,6 +20,8 @@
 #include "apigen/GeneratorsSessionCheckResp.hpp"
 #include "apigen/GeneratorsAddBucketResp.hpp"
 #include "apigen/GeneratorsAddBucketParams.hpp"
+#include "apigen/GeneratorsStatsParams.hpp"
+#include "apigen/GeneratorsStatsResp.hpp"
 #include <argon2.h>
 #include <folly/Random.h>
 #include <iostream>
@@ -172,7 +174,8 @@ void ApiHandler::onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexc
         && func!="login"
         && func!="list"
         && func!="sessionCheck"
-        && func!="addBucket")
+        && func!="addBucket"
+        && func!="stats")
     {
         ResponseBuilder(downstream_)
             .status(404, "Not found")
@@ -308,6 +311,8 @@ ApiHandler::ApiResponse ApiHandler::runRequest()
                 resp = Api::SessionCheckResp();
             else if(func=="addBucket")
                 resp = addBucket(params, *session);
+            else if(func=="stats")
+                resp = stats(params, *session);
         }
         
     }
@@ -521,4 +526,11 @@ Api::AddBucketResp ApiHandler::addBucket(const Api::AddBucketParams& params, con
         throw ApiError(Api::Herror::bucketAlreadyExists);
 
     return {};
+}
+
+Api::StatsResp ApiHandler::stats(const Api::StatsParams& params, const ApiSessionStorage& sessionStorage)
+{
+    const auto size = sfs.get_data_file_size();
+    const auto free = sfs.get_free_space_in_data_file();
+    return Api::StatsResp{.freeSpace=free, .size=size, .used = size - free};
 }

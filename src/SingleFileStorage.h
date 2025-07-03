@@ -83,7 +83,8 @@ public:
 
 	typedef std::string(*common_prefix_func_t)(const std::string_view);
 	typedef size_t(*common_prefix_hash_func_t)(const std::string_view);
-
+	using on_delete_callback_t = std::function<std::vector<std::string>(const std::string&, const std::string&)>;
+	
 	struct SFSOptions
 	{
 		std::string data_path;
@@ -107,6 +108,7 @@ public:
 		MDB_cmp_func* key_compare_func = nullptr;
 		common_prefix_func_t common_prefix_func = nullptr;
 		common_prefix_hash_func_t common_prefix_hash_func = nullptr;
+		on_delete_callback_t on_delete_callback;
 	};
 
 	SingleFileStorage(SFSOptions options);
@@ -631,6 +633,7 @@ private:
 
 	common_prefix_func_t common_prefix_func;
 	common_prefix_hash_func_t common_prefix_hash_func;
+	on_delete_callback_t on_delete_callback;
 
 	int64_t curr_version = 0;
 

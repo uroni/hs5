@@ -14,6 +14,8 @@
 #include "apigen/ListParams.hpp"
 #include "apigen/AddBucketResp.hpp"
 #include "apigen/AddBucketParams.hpp"
+#include "apigen/StatsParams.hpp"
+#include "apigen/StatsResp.hpp"
 #include "Session.h"
 #include <proxygen/httpserver/RequestHandler.h>
 
@@ -57,6 +59,7 @@ private:
     Api::ListResp list(const Api::ListParams& params, const ApiSessionStorage& sessionStorage);
     Api::ListResp listBuckets(const Api::ListParams& params, const ApiSessionStorage& sessionStorage);
     Api::AddBucketResp addBucket(const Api::AddBucketParams& params, const ApiSessionStorage& sessionStorage);
+    Api::StatsResp stats(const Api::StatsParams& params, const ApiSessionStorage& sessionStorage);
 
     std::string func;
     std::string body;

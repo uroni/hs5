@@ -236,6 +236,8 @@ public:
     static int readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
     static int finalizeMultiPart(SingleFileStorage& sfs, const int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
 
+    static std::vector<std::string> onDeleteCallback(const std::string& fn, const std::string& md5sum);
+
 private:
     void readFile(folly::EventBase *evb);
     void readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> self, int64_t offset);

@@ -42,6 +42,8 @@ def create_random_file(fn: Path, size: int) -> int:
 
 def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
 
+    assert hs5.get_stats().used == 0
+
     fdata = os.urandom(29*1024*1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
@@ -57,6 +59,8 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
     assert bdata == fdata[:10]
+
+    assert hs5.get_stats().used == len(fdata)
 
     obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=10-19")
     assert obj_range["Body"].read() == fdata[10:20]
@@ -97,6 +101,8 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     assert not list_resp["IsTruncated"]
     assert "Contents" not in list_resp
 
+    assert hs5.get_stats().used == 0
+
 def test_get_commit_obj(tmp_path: Path, hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     fpath = tmp_path / "commit_uuid.txt"
@@ -131,6 +137,8 @@ def delete_all_objects(hs5: Hs5Runner, bucket: str):
             s3_client.delete_object(Bucket=bucket, Key=obj["Key"])
 
     hs5.commit_storage(s3_client)
+
+    assert hs5.get_stats().used == 0
 
 def test_put_empty(tmp_path: Path, hs5: Hs5Runner):
     fdata = ""
@@ -271,9 +279,12 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
 
 def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):
 
-    with open(tmp_path / "upload_multipart.dat", "wb") as upload_file:
-        size = 50*1024*1024
+    assert hs5.get_stats().used == 0
 
+    ul_size = 50*1024*1024
+
+    with open(tmp_path / "upload_multipart.dat", "wb") as upload_file:
+        size = ul_size
         while size > 0:
             buf = os.urandom(512*1024)
             upload_file.write(buf)
@@ -281,7 +292,12 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):
 
     s3_client = hs5.get_s3_client()
     s3_client.upload_file(upload_file.name, hs5.testbucketname(), "upload.txt")
-    dl_path = tmp_path / "download.dat"
+
+    hs5.commit_storage(s3_client)
+
+    assert hs5.get_stats().used == ul_size
+
+    dl_path = tmp_path / "download.dat"   
     s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
 
     assert filecmp.cmp(upload_file.name, dl_path)
@@ -304,6 +320,13 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):
     obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range=f"bytes={off}-{off+size -1}")
     bdata = obj_range["Body"].read()
     assert len(bdata) == size
+
+
+    s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+
+    hs5.commit_storage(s3_client)
+
+    assert hs5.get_stats().used == 0
 
 
 

@@ -1,5 +1,6 @@
 # Copyright Martin Raiber. All Rights Reserved.
 # SPDX-License-Identifier: LGPL-3.0-or-later
+from dataclasses import dataclass
 from pathlib import Path
 from shutil import rmtree
 import subprocess
@@ -16,6 +17,16 @@ from mypy_boto3_s3.client import S3Client
 import requests
 
 curr_port = 11000
+
+@dataclass
+class Hs5Stats:
+    used: int
+    size: int
+    free_space: int
+
+    def __str__(self) -> str:
+        return f"Used: {self.used}, Size: {self.size}, Free space: {self.free_space}"
+
 
 class Hs5Runner:
     manual_commit = False
@@ -90,6 +101,8 @@ class Hs5Runner:
 
         self._wait_for_startup()
 
+        self._login_admin()
+
         self.get_s3_client().create_bucket(Bucket=self.testbucketname())
 
     def _wait_for_startup(self) -> None:
@@ -99,6 +112,20 @@ class Hs5Runner:
                 break
             except:
                 time.sleep(0.01)
+
+    def _login_admin(self) -> None:
+
+        self._ses = requests.session()
+
+        response = self._ses.post(self.get_api_url()+"login", json={
+            "username": "root",
+            "password": self._root_key
+        })
+
+        assert response.status_code == 200
+        resp = response.json()
+        self._admin_ses = resp["ses"]
+        assert self._admin_ses
 
     def stop(self) -> None:
 
@@ -150,27 +177,59 @@ class Hs5Runner:
             return 0
         return os.path.getsize(data_file_path)
     
+    def get_stats(self) -> Hs5Stats:
+        url = self.get_api_url() + "stats"
+        response = self._ses.post(url, json={"ses": self._admin_ses})
+        
+        assert response.status_code == 200
+        resp = response.json()
+        return Hs5Stats(**resp)
+    
 
 @pytest.fixture
 def hs5(tmpdir: Path):
-    runner = Hs5Runner(tmpdir, data_file_size_limit_mb=100)
+    loc = tmpdir / uuid.uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(loc, data_file_size_limit_mb=100)
     yield runner
     runner.stop()
+    try:
+        rmtree(loc)
+    except:
+        pass
 
 @pytest.fixture
 def hs5_perf(tmpdir: Path):
-    runner = Hs5Runner(tmpdir, data_file_size_limit_mb=100, perf=True)
+    loc = tmpdir / uuid.uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(loc, data_file_size_limit_mb=100, perf=True)
     yield runner
     runner.stop()
+    try:
+        rmtree(loc)
+    except:
+        pass
 
 @pytest.fixture
 def hs5_large(tmpdir: Path):
-    runner = Hs5Runner(tmpdir, data_file_size_limit_mb=5000)
+    loc = tmpdir / uuid.uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(loc, data_file_size_limit_mb=5000)
     yield runner
     runner.stop()
+    try:
+        rmtree(loc)
+    except:
+        pass
 
 @pytest.fixture
 def hs5_large_small_alloc_chunksize(tmpdir: Path):
-    runner = Hs5Runner(tmpdir, data_file_size_limit_mb=5000, data_file_alloc_chunk_size=10*1024*1024)
+    loc = tmpdir / uuid.uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(loc, data_file_size_limit_mb=5000, data_file_alloc_chunk_size=10*1024*1024)
     yield runner
     runner.stop()
+    try:
+        rmtree(loc)
+    except:
+        pass

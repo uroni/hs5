@@ -194,6 +194,9 @@ int realMain(int argc, char* argv[])
     sfsoptions.common_prefix_func = s3key_common_prefix;
     sfsoptions.common_prefix_hash_func = s3key_common_prefix_hash;
     sfsoptions.wal_file_path = FLAGS_index_wal_path.empty() ? FLAGS_index_wal_path : (FLAGS_index_wal_path + os_file_sep() + "index.wal");
+    sfsoptions.on_delete_callback = [](const std::string& fn, const std::string& md5sum) -> std::vector<std::string> {
+      return S3Handler::onDeleteCallback(fn, md5sum);
+    };
 
     proxygen::HTTPSessionBase::setMaxReadBufferSize(16*1024);
 
