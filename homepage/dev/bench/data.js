@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1751574511467,
+  "lastUpdate": 1751574582041,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -760,6 +760,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.27741013688665833",
             "extra": "mean: 15.258156556999984 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "ab2b76af91bd708f7d6b62a09b1dccce0be80029",
+          "message": "Fix multi-part object deletion",
+          "timestamp": "2025-07-03T22:21:04+02:00",
+          "tree_id": "d441f7565f46aebe9214b61502011a1cfc99abaa",
+          "url": "https://github.com/uroni/hs5/commit/ab2b76af91bd708f7d6b62a09b1dccce0be80029"
+        },
+        "date": 1751574581500,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.06871650554093307,
+            "unit": "iter/sec",
+            "range": "stddev: 0.36742393069290946",
+            "extra": "mean: 14.552544430600005 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06512331888612105,
+            "unit": "iter/sec",
+            "range": "stddev: 0.19213119277505905",
+            "extra": "mean: 15.355482753399997 sec\nrounds: 5"
           }
         ]
       }
