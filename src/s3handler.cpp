@@ -1105,7 +1105,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         const auto payload = *payloadOpt;
 
-        if(!createBucket && !headers->getQueryStringAsStringPiece().empty() && (xid.empty() || xid == "PutObjectPart"))
+        if(!createBucket && !headers->getQueryStringAsStringPiece().empty() && (xid.empty() || xid == "UploadPart"))
         {
             int partNumber = 0;
             const auto& queryParams = headers->getQueryParams();
