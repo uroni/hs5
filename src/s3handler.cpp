@@ -1022,9 +1022,10 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         running = true;
 
-        if(header_path.find('/', 1)==std::string::npos)
+        const auto nextSlash = header_path.find('/', 1);
+        if(nextSlash==std::string::npos || nextSlash == header_path.size()-1)
         {
-            const auto bucketName = header_path.subpiece(1);
+            const auto bucketName = header_path.subpiece(1, nextSlash);
             if(!checkSig(*headers, emptyPayloadHash, fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket", false))
             {
                 XLOGF(INFO, "Unauthorized list bucket: {}", bucketName);
