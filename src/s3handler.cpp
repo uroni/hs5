@@ -51,6 +51,7 @@ DEFINE_bool(with_stop_command, false, "Allow stopping via putting to stop object
 DEFINE_bool(allow_sig_v2, true, "Allow aws sig v2");
 DEFINE_string(host_override, "", "Override host for s3 requests");
 DEFINE_bool(pre_sync_commit, false, "Pre-sync data and index files before commit for potential performance gain");
+DEFINE_int64(commit_after_ms, 30000, "If manual commit is enabled, wait this amount of milliseconds before automatically committing. 0 means not commiting automatically at all.");
 
 std::string hashSha256Hex(const std::string_view payload)
 {
@@ -2249,21 +2250,16 @@ void S3Handler::finalizeMultipartUpload()
                         return;
                 }
 
-                if(!self->sfs.get_manual_commit())
+                if(!self->commit())
                 {
-                    const bool b = self->sfs.commit(false, -1, FLAGS_pre_sync_commit);
-                    
-                    if(!b)
-                    {
-                        evb->runInEventBaseThread([self = self]()
-                                            {           
-                                ResponseBuilder(self->downstream_)
-                                    .status(500, "Internal error")
-                                    .body("Commit error")
-                                    .sendWithEOM();
-                                self->finished_ = true; });
-                        return;
-                    }
+                    evb->runInEventBaseThread([self = self]()
+                                        {           
+                            ResponseBuilder(self->downstream_)
+                                .status(500, "Internal error")
+                                .body("Commit error")
+                                .sendWithEOM();
+                            self->finished_ = true; });
+                    return;
                 }
 
                 evb->runInEventBaseThread([self = self, etagBin, numParts = multiPartData->parts.size()]()
@@ -2282,6 +2278,59 @@ void S3Handler::finalizeMultipartUpload()
                         self->finished_ = true; });
                         return;
             });    
+}
+
+bool S3Handler::commit()
+{
+    if(self->sfs.get_manual_commit() && FLAGS_commit_after_ms>0)
+    {
+        static std::mutex mutex;
+        static std::set<SingleFileStorage*> commitAfterStarted;
+
+        bool doStart = false;
+
+        {
+            std::lock_guard lock(mutex);
+            const auto [it, inserted] = commitAfterStarted.insert(&self->sfs);
+            if(inserted)
+                doStart = true;
+        }
+
+        if(doStart)
+        {
+            folly::getGlobalCPUExecutor()->add([sfs = &self->sfs]() {
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_commit_after_ms));
+
+                {
+                    std::lock_guard lock(mutex);
+                    commitAfterStarted.erase(sfs);
+                }
+
+                if(!sfs->commit(false, -1, FLAGS_pre_sync_commit))
+                {
+                    XLOGF(ERR, "Commit after {} ms failed", FLAGS_commit_after_ms);
+                    abort();
+                }
+                else
+                {
+                    XLOGF(INFO, "Commit after {} ms succeeded", FLAGS_commit_after_ms);
+                }                    
+            });
+        }
+    }
+    else if(!self->sfs.get_manual_commit())
+    {
+        const bool b = self->sfs.commit(false, -1, FLAGS_pre_sync_commit);
+
+        if(!b)
+        {
+            XLOGF(ERR, "Storage commit failed");
+            return false;
+        }
+    }
+
+    return true;
 }
 
 
@@ -2375,9 +2424,9 @@ void S3Handler::deleteObjects()
                         res = self->sfs.del(currPath, SingleFileStorage::DelAction::Del, false);
                     }
 
-                    if(res==0 && !self->sfs.get_manual_commit())
+                    if(res==0)
                     {
-                        res = self->sfs.commit(false, -1, FLAGS_pre_sync_commit) ? 0 : 1;
+                        res = self->commit() ? 0 : 1;
                     }
 
                     if(res==0)
@@ -2456,9 +2505,9 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                 res = self->sfs.del(currPath, SingleFileStorage::DelAction::Del, false);
             }
 
-            if(res==0 && !self->sfs.get_manual_commit())
+            if(res==0)
             {
-                res = self->sfs.commit(false, -1, FLAGS_pre_sync_commit) ? 0 : 1;
+                res = self->commit() ? 0 : 1;
             }
 
             evb->runInEventBaseThread([self = self, res]()
@@ -3367,23 +3416,18 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
             return;
         }
 
-        if(!sfs.get_manual_commit())
+        if(!commit())
         {
-            bool b = sfs.commit(false, -1, FLAGS_pre_sync_commit);
-            
-            if(!b)
-            {
-                evb->runInEventBaseThread([self = this]()
-                                    {           
-                        if(!self || self->finished_)
-                            return;
-                        ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
-                            .body("Commit error")
-                            .sendWithEOM();
-                        self->finished_ = true; });
-                return;
-            }
+            evb->runInEventBaseThread([self = this]()
+                                {           
+                    if(!self || self->finished_)
+                        return;
+                    ResponseBuilder(self->downstream_)
+                        .status(500, "Internal error")
+                        .body("Commit error")
+                        .sendWithEOM();
+                    self->finished_ = true; });
+            return;
         }
 
         evb->runInEventBaseThread([self = this, md5sum]()

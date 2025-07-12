@@ -129,7 +129,8 @@ ConfigResult readConfigFile(const std::string& fn)
         {"DATA_STORAGE_PATH", "data_path"},
         {"METADATA_STORAGE_PATH", "index_path"},
         {"SERVER_IP", "ip"},
-        {"INIT_ROOT_PASSWORD", "init_root_password"}
+        {"INIT_ROOT_PASSWORD", "init_root_password"},
+        {"COMMIT_AFTER_MS", "commit_after_ms"}
     };
 
     for(const auto& [key, val]: settings)
@@ -227,6 +228,10 @@ int actionRun(std::vector<std::string> args)
     TCLAP::SwitchArg manualCommitArg("", "manual-commit",
         "Manual commit mode (default false)", cmd);
 
+    TCLAP::ValueArg<int64_t> commitAfterMsArg("", "commit-after-ms",
+        "If manual commit mode is enabled, commit after this time (default 30000ms)",
+        false, 0, "milliseconds", cmd);
+
     TCLAP::SwitchArg duckDbUi("", "duckdb-ui",
         "Run DuckDB UI", cmd);
 
@@ -315,6 +320,12 @@ int actionRun(std::vector<std::string> args)
         && manualCommitArg.getValue())
     {
         realArgs.push_back("--manual_commit");
+    }
+
+    if(!alreadySetArgs.contains("--commit_after_ms"))
+    {
+        realArgs.push_back("--commit_after_ms");
+        realArgs.push_back(std::to_string(commitAfterMsArg.getValue()));
     }
 
     if(!alreadySetArgs.contains("--logging"))

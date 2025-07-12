@@ -251,6 +251,7 @@ private:
     void commit(proxygen::HTTPMessage& headers);
     void deleteObject(proxygen::HTTPMessage& headers);
     void deleteBucket(proxygen::HTTPMessage& headers);
+    bool commit();
 
     void listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& continuationToken, 
         const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter, const std::string& delimiter, const int64_t bucket,
