@@ -15,7 +15,9 @@
     "fmt",
     "argon2",
     "tclap",
-    "duckdb"
-    
+    {
+     "name": "duckdb-custom",
+     "features": ["autocomplete", "excel", "httpfs", "icu", "json", "tpcds", "tpch","ui","ducklake"]
+    }
   ]
 }

@@ -32,7 +32,6 @@
 #include "config.h"
 #include "StaticHandler.h"
 #include "DuckDbFs.h"
-#include "ui_extension.hpp"
 
 duckdb::DuckDB& getDuckDb()
 {
@@ -233,8 +232,6 @@ int realMain(int argc, char* argv[])
 
       auto& fs =(getDuckDb().instance)->GetFileSystem();
       fs.RegisterSubSystem(duckdb::make_uniq<DuckDbFs>(sfs, FLAGS_bucket_versioning));
-
-      getDuckDb().LoadExtension<duckdb::UiExtension>();
 
       auto res = con.Query("SET ui_local_port = "+std::to_string(FLAGS_duckdb_port));
       if(res->HasError())

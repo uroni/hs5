@@ -1,0 +1,25 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 981de80..64e6298 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -13,7 +13,7 @@ if (EMSCRIPTEN)
+ endif()
+ 
+ # Dependencies from VCPKG
+-find_package(EXPAT REQUIRED)
++find_package(expat REQUIRED)
+ find_package(ZLIB REQUIRED)
+ find_package(minizip-ng CONFIG REQUIRED)
+ 
+@@ -30,9 +30,9 @@ set(PARAMETERS "-warnings")
+ build_loadable_extension(${TARGET_NAME} ${PARAMETERS} ${EXTENSION_SOURCES}
+                          ${NUMFORMAT_OBJECT_FILES})
+ 
+-target_link_libraries(${EXTENSION_NAME} EXPAT::EXPAT MINIZIP::minizip-ng
++target_link_libraries(${EXTENSION_NAME} expat::expat MINIZIP::minizip-ng
+                       ZLIB::ZLIB)
+-target_link_libraries(${LOADABLE_EXTENSION_NAME} EXPAT::EXPAT
++target_link_libraries(${LOADABLE_EXTENSION_NAME} expat::expat
+                       MINIZIP::minizip-ng ZLIB::ZLIB)
+ 
+ install(

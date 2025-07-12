@@ -86,7 +86,7 @@ public:
                              duckdb::FileOpener *opener) override;
 
 
-    duckdb::vector<std::string> Glob(const std::string &glob_pattern, duckdb::FileOpener *opener) override;
+    duckdb::vector<duckdb::OpenFileInfo> Glob(const std::string &glob_pattern, duckdb::FileOpener *opener) override;
 
     static ParsedHs5Url Hs5UrlParse(std::string url);
 

@@ -219,7 +219,7 @@ bool DuckDbFs::ListFiles(const std::string &directory, const std::function<void(
 	}
 
 	for (const auto &file : glob_res) {
-		callback(file, false);
+		callback(file.path, false);
 	}
 
 	return true;
@@ -287,7 +287,7 @@ ParsedHs5Url DuckDbFs::Hs5UrlParse(std::string url)
     return {prefix, bucket, key};
 }
 
-duckdb::vector<std::string> DuckDbFs::Glob(const std::string &glob_pattern, duckdb::FileOpener *opener)
+duckdb::vector<duckdb::OpenFileInfo> DuckDbFs::Glob(const std::string &glob_pattern, duckdb::FileOpener *opener)
 {
     const auto parsedUrl = Hs5UrlParse(glob_pattern);
 
@@ -320,7 +320,7 @@ duckdb::vector<std::string> DuckDbFs::Glob(const std::string &glob_pattern, duck
 
     std::string lastOutputKeyStr;
 
-    duckdb::vector<std::string> ret;
+    duckdb::vector<duckdb::OpenFileInfo> ret;
 
     while(true)
     {
