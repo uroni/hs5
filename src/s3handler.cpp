@@ -3093,7 +3093,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 "\t\t\t<ID>75aa57f09aa0c8caeab4f8c24e99d10f8e7faeebf76c078efc7c6caea54ba06a</ID>\n"
                 "\t\t\t<DisplayName>mtd@amazon.com</DisplayName>\n"
                 "\t\t</Owner>\n"
-                "\t</Contents>", escapeXML(keyInfo.key), lastModifiedTp, folly::hexlify(md5sum), size);
+                "\t</Contents>", escapeXML(keyInfo.key), datebuf, folly::hexlify(md5sum), size);
             ++keyCount;
         }
 
