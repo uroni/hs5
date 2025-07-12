@@ -23,6 +23,7 @@ import time
 import filecmp
 import io
 import requests
+import hashlib
 
 def create_random_file(fn: Path, size: int) -> int:
     with open(fn, "wb") as f:
@@ -47,10 +48,14 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     fdata = os.urandom(29*1024*1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
+
+    fdata_md5 = hashlib.md5(fdata).hexdigest()
+
     
     s3_client = hs5.get_s3_client()
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+        res = s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+        assert res["ETag"].strip('"').lower() == fdata_md5.lower()
 
     obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj_info["ContentLength"] == len(fdata)

@@ -3463,7 +3463,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
                         return;
                     ResponseBuilder resp(self->downstream_);
                     resp.status(200, "OK");
-                    resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, fmt::format("\"{}\"", folly::hexlify(md5sum)));
+                    resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, fmt::format("\"{}\"", folly::hexlify(md5sum.substr(1))));
                     if(self->keyInfo.version != 0)
                     {
                         resp.header("x-amz-version-id", self->sfs.encrypt_id(self->keyInfo.version));
