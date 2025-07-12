@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752326960688,
+  "lastUpdate": 1752333697862,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -874,6 +874,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.38271789297531755",
             "extra": "mean: 15.689533405600013 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "3882ea3fd6e14e4b92f82dd6107ea06032b4cd80",
+          "message": "Fix duckdb static linking",
+          "timestamp": "2025-07-12T16:43:30+02:00",
+          "tree_id": "c22dba5d088bc57c6f46a7e85afab1505f517044",
+          "url": "https://github.com/uroni/hs5/commit/3882ea3fd6e14e4b92f82dd6107ea06032b4cd80"
+        },
+        "date": 1752333697446,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07286761689573773,
+            "unit": "iter/sec",
+            "range": "stddev: 0.12510741211549534",
+            "extra": "mean: 13.72351728520016 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06427986016843426,
+            "unit": "iter/sec",
+            "range": "stddev: 0.14069603062949304",
+            "extra": "mean: 15.556972236399906 sec\nrounds: 5"
           }
         ]
       }
