@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752336401825,
+  "lastUpdate": 1752336424650,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -1026,6 +1026,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.27158681160862813",
             "extra": "mean: 15.956597396400003 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "76c54af71cc99d361446f7045a65c114a50cd1a4",
+          "message": "Properly remove trailing slash from bucket name",
+          "timestamp": "2025-07-12T17:58:56+02:00",
+          "tree_id": "656d9ccfb4310d56d2f6b79eec1bd2bbe70664f1",
+          "url": "https://github.com/uroni/hs5/commit/76c54af71cc99d361446f7045a65c114a50cd1a4"
+        },
+        "date": 1752336424200,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07271477077043843,
+            "unit": "iter/sec",
+            "range": "stddev: 0.04877009057021725",
+            "extra": "mean: 13.752364057599994 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06544127548839643,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1589158371419519",
+            "extra": "mean: 15.280875755199986 sec\nrounds: 5"
           }
         ]
       }
