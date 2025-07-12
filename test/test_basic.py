@@ -224,6 +224,18 @@ def test_multipage_list_v2(tmp_path: Path, hs5: Hs5Runner):
     res = s3_client.list_objects(Bucket=hs5.testbucketname(), MaxKeys=100)
     assert "Contents" not in res
 
+def test_list_v2_empty(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), MaxKeys=100)
+    assert not res["IsTruncated"]
+    assert "Contents" not in res
+
+    # Test with a prefix
+    res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), Prefix="nonexistent", MaxKeys=100)
+    assert not res["IsTruncated"]
+    assert "Contents" not in res
+
 
 def test_list_prefix(tmp_path: Path, hs5: Hs5Runner):
     with open(tmp_path / "upload.txt", "w") as upload_file:
