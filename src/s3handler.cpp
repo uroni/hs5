@@ -1086,7 +1086,13 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         put_remaining = remaining;
         const auto path = headers->getPathAsStringPiece();
 
-        const auto createBucket = !path.empty() && path.find_first_of('/', 1)==std::string::npos;
+        std::string xid;
+        if(!headers->getQueryStringAsStringPiece().empty())
+        {
+            xid = headers->getDecodedQueryParam("x-id");
+        }
+
+        const auto createBucket = !path.empty() && path.find_first_of('/', 1)==std::string::npos && (xid.empty() || xid == "CreateBucket");
 
         if(createBucket)
             keyInfo.key = path.substr(1);
@@ -1099,7 +1105,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         const auto payload = *payloadOpt;
 
-        if(!createBucket && !headers->getQueryStringAsStringPiece().empty())
+        if(!createBucket && !headers->getQueryStringAsStringPiece().empty() && (xid.empty() || xid == "PutObjectPart"))
         {
             int partNumber = 0;
             const auto& queryParams = headers->getQueryParams();
@@ -1170,7 +1176,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        const auto action = "s3:PutObject";
+        const auto action = createBucket ? "s3:CreateBucket" : "s3:PutObject";
 
         if(!checkSig(*headers, payload, resource, action, true))
         {
@@ -1184,7 +1190,27 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         if(createBucket)
         {
+            if(!xid.empty() && xid != "CreateBucket")
+            {
+                XLOGF(INFO, "Invalid x-id for create bucket: {}", xid);
+                ResponseBuilder(downstream_)
+                    .status(400, "Bad request")
+                    .body("Invalid x-id for create bucket")
+                    .sendWithEOM();
+                return;
+            }
+
             request_type = RequestType::CreateBucket;
+            return;
+        }
+
+        if(!xid.empty() && xid != "PutObject")
+        {
+            XLOGF(INFO, "Invalid x-id for put object: {}", xid);
+            ResponseBuilder(downstream_)
+                .status(400, "Bad request")
+                .body("Invalid x-id for put object")
+                .sendWithEOM();
             return;
         }
 
