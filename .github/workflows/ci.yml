@@ -40,6 +40,12 @@ jobs:
         with:
           submodules: true
 
+      - name: Setup system packages for vcpkg
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: sudo apt-get update &&
+            sudo apt-get install autoconf automake autoconf-archive
+
       - uses: lukka/get-cmake@v3.31.5
 
       - name: Restore from cache and setup vcpkg executable and data files.
