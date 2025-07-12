@@ -126,7 +126,7 @@ find_path(TCLAP_INCLUDE_DIRS "tclap/Arg.h")
 target_include_directories(hs5 PRIVATE ${TCLAP_INCLUDE_DIRS})
 target_link_libraries(hs5 PRIVATE $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static> Folly::folly Folly::folly_deps Folly::follybenchmark Folly::folly_test_util
   proxygen::proxygen proxygen::proxygencurl proxygen::proxygenhttpserver expat::expat unofficial-sodium::sodium SqliteCppGen::SqliteCppGen nlohmann_json::nlohmann_json fmt::fmt
-  $<IF:$<TARGET_EXISTS:duckdb>,duckdb,duckdb_static> )
+  $<IF:$<TARGET_EXISTS:duckdb_static>,duckdb_static,duckdb>)
 
 target_compile_features(hs5 PUBLIC cxx_std_20)
 

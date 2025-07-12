@@ -17,7 +17,7 @@
     "tclap",
     {
      "name": "duckdb-custom",
-     "features": ["autocomplete", "excel", "httpfs", "icu", "json", "tpcds", "tpch","ui","ducklake"]
+     "features": ["autocomplete", "excel", "httpfs", "json", "tpcds", "tpch","ui","ducklake"]
     }
   ]
 }
