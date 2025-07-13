@@ -303,6 +303,7 @@ private:
 	std::condition_variable extents_cond;
 
 	std::vector<SingleFileStorage::Ext> extents;
+    bool extentsInitialized = false;
     EvpMdCtx evpMdCtx;
     std::unique_ptr<PayloadHash> payloadHash;
 

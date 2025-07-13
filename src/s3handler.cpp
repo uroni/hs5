@@ -1071,7 +1071,6 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     }
     else if (headers->getMethod() == HTTPMethod::PUT)
     {
-        request_type = RequestType::PutObject;
         std::string cl = headers->getHeaders().getSingleOrEmpty(
             proxygen::HTTP_HEADER_CONTENT_LENGTH);
         if (cl.empty())
@@ -1913,6 +1912,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
 void S3Handler::putObject(proxygen::HTTPMessage& headers)
 {
+    request_type = RequestType::PutObject;
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb]()
@@ -1970,6 +1970,7 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                 if(!res.extents.empty())
                     self->extents = std::move(res.extents);
 
+                self->extentsInitialized = true;
                 self->extents_cond.notify_all();
             });
 }
@@ -1990,6 +1991,7 @@ std::pair<std::string, std::string> splitUploadId(const std::string& uploadId)
 
 void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId)
 {
+    request_type = RequestType::PutObject;
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb, partNumber, uploadId, uploadVerId]()
@@ -2072,6 +2074,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
 
                 std::lock_guard lock(self->extents_mutex);
                 self->extents = std::move(res.extents);
+                self->extentsInitialized = true;
                 self->extents_cond.notify_all();
             });
 }
@@ -3291,6 +3294,9 @@ void S3Handler::readBodyThread(folly::EventBase *evb)
 
 void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 {
+    if(request_type == RequestType::Unknown)
+        return;
+
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     size_t body_bytes = body->length();
@@ -3358,6 +3364,11 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
         }
         return;
     }
+    else if(request_type != RequestType::PutObject)
+    {
+        XLOGF(WARN, "Ignoring body received in request type {}", static_cast<int>(request_type));
+        return;
+    }
 
     {
         std::scoped_lock lock{bodyMutex};
@@ -3382,6 +3393,19 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
 void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr<folly::IOBuf> body)
 {
+    {
+        std::unique_lock lock(extents_mutex);
+        while (!extentsInitialized && !finished_)
+        {
+            extents_cond.wait(lock);
+        }
+
+        if (finished_)
+        {
+            return;
+        }
+    }
+
     if(!body)
     {
         if(put_remaining!=0)
@@ -3472,19 +3496,6 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
                     resp.sendWithEOM();
                     self->finished_ = true; });
         return;
-    }
-
-    {
-        std::unique_lock lock(extents_mutex);
-        while (extents.empty() && !finished_)
-        {
-            extents_cond.wait(lock);
-        }
-
-        if (finished_)
-        {
-            return;
-        }
     }
 
     if(extents.size()>1)
