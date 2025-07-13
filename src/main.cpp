@@ -58,7 +58,7 @@ DEFINE_string(index_path, ".", "Path where to put the index file");
 DEFINE_string(data_path, ".", "Path where to put the data file");
 DEFINE_bool(stop_on_error, false, "Stop on write/read errors");
 DEFINE_bool(punch_holes, true, "Free up space if not enough free space is left by punching holes");
-DEFINE_string(server_url, "serverurl", "URL of server");
+DEFINE_string(server_url, "", "URL of server");
 DEFINE_bool(bucket_versioning, false, "Enable bucket versioning");
 DEFINE_string(index_wal_path, "", "Path where to put the index WAL file. Disabled if empty");
 DEFINE_bool(run_duckdb, false, "Run DuckDB UI");
@@ -165,9 +165,6 @@ int realMain(int argc, char* argv[])
       return 1;
     }
 
-    if(FLAGS_server_url.empty())
-      FLAGS_server_url = "http://example.com";
-
     std::vector<proxygen::HTTPServer::IPConfig> IPs = {
         {folly::SocketAddress(FLAGS_ip, FLAGS_http_port, true), proxygen::HTTPServer::Protocol::HTTP},
     };
@@ -176,6 +173,9 @@ int realMain(int argc, char* argv[])
     {
       IPs.push_back({folly::SocketAddress(FLAGS_ip, FLAGS_h2_port, true), proxygen::HTTPServer::Protocol::HTTP2});
     }
+
+    if(FLAGS_server_url.empty())
+      FLAGS_server_url = fmt::format("http://{}:{}", FLAGS_ip, FLAGS_http_port);
 
     SingleFileStorage::SFSOptions sfsoptions;
     sfsoptions.data_path = FLAGS_data_path;

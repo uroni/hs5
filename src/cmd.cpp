@@ -203,7 +203,7 @@ int actionRun(std::vector<std::string> args)
 
     TCLAP::ValueArg<std::string> serverUrlArg("u", "server-url",
 		"URL of the server",
-		false, "https://example.com", "URL", cmd);
+		false, "", "URL", cmd);
 
     TCLAP::ValueArg<std::string> storagePathArg("s", "storage-path",
 		"Storage path (default current dir)",
