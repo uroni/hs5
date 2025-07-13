@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1752440878204,
+  "lastUpdate": 1752440948943,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -1330,6 +1330,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.22554632983625725",
             "extra": "mean: 14.63559451699997 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "d339f54c8c3423b3a897ba6cbe3ebfa0209913d0",
+          "message": "Use bool to signal extent initialization\n\nSo it also works with zero length files",
+          "timestamp": "2025-07-13T23:00:24+02:00",
+          "tree_id": "30f8cee9885d4c2d0efa465fac2d3024e4c86883",
+          "url": "https://github.com/uroni/hs5/commit/d339f54c8c3423b3a897ba6cbe3ebfa0209913d0"
+        },
+        "date": 1752440948357,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07276647796458009,
+            "unit": "iter/sec",
+            "range": "stddev: 0.17707305854176034",
+            "extra": "mean: 13.742591753399983 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06431941144037857,
+            "unit": "iter/sec",
+            "range": "stddev: 0.23829162980657673",
+            "extra": "mean: 15.547405947999982 sec\nrounds: 5"
           }
         ]
       }
