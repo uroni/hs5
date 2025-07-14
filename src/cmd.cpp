@@ -230,7 +230,7 @@ int actionRun(std::vector<std::string> args)
 
     TCLAP::ValueArg<int64_t> commitAfterMsArg("", "commit-after-ms",
         "If manual commit mode is enabled, commit after this time (default 30000ms)",
-        false, 0, "milliseconds", cmd);
+        false, 30000, "milliseconds", cmd);
 
     TCLAP::SwitchArg duckDbUi("", "duckdb-ui",
         "Run DuckDB UI", cmd);
