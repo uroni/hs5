@@ -2337,14 +2337,18 @@ bool S3Handler::commit()
                     commitAfterStarted.erase(sfs);
                 }
 
-                if(!sfs->commit(false, -1, FLAGS_pre_sync_commit))
+                const auto startime = std::chrono::steady_clock::now();
+                const auto rc = sfs->commit(false, -1, FLAGS_pre_sync_commit);
+                const auto duration = std::chrono::steady_clock::now() - startime;
+
+                if(!rc)
                 {
-                    XLOGF(ERR, "Commit after {} ms failed", FLAGS_commit_after_ms);
+                    XLOGF(ERR, "Commit after {} ms failed. Commit duration {}ms", FLAGS_commit_after_ms, std::chrono::duration_cast<std::chrono::milliseconds>(duration).count());
                     abort();
                 }
                 else
                 {
-                    XLOGF(INFO, "Commit after {} ms succeeded", FLAGS_commit_after_ms);
+                    XLOGF(INFO, "Commit after {} ms succeeded. Commit duration {}ms", FLAGS_commit_after_ms, std::chrono::duration_cast<std::chrono::milliseconds>(duration).count());
                 }                    
             });
         }
