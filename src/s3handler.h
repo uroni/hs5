@@ -231,6 +231,8 @@ public:
     };
 
     static bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData);
+    static std::string getEtag(const std::string& md5sum);
+    
     static int seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
     static int readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
     static int readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
@@ -259,8 +261,7 @@ private:
     void createMultipartUpload(proxygen::HTTPMessage& headers);
     void finalizeMultipartUpload();
     void finalizeCreateBucket();
-    std::string getEtag(const std::string& md5sum);
-    
+    std::string getEtagParsedMultipart(const std::string& md5sum);
     
     void readBodyThread(folly::EventBase *evb);
     bool setKeyInfoFromPath(const std::string_view path);

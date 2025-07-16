@@ -1665,6 +1665,53 @@ bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen,
 
 std::string S3Handler::getEtag(const std::string& md5sum)
 {
+#ifdef ALLOW_LEGACY_MD5SUM
+    if(md5sum.size()==MD5_DIGEST_LENGTH || md5sum.empty())
+    {
+        return md5sum;
+    }
+#endif
+
+    if(md5sum.empty())
+        return std::string();
+
+    CRData rdata(md5sum.data(), md5sum.size());
+    char itype;
+    if(!rdata.getChar(&itype) || itype == metadata_tombstone)
+        return std::string();
+
+    if(itype != metadata_multipart_object && itype != metadata_object)
+    {
+        assert(false);
+        return std::string();
+    }
+
+    std::string etag;
+
+    if(rdata.getLeft()>=MD5_DIGEST_LENGTH)
+    {
+        etag.assign(rdata.getCurrDataPtr(), MD5_DIGEST_LENGTH);
+        rdata.incrementPtr(MD5_DIGEST_LENGTH);
+    }
+
+    if(itype == metadata_object)
+    {
+        return fmt::format("\"{}\"", folly::hexlify(etag));
+    }
+
+    int64_t uploadId, numParts;
+
+    if(!rdata.getVarInt(&uploadId))
+        return fmt::format("\"{}\"", folly::hexlify(etag));
+
+    if(!rdata.getVarInt(&numParts))
+        return fmt::format("\"{}\"", folly::hexlify(etag));
+
+    return fmt::format("\"{}-{}\"", folly::hexlify(etag), numParts);
+}
+
+std::string S3Handler::getEtagParsedMultipart(const std::string& md5sum)
+{
     if(multiPartDownloadData)
         return fmt::format("\"{}-{}\"", folly::hexlify(multiPartDownloadData->etag), multiPartDownloadData->numParts);
     else
@@ -1859,7 +1906,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                 #ifdef ALLOW_LEGACY_MD5SUM
                 const auto md5sum = res.md5sum.size() == MD5_DIGEST_LENGTH ? res.md5sum : ((!res.md5sum.empty() && res.md5sum[0] == metadata_object ) ? res.md5sum.substr(1) : "");
                 #else
-                const auto md5sum = (!res.md5sum.empty() && res.md5sum[0] == metadata_object ) ? res.md5sum.substr(1) : "";
+                const auto md5sum = (!res.md5sum.empty() && res.md5sum[0] == metadata_object ) ? res.md5sum.substr(1, MD5_DIGEST_LENGTH) : "";
                 #endif
 
                 const auto [rangeStart, rangeEnd] = parseRange(range, res.total_len);
@@ -1880,7 +1927,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                                               {
                     auto resp = std::move(ResponseBuilder(self->downstream_).status(hasRange ? 206 : 200, hasRange ? "Partial Content" : "OK")
                         .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(rangeEnd-rangeStart))
-                        .header(proxygen::HTTP_HEADER_ETAG, self->getEtag(md5sum))
+                        .header(proxygen::HTTP_HEADER_ETAG, self->getEtagParsedMultipart(md5sum))
                         .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "binary/octet-stream"));
 
                     if(self->request_type==RequestType::HeadObject)
@@ -3093,14 +3140,14 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             val_data += fmt::format("\t<Contents>\n"
                 "\t\t<Key>{}</Key>\n"
                 "\t\t<LastModified>{}</LastModified>\n"
-                "\t\t<ETag>\"{}\"</ETag>\n"
+                "\t\t<ETag>{}</ETag>\n"
                 "\t\t<Size>{}</Size>\n"
                 "\t\t<StorageClass>STANDARD</StorageClass>\n"
                 "\t\t<Owner>\n"
                 "\t\t\t<ID>75aa57f09aa0c8caeab4f8c24e99d10f8e7faeebf76c078efc7c6caea54ba06a</ID>\n"
                 "\t\t\t<DisplayName>mtd@amazon.com</DisplayName>\n"
                 "\t\t</Owner>\n"
-                "\t</Contents>", escapeXML(keyInfo.key), datebuf, folly::hexlify(md5sum), size);
+                "\t</Contents>", escapeXML(keyInfo.key), datebuf, getEtag(md5sum), size);
             ++keyCount;
         }
 

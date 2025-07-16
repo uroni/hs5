@@ -93,6 +93,7 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     assert diff.total_seconds() < 60
     assert "Key" in objs[0] and objs[0]["Key"] == "upload.txt"
     assert "Size" in objs[0] and objs[0]["Size"] == len(fdata)
+    assert "ETag" in objs[0] and objs[0]["ETag"].strip('"').lower() == fdata_md5.lower()
     
     s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     with pytest.raises(ClientError):
