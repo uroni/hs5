@@ -27,7 +27,7 @@ namespace
     int64_t nextId()
     {
         auto ret = currMaxId;
-        currMaxId+=2;
+        currMaxId+=4;
         return ret;
     }
 }
@@ -121,7 +121,17 @@ int64_t getPartialUploadsBucket(int64_t bucketId)
 
 bool isPartialUploadsBucket(int64_t bucketId)
 {
-    return bucketId % 2 == 0;
+    return bucketId % 4 == 2;
+}
+
+int64_t getPartsBucket(int64_t bucketId)
+{
+    return bucketId + 2;
+}
+
+bool isPartsBucket(int64_t bucketId)
+{
+    return bucketId % 4 == 3;
 }
 
 std::string getBucketName(int64_t bucketId)

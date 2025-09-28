@@ -19,6 +19,10 @@ int64_t getPartialUploadsBucket(int64_t bucketId);
 
 bool isPartialUploadsBucket(int64_t bucketId);
 
+int64_t getPartsBucket(int64_t bucketId);
+
+bool isPartsBucket(int64_t bucketId);
+
 std::string getBucketName(int64_t bucketId);
 
 Api::ListResp getBucketNames();

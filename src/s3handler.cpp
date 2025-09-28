@@ -2057,10 +2057,11 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                     return;
                 }
 
-                const auto bucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
+                const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
+                const auto partsBucketId = buckets::getPartsBucket(self->keyInfo.bucketId);
 
                 auto readRes = self->sfs.read_prepare(make_key({.key = uploadIdToStr(uploadId), .version = 0, 
-                    .bucketId = bucketId}), 0);
+                    .bucketId = partialUploadsBucketId}), 0);
                 if(readRes.err!=0)
                 {
                     evb->runInEventBaseThread([self = self, readRes]()
@@ -2095,7 +2096,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                 }
 
                 self->keyInfo = {.key = uploadIdToStr(uploadId) +"."+uploadIdToStr(partNumber), .version = 0, 
-                    .bucketId = bucketId};
+                    .bucketId = partsBucketId};
                 auto res = self->sfs.write_prepare(make_key(self->keyInfo), self->put_remaining);
                 if (res.err != 0)
                 {                    
@@ -2140,10 +2141,10 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
                 data.addString2(uploadVerId);
 
                 std::string md5sum(data.getDataPtr(), data.getDataSize());
-                const auto bucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
+                const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
 
                 auto rc = self->sfs.write(make_key({.key = uploadIdToStr(uploadId), .version = 0, 
-                    .bucketId = bucketId}), nullptr, 0, 0, 0, md5sum,  false, false);
+                    .bucketId = partialUploadsBucketId}), nullptr, 0, 0, 0, md5sum,  false, false);
          
                 evb->runInEventBaseThread([rc=rc, uploadIdEnc = uploadIdEnc, uploadVerId, self = self]()
                                   {   
@@ -2180,10 +2181,10 @@ void S3Handler::finalizeMultipartUpload()
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb, multiPartData = this->multiPartUploadData.get()]()
             {
-                const auto bucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
+                const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
                 auto readRes = self->sfs.read_prepare(
                     make_key({.key = uploadIdToStr(multiPartData->uploadId), .version = 0, 
-                    .bucketId = bucketId}), 0);
+                    .bucketId = c}), 0);
                 CRData uploadData(readRes.md5sum.data(), readRes.md5sum.size());
                 std::string uploadFPath;
                 std::string uploadVerId;
@@ -2232,6 +2233,8 @@ void S3Handler::finalizeMultipartUpload()
                     return;
                 }
 
+                const auto partsBucketId = getPartsBucket(self->keyInfo.bucketId);
+
                 for(const auto& part: multiPartData->parts)
                 {
                     if(part.partNumber==7)
@@ -2239,7 +2242,7 @@ void S3Handler::finalizeMultipartUpload()
 
                     auto readPartRes = self->sfs.read_prepare(
                         make_key({.key = uploadIdToStr(multiPartData->uploadId)+"."+uploadIdToStr(part.partNumber), .version = 0, 
-                            .bucketId = bucketId}), SingleFileStorage::ReadSkipAddReading);
+                            .bucketId = partsBucketId}), SingleFileStorage::ReadSkipAddReading);
 
                     if(readPartRes.err!=0)
                     {
@@ -2313,7 +2316,7 @@ void S3Handler::finalizeMultipartUpload()
 
                 auto delRes = self->sfs.del(
                     make_key({.key = uploadIdToStr(multiPartData->uploadId), .version = 0, 
-                        .bucketId = bucketId}), SingleFileStorage::DelAction::Del, false);
+                        .bucketId = partialUploadsBucketId}), SingleFileStorage::DelAction::Del, false);
 
                 if(delRes)
                 {
@@ -2752,10 +2755,10 @@ int S3Handler::seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
 int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents)
 {
     auto partNum = multiPartDownloadData.currExt.start;
-    const auto partialBucketId = buckets::getPartialUploadsBucket(bucketId);
+    const auto partsBucketId = buckets::getPartsBucket(bucketId);
     auto res = sfs.read_prepare(
         make_key({.key = uploadIdToStr(multiPartDownloadData.uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
-                    .bucketId = partialBucketId}), 0);
+                    .bucketId = partsBucketId}), 0);
     if (res.err != 0)
     {
         XLOGF(WARN, "Error reading next multipart object meta-information uploadid {} partnum {}", multiPartDownloadData.uploadId, partNum);
@@ -2822,10 +2825,10 @@ int S3Handler::readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int6
             assert(ext.obj_offset>=multiPartDownloadData.currOffset );
             ext.obj_offset-=multiPartDownloadData.currOffset;
         }
-        const auto partialBucketId = buckets::getPartialUploadsBucket(bucketId);
+        const auto partsBucketId = buckets::getPartsBucket(bucketId);
         const auto rc = sfs.read_finalize(
             make_key({.key = uploadIdToStr(multiPartDownloadData.uploadId)+"."+uploadIdToStr(lastPartNum), .version = 0, 
-                    .bucketId = partialBucketId}), extents, 0);
+                    .bucketId = partsBucketId}), extents, 0);
         assert(rc==0);
         multiPartDownloadData.needsFinalize = false;
     }
@@ -2848,7 +2851,7 @@ int S3Handler::finalizeMultiPart(SingleFileStorage& sfs, const int64_t bucketId,
     if(!multiPartDownloadData.needsFinalize)
         return 0;
 
-    const auto partialBucketId = buckets::getPartialUploadsBucket(bucketId);
+    const auto partsBucketId = buckets::getPartsBucket(bucketId);
     const auto partNum = multiPartDownloadData.currExt.start;
 
     if(!extents.empty() && extents[0].len>0)
@@ -2860,7 +2863,7 @@ int S3Handler::finalizeMultiPart(SingleFileStorage& sfs, const int64_t bucketId,
         }
         
         const auto rc = sfs.read_finalize(make_key({.key = uploadIdToStr(multiPartDownloadData.uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
-                    .bucketId = bucketId}), extents, 0);
+                    .bucketId = partsBucketId}), extents, 0);
         assert(rc==0);
     }
 
@@ -3740,14 +3743,15 @@ std::vector<std::string> S3Handler::onDeleteCallback(const std::string& fn, cons
         }
 
         XLOGF(INFO, "Multi-part upload found for object {} with total length {}. Deleting {} parts", keyInfo.key, totalLen, parts);
-        const auto partialBucketId = buckets::getPartialUploadsBucket(keyInfo.bucketId);
+        const auto partsBucketId = buckets::getPartsBucket(keyInfo.bucketId);
+        ret.reserve(parts);
 
         for(const auto& ext: multiPartDownloadData->exts)
         {
             for(auto partNum=ext.start; partNum<ext.start+ext.len; ++partNum)
             {
                 const auto key = make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
-                            .bucketId = partialBucketId});
+                            .bucketId = partsBucketId});
                 ret.push_back(key);
             }
         }
