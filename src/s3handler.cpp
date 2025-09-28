@@ -2184,7 +2184,7 @@ void S3Handler::finalizeMultipartUpload()
                 const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
                 auto readRes = self->sfs.read_prepare(
                     make_key({.key = uploadIdToStr(multiPartData->uploadId), .version = 0, 
-                    .bucketId = c}), 0);
+                    .bucketId = partialUploadsBucketId}), 0);
                 CRData uploadData(readRes.md5sum.data(), readRes.md5sum.size());
                 std::string uploadFPath;
                 std::string uploadVerId;
@@ -2194,7 +2194,7 @@ void S3Handler::finalizeMultipartUpload()
                     !uploadData.getStr2(&uploadVerId) ||
                     uploadVerId!=multiPartData->verId )
                 {
-                    evb->runInEventBaseThread([self = self, readRes]()
+                    evb->runInEventBaseThread([self = self, readRes = readRes]()
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
@@ -2223,17 +2223,17 @@ void S3Handler::finalizeMultipartUpload()
                 if(md5Ctx==nullptr ||
                     EVP_DigestInit(md5Ctx, EVP_md5())!=1)
                 {
-                    evb->runInEventBaseThread([self = self, readRes]()
+                    evb->runInEventBaseThread([self = self]()
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Error initializing hash function", readRes.err))
+                            .body(fmt::format("Error initializing hash function"))
                             .sendWithEOM();
                         self->finished_ = true; });
                     return;
                 }
 
-                const auto partsBucketId = getPartsBucket(self->keyInfo.bucketId);
+                const auto partsBucketId = buckets::getPartsBucket(self->keyInfo.bucketId);
 
                 for(const auto& part: multiPartData->parts)
                 {
