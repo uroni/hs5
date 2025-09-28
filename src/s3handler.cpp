@@ -1380,7 +1380,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         const std::string uploadsStr = "uploads";
         
-        if(headers->getQueryStringAsStringPiece() == uploadsStr)
+        if(headers->getQueryStringAsStringPiece() == uploadsStr ||
+            headers->hasQueryParam("uploads"))
         {
             const auto resource = fmt::format("arn:aws:s3:::{}", headers->getPathAsStringPiece().substr(1));
             const auto action = "s3:CreateMultipartUpload";
