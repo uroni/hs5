@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759084599558,
+  "lastUpdate": 1759084626419,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -1634,6 +1634,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.13431304413772274",
             "extra": "mean: 15.043807336999999 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "c88ccb84973073859876744d6ed9d4ceecc9168a",
+          "message": "Handle content sha256 being set to UNSIGNED-PAYLOAD",
+          "timestamp": "2025-09-28T20:00:03+02:00",
+          "tree_id": "6f1019ad246db4ddc4d5ea176bc3f8d9d24eb5f7",
+          "url": "https://github.com/uroni/hs5/commit/c88ccb84973073859876744d6ed9d4ceecc9168a"
+        },
+        "date": 1759084625362,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07575531125111667,
+            "unit": "iter/sec",
+            "range": "stddev: 0.027819436602108907",
+            "extra": "mean: 13.200394579399994 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06682973590749079,
+            "unit": "iter/sec",
+            "range": "stddev: 0.2043253505578897",
+            "extra": "mean: 14.963398948400037 sec\nrounds: 5"
           }
         ]
       }
