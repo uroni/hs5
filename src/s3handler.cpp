@@ -943,6 +943,9 @@ std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& mes
 {
     const auto payload = message.getHeaders().getSingleOrEmpty("x-amz-content-sha256");
 
+    if(payload == unsigned_payload)
+        return payload;
+
     std::string payloadBin;
     if(!folly::unhexlify(payload, payloadBin))
     {
