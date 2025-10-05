@@ -2144,6 +2144,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 		res.total_len += ext.len;
 	}
 	res.md5sum = frag_info.md5sum;
+	res.last_modified = frag_info.last_modified;
 
 	if(read_newest)
 	{

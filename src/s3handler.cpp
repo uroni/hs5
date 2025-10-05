@@ -1821,6 +1821,16 @@ std::pair<int64_t, int64_t> parseRange(const std::string_view range, int64_t fil
     return std::make_pair(start, end);
 }
 
+std::string format_last_modified(const int64_t lastModified)
+{
+    constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
+    const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(lastModified));
+
+    char datebuf[sizeof("2011-10-08T07:07:09Z")];
+    std::strftime(datebuf, sizeof(datebuf), "%FT%TZ", std::gmtime(&lastModifiedTp));
+    return datebuf;
+}
+
 void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& accessKey)
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
@@ -1945,12 +1955,13 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     return;
                 }
 
-                evb->runInEventBaseThread([self = self, hasRange=!range.empty(), rangeStart, rangeEnd, md5sum]()
+                evb->runInEventBaseThread([self = self, hasRange=!range.empty(), rangeStart, rangeEnd, md5sum, last_modified = res.last_modified]()
                                               {
                     auto resp = std::move(ResponseBuilder(self->downstream_).status(hasRange ? 206 : 200, hasRange ? "Partial Content" : "OK")
                         .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(rangeEnd-rangeStart))
                         .header(proxygen::HTTP_HEADER_ETAG, self->getEtagParsedMultipart(md5sum))
-                        .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "binary/octet-stream"));
+                        .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "binary/octet-stream")
+                        .header("Last-Modified", format_last_modified(last_modified)));
 
                     if(self->request_type==RequestType::HeadObject)
                     {
@@ -3156,12 +3167,6 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 size += ext.len;
             }
 
-            constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
-            const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(last_modified));
-
-            char datebuf[sizeof("2011-10-08T07:07:09Z")];
-            std::strftime(datebuf, sizeof(datebuf), "%FT%TZ", std::gmtime(&lastModifiedTp));
-
             val_data += fmt::format("\t<Contents>\n"
                 "\t\t<Key>{}</Key>\n"
                 "\t\t<LastModified>{}</LastModified>\n"
@@ -3172,7 +3177,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 "\t\t\t<ID>75aa57f09aa0c8caeab4f8c24e99d10f8e7faeebf76c078efc7c6caea54ba06a</ID>\n"
                 "\t\t\t<DisplayName>mtd@amazon.com</DisplayName>\n"
                 "\t\t</Owner>\n"
-                "\t</Contents>", escapeXML(keyInfo.key), datebuf, getEtag(md5sum), size);
+                "\t</Contents>", escapeXML(keyInfo.key), format_last_modified(last_modified), getEtag(md5sum), size);
             ++keyCount;
         }
 

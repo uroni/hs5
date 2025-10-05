@@ -156,6 +156,7 @@ public:
 		int64_t total_len;
 		std::string md5sum;
 		std::string key;
+		int64_t last_modified;
 	};
 
 	ReadPrepareResult read_prepare(const std::string_view fn, unsigned int flags);
