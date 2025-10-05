@@ -59,8 +59,10 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
 
     obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj_info["ContentLength"] == len(fdata)
+    assert obj_info["LastModified"].year >= 2025
 
     obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9")
+    assert obj_range["LastModified"].year >= 2025
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
     assert bdata == fdata[:10]
