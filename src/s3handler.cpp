@@ -497,10 +497,25 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
         canonicalParamStr += param;
     }
 
+    std::string emptyPayload;
+    if(payload.empty())
+    {
+        // We expect an empty payload, but we also don't read the body, so don't care if this is wrong
+        emptyPayload = headers.getHeaders().getSingleOrEmpty("x-amz-content-sha256");
+    
+        if(!emptyPayload.empty() &&
+            emptyPayload != unsigned_payload &&
+            emptyPayload != emptyPayloadHash)
+        {
+            XLOGF(WARN, "Unkown empty payload '{}' (not empty or UNSIGNED-PAYLOAD). Ignoring", emptyPayload);
+        }
+    }
+
     const auto canonicalRequest = folly::sformat(
         "{}\n{}\n{}\n{}\n{}\n{}", headers.getMethodString(),
         headers.getPathAsStringPiece(), canonicalParamStr, canonicalHeaders,
-        signedHeaders, (presignedRequest || payload.empty()) ? unsigned_payload : payload);
+        signedHeaders, presignedRequest ? unsigned_payload : (payload.empty() ? 
+            (emptyPayload.empty() ? unsigned_payload : emptyPayload) : payload ));
 
     const auto hashedCanonicalRequest = hashSha256Hex(canonicalRequest);
     if(requestDateTime.empty())
@@ -1029,7 +1044,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         if(nextSlash==std::string::npos || nextSlash == header_path.size()-1)
         {
             const auto bucketName = header_path.subpiece(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
-            if(!checkSig(*headers, emptyPayloadHash, fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket", false))
+            if(!checkSig(*headers, "", fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket", false))
             {
                 XLOGF(INFO, "Unauthorized list bucket: {}", bucketName);
                 ResponseBuilder(downstream_)
@@ -1046,7 +1061,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         const auto resource = fmt::format("arn:aws:s3:::{}", header_path.subpiece(1));
         const auto action = headers->getMethod() == HTTPMethod::GET ? "s3:GetObject" : "s3:HeadObject";
 
-        auto accessKey = checkSig(*headers, emptyPayloadHash, resource, action, true);
+        auto accessKey = checkSig(*headers, "", resource, action, true);
 
         if(!accessKey)
         {
@@ -1263,7 +1278,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         const auto action = isDeleteBucket ? "s3:DeleteBucket" : "s3:DeleteObject";
 
         //TODO: Double-check that pre-signed delete is possible
-        if(!checkSig(*headers, emptyPayloadHash, resource, action, true))
+        if(!checkSig(*headers, "", resource, action, true))
         {
             XLOGF(INFO, "Unauthorized delete object: {}", path);
             ResponseBuilder(downstream_)
@@ -1386,7 +1401,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const auto resource = fmt::format("arn:aws:s3:::{}", headers->getPathAsStringPiece().substr(1));
             const auto action = "s3:CreateMultipartUpload";
 
-            if(!checkSig(*headers, emptyPayloadHash, resource, action, true))
+            if(!checkSig(*headers, "", resource, action, true))
             {
                 XLOGF(INFO, "Unauthorized create multi-part upload: {}", headers->getPathAsStringPiece());
                 ResponseBuilder(downstream_)
@@ -1601,14 +1616,17 @@ void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string&
 
 void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
 {
+    const auto runtime_id = sfs.get_runtime_id();
     if(request_type==RequestType::HeadObject)
     {
-        ResponseBuilder(self->downstream_).status(200, "OK").header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(sfs.get_runtime_id().size())).sendWithEOM();
+        ResponseBuilder(self->downstream_).status(200, "OK").header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(runtime_id.size())).sendWithEOM();
         return;
     }
 
     ResponseBuilder(self->downstream_)
                         .status(200, "OK")
+                        .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(runtime_id.size()))
+                        .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "binary/octet-stream")
                         .body(fmt::format("{}", sfs.get_runtime_id()))
                         .sendWithEOM();
 }
