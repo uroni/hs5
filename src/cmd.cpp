@@ -151,6 +151,15 @@ ConfigResult readConfigFile(const std::string& fn)
             res.args.push_back(toFollyLoglevel(val));
             continue;
         }
+        if(key=="STOP_ON_ERROR")
+        {
+            if(parseConfigBool(val))
+            {
+                res.args.push_back("--stop_on_error");
+                res.setArgs.insert("--stop_on_error");
+            }
+            continue;
+        }
 
         const auto it = configMapping.find(key);
         if(it!=configMapping.end())
@@ -238,6 +247,9 @@ int actionRun(std::vector<std::string> args)
     TCLAP::ValueArg<unsigned short> duckDbUiPort("", "duckdb-http-port",
 		"Specifies on which port DuckDB UI will run (default 4213)",
 		false, 4213, "port number", cmd);
+
+    TCLAP::SwitchArg stopOnErrorArg("", "stop-on-error",
+        "Stop running on error (e.g., write error)", cmd);
 
     std::vector<std::string> realArgs;
 	realArgs.push_back(args[0]);
@@ -339,6 +351,12 @@ int actionRun(std::vector<std::string> args)
         realArgs.push_back("--run_duckdb");
         realArgs.push_back("--duckdb_port");
         realArgs.push_back(std::to_string(duckDbUiPort.getValue()));
+    }
+
+    if(!alreadySetArgs.contains("--stop_on_error") &&
+            stopOnErrorArg.getValue())
+    {
+        realArgs.push_back("--stop_on_error");
     }
 
     return runRealMain(realArgs);
