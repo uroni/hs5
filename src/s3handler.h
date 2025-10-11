@@ -264,6 +264,7 @@ private:
     std::string getEtagParsedMultipart(const std::string& md5sum);
     
     void readBodyThread(folly::EventBase *evb);
+    void startReadBodyThread(folly::EventBase *evb);
     bool setKeyInfoFromPath(const std::string_view path);
     std::optional<std::string> initPayloadHash(proxygen::HTTPMessage& message);
     void deleteObjects();

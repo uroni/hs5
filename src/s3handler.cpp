@@ -3302,11 +3302,21 @@ void S3Handler::onEgressResumed() noexcept
     }
 }
 
+void S3Handler::startReadBodyThread(folly::EventBase *evb)
+{
+    if(!hasBodyThread)
+    {
+        hasBodyThread = true;
+        folly::getGlobalCPUExecutor()->add(
+            [self = this->self, evb]() mutable
+            {
+                self->readBodyThread(evb);
+            });
+    }
+}
+
 void S3Handler::readBodyThread(folly::EventBase *evb)
 {
-    if(finished_)
-        return;
-
     std::unique_lock lock{bodyMutex};
     bool unpause = false;
     size_t cnt = 0;
@@ -3457,16 +3467,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
         if(pause)
             downstream_->pauseIngress();
         bodyQueue.emplace(BodyObj{.offset = done_bytes, .body = std::move(body), .unpause = pause});
-
-        if(!hasBodyThread)
-        {
-            hasBodyThread = true;
-            folly::getGlobalCPUExecutor()->add(
-                [self = this->self, evb]() mutable
-                {
-                    self->readBodyThread(evb);
-                });
-        }
+        startReadBodyThread(evb);
     }
 
     done_bytes += body_bytes;
@@ -3483,6 +3484,8 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
         if (finished_)
         {
+            sfs.free_extents(extents);
+            extents.clear();
             return;
         }
     }
@@ -3491,6 +3494,10 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
     {
         if(put_remaining!=0)
         {
+            XLOGF(WARN, "Key {}, remaining bytes {}. Returning error", keyInfo.key, put_remaining.load(std::memory_order_relaxed));
+            sfs.free_extents(extents);          
+            extents.clear();
+
             evb->runInEventBaseThread([self = this]()
                                 {           
                     if(!self || self->finished_)
@@ -3511,6 +3518,11 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
         if(payloadHash && !payloadHash->isFinalExpected())
         {
+            sfs.free_extents(extents);
+            extents.clear();
+
+            XLOGF(WARN, "Payload hash not as expected");
+
             evb->runInEventBaseThread([self = this]()
                                 {           
                 if(!self || self->finished_)
@@ -3534,8 +3546,11 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
         auto rc = sfs.write_finalize(make_key(keyInfo), extents, lastModified, md5sum, false, true);
 
+        extents.clear();
+
         if (rc != 0)
         {
+            XLOGF(WARN, "Error obj {} finalizing write code {}", keyInfo.key, rc);
             evb->runInEventBaseThread([self = this]()
                                 {           
                     if(!self || self->finished_)
@@ -3550,6 +3565,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
         if(!commit())
         {
+            XLOGF(WARN, "Commit obj {} failed", keyInfo.key);
             evb->runInEventBaseThread([self = this]()
                                 {           
                     if(!self || self->finished_)
@@ -3625,6 +3641,11 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         auto rc = sfs.write_ext(curr_ext, reinterpret_cast<const char*>(data), wlen);
         if (rc != 0)
         {
+            sfs.free_extents(extents);
+            extents.clear();
+
+            XLOGF(WARN, "Error obj {} code {}. Writing ext {} len {} failed", keyInfo.key, rc, curr_ext.obj_offset, curr_ext.len);
+
             evb->runInEventBaseThread([self = this->self]()
                                   {  
                     if(!self || self->finished_)
@@ -3674,18 +3695,11 @@ void S3Handler::onEOM() noexcept
         if(finished_)
             return;
 
+        XLOGF(DBG0, "Received EOM for PutObject {} done_bytes {} put_remaining {}", keyInfo.key, done_bytes, put_remaining.load(std::memory_order_relaxed));
+
         std::scoped_lock lock{bodyMutex};
         bodyQueue.emplace(BodyObj{.offset = done_bytes, .body = {}, .unpause = false});
-
-        if(!hasBodyThread)
-        {
-            hasBodyThread = true;
-            folly::getGlobalCPUExecutor()->add(
-                [self = this->self, evb]() mutable
-                {
-                    self->readBodyThread(evb);
-                });
-        }
+        startReadBodyThread(evb);
     }
     else if(request_type == RequestType::CreateBucket)
     {
@@ -3730,13 +3744,19 @@ void S3Handler::requestComplete() noexcept
 
 void S3Handler::onError(ProxygenError /*err*/) noexcept
 {
-    XLOG(DBG0, "onError");
+    XLOG(INFO, "onError");
     finished_ = true;
     paused_ = true;
 
     if (request_type == RequestType::PutObject)
     {
-        // TODO: Free extents
+        XLOGF(WARN, "Error obj {} stopping put", keyInfo.key);
+
+        std::scoped_lock lock{bodyMutex};
+        std::queue<BodyObj> emptyQueue;
+        bodyQueue.swap(emptyQueue);
+        bodyQueue.emplace(BodyObj{.offset = 0, .body = {}, .unpause = false});
+        startReadBodyThread(folly::EventBaseManager::get()->getEventBase());
     }
 
     self.reset();

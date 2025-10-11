@@ -317,6 +317,8 @@ public:
 
 	std::string encrypt_id(const int64_t id);
 
+	void free_extents(const std::vector<Ext>& extents);
+
 private:
 
 	int write_int(const std::string& fn, const char* data, size_t data_size, const size_t data_alloc_size,
@@ -364,8 +366,6 @@ private:
 	int64_t reset_del_queue(MDB_txn* txn, MDB_txn* freespace_txn, THREAD_ID tid, int64_t disk_id, int64_t transid);
 
 	void wait_startup_finished(std::unique_lock<std::mutex>& lock);
-
-	void free_extents(const std::vector<Ext>& extents);
 
 	int64_t get_really_min_space(int64_t& index_file_size);
 

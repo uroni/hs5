@@ -2857,7 +2857,7 @@ int64_t SingleFileStorage::remove_fn(const std::string & fn, MDB_txn * txn, MDB_
 				return commit_errors;
 			}
 
-			if (offset != -1)
+			if (offset != -1 && !del_old)
 			{
 				int64_t last_modified;
 				std::string md5sum;
