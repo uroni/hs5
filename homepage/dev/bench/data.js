@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1759660671316,
+  "lastUpdate": 1760205243699,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -1862,6 +1862,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.22402725146125302",
             "extra": "mean: 15.85995756980003 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "8eeef7df1177c29885ef1f03730ceac2ee9a6a47",
+          "message": "Don't use epoll_pwait2\n\nDoesn't work on Linux < 5.11",
+          "timestamp": "2025-10-11T19:45:00+02:00",
+          "tree_id": "a83b340ba9337a21c17a8c561b6250facb27fae2",
+          "url": "https://github.com/uroni/hs5/commit/8eeef7df1177c29885ef1f03730ceac2ee9a6a47"
+        },
+        "date": 1760205243101,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.075890860235325,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1603989312377246",
+            "extra": "mean: 13.176817299200001 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06518064869183654,
+            "unit": "iter/sec",
+            "range": "stddev: 0.06463537464344574",
+            "extra": "mean: 15.341976799400026 sec\nrounds: 5"
           }
         ]
       }
