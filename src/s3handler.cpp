@@ -1744,10 +1744,12 @@ void S3Handler::commit(proxygen::HTTPMessage& headers)
 {
     if(put_remaining>0)
     {
+        XLOGF(WARN, "put_remaining > 0 for key {}: {}", keyInfo.key, put_remaining.load(std::memory_order_relaxed));
             ResponseBuilder(self->downstream_)
                     .status(500, "Internal error")
                     .body(fmt::format("Body length != 0"))
                     .sendWithEOM();
+        return;
     }
 
     auto evb = folly::EventBaseManager::get()->getEventBase();
@@ -1999,6 +2001,7 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
             {
                 if(!self->evpMdCtx.init(EVP_md5()))
                 {
+                    XLOGF(ERR, "Failed to initialize md5 context");
                     evb->runInEventBaseThread([self = self]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2016,6 +2019,7 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
 
                 if(self->keyInfo.key.size()>1024)
                 {
+                    XLOGF(WARN, "Key too long. Size {}", self->keyInfo.key.size());
                     evb->runInEventBaseThread([self = self]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2032,7 +2036,8 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
 
                 auto res = self->sfs.write_prepare(fpath, self->put_remaining);
                 if (res.err != 0)
-                {                    
+                {            
+                    XLOGF(WARN, "Write object prepare failed for key {} err {}", self->keyInfo.key, res.err);        
                     evb->runInEventBaseThread([self = self, res]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2078,6 +2083,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
             {
                 if(!self->evpMdCtx.init(EVP_md5()))
                 {
+                    XLOGF(ERR, "Failed to initialize md5 context");
                     evb->runInEventBaseThread([self = self]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2097,6 +2103,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                     .bucketId = partialUploadsBucketId}), 0);
                 if(readRes.err!=0)
                 {
+                    XLOGF(WARN, "Could not read upload data for uploadId {} err {}", uploadId, readRes.err);
                     evb->runInEventBaseThread([self = self, readRes]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2116,6 +2123,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                 if(!rdata.getStr2(&dataPath) || !rdata.getStr2(&dataUploadVerId) ||
                     dataPath != make_key(self->keyInfo) || dataUploadVerId!=uploadVerId)
                 {
+                    XLOGF(WARN, "Could not verify upload data for uploadId {} partNumber {}", uploadId, partNumber);
                     evb->runInEventBaseThread([self = self, readRes]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2132,7 +2140,8 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                     .bucketId = partsBucketId};
                 auto res = self->sfs.write_prepare(make_key(self->keyInfo), self->put_remaining);
                 if (res.err != 0)
-                {                    
+                {            
+                    XLOGF(WARN, "Write object part prepare failed for uploadId {} partNumber {} err {}", uploadId, partNumber, res.err);        
                     evb->runInEventBaseThread([self = self, res]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2178,6 +2187,11 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
 
                 auto rc = self->sfs.write(make_key({.key = uploadIdToStr(uploadId), .version = 0, 
                     .bucketId = partialUploadsBucketId}), nullptr, 0, 0, 0, md5sum,  false, false);
+
+                if(rc!=0)
+                {
+                    XLOGF(WARN, "Could not write upload data for uploadId {} err {}", uploadId, rc);
+                }
          
                 evb->runInEventBaseThread([rc=rc, uploadIdEnc = uploadIdEnc, uploadVerId, self = self]()
                                   {   
@@ -2227,6 +2241,7 @@ void S3Handler::finalizeMultipartUpload()
                     !uploadData.getStr2(&uploadVerId) ||
                     uploadVerId!=multiPartData->verId )
                 {
+                    XLOGF(WARN, "Could not find upload data for uploadId {} err {}", multiPartData->uploadId, readRes.err);
                     evb->runInEventBaseThread([self = self, readRes = readRes]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2256,6 +2271,7 @@ void S3Handler::finalizeMultipartUpload()
                 if(md5Ctx==nullptr ||
                     EVP_DigestInit(md5Ctx, EVP_md5())!=1)
                 {
+                    XLOGF(ERR, "Failed to initialize md5 context");
                     evb->runInEventBaseThread([self = self]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2279,6 +2295,7 @@ void S3Handler::finalizeMultipartUpload()
 
                     if(readPartRes.err!=0)
                     {
+                        XLOGF(WARN, "Could not read part data for uploadId {} partNumber {} err {}", multiPartData->uploadId, part.partNumber, readPartRes.err);
                         evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2337,6 +2354,7 @@ void S3Handler::finalizeMultipartUpload()
                 auto writeRes = self->sfs.write_finalize(uploadFPath, {SingleFileStorage::Ext(0, 0, 0)}, lastModified, md5sum, false, true);
                 if(writeRes)
                 {
+                    XLOGF(WARN, "Could not finalize object for uploadId {} err {}", multiPartData->uploadId, writeRes);
                      evb->runInEventBaseThread([self = self, writeRes]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2353,6 +2371,7 @@ void S3Handler::finalizeMultipartUpload()
 
                 if(delRes)
                 {
+                    XLOGF(WARN, "Could not delete upload metadata for uploadId {} err {}", multiPartData->uploadId, delRes);
                     evb->runInEventBaseThread([self = self, delRes]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2365,6 +2384,7 @@ void S3Handler::finalizeMultipartUpload()
 
                 if(!self->commit())
                 {
+                    XLOGF(ERR, "Storage commit failed");
                     evb->runInEventBaseThread([self = self]()
                                         {           
                             ResponseBuilder(self->downstream_)
@@ -2461,6 +2481,7 @@ void S3Handler::finalizeCreateBucket()
 
                 if(bucketId < 0)
                 {
+                    XLOGF(WARN, "Bucket {} already exists", self->keyInfo.key);
                     evb->runInEventBaseThread([self = self]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2678,6 +2699,7 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
                 
                 if(!self->sfs.iter_start(iterStartVal, false, iter_data))
                 {
+                    XLOGF(ERR, "Error starting listing during delete bucket");
                     evb->runInEventBaseThread([self = self]()
                                                         {
                                     ResponseBuilder(self->downstream_)
@@ -3088,6 +3110,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
     if(!sfs.iter_start(iterStartVal, false, iter_data))
     {
+        XLOGF(ERR, "Error starting listing");
         evb->runInEventBaseThread([self = self]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -3183,6 +3206,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
         if(!sfs.iter_next(iter_data))
         {
+            XLOGF(ERR, "Error iterating listing");
             evb->runInEventBaseThread([self = self]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -3392,6 +3416,8 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
     size_t body_bytes = body->length();
 
+    XLOGF(DBG0, "Received body of {} bytes for request type {} for obj {}", body_bytes, static_cast<int>(request_type), keyInfo.key);
+
     if(request_type == RequestType::CompleteMultipartUpload ||
         request_type == RequestType::DeleteObjects)
     {
@@ -3403,6 +3429,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
         if(isFinal && payloadHash && !payloadHash->isFinalExpected())
         {
+            XLOGF(WARN, "Payload hash not as expected");
             ResponseBuilder(self->downstream_)
                 .status(500, "Internal error")
                 .body("Payload hash not as expected")
@@ -3413,7 +3440,8 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
         auto rc = XML_Parse(xmlBody.parser, reinterpret_cast<const char*>(body->data()), body->length(), isFinal ? 1 : 0);
         if(rc!=XML_STATUS_OK)
-        {                 
+        {             
+            XLOGF(WARN, "Error parsing XML body code {} exp {}", static_cast<int>(rc), static_cast<const char*>(XML_ErrorString(XML_GetErrorCode(xmlBody.parser))));    
             ResponseBuilder(self->downstream_)
                 .status(500, "Internal error")
                 .body("Write ext error")
@@ -3433,6 +3461,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
         if(isFinal && payloadHash && !payloadHash->isFinalExpected())
         {
+            XLOGF(WARN, "Payload hash not as expected");
             ResponseBuilder(self->downstream_)
                 .status(500, "Internal error")
                 .body("Payload hash not as expected")
@@ -3447,6 +3476,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
         }
         else
         {
+            XLOGF(WARN, "Body too long for CreateBucket");
             ResponseBuilder(self->downstream_)
                 .status(500, "Internal error")
                 .body("Body too long")
@@ -3578,6 +3608,8 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
             return;
         }
 
+        XLOGF(DBG0, "Successfully wrote object {} etag {}", keyInfo.key, folly::hexlify(md5sum.substr(1)));
+
         evb->runInEventBaseThread([self = this, md5sum]()
                                 {      
                     if(!self)
@@ -3679,6 +3711,7 @@ void S3Handler::onEOM() noexcept
 
         if(put_remaining!=0)
         {
+            XLOGF(WARN, "Key {}, remaining bytes {} while completing multipart upload. Returning error", keyInfo.key, put_remaining.load(std::memory_order_relaxed));
             ResponseBuilder(self->downstream_)
                 .status(500, "Internal error")
                 .body("Expecting more data")
@@ -3716,6 +3749,7 @@ void S3Handler::onEOM() noexcept
 
         if(put_remaining!=0)
         {
+            XLOGF(WARN, "Key {}, remaining bytes {} while deleting objects. Returning error", keyInfo.key, put_remaining.load(std::memory_order_relaxed));
             ResponseBuilder(self->downstream_)
                 .status(500, "Internal error")
                 .body("Expecting more data")
