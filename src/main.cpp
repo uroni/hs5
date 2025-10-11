@@ -207,7 +207,6 @@ int realMain(int argc, char* argv[])
     options.handlerFactories =
         proxygen::RequestHandlerChain().addThen<S3HandlerFactory>(sfsoptions).build();
     auto& sfs = dynamic_cast<S3HandlerFactory*>(options.handlerFactories.back().get())->getSfs();
-    options.h2cEnabled = true;
 
     server = std::make_unique<proxygen::HTTPServer>(std::move(options));
     server->bind(IPs);
