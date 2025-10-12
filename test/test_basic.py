@@ -3,7 +3,6 @@
 from concurrent.futures import thread
 from dataclasses import dataclass
 import datetime
-from distutils.command.upload import upload
 import json
 import logging
 from pathlib import Path
