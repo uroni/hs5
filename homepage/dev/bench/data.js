@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1760266106684,
+  "lastUpdate": 1760273704164,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -2052,6 +2052,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.2385834896975967",
             "extra": "mean: 16.26674793420001 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "a19b81d5ebcf646ebbf9bea0fd01b42afb526ecb",
+          "message": "Remove weird import",
+          "timestamp": "2025-10-12T14:45:52+02:00",
+          "tree_id": "5bfa59a88fdd8043f60f2f10b409339e60b1bf8a",
+          "url": "https://github.com/uroni/hs5/commit/a19b81d5ebcf646ebbf9bea0fd01b42afb526ecb"
+        },
+        "date": 1760273703094,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07441800487333392,
+            "unit": "iter/sec",
+            "range": "stddev: 0.19364634329580122",
+            "extra": "mean: 13.437608300599958 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06550222398288197,
+            "unit": "iter/sec",
+            "range": "stddev: 0.3368577073194423",
+            "extra": "mean: 15.266657209400023 sec\nrounds: 5"
           }
         ]
       }
