@@ -26,7 +26,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: sudo apt-get update &&
             sudo apt-get install autoconf automake autoconf-archive &&
-            sudo sed -i 's/epoll_pwait2/epoll_pwait2_disabled/g' /usr/include/x86_64-linux-gnu/sys/epoll.h
+            ( ! [ -e /usr/include/x86_64-linux-gnu/sys/epoll.h ] || sudo sed -i 's/epoll_pwait2/epoll_pwait2_disabled/g' /usr/include/x86_64-linux-gnu/sys/epoll.h )
 
       - uses: lukka/get-cmake@v3.31.5
 
