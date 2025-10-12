@@ -3627,6 +3627,12 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         return;
     }
 
+    if(extents.empty())
+    {
+        XLOGF(INFO, "No extents for object {} for body size {}. Not writing", keyInfo.key, body->length());
+        return;
+    }
+
     if(extents.size()>1)
     {
         assert(extents[0] < extents[1]);
