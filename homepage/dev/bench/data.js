@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1760211520641,
+  "lastUpdate": 1760265379591,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -1976,6 +1976,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.20832105727685254",
             "extra": "mean: 14.59029381220007 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "b85fd17525d97833a21f4463090487d3a7c407d2",
+          "message": "Improve write error handling",
+          "timestamp": "2025-10-12T12:27:26+02:00",
+          "tree_id": "da02d1890673f3335ce81e96940f7fe3dff300f1",
+          "url": "https://github.com/uroni/hs5/commit/b85fd17525d97833a21f4463090487d3a7c407d2"
+        },
+        "date": 1760265379172,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07629484485382028,
+            "unit": "iter/sec",
+            "range": "stddev: 0.049977700901608",
+            "extra": "mean: 13.107045461799999 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06559028385520889,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1361748339696308",
+            "extra": "mean: 15.246160577800037 sec\nrounds: 5"
           }
         ]
       }
