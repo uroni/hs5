@@ -97,7 +97,8 @@
         "scoped_allocator": "cpp",
         "spanstream": "cpp",
         "stacktrace": "cpp",
-        "syncstream": "cpp"
+        "syncstream": "cpp",
+        "*.icc": "cpp"
     },
     "python.testing.pytestArgs": [
         "test"
