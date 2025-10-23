@@ -2636,19 +2636,11 @@ void S3Handler::deleteObjects()
                         res = self->commit() ? 0 : 1;
                     }
 
-                    if(res==0)
+                    if(res==0 || res==ENOENT)
                     {
                         resp += fmt::format("\t<Deleted>\n"
                             "\t\t<Key>{}</Key>\n"
                             "\t</Deleted>\n", obj.key);
-                    }
-                    else if(res==ENOENT)
-                    {
-                        resp += fmt::format("\t<Error>\n"
-                            "\t\t<Code>NoSuchKey</Code>\n"
-                            "\t\t<Message>Object not found</Message>\n"
-                            "\t\t<Key>{}</Key>\n"
-                            "\t</Error>\n", obj.key);
                     }
                     else
                     {
@@ -2723,8 +2715,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                     {
                         XLOGF(INFO, "Removing object '{}' not found", self->keyInfo.key);
                         ResponseBuilder(self->downstream_)
-                            .status(404, "Not found")
-                            .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
+                            .status(204, "No Content")
                             .sendWithEOM();
                     }
                     else if(res!=0)
@@ -2738,7 +2729,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                     else
                     {
                         ResponseBuilder(self->downstream_)
-                            .status(200, "OK")
+                            .status(204, "No Content")
                             .sendWithEOM();
                     }
                     self->finished_ = true;

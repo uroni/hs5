@@ -96,8 +96,7 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     assert "ETag" in objs[0] and objs[0]["ETag"].strip('"').lower() == fdata_md5.lower()
     
     s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt")
-    with pytest.raises(ClientError):
-        s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload_nonexistent.txt")
+    s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload_nonexistent.txt")
     with pytest.raises(ClientError):
         s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
 
@@ -566,3 +565,15 @@ def test_delete_multiple_objects(tmp_path: Path, hs5: Hs5Runner):
     for i in range(5):
         with pytest.raises(ClientError):
             s3_client.head_object(Bucket='testbucket', Key=f'upload_{i}.txt')
+
+
+    objects_to_delete = [{'Key': f'nonexistent_{i}.txt'} for i in range(5)]
+    response = s3_client.delete_objects(
+        Bucket='testbucket',
+        Delete={
+            'Objects': objects_to_delete
+        }
+    )
+    # Check if all objects were reported as deleted (even if they didn't exist)
+    assert response['ResponseMetadata']['HTTPStatusCode'] == 200
+    assert 'Deleted' in response and len(response['Deleted']) == 5
