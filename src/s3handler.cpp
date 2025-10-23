@@ -954,6 +954,75 @@ static void deleteObjectsXmlCharData(void *userData,
     }
 }
 
+
+
+enum class S3ErrorCode
+{
+    NoSuchBucket,
+    AccessDenied,
+    BucketNotEmpty,
+    InternalError,
+    NoSuchKey,
+    BucketAlreadyExists,
+    InvalidPartOrder
+};
+
+std::string_view s3errorCodeToStr(const S3ErrorCode code)
+{
+    switch(code)
+    {
+        case S3ErrorCode::NoSuchBucket:
+            return "NoSuchBucket";
+        case S3ErrorCode::AccessDenied:
+            return "AccessDenied";
+        case S3ErrorCode::BucketNotEmpty:
+            return "BucketNotEmpty";
+        case S3ErrorCode::InternalError:
+            return "InternalError";
+        case S3ErrorCode::NoSuchKey:
+            return "NoSuchKey";
+        case S3ErrorCode::BucketAlreadyExists:
+            return "BucketAlreadyExists";
+        case S3ErrorCode::InvalidPartOrder:
+            return "InvalidPartOrder";
+        default:
+            return "InternalError";
+    }
+}
+
+std::string_view s3errorMsg(const S3ErrorCode code)
+{
+    switch(code)
+    {
+        case S3ErrorCode::NoSuchBucket:
+            return "The specified bucket does not exist";
+        case S3ErrorCode::AccessDenied:
+            return "Access Denied";
+        case S3ErrorCode::BucketNotEmpty:
+            return "The bucket you tried to delete is not empty";
+        case S3ErrorCode::InternalError:    
+            return "We encountered an internal error. Please try again.";
+        case S3ErrorCode::NoSuchKey:
+            return "The specified key does not exist.";
+        case S3ErrorCode::BucketAlreadyExists:
+            return "The specified bucket already exists.";
+        case S3ErrorCode::InvalidPartOrder:
+            return "The list of parts was not in ascending order. The parts list must be specified in order by part number.";
+        default:
+            return "We encountered an internal error. Please try again.";
+    }
+}
+
+std::string s3errorXml(const S3ErrorCode code, const std::string_view& msg, const std::string_view& ressource, const std::string_view& request_id)
+{
+    return fmt::format("<Error>\n"
+        "\t<Code>{}</Code>\n"
+        "\t<Message>{}</Message>\n"
+        "\t<Resource>{}</Resource>\n"
+        "\t<RequestId>{}</RequestId>\n"
+        "</Error>", s3errorCodeToStr(code), msg.empty() ? s3errorMsg(code) : msg, ressource, request_id);
+}
+
 std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& message)
 {
     const auto payload = message.getHeaders().getSingleOrEmpty("x-amz-content-sha256");
@@ -1350,7 +1419,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 XLOGF(INFO, "Bucket {} not found", bucketName);
                 ResponseBuilder(downstream_)
                             .status(404, "Not found")
-                            .body("Bucket not found")
+                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucketName, ""))
                             .sendWithEOM();
                 return;
             }
@@ -1361,7 +1430,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             {
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
-                    .body("Could not init MD5 content hash")
+                    .body(s3errorXml(S3ErrorCode::InternalError, "Could not init MD5 content hash", bucketName, ""))
                     .sendWithEOM();
                 return;
             }
@@ -1374,7 +1443,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             {
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
-                    .body("Could not init XML parser")
+                    .body(s3errorXml(S3ErrorCode::InternalError, "Could not init XML parser", bucketName, ""))
                     .sendWithEOM();
                 return;
             }
@@ -1486,7 +1555,7 @@ bool S3Handler::setKeyInfoFromPath(const std::string_view path)
         XLOGF(INFO, "Path empty when getting key info");
         ResponseBuilder(downstream_)
                     .status(500, "Internal error")
-                    .body("Path is empty")
+                    .body(s3errorXml(S3ErrorCode::InternalError, "Path is empty", "", ""))
                     .sendWithEOM();
         return false;
     }
@@ -1498,7 +1567,7 @@ bool S3Handler::setKeyInfoFromPath(const std::string_view path)
         XLOGF(INFO, "Could not find bucket in path {}", path);
         ResponseBuilder(downstream_)
                     .status(500, "Internal error")
-                    .body("Could not find bucket in path")
+                    .body(s3errorXml(S3ErrorCode::InternalError, "Could not find bucket in path", "", ""))
                     .sendWithEOM();
         return false;
     }
@@ -1512,7 +1581,7 @@ bool S3Handler::setKeyInfoFromPath(const std::string_view path)
         XLOGF(INFO, "Bucket of {} not found", path);
         ResponseBuilder(downstream_)
                     .status(404, "Not found")
-                    .body("Bucket not found")
+                    .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucketName, ""))
                     .sendWithEOM();
         return false;
     }
@@ -1531,7 +1600,7 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
     {
         ResponseBuilder(self->downstream_)
                             .status(404, "Not found")
-                            .body(fmt::format("Bucket not found"))
+                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucket, ""))
                             .sendWithEOM();
         return;
     }
@@ -1548,7 +1617,7 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
     {
         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Unknown list type"))
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Unknown list type", bucket, ""))
                             .sendWithEOM();
         return;
     }
@@ -1563,7 +1632,7 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
     {
         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Delimiter has more than one char"))
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Delimiter has more than one char", bucket, ""))
                             .sendWithEOM();
         return;
     }
@@ -1590,7 +1659,7 @@ void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string&
     {
         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Delimiter has more than one char"))
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Delimiter has more than one char", bucket, ""))
                             .sendWithEOM();
         return;
     }
@@ -1600,7 +1669,7 @@ void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string&
     {
         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Cannot decode continuation token"))
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Cannot decode continuation token", bucket, ""))
                             .sendWithEOM();
         return;
     }
@@ -1747,7 +1816,7 @@ void S3Handler::commit(proxygen::HTTPMessage& headers)
         XLOGF(WARN, "put_remaining > 0 for key {}: {}", keyInfo.key, put_remaining.load(std::memory_order_relaxed));
             ResponseBuilder(self->downstream_)
                     .status(500, "Internal error")
-                    .body(fmt::format("Body length != 0"))
+                    .body(s3errorXml(S3ErrorCode::InternalError, "put_remaining > 0", fullKeyPath(), ""))
                     .sendWithEOM();
         return;
     }
@@ -1764,7 +1833,7 @@ void S3Handler::commit(proxygen::HTTPMessage& headers)
         {
             ResponseBuilder(self->downstream_)
                     .status(500, "Internal error")
-                    .body(fmt::format("Commit error"))
+                    .body(s3errorXml(S3ErrorCode::InternalError, "Commit error", self->fullKeyPath(), ""))
                     .sendWithEOM();
         }
         else {
@@ -1870,14 +1939,14 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                             {
                                 ResponseBuilder(self->downstream_)
                                     .status(404, "Not found")
-                                    .body(fmt::format("Object not found"))
+                                    .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
                                     .sendWithEOM();
                             }
                             else
                             {
                                 ResponseBuilder(self->downstream_)
                                     .status(403, "Forbidden")
-                                    .body(fmt::format("Access is forbidden"))
+                                    .body(s3errorXml(S3ErrorCode::AccessDenied, "Access is forbidden", self->fullKeyPath(), ""))
                                     .sendWithEOM();
                             }
                         }
@@ -1885,14 +1954,14 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         {
                             ResponseBuilder(self->downstream_)
                                 .status(500, "Internal error")
-                                .body(fmt::format("Storage is dead"))
+                                .body(s3errorXml(S3ErrorCode::InternalError, "Storage is dead", self->fullKeyPath(), ""))
                                 .sendWithEOM();
                         }
                         else
                         {
                             ResponseBuilder(self->downstream_)
                                 .status(500, "Internal error")
-                                .body(fmt::format("Error code: {}", res.err))
+                                .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error code: {}", res.err), self->fullKeyPath(), ""))
                                 .sendWithEOM();
                         }
                                               });
@@ -1905,7 +1974,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                                               {
                                 ResponseBuilder(self->downstream_)
                                 .status(500, "Internal error")
-                                .body(fmt::format("Error parsing md5sum data"))
+                                .body(s3errorXml(S3ErrorCode::InternalError, "Error parsing md5sum data", self->fullKeyPath(), ""))
                                 .sendWithEOM();
                                               });
                                             return;
@@ -1920,7 +1989,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         {
                             ResponseBuilder(self->downstream_)
                                         .status(404, "Not found")
-                                        .body(fmt::format("Object not found"))
+                                        .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
                                         .sendWithEOM();
                         });
                     }
@@ -1930,7 +1999,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         {
                             ResponseBuilder(self->downstream_)
                                     .status(403, "Forbidden")
-                                    .body(fmt::format("Access is forbidden"))
+                                    .body(s3errorXml(S3ErrorCode::AccessDenied, "Access is forbidden", self->fullKeyPath(), ""))
                                     .sendWithEOM();
                         });
                     }
@@ -2006,7 +2075,7 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Could not initialize md5"))
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Could not initialize md5", self->fullKeyPath(), ""))
                             .sendWithEOM();
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
@@ -2024,7 +2093,7 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Key too long"))
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Key too long", self->fullKeyPath(), ""))
                             .sendWithEOM();
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
@@ -2042,7 +2111,7 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Error preparing writing. Errno {}", res.err))
+                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error preparing writing. Errno {}", res.err), self->fullKeyPath(), ""))
                             .sendWithEOM();
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
@@ -2088,7 +2157,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Could not initialize md5"))
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Could not initialize md5", self->fullKeyPath(), ""))
                             .sendWithEOM();
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
@@ -2108,7 +2177,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Could not find upload data."))
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Could not find upload data.", self->fullKeyPath(), ""))
                             .sendWithEOM();
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
@@ -2128,7 +2197,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Could not verify upload data."))
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Could not verify upload data.", self->fullKeyPath(), ""))
                             .sendWithEOM();
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
@@ -2146,7 +2215,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Error preparing writing. Errno {}", res.err))
+                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error preparing writing. Errno {}", res.err), self->fullKeyPath(), ""))
                             .sendWithEOM();
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
@@ -2246,7 +2315,7 @@ void S3Handler::finalizeMultipartUpload()
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Could not find upload. Errno {}", readRes.err))
+                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Could not find upload. Errno {}", readRes.err), self->fullKeyPath(), ""))
                             .sendWithEOM();
                         self->finished_ = true; });
                     return;
@@ -2276,7 +2345,7 @@ void S3Handler::finalizeMultipartUpload()
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Error initializing hash function"))
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Error initializing hash function", self->fullKeyPath(), ""))
                             .sendWithEOM();
                         self->finished_ = true; });
                     return;
@@ -2300,7 +2369,7 @@ void S3Handler::finalizeMultipartUpload()
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Could not find part {}", partNumber))
+                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Could not find part {}", partNumber), self->fullKeyPath(), ""))
                             .sendWithEOM();
                         self->finished_ = true; });
                         return;
@@ -2359,7 +2428,7 @@ void S3Handler::finalizeMultipartUpload()
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Error adding object to db. Err {}", writeRes))
+                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error adding object to db. Err {}", writeRes), self->fullKeyPath(), ""))
                             .sendWithEOM();
                         self->finished_ = true; });
                         return;
@@ -2376,7 +2445,7 @@ void S3Handler::finalizeMultipartUpload()
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Error deleting upload metadata. Err {}", delRes))
+                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error deleting upload metadata. Err {}", delRes), self->fullKeyPath(), ""))
                             .sendWithEOM();
                         self->finished_ = true; });
                         return;
@@ -2389,7 +2458,7 @@ void S3Handler::finalizeMultipartUpload()
                                         {           
                             ResponseBuilder(self->downstream_)
                                 .status(500, "Internal error")
-                                .body("Commit error")
+                                .body(s3errorXml(S3ErrorCode::InternalError, "Commit error", self->fullKeyPath(), ""))
                                 .sendWithEOM();
                             self->finished_ = true; });
                     return;
@@ -2486,7 +2555,7 @@ void S3Handler::finalizeCreateBucket()
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(409, "OK")
-                            .body("BucketAlreadyExists")
+                            .body(s3errorXml(S3ErrorCode::BucketAlreadyExists, "", self->fullKeyPath(), ""))
                             .sendWithEOM();
                         self->finished_ = true;
                     });
@@ -2655,7 +2724,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                         XLOGF(INFO, "Removing object '{}' not found", self->keyInfo.key);
                         ResponseBuilder(self->downstream_)
                             .status(404, "Not found")
-                            .body(fmt::format("Object not found"))
+                            .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
                             .sendWithEOM();
                     }
                     else if(res!=0)
@@ -2663,7 +2732,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                         XLOGF(INFO, "Removing object '{}' err {}", self->keyInfo.key, res);
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Storage is dead"))
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Storage is dead", self->keyInfo.key, ""))
                             .sendWithEOM();
                     }
                     else
@@ -2704,7 +2773,7 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
                                                         {
                                     ResponseBuilder(self->downstream_)
                                         .status(500, "Internal error")
-                                        .body(fmt::format("Error starting listing"))
+                                        .body(s3errorXml(S3ErrorCode::InternalError, "Error starting listing for empty check", self->keyInfo.key, ""))
                                         .sendWithEOM(); });
                     return;
                 }
@@ -2739,7 +2808,7 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
                         XLOGF(INFO, "Bucket '{}' not found", self->keyInfo.key);
                         ResponseBuilder(self->downstream_)
                             .status(404, "Not found")
-                            .body(fmt::format("Bucket not found"))
+                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", self->fullKeyPath(), ""))
                             .sendWithEOM();
                     }
                     else if(hasObjects)
@@ -2747,7 +2816,7 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
                         XLOGF(INFO, "Bucket '{}' contains objects", self->keyInfo.key);
                         ResponseBuilder(self->downstream_)
                             .status(400, "BucketContainsObjects")
-                            .body(fmt::format("Bucket contains objects"))
+                            .body(s3errorXml(S3ErrorCode::BucketNotEmpty, "", self->fullKeyPath(), ""))
                             .sendWithEOM();
                     }
                     else
@@ -3111,11 +3180,11 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     if(!sfs.iter_start(iterStartVal, false, iter_data))
     {
         XLOGF(ERR, "Error starting listing");
-        evb->runInEventBaseThread([self = self]()
+        evb->runInEventBaseThread([self = self, bucketName]()
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Error starting listing"))
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Error starting listing", bucketName, ""))
                             .sendWithEOM(); });
         return;
     }
@@ -3207,11 +3276,11 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         if(!sfs.iter_next(iter_data))
         {
             XLOGF(ERR, "Error iterating listing");
-            evb->runInEventBaseThread([self = self]()
+            evb->runInEventBaseThread([self = self, bucketName]()
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(fmt::format("Error listing (in iteration)"))
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Error listing (in iteration)", bucketName, ""))
                             .sendWithEOM(); });
             sfs.iter_stop(iter_data);
             return;
@@ -3720,10 +3789,46 @@ void S3Handler::onEOM() noexcept
             XLOGF(WARN, "Key {}, remaining bytes {} while completing multipart upload. Returning error", keyInfo.key, put_remaining.load(std::memory_order_relaxed));
             ResponseBuilder(self->downstream_)
                 .status(500, "Internal error")
-                .body("Expecting more data")
+                .body(s3errorXml(S3ErrorCode::InternalError, "Expecting more data", fullKeyPath(), ""))
                 .sendWithEOM();
             finished_ = true; 
             return;
+        }
+
+        switch(multiPartUploadData->parseState)
+        {
+            case MultiPartUploadData::ParseState::InvalidPartOrder:
+            {
+                XLOGF(WARN, "Invalid part order in CompleteMultipartUpload for obj {}", keyInfo.key);
+                ResponseBuilder(self->downstream_)
+                    .status(400, "Bad request")
+                    .body(s3errorXml(S3ErrorCode::InvalidPartOrder, "", fullKeyPath(), ""))
+                    .sendWithEOM();
+                finished_ = true; 
+                return;
+            }
+            case MultiPartUploadData::ParseState::Unknown:
+            {
+                XLOGF(WARN, "Unknown parse error in CompleteMultipartUpload for obj {}", keyInfo.key);
+                ResponseBuilder(self->downstream_)
+                    .status(500, "Internal error")
+                    .body(s3errorXml(S3ErrorCode::InternalError, "Error parsing XML", fullKeyPath(), ""))
+                    .sendWithEOM();
+                finished_ = true; 
+                return;
+            }
+            case MultiPartUploadData::ParseState::Finished:
+                break;
+            default:
+            {
+                XLOGF(WARN, "Unexpected parse state {} in CompleteMultipartUpload for obj {}", static_cast<int>(multiPartUploadData->parseState), keyInfo.key);
+                ResponseBuilder(self->downstream_)
+                    .status(500, "Internal error")
+                    .body(s3errorXml(S3ErrorCode::InternalError, "Error parsing XML", fullKeyPath(), ""))
+                    .sendWithEOM();
+                finished_ = true;
+                return;
+            }
         }
 
         finalizeMultipartUpload();
@@ -3845,4 +3950,9 @@ std::vector<std::string> S3Handler::onDeleteCallback(const std::string& fn, cons
     }
 
     return ret;
+}
+
+std::string S3Handler::fullKeyPath() const
+{
+    return buckets::getBucketName(keyInfo.bucketId) + "/" + keyInfo.key;
 }

@@ -7,7 +7,6 @@ import json
 import logging
 from pathlib import Path
 import random
-from re import T
 from typing import AnyStr, Optional, Union
 from uuid import uuid4
 import boto3

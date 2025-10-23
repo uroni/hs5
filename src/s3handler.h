@@ -269,6 +269,8 @@ private:
     std::optional<std::string> initPayloadHash(proxygen::HTTPMessage& message);
     void deleteObjects();
 
+    std::string fullKeyPath() const;
+
 	enum class RequestType
 	{
 		Unknown,
