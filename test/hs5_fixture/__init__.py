@@ -61,7 +61,7 @@ class Hs5Runner:
 
         assert hs5_loc is not None
 
-        args = [str(hs5_loc),
+        self.args = [str(hs5_loc),
                 "internal",
                 "--ip",
                 "127.0.0.1",
@@ -70,40 +70,59 @@ class Hs5Runner:
             "--init_root_password", self._root_key,
             "--with_stop_command", "true",
             "--bucket_versioning=false"]
+
+        if os.environ.get("MANUAL_COMMIT") == "1":
+            self.manual_commit = True
         
         if os.environ.get("ENABLE_WAL") == "1":
-            args.append("--index_wal_path")
-            args.append(".")
-        
+            self.args.append("--index_wal_path")
+            self.args.append(".")
+
+        if os.environ.get("ENABLE_WAL_WRITE_DATA") == "1":
+            self.args.append("--wal_write_data")
+
+        if os.environ.get("ENABLE_WAL_WRITE_META") == "0":
+            self.args.append("--nowal_write_meta")
+
         if perf:
-            args.append("--logging")
-            args.append("WARN")
+            self.args.append("--logging")
+            self.args.append("WARN")
         else:
-            args.append("--data_file_size_limit_mb")
-            args.append(str(data_file_size_limit_mb))
-            args.append("--data_file_alloc_chunk_size")
-            args.append(str(data_file_alloc_chunk_size))
-            args.append("--logging")
-            args.append("DBG0")
-        
+            self.args.append("--data_file_size_limit_mb")
+            self.args.append(str(data_file_size_limit_mb))
+            self.args.append("--data_file_alloc_chunk_size")
+            self.args.append(str(data_file_alloc_chunk_size))
+            self.args.append("--logging")
+            self.args.append("INFO")
+
         if self.manual_commit:
-            args.append("--manual_commit")
+            self.args.append("--manual_commit")
 
         if self.with_heaptrack:
-            args.insert(0, "heaptrack")
+            self.args.insert(0, "heaptrack")
 
-        self._process = subprocess.Popen(
-            args,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-            cwd=workdir
-        )
+        self.args.append("--check_freespace_on_startup")
 
-        self._wait_for_startup()
+        if not perf:
+            self.args.append("--wal_write_delay")
+
+        self.args.append("--enable_core_dumps")
+
+        self.start()
 
         self._login_admin()
 
         self.get_s3_client().create_bucket(Bucket=self.testbucketname())
+
+    def start(self) -> None:
+        self._process = subprocess.Popen(
+            self.args,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            cwd=self._workdir
+        )
+
+        self._wait_for_startup()
 
     def _wait_for_startup(self) -> None:
         while True:
@@ -127,7 +146,7 @@ class Hs5Runner:
         self._admin_ses = resp["ses"]
         assert self._admin_ses
 
-    def stop(self) -> None:
+    def stop(self, cleanup: bool) -> None:
 
         with pytest.raises(subprocess.TimeoutExpired):
             self._process.wait(0.001)
@@ -139,8 +158,12 @@ class Hs5Runner:
 
         self._process.wait()
 
-        if not self.with_heaptrack:
+        if not self.with_heaptrack and cleanup:
             rmtree(self._workdir)
+
+    def restart(self) -> None:
+        self.stop(cleanup=False)
+        self.start()
 
     def get_url(self) -> str:
         return f"http://127.0.0.1:{self._port}"
@@ -192,7 +215,7 @@ def hs5(tmpdir: Path):
     loc.mkdir()
     runner = Hs5Runner(loc, data_file_size_limit_mb=100)
     yield runner
-    runner.stop()
+    runner.stop(cleanup=True)
     try:
         rmtree(loc)
     except:
@@ -204,7 +227,7 @@ def hs5_perf(tmpdir: Path):
     loc.mkdir()
     runner = Hs5Runner(loc, data_file_size_limit_mb=100, perf=True)
     yield runner
-    runner.stop()
+    runner.stop(cleanup=True)
     try:
         rmtree(loc)
     except:
@@ -216,7 +239,7 @@ def hs5_large(tmpdir: Path):
     loc.mkdir()
     runner = Hs5Runner(loc, data_file_size_limit_mb=5000)
     yield runner
-    runner.stop()
+    runner.stop(cleanup=True)
     try:
         rmtree(loc)
     except:
@@ -228,7 +251,7 @@ def hs5_large_small_alloc_chunksize(tmpdir: Path):
     loc.mkdir()
     runner = Hs5Runner(loc, data_file_size_limit_mb=5000, data_file_alloc_chunk_size=10*1024*1024)
     yield runner
-    runner.stop()
+    runner.stop(cleanup=True)
     try:
         rmtree(loc)
     except:

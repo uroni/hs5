@@ -24,6 +24,7 @@
 #include <folly/Uri.h>
 #include <folly/lang/Bits.h>
 #include <folly/hash/Hash.h>
+#include <folly/hash/Checksum.h>
 #include <folly/base64.h>
 #include <limits>
 #include <memory>
@@ -3068,11 +3069,13 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
     
         if(multiPartDownloadData)
         {
-            XLOGF(DBG0, "Sending body off {} len {} of fpath {} total_len {} part {}", offset, res.buf->length(), self->keyInfo.key, put_remaining.load(std::memory_order_relaxed), multiPartDownloadData->currExt.start);
+            XLOGF(DBG0, "Sending body off {} len {} of fpath {} total_len {} part {} data {}", offset, res.buf->length(), self->keyInfo.key, put_remaining.load(std::memory_order_relaxed), multiPartDownloadData->currExt.start,
+                folly::crc32c(reinterpret_cast<const uint8_t*>(res.buf->data()), res.buf->length()));
         }
         else
         {
-            XLOGF(DBG0, "Sending body off {} len {} of fpath {} total_len {}", offset, res.buf->length(), self->keyInfo.key, put_remaining.load(std::memory_order_relaxed));
+            XLOGF(DBG0, "Sending body off {} len {} of fpath {} total_len {} data {}", offset, res.buf->length(), self->keyInfo.key, put_remaining.load(std::memory_order_relaxed),
+                folly::crc32c(reinterpret_cast<const uint8_t*>(res.buf->data()), res.buf->length()));
         }
 
         offset += res.buf->length();

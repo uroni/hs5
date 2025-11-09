@@ -160,6 +160,20 @@ ConfigResult readConfigFile(const std::string& fn)
             }
             continue;
         }
+        if(key=="WAL_SIZE_MB")
+        {
+            res.setArgs.insert("--max_wal_size_mb");
+            res.args.push_back("--max_wal_size_mb");
+            res.args.push_back(std::string(val));
+            continue;
+        }
+        if(key=="WAL_ITEMS")
+        {
+            res.setArgs.insert("--max_wal_items");
+            res.args.push_back("--max_wal_items");
+            res.args.push_back(std::string(val));
+            continue;
+        }        
 
         const auto it = configMapping.find(key);
         if(it!=configMapping.end())
@@ -251,6 +265,21 @@ int actionRun(std::vector<std::string> args)
     TCLAP::SwitchArg stopOnErrorArg("", "stop-on-error",
         "Stop running on error (e.g., write error)", cmd);
 
+    TCLAP::ValueArg<std::string> walPathArg("", "wal-path",
+        "Path to write performance WAL file to (default same as meta storage path)",
+        false, "", "path", cmd);
+
+    std::vector<std::string> walModes;
+    walModes.push_back("disabled");
+	walModes.push_back("metadata-only");
+    walModes.push_back("data-only");
+	walModes.push_back("full");
+
+    TCLAP::ValuesConstraint<std::string> walModesConstraint(walModes);
+    TCLAP::ValueArg<std::string> walModeArg("", "wal-mode",
+        "Specifies what to write to performance WAL file (default disabled)",
+        false, "disabled", &walModesConstraint, cmd);
+
     std::vector<std::string> realArgs;
 	realArgs.push_back(args[0]);
 
@@ -269,7 +298,7 @@ int actionRun(std::vector<std::string> args)
         realArgs.push_back(std::to_string(httpPortArg.getValue()));
     }
 
-    if(!alreadySetArgs.contains("--server_url"))
+    if(!alreadySetArgs.contains("--server_url") && serverUrlArg.isSet())
     {
         realArgs.push_back("--server_url");
         realArgs.push_back(serverUrlArg.getValue());
@@ -295,23 +324,27 @@ int actionRun(std::vector<std::string> args)
         }
     }
 
+    auto metadataStoragePathVal = std::string();
+
     if(!alreadySetArgs.contains("--index_path"))
     {
-        if( metadataStoragePathArg.isSet()  || storagePathArg.isSet()) 
+        if( metadataStoragePathArg.isSet() || storagePathArg.isSet()) 
         {
-            const auto dataPath = metadataStoragePathArg.isSet() ? metadataStoragePathArg.getValue() : storagePathArg.getValue();
+            metadataStoragePathVal = metadataStoragePathArg.isSet() ? metadataStoragePathArg.getValue() : storagePathArg.getValue();
             realArgs.push_back("--index_path");
-            realArgs.push_back(metadataStoragePathArg.getValue());
+            realArgs.push_back(metadataStoragePathVal);
         }
         else if(auto metadataPath = getenv("METADATA_PATH"); metadataPath)
         {
             realArgs.push_back("--index_path");
             realArgs.push_back(metadataPath);
+            metadataStoragePathVal = metadataPath;
         }
         else if(auto metadataPath = getenv("STORAGE_PATH"); metadataPath)
         {
             realArgs.push_back("--index_path");
             realArgs.push_back(metadataPath);
+            metadataStoragePathVal = metadataPath;
         }
     }
 
@@ -357,6 +390,24 @@ int actionRun(std::vector<std::string> args)
             stopOnErrorArg.getValue())
     {
         realArgs.push_back("--stop_on_error");
+    }
+
+    if(walModeArg.isSet() && walModeArg.getValue()!="disabled")
+    {
+        if(!alreadySetArgs.contains("--index_wal_path"))
+        {
+            realArgs.push_back("--index_wal_path");
+            realArgs.push_back(walPathArg.isSet() ? walPathArg.getValue() : metadataStoragePathVal);
+        }
+
+        if(walModeArg.getValue()=="full")
+        {
+            realArgs.push_back("--wal_write_data");
+        }
+        else if(walModeArg.getValue()=="data-only")
+        {
+            realArgs.push_back("--nowal_write_meta");
+        }
     }
 
     return runRealMain(realArgs);

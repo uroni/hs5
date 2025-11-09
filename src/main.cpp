@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 #include <exception>
+#include <sys/time.h>
+#include <sys/resource.h>
 #include <folly/String.h>
 #include <gflags/gflags.h>
 #include <iostream>
@@ -61,8 +63,12 @@ DEFINE_bool(punch_holes, true, "Free up space if not enough free space is left b
 DEFINE_string(server_url, "", "URL of server");
 DEFINE_bool(bucket_versioning, false, "Enable bucket versioning");
 DEFINE_string(index_wal_path, "", "Path where to put the index WAL file. Disabled if empty");
+DEFINE_bool(wal_write_meta, true, "Write metadata to WAL file");
+DEFINE_bool(wal_write_data, false, "Write actual data to WAL file in addition to metadata");
 DEFINE_bool(run_duckdb, false, "Run DuckDB UI");
 DEFINE_int32(duckdb_port, 4213, "Port to listen on with DuckDB UI protocol");
+DEFINE_bool(enable_core_dumps, false, "Enable core dumps on crashes");
+DEFINE_bool(wait_for_wal_startup, true, "Wait for WAL startup to finish before accepting requests");
 
 namespace {
   std::unique_ptr<proxygen::HTTPServer> server;
@@ -73,7 +79,9 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
   S3HandlerFactory(SingleFileStorage::SFSOptions sfsoptions)
    : sfs(std::move(sfsoptions))
   {
-    sfs.start_thread(sfs.get_transid());
+    sfs.start_thread(sfs.get_transid() + 1);
+    if(FLAGS_wait_for_wal_startup)
+      sfs.wait_for_wal_startup_finished();
   }
 
   void onServerStart(folly::EventBase* /*evb*/) noexcept override {
@@ -147,9 +155,40 @@ void stopServer()
 
 int realMain(int argc, char* argv[])
 {
+  auto internalArgs = [&]() {
+      std::string ret;
+      for(int i=1;i<argc;++i)
+      {
+        if(i>1)
+          ret += " ";
+        ret += std::string(argv[i]);
+      }
+      return ret;
+    };
+
+    auto internalArgsStr = internalArgs();
+
     folly::Init init(&argc, &argv, true);
 
     XLOGF(INFO, "HS5 {} rev {}", PACKAGE_VERSION, GIT_REVISION);
+
+    XLOGF(DBG0, "Internal command line: {}", internalArgsStr);
+
+    if(FLAGS_enable_core_dumps)
+    {
+      // Enable core dumps
+      struct rlimit rl = {};
+      rl.rlim_cur = RLIM_INFINITY;
+      rl.rlim_max = RLIM_INFINITY;
+      if(setrlimit(RLIMIT_CORE, &rl) != 0)
+      {
+        XLOGF(ERR, "Failed to enable core dumps: {}", folly::errnoStr(errno));
+      }
+      else
+      {
+        XLOGF(INFO, "Core dumps enabled");
+      }
+    }
 
     SingleFileStorage::init_mutex();
     try
@@ -196,6 +235,14 @@ int realMain(int argc, char* argv[])
     sfsoptions.on_delete_callback = [](const std::string& fn, const std::string& md5sum) -> std::vector<std::string> {
       return S3Handler::onDeleteCallback(fn, md5sum);
     };
+    sfsoptions.wal_write_meta = FLAGS_wal_write_meta;
+    sfsoptions.wal_write_data = FLAGS_wal_write_data;    
+
+    if(!FLAGS_wal_write_meta && !FLAGS_wal_write_data)
+    {
+      XLOGF(ERR, "Either writing metadata or data to WAL file must be enabled");
+      return 1;
+    }
 
     proxygen::HTTPSessionBase::setMaxReadBufferSize(16*1024);
 

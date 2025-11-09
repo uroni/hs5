@@ -44,6 +44,10 @@ const size_t c_max_path = 1024 + 1 + 8 + 8;
 
 DEFINE_bool(symlink_lockfile_to_tmpdir, false, "Symlink LMDB lockfile to /tmp");
 DEFINE_int64(min_free_space, 0, "HS5 will try to keep at least this amount of MiB free on the data storage location");
+DEFINE_int64(max_wal_size_mb, 1000, "Maximum WAL file size in MiB before resetting");
+DEFINE_int64(max_wal_items, 10000, "Maxmimum amount of items in WAL file before resetting");
+DEFINE_bool(check_freespace_on_startup, false, "Check data file freespace on startup");
+DEFINE_bool(wal_write_thread, true, "Use a separate thread for WAL file data writes");
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -379,6 +383,7 @@ namespace
 	const char dbi_size_info_migration = 2;
 	const char dbi_size_info_ext_freespace = 3;
 	const char dbi_size_info_enckey = 4;
+	const char dbi_size_info_wal_uuid = 5;
 
 }
 
@@ -422,7 +427,8 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	alloc_use_free_space_percent(options.alloc_use_free_space_percent),
 	runtime_id(options.runtime_id), manual_commit(options.manual_commit), stop_on_error(options.stop_on_error), punch_holes(options.punch_holes),
 	data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func),
-	common_prefix_hash_func(options.common_prefix_hash_func), on_delete_callback(options.on_delete_callback)
+	common_prefix_hash_func(options.common_prefix_hash_func), on_delete_callback(options.on_delete_callback), wal_write_meta(options.wal_write_meta), 
+	wal_write_data(options.wal_write_data)
 {
 	if(common_prefix_func==nullptr)
 		common_prefix_func = common_prefix_passthrough;
@@ -908,8 +914,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	}
 	else
 	{
-		// Use random initial transid to avoid applying mismatching wal files
-		curr_transid = folly::Random::rand32();
+		curr_transid = 1;
 		XLOG(INFO) << "New data file transid " << std::to_string(curr_transid) << " curr size "+folly::prettyPrint(index_file_size, folly::PRETTY_BYTES_IEC) << " fn " << data_file_path;
 	}
 
@@ -1027,6 +1032,53 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 		}
 	}
 
+	ch = dbi_size_info_wal_uuid;
+	val.mv_data = &ch;
+	val.mv_size = 1;
+
+	MDB_val wal_uuid_out;
+
+	rc = mdb_get(txn, dbi_size, &val, &wal_uuid_out);
+
+	if (rc && rc != MDB_NOTFOUND)
+	{
+		throw std::runtime_error("LMDB: Error getting WAL UUID (" + (std::string)mdb_strerror(rc) + ")");
+	}
+	if (has_mmap_read_error_reset(tid))
+	{
+		throw std::runtime_error("LMDB: Error getting WAL UUID (SIGBUS)");
+	}
+
+	if (rc != MDB_NOTFOUND)
+	{
+		if (wal_uuid_out.mv_size == sizeof(wal_uuid))
+		{
+			memcpy(wal_uuid, wal_uuid_out.mv_data, sizeof(wal_uuid));
+		}
+		else
+		{
+			throw std::runtime_error("LMDB: WAL UUID has wrong size");
+		}
+	}
+	else
+	{
+		folly::Random::secureRandom(wal_uuid, sizeof(wal_uuid));
+
+		wal_uuid_out.mv_data = wal_uuid;
+		wal_uuid_out.mv_size = sizeof(wal_uuid);
+
+		rc = mdb_put(txn, dbi_size, &val, &wal_uuid_out, 0);
+
+		if (rc)
+		{
+			throw std::runtime_error("LMDB: Failed to put WAL UUID into db on startup");
+		}
+		if (has_mmap_read_error_reset(tid))
+		{
+			throw std::runtime_error("LMDB: Failed to put WAL UUID into db on startup (SIGBUS)");
+		}
+	}
+
 	ch = dbi_size_info_ext_freespace;
 	val.mv_data = &ch;
 	val.mv_size = 1;
@@ -1130,6 +1182,117 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 		throw std::runtime_error("LMDB: Error commiting txn for dbi handle (SIGBUS)");
 	}
 
+	if(!options.wal_file_path.empty()
+		&& (wal_write_data || wal_write_meta) )
+	{
+		auto wal_mode = (wal_write_meta && !wal_write_data) ? "meta_only" : (wal_write_data && !wal_write_meta) ? "data_only" : "full";
+		XLOGF(INFO, "Opening WAL file at {} mode {} {}", options.wal_file_path, wal_mode, FLAGS_wal_write_thread ? "with write thread" : "no write thread");
+		wal_file = std::make_unique<WalFile>(options.wal_file_path, wal_uuid, data_file);
+
+		const auto readResAlt = wal_file->read(curr_transid, &data_file, false, true);
+		if(!readResAlt.items.empty())
+		{
+			XLOGF(INFO, "WAL file (alt) read {} items", readResAlt.items.size());
+		}
+
+		auto addWalItems = [&](const auto& items)
+		{
+			for (const auto& item : items)
+			{
+				if (item.action == SingleFileStorage::FragAction::Del
+					|| item.action == SingleFileStorage::FragAction::Add
+					|| item.action == SingleFileStorage::FragAction::AddNoDelOld
+					|| item.action == SingleFileStorage::FragAction::DelOld
+					|| item.action == SingleFileStorage::FragAction::QueueDel
+					|| item.action == SingleFileStorage::FragAction::UnqueueDel)
+				{
+					// This is for if we don't wait for wal before startup
+					++commit_items[common_prefix_hash_func(item.fn)];
+				}
+
+				commit_queue.push_back(item);
+				++startup_wal_items;
+			}
+		};
+
+		addWalItems(readResAlt.items);
+
+		const auto readRes = wal_file->read(curr_transid, &data_file, false, false);
+
+		if(!readRes.items.empty())
+		{
+			XLOGF(INFO, "WAL file read {} items", readRes.items.size());
+		}
+
+		addWalItems(readRes.items);
+
+		if(startup_wal_items>0)
+		{
+			SFragInfo frag_info;
+			frag_info.action = FragAction::Commit;
+
+			commit_queue.push_back(frag_info);
+			++startup_wal_items;
+
+			wal_startup_finished = false;
+
+			assert(startup_wal_items == commit_queue.size());
+		}
+
+		if(readRes.commit_info || readResAlt.commit_info)
+		{
+			const auto& commit_info = readRes.commit_info ? *readRes.commit_info : *readResAlt.commit_info;
+			data_file_max_size = commit_info.data_file_max_size;
+			data_file_offset = commit_info.curr_write_ext_start;
+			data_file_offset_end = commit_info.curr_write_ext_end;
+			data_file_free = commit_info.data_file_free;
+			curr_transid = commit_info.curr_transid;
+			curr_partid = commit_info.local_curr_partid;
+			curr_version = commit_info.local_curr_version;
+
+			if(!commit_info.reserved_extents.empty())
+			{
+				XLOGF(INFO, "WAL file recovery reserved {} extents", commit_info.reserved_extents.size());
+
+				THREAD_ID tid = gettid();
+				setup_mmap_read_error(tid);
+
+				MDB_txn* txn;
+				rc = mdb_txn_begin(db_env, NULL, 0, &txn);
+				if (rc)
+					throw std::runtime_error("LMDB: Failed to open transaction handle for commit (1) (" + std::string(mdb_strerror(rc)) + ") sfs " + db_path);
+
+				if (has_mmap_read_error_reset(tid))
+					throw std::runtime_error("LMDB: Failed to open transaction handle for commit (1) (SIGBUS) sfs " + db_path);
+
+
+				size_t idx = 0;
+				for(const auto& ext: commit_info.reserved_extents)
+				{
+					if(add_tmp(idx++, txn, tid, ext.offset, ext.len, true))
+						throw std::runtime_error("LMDB: Failed to add reserved extent from WAL during recovery");
+				}
+
+				rc = mdb_txn_commit(txn);
+				if (rc)
+					throw std::runtime_error("LMDB: Error commiting txn for dbi handle (" + (std::string)mdb_strerror(rc) + ")");
+				if (has_mmap_read_error_reset(tid))
+					throw std::runtime_error("LMDB: Error commiting txn for dbi handle (SIGBUS)");
+			}
+
+			XLOG(INFO) << "WAL Data file max " << std::to_string(data_file_max_size) << " offset " << std::to_string(data_file_offset) <<
+				" end " << std::to_string(data_file_offset_end) <<
+				" free " << std::to_string(data_file_free) <<
+				" transid " << std::to_string(curr_transid) << 
+				" curr_partid " << curr_partid <<
+				" curr_version " << curr_version << " fn " << data_file_path;
+		}
+
+		wal_write_thread = std::jthread([this](std::stop_token st){
+			wal_file->dataWriteThread(st);
+		});
+	}
+
 	if (data_file_max_size < data_file.size())
 	{
 		XLOG(INFO) << "Trimming " << folly::prettyPrint(data_file.size() - data_file_max_size, folly::PRETTY_BYTES_IEC) << " from data file during recovery";
@@ -1156,24 +1319,6 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 			(*cb)();
 		});
 	}
-
-	if(!options.wal_file_path.empty())
-	{
-		XLOGF(INFO, "Opening WAL file at {}", options.wal_file_path);
-		wal_file = std::make_unique<WalFile>(options.wal_file_path);
-
-		const auto items = wal_file->read(curr_transid);
-
-		if(!items.empty())
-		{
-			XLOGF(INFO, "WAL file read {} items", items.size());
-		}
-
-		for(const auto& item : items)
-		{
-			commit_queue.push_back(item);
-		}
-	}
 }
 
 SingleFileStorage::SingleFileStorage()
@@ -1190,6 +1335,13 @@ SingleFileStorage::SingleFileStorage()
 SingleFileStorage::~SingleFileStorage()
 {
 	XLOGF(INFO, "Shutting down SingleFileStorage...");
+
+	if(wal_file)
+	{
+		wal_write_thread.request_stop();
+		wal_file->wakeupDataWriteThread();
+	}
+
 	if(commit_thread_h.joinable())
 	{
 		{
@@ -1716,7 +1868,7 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
 				data_file_offset = commit_info.new_datafile_offset;
 				data_file_offset_end = commit_info.new_datafile_offset_end;
 
-				XLOG(INFO) << "Found new free extent (" << std::to_string(data_file_offset) << ", " << std::to_string(data_file_offset_end) << "). Size " << folly::prettyPrint(data_file_offset_end - data_file_offset, folly::PRETTY_BYTES_IEC);
+				XLOG(DBG0) << "Found new free extent (" << std::to_string(data_file_offset) << ", " << std::to_string(data_file_offset_end) << "). Size " << folly::prettyPrint(data_file_offset_end - data_file_offset, folly::PRETTY_BYTES_IEC);
 			}
 
 			if (data_file_offset_end > data_file_offset)
@@ -1789,13 +1941,26 @@ int SingleFileStorage::write_ext(const Ext& ext, const char* data, size_t data_s
 
 	EXT_DEBUG(XLOG(INFO) << "Writing " << data_file_path << " to offset " << std::to_string(ext.data_file_offset) << " len " << std::to_string(data_size));
 
-	if (sel_data_file->pwriteFullFillPage(data, data_size, ext.data_file_offset) != data_size )
+	const auto walWrite = wal_write_data && wal_file;
+	const auto walWriteThread = walWrite && FLAGS_wal_write_thread;
+
+	if (!walWriteThread && sel_data_file->pwriteFullFillPage(data, data_size, ext.data_file_offset) != data_size )
 	{
 		std::string fn =
 				sel_data_file == &data_file ? data_file_path : (data_file_path.parent_path() / "new_data");
 
 		XLOG(ERR) << "Error writing to data file " << fn + ". " + folly::errnoStr(errno);
 
+		if (errno > 0)
+			return errno;
+		else
+			return EIO;
+	}
+
+	if( walWrite &&
+		!wal_file->writeData(ext.data_file_offset, data, data_size, walWriteThread))
+	{
+		XLOGF(ERR, "Error writing to WAL file for data file {} off {}: {}", data_file_path.string(), ext.data_file_offset, folly::errnoStr(errno));
 		if (errno > 0)
 			return errno;
 		else
@@ -1908,7 +2073,7 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 				data_file_offset = commit_info.new_datafile_offset;
 				data_file_offset_end = commit_info.new_datafile_offset_end;
 
-				XLOG(INFO) << "Found new free extent (" << std::to_string(data_file_offset) << ", " << std::to_string(data_file_offset_end) << "). Size " << folly::prettyPrint(data_file_offset_end - data_file_offset, folly::PRETTY_BYTES_IEC);
+				XLOG(DBG0) << "Found new free extent (" << std::to_string(data_file_offset) << ", " << std::to_string(data_file_offset_end) << "). Size " << folly::prettyPrint(data_file_offset_end - data_file_offset, folly::PRETTY_BYTES_IEC);
 			}
 
 			if (data_file_offset_end > data_file_offset)
@@ -2262,6 +2427,11 @@ SingleFileStorage::ReadExtResult SingleFileStorage::read_ext(const Ext& ext, con
 	auto data = buf.preallocate(bufsize, bufsize);
 	auto bufptr = reinterpret_cast<char*>(data.first);
 
+	if(wal_file && wal_write_data)
+	{
+		wal_file->waitForWriteout(ext.data_file_offset, toread);
+	}
+
 	ssize_t read;
 	bool dio_read = (flags & ReadWithReadahead) == 0 && (flags & ReadUnsynced) == 0 && *sel_data_file_dio;
 	if (dio_read)
@@ -2314,6 +2484,11 @@ int SingleFileStorage::read_ext(const Ext& ext, const unsigned int flags, const 
 	{
 		sel_data_file = &new_data_file;
 		sel_data_file_dio = &new_data_file_dio;
+	}
+
+	if(wal_file && wal_write_data)
+	{
+		wal_file->waitForWriteout(ext.data_file_offset, toread);
 	}
 
 	bool dio_read = (flags & ReadWithReadahead) == 0 && (flags & ReadUnsynced) == 0 && *sel_data_file_dio;
@@ -2529,6 +2704,8 @@ bool SingleFileStorage::list_commit()
 	if(!wal_file)
 		return true;
 
+	XLOGF(INFO, "Listing commit requested for SFS {} because of WAL presence", db_path);
+
 	SCommitInfo commit_info;
 	std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
 
@@ -2536,7 +2713,10 @@ bool SingleFileStorage::list_commit()
 		std::scoped_lock lock(mutex);
 
 		if(!needs_wal_file_reset)
+		{
+			XLOGF(INFO, "WAL file for SFS {} does not need reset, skipping listing commit", db_path);
 			return true;
+		}
 
 		
 		SFragInfo frag_info;
@@ -2554,6 +2734,8 @@ bool SingleFileStorage::list_commit()
 		cond.notify_all();
 	}
 	commit_info.commit_done.wait(commit_done_lock);
+
+	XLOGF(INFO, "Listing commit for SFS {} completed with {} errors", db_path, commit_info.commit_errors);
 
 	return commit_info.commit_errors == 0;
 }
@@ -3089,13 +3271,13 @@ int64_t SingleFileStorage::log_fn(const std::string & fn, MDB_txn * txn, THREAD_
 	return commit_errors;
 }
 
-int64_t SingleFileStorage::add_tmp(int64_t idx, MDB_txn* txn, THREAD_ID tid, int64_t offset, int64_t len)
+int64_t SingleFileStorage::add_tmp(int64_t idx, MDB_txn* txn, THREAD_ID tid, int64_t offset, int64_t len, bool from_startup)
 {
 	int64_t commit_errors = 0;
 
 	CWData keydata;
 	keydata.addChar(0);
-	keydata.addChar('t');
+	keydata.addChar(from_startup ? 's' : 't');
 	keydata.addVarInt(idx);
 
 	MDB_val tkey;
@@ -4831,6 +5013,8 @@ bool SingleFileStorage::generate_freespace_cache(MDB_txn* source_txn, MDB_txn* d
 
 bool SingleFileStorage::freespace_check(MDB_txn* source_txn, MDB_txn* freespace_txn, bool fast_check)
 {
+	XLOGF(INFO, "Freespace check sfs {} started...", db_path);
+
 	THREAD_ID tid = gettid();
 
 	MDB_val tkey;
@@ -4853,6 +5037,8 @@ bool SingleFileStorage::freespace_check(MDB_txn* source_txn, MDB_txn* freespace_
 			XLOG(ERR) << "Error reading first ext " << decompress_filename(key_name);
 			return false;
 		}
+
+		XLOGF(DBG0, "Freespace check key {} extent offset {} len {}", decompress_filename(std::string(reinterpret_cast<char*>(tkey.mv_data), tkey.mv_size)), first_ext.offset, first_ext.len);
 
 		std::vector<SPunchItem> extents;
 
@@ -5201,6 +5387,8 @@ bool SingleFileStorage::freespace_check(MDB_txn* source_txn, MDB_txn* freespace_
 		int64_t curr_end = (std::min)(data_size, data_file_offset_end);
 		int64_t start_bit = data_file_offset/4096;
 		int64_t len_bits = div_up(curr_end - data_file_offset, 4096);
+
+		XLOGF(INFO, "Setting bitmap using data_file_offset+end offset={} len={}", data_file_offset, curr_end - data_file_offset);
 
 		if(bmap.get_range(start_bit, start_bit + len_bits))
 		{
@@ -6494,6 +6682,8 @@ void SingleFileStorage::operator()()
 		curr_write_ext_end = data_file_offset_end;
 	}
 
+	XLOGF(DBG0, "curr_write_ext_start={} curr_write_ext_end={}", curr_write_ext_start, curr_write_ext_end);
+
 	THREAD_ID tid = gettid();
 	setup_mmap_read_error(tid);
 
@@ -6660,11 +6850,12 @@ void SingleFileStorage::operator()()
 		}
 	}
 
-	if (std::filesystem::exists("/etc/urbackup/check_free_space_cache") )
+	if (FLAGS_check_freespace_on_startup && wal_startup_finished)
 	{
 		if (!freespace_check(txn, freespace_txn, true))
 		{
 			XLOG(ERR) << "Freespace check failed";
+			assert(false);
 			++commit_errors;
 		}
 	}
@@ -6774,7 +6965,8 @@ void SingleFileStorage::operator()()
 
 	std::deque<SFragInfo> pending_commits;
 	std::chrono::steady_clock::time_point last_commit_time = std::chrono::steady_clock::now();
-	bool can_skip_commit = false;
+
+	auto can_skip_commit = false;
 
 	size_t mod_items = 0;
 
@@ -6816,6 +7008,7 @@ void SingleFileStorage::operator()()
 			break;
 		}
 
+		bool from_startup_wal = false;
 		bool pending_commit = false;
 		SFragInfo frag_info;
 		/*if (mod_items > 100000)
@@ -6840,6 +7033,11 @@ void SingleFileStorage::operator()()
 			}
 			else if(!commit_queue.empty())
 			{
+				if(startup_wal_items > 0)
+				{
+					startup_wal_items--;
+					from_startup_wal = true;
+				}
 				frag_info = commit_queue.front();
 				commit_queue.pop_front();
 			}
@@ -6899,7 +7097,10 @@ void SingleFileStorage::operator()()
 
 		lock.unlock();
 
-		if (!pending_commit &&
+		XLOGF(DBG0, "Running frag_info action={} fn={} offset={} len={}", 
+			static_cast<int>(frag_info.action), frag_info.fn, frag_info.offset, frag_info.len);
+
+		if (!pending_commit && !from_startup_wal &&
 			frag_info.action == FragAction::Commit)
 		{
 			pending_commits.push_back(frag_info);
@@ -6946,15 +7147,21 @@ void SingleFileStorage::operator()()
 			mod_items += 2;
 		}
 
-		if(wal_file && !wal_file->write(prev_transid, frag_info) )
+		if(wal_file && !from_startup_wal && wal_write_meta &&
+			!wal_file->write(prev_transid, frag_info) )
 		{
 			XLOG(ERR) << "Failed to write to wal file. " << folly::errnoStr(errno);
 			++commit_errors;
 		}
 
+		auto wal_commit_allowed = [&]() {
+			return frag_info.md5sum != "reset" &&
+				frag_info.md5sum != "l";
+		};
+
 		if(frag_info.action == FragAction::Commit)
 		{
-			if(can_skip_commit)
+			if(can_skip_commit && wal_commit_allowed())
 			{
 				{
 					if (frag_info.commit_info != nullptr)
@@ -6976,24 +7183,68 @@ void SingleFileStorage::operator()()
 		}
 
 		if(frag_info.action == FragAction::Commit && 
-			frag_info.md5sum != "reset" &&
-			frag_info.md5sum != "l" &&
-			wal_file && wal_file->items() < 1000)
+			wal_write_meta &&
+			wal_commit_allowed() &&
+			!from_startup_wal &&
+			wal_file && wal_file->size() < FLAGS_max_wal_size_mb*1024*1024
+			&& wal_file->items() < FLAGS_max_wal_items)
 		{
-			if (data_file.fsyncNoInt()!=0)
+			if(!wal_write_data)
 			{
-				XLOG(ERR) << "Failed to sync data file " << data_file_path << ". " << folly::errnoStr(errno);
-				++commit_errors;
+				if (data_file.fsyncNoInt()!=0)
+				{
+					XLOG(ERR) << "Failed to sync data file " << data_file_path << ". " << folly::errnoStr(errno);
+					++commit_errors;
+				}
+
+				if (new_data_file
+					&& new_data_file.fsyncNoInt()!=0)
+				{
+					XLOG(ERR) << "Failed to sync new data file " << (data_file_path.parent_path() / "new_data") << ". " << folly::errnoStr(errno);
+					++commit_errors;
+				}
 			}
 
-			if (new_data_file
-				&& new_data_file.fsyncNoInt()!=0)
-			{
-				XLOG(ERR) << "Failed to sync new data file " << (data_file_path.parent_path() / "new_data") << ". " << folly::errnoStr(errno);
-				++commit_errors;
+			int64_t local_curr_partid;
+			int64_t local_curr_version;
+			std::vector<SPunchItem> local_reserved_extents;
+			{				
+				{
+					std::scoped_lock lock(reserved_extents_mutex);
+					local_curr_partid = curr_partid;
+					local_curr_version = curr_version;
+					local_reserved_extents.reserve(reserved_extents.size());
+					for(const auto& it: reserved_extents)
+					{
+						if( it.first + it.second <= data_file_max_size &&
+							 !(it.first >= curr_write_ext_start && 
+								it.first + it.second <= curr_write_ext_end) )
+							local_reserved_extents.emplace_back(SPunchItem(it.first, it.second));
+					}
+				}
+			
+				for(const auto& reserved_extent: local_reserved_extents)
+				{
+					auto size = reserved_extent.offset + div_up(reserved_extent.len, block_size)*block_size;
+
+					if (size > curr_write_ext_start
+						&& size <= curr_write_ext_end)
+						curr_write_ext_start = size;
+					if (size > data_file_max_size)
+						data_file_max_size = size;
+				}
 			}
 
-			const auto commit_ok = wal_file->sync();
+			const WalFile::CommitInfo commitInfo{.data_file_max_size = data_file_max_size,
+								.curr_write_ext_start = curr_write_ext_start,
+								.curr_write_ext_end = curr_write_ext_end,
+								.data_file_free = data_file_free,
+								.curr_transid = curr_transid,
+								.local_curr_partid = local_curr_partid,
+								.local_curr_version = local_curr_version,
+								.reserved_extents = local_reserved_extents};
+
+			const auto commit_ok = wal_file->sync(commitInfo);
 			if(!commit_ok)
 			{
 				XLOG(ERR) << "Failed to sync wal file. " << folly::errnoStr(errno);
@@ -7084,17 +7335,50 @@ void SingleFileStorage::operator()()
 				}
 			}
 
-			if (data_file.fsyncNoInt()!=0)
+			auto wal_file_reset = true;
+
+			if(wal_file && !from_startup_wal && !wal_write_meta && wal_write_data && wal_file->items() < FLAGS_max_wal_items &&
+				wal_file->size() < FLAGS_max_wal_size_mb*1024*1024)
 			{
-				XLOG(ERR) << "Failed to sync data file " << data_file_path << ". " << folly::errnoStr(errno);
-				++commit_errors;
+				wal_file_reset = false;
 			}
 
-			if (new_data_file
-				&& new_data_file.fsyncNoInt()!=0)
+			// Prevent adding data after we have synced the data file and before
+			// we have reset the WAL file
+			WalFile::ResetPrep walFileResetPrep((wal_file_reset && !FLAGS_wal_write_thread)? wal_file.get() : nullptr);
+
+			if ( wal_file_reset && !FLAGS_wal_write_thread ) 
 			{
-				XLOG(ERR) << "Failed to sync new data file " << (data_file_path.parent_path() / "new_data") << ". " << folly::errnoStr(errno);
-				++commit_errors;
+				if (data_file.fsyncNoInt()!=0)
+				{
+					XLOG(ERR) << "Failed to sync data file " << data_file_path << ". " << folly::errnoStr(errno);
+					++commit_errors;
+				}
+
+				if (new_data_file
+					&& new_data_file.fsyncNoInt()!=0)
+				{
+					XLOG(ERR) << "Failed to sync new data file " << (data_file_path.parent_path() / "new_data") << ". " << folly::errnoStr(errno);
+					++commit_errors;
+				}
+			}
+			else if(wal_file_reset && FLAGS_wal_write_thread && wal_write_data)
+			{
+				wal_file->waitForWrites();
+
+				if(!wal_file->fsync())
+				{
+					XLOG(ERR) << "Failed to sync wal file. " << folly::errnoStr(errno);
+					++commit_errors;
+				}
+			}
+			else
+			{
+				if(!wal_file->fsync())
+				{
+					XLOG(ERR) << "Failed to sync wal file. " << folly::errnoStr(errno);
+					++commit_errors;
+				}
 			}
 
 			size_t num_reserved_extents;
@@ -7121,7 +7405,7 @@ void SingleFileStorage::operator()()
 				size_t ext_idx = 0;
 				for(const auto& reserved_extent: local_reserved_extents)
 				{
-					commit_errors += add_tmp(ext_idx, txn, tid, reserved_extent.offset, reserved_extent.len);
+					commit_errors += add_tmp(ext_idx, txn, tid, reserved_extent.offset, reserved_extent.len, false);
 					++ext_idx;
 
 					auto size = reserved_extent.offset + div_up(reserved_extent.len, block_size)*block_size;
@@ -7382,8 +7666,22 @@ void SingleFileStorage::operator()()
 				if(frag_info.offset == -1)
 					++curr_transid;
 
-				if(wal_file)
-					wal_file->reset();
+				if(wal_file && wal_file_reset)
+				{
+					if(!FLAGS_wal_write_thread || !wal_write_data)
+					{
+						wal_file->reset(walFileResetPrep, wal_write_data, std::nullopt);
+					}
+					else
+					{
+						XLOGF(INFO, "Switching wal files curr_transid={}", curr_transid);
+						if(!wal_file->switchFiles())
+						{
+							XLOG(ERR) << "Failed to switch wal files. " << folly::errnoStr(errno);
+							++commit_errors;
+						}
+					}
+				}
 
 				int rc = mdb_txn_begin(db_env, NULL, 0, &txn);
 				if (rc)
@@ -7414,6 +7712,21 @@ void SingleFileStorage::operator()()
 				}
 
 				can_skip_commit=true;
+			}
+
+			if(from_startup_wal)
+			{
+				XLOGF(INFO, "Wal startup finished");
+				if (FLAGS_check_freespace_on_startup && !freespace_check(txn, freespace_txn, true))
+				{
+					XLOG(ERR) << "Freespace check failed";
+					assert(false);
+					++commit_errors;
+				}
+
+				std::scoped_lock llock(mutex);
+				wal_startup_finished = true;
+				wal_startup_finished_cond.notify_all();
 			}
 		}
 		else if (frag_info.action == FragAction::ResetDelLog)
@@ -7640,10 +7953,16 @@ void SingleFileStorage::operator()()
 		}
 		else if (frag_info.action == FragAction::FindFree)
 		{
+			XLOGF(DBG0, "Find free curr_write_ext_start={} curr_write_ext_end={} data_file_max_size={}",
+				curr_write_ext_start, curr_write_ext_end, data_file_max_size);
+
 			if (frag_info.offset > curr_write_ext_start)
 				curr_write_ext_start = frag_info.offset;
 			if (frag_info.offset > data_file_max_size)
 				data_file_max_size = frag_info.offset;
+
+			XLOGF(DBG0, "Find free curr_write_ext_start={} curr_write_ext_end={} data_file_max_size={}",
+				curr_write_ext_start, curr_write_ext_end, data_file_max_size);
 
 			bool search_for_free_space = true;
 			bool add_remaining_ext = true;
@@ -7663,6 +7982,8 @@ void SingleFileStorage::operator()()
 					free_space > min_free_space
 					&& free_space > really_min_space)
 				{
+					XLOGF(DBG0, "Find free append curr_write_ext_start={}, curr_write_ext_end={}, data_file_max_size={}",
+						curr_write_ext_start, curr_write_ext_end, data_file_max_size);
 					curr_write_ext_end = curr_write_ext_start + alloc_chunk_size;
 					search_for_free_space = false;
 				}
@@ -7679,6 +8000,12 @@ void SingleFileStorage::operator()()
 				if (curr_write_ext_end - curr_write_ext_start >= block_size
 					&& add_remaining_ext)
 				{
+					if(wal_file && wal_write_meta &&
+						!wal_file->writeAddFreemapExt(prev_transid, curr_write_ext_start, curr_write_ext_end - curr_write_ext_start))
+					{
+						XLOG(ERR) << "Failed to write to wal file. " << folly::errnoStr(errno);
+						++commit_errors;
+					}
 					add_freemap_ext(freespace_txn, curr_write_ext_start,
 						curr_write_ext_end - curr_write_ext_start, false, tid);
 					add_remaining_ext = false;
@@ -7705,9 +8032,19 @@ void SingleFileStorage::operator()()
 			
 			if (search_for_free_space)
 			{
+				XLOGF(DBG0, "Find free search curr_write_ext_start={} curr_write_ext_end={} data_file_max_size={}",
+					curr_write_ext_start, curr_write_ext_end, data_file_max_size);
+
 				if (curr_write_ext_end - curr_write_ext_start >= block_size
 					&& add_remaining_ext)
 				{
+					if(wal_file && wal_write_meta &&
+						!wal_file->writeAddFreemapExt(prev_transid, curr_write_ext_start, curr_write_ext_end - curr_write_ext_start))
+					{
+						XLOG(ERR) << "Failed to write to wal file. " << folly::errnoStr(errno);
+						++commit_errors;
+					}
+
 					add_freemap_ext(freespace_txn, curr_write_ext_start, 
 						curr_write_ext_end - curr_write_ext_start, false, tid);
 				}
@@ -7716,6 +8053,13 @@ void SingleFileStorage::operator()()
 				if (find_freemap_ext(freespace_txn, tid, start, len))
 				{
 					XLOG(DBG) << "Writing to free extent (" << std::to_string(start) << ", " << std::to_string(len) << ")";
+
+					if(wal_file && wal_write_meta &&
+						!wal_file->writeDelFreemapExt(prev_transid, start, len))
+					{
+						XLOG(ERR) << "Failed to write to wal file. " << folly::errnoStr(errno);
+						++commit_errors;
+					}
 
 					MDB_val tkey;
 					CWData wtkey;
@@ -7789,10 +8133,70 @@ void SingleFileStorage::operator()()
 				}
 			}
 
-			std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
-			frag_info.commit_info->new_datafile_offset = curr_write_ext_start;
-			frag_info.commit_info->new_datafile_offset_end = curr_write_ext_end;
-			frag_info.commit_info->commit_done.notify_all();
+			if(frag_info.commit_info)
+			{
+				std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
+				frag_info.commit_info->new_datafile_offset = curr_write_ext_start;
+				frag_info.commit_info->new_datafile_offset_end = curr_write_ext_end;
+				frag_info.commit_info->commit_done.notify_all();
+			}
+		}
+		else if (frag_info.action == FragAction::DelFreemapWal)
+		{
+			const auto start = frag_info.offset;
+			const auto len = frag_info.len;
+			MDB_val tkey;
+			CWData wtkey;
+			wtkey.addVarInt(start);
+			tkey.mv_data = wtkey.getDataPtr();
+			tkey.mv_size = wtkey.getDataSize();
+			rc = mdb_del(freespace_txn, dbi_free, &tkey, nullptr);
+
+			const bool mmap_err = has_mmap_read_error_reset(tid);
+			if (mmap_err)
+			{
+				XLOG(ERR) << "LMDB: Error removing free extent (SIGBUS) DelFreemapWal sfs " << db_path;
+				frag_info.commit_info->commit_errors = 1;
+				++commit_errors;
+			}
+
+			if (rc)
+			{
+				XLOG(ERR) << "Error removing free extent DelFreemapWal (" << start << ", " << len << ") (" << mdb_strerror(rc) << ") sfs " << db_path;
+				frag_info.commit_info->commit_errors = 1;
+			}
+			else if(!mmap_err)
+			{
+				MDB_val tval;
+				CWData wtval;
+				wtval.addVarInt(len);
+				tval.mv_data = wtval.getDataPtr();
+				tval.mv_size = wtval.getDataSize();
+
+				rc = mdb_del(freespace_txn, dbi_free_len, &tval, &tkey);
+
+				if (rc)
+				{
+					XLOG(ERR) << "Error removing free extent (2) DelFreemapWal (" << mdb_strerror(rc) << ") sfs " << db_path;
+					frag_info.commit_info->commit_errors = 1;
+				}
+				if (has_mmap_read_error_reset(tid))
+				{
+					XLOG(ERR) << "LMDB: Error removing free extent (2) DelFreemapWal (SIGBUS) sfs " << db_path;
+					frag_info.commit_info->commit_errors = 1;
+					++commit_errors;
+				}
+			}
+
+			{
+				std::scoped_lock lock2(freespace_mutex);
+				data_file_free -= len;
+			}
+		}
+		else if (frag_info.action == FragAction::AddFreemapWal)
+		{
+			add_freemap_ext(freespace_txn, frag_info.offset, 
+						frag_info.len, false, tid);
 		}
 		else if (frag_info.action == FragAction::FreeExtents)
 		{
@@ -8903,6 +9307,13 @@ bool SingleFileStorage::read_pgids(MDB_txn* txn, MDB_dbi dbi, THREAD_ID tid,
 
 	rc = mdb_cursor_first_leaf_page(cur, &pgno);
 
+	if(rc == MDB_NOTFOUND)
+	{
+		//empty db
+		mdb_cursor_close(cur);
+		return true;
+	}
+
 	if (rc)
 	{
 		XLOG(ERR) << "LMDB: Failed mdb_cursor_first_leaf_page in read_pgids (" << mdb_strerror(rc) << ") sfs " << db_path;
@@ -9048,4 +9459,15 @@ int SingleFileStorage::add_new_object(MDB_txn* txn, const THREAD_ID tid, const s
 	}
 
 	return 0;
+}
+
+void SingleFileStorage::wait_for_wal_startup_finished()
+{
+	XLOGF(INFO, "Waiting for WAL startup to finish for sfs {}", db_path);
+	std::unique_lock lock(mutex);
+	while (!wal_startup_finished)
+	{
+		wal_startup_finished_cond.wait(lock);
+	}
+	XLOGF(INFO, "WAL startup finished for sfs {}", db_path);
 }

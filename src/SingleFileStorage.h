@@ -109,6 +109,8 @@ public:
 		common_prefix_func_t common_prefix_func = nullptr;
 		common_prefix_hash_func_t common_prefix_hash_func = nullptr;
 		on_delete_callback_t on_delete_callback;
+		bool wal_write_meta = true;
+		bool wal_write_data = false;
 	};
 
 	SingleFileStorage(SFSOptions options);
@@ -319,6 +321,8 @@ public:
 
 	void free_extents(const std::vector<Ext>& extents);
 
+	void wait_for_wal_startup_finished();
+
 private:
 
 	int write_int(const std::string& fn, const char* data, size_t data_size, const size_t data_alloc_size,
@@ -333,7 +337,7 @@ private:
 	int64_t log_fn(const std::string& fn,
 		MDB_txn* txn, THREAD_ID tid, int64_t transid);
 
-	int64_t add_tmp(int64_t idx, MDB_txn* txn, THREAD_ID tid, int64_t offset, int64_t len);
+	int64_t add_tmp(int64_t idx, MDB_txn* txn, THREAD_ID tid, int64_t offset, int64_t len, bool from_startup);
 
 	int64_t rm_tmp(int64_t idx, MDB_txn* txn, THREAD_ID tid);
 
@@ -465,7 +469,9 @@ private:
 		UnqueueDel,
 		DelWithQueued,
 		ResetDelQueue,
-		AssertDelQueueEmpty
+		AssertDelQueueEmpty,
+		DelFreemapWal,
+		AddFreemapWal
 	};
 
 	struct SFragInfo;
@@ -640,6 +646,13 @@ private:
 
 	std::unique_ptr<WalFile> wal_file;
 	bool needs_wal_file_reset = false;
+	bool wal_write_meta = true;
+	bool wal_write_data = false;
+	char wal_uuid[16];
+	size_t startup_wal_items = 0;
+	bool wal_startup_finished = true;
+	std::condition_variable wal_startup_finished_cond;
+	std::jthread wal_write_thread;
 };
 
 
