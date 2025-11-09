@@ -44,7 +44,7 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: sudo apt-get update &&
-            sudo apt-get install autoconf automake autoconf-archive
+            sudo apt-get install autoconf automake autoconf-archive lld
 
       - uses: lukka/get-cmake@v3.31.5
 
