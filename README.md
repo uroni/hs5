@@ -117,6 +117,10 @@ The main object storage consists of (mostly) two files. One is an `index.lmdb` L
 
  Step 5 makes sure that we notice a restart of `hs5`. In that case, we have to re-upload the two objects since they might not be flushed to disk. If the comparison at step 5 fails, you could also abort, but `objA` and `objB` might be stored in the bucket. You might want to add some periodic task that checks for such orphaned objects or keep track of potentially orphaned objects somehow and clean them up regularly.
 
+## WAL for performance
+
+HS5 has an optional Write-Ahead-Log (WAL) mode where it logs data and/or metadata into a file first before writing it to the respective files. This can be used to improve performance if the metadata/data file is slower than the WAL file w.r.t. latency, e.g., the data path is network storage and the wal path is local flash storage. Enable this mode with `--wal-mode all` (or `metadata-only`/`data-only`).
+
 ## DuckDB UI #
 
 HS5 integrates with DuckDB. If you run hs5 with the switch `--duckdb-ui` it'll start the DuckDB UI on port 4213 per default. You can then directly query e.g. `parquet` files in HS5 buckets with the `hs5://` scheme. Currently only reading is supported. E.g. following DuckDB query:
