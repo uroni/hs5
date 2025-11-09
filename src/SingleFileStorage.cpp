@@ -7347,7 +7347,7 @@ void SingleFileStorage::operator()()
 			// we have reset the WAL file
 			WalFile::ResetPrep walFileResetPrep((wal_file_reset && !FLAGS_wal_write_thread)? wal_file.get() : nullptr);
 
-			if ( wal_file_reset && !FLAGS_wal_write_thread ) 
+			if ( !wal_file || (wal_file_reset && !FLAGS_wal_write_thread) ) 
 			{
 				if (data_file.fsyncNoInt()!=0)
 				{
