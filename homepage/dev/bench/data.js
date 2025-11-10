@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1761258287400,
+  "lastUpdate": 1762804140488,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -2280,6 +2280,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.2187528393890321",
             "extra": "mean: 15.198170022199998 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "5925327e877097fcca482d1c6306191db1a1cea8",
+          "message": "Add section about WAL",
+          "timestamp": "2025-11-09T14:24:56+01:00",
+          "tree_id": "becaf662a18f2777d8890632e7d00ad412bf2b4d",
+          "url": "https://github.com/uroni/hs5/commit/5925327e877097fcca482d1c6306191db1a1cea8"
+        },
+        "date": 1762804140078,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07171314126702802,
+            "unit": "iter/sec",
+            "range": "stddev: 0.6318161094721969",
+            "extra": "mean: 13.944445639000003 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06452801190728179,
+            "unit": "iter/sec",
+            "range": "stddev: 0.28347794703205825",
+            "extra": "mean: 15.497145664999994 sec\nrounds: 5"
           }
         ]
       }
