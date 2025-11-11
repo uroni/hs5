@@ -3659,34 +3659,32 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         if(!commit())
         {
             XLOGF(WARN, "Commit obj {} failed", keyInfo.key);
-            evb->runInEventBaseThread([self = this]()
+            evb->runInEventBaseThread([this]()
                                 {           
-                    if(!self || self->finished_)
+                    if(finished_)
                         return;
-                    ResponseBuilder(self->downstream_)
+                    finished_ = true;
+                    ResponseBuilder(downstream_)
                         .status(500, "Internal error")
                         .body("Commit error")
-                        .sendWithEOM();
-                    self->finished_ = true; });
+                        .sendWithEOM(); });
             return;
         }
 
         XLOGF(DBG0, "Successfully wrote object {} etag {}", keyInfo.key, folly::hexlify(md5sum.substr(1)));
 
-        evb->runInEventBaseThread([self = this, md5sum]()
+        evb->runInEventBaseThread([this, md5sum]()
                                 {      
-                    if(!self)
-                        return;
-                    ResponseBuilder resp(self->downstream_);
+                    finished_ = true;
+                    ResponseBuilder resp(downstream_);
                     resp.status(200, "OK");
                     resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, fmt::format("\"{}\"", folly::hexlify(md5sum.substr(1))));
-                    if(self->keyInfo.version != 0)
+                    if(keyInfo.version != 0)
                     {
-                        resp.header("x-amz-version-id", self->sfs.encrypt_id(self->keyInfo.version));
-                        
+                        resp.header("x-amz-version-id", sfs.encrypt_id(keyInfo.version));
                     }
                     resp.sendWithEOM();
-                    self->finished_ = true; });
+                     });
         return;
     }
 

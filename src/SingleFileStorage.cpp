@@ -2856,6 +2856,13 @@ bool SingleFileStorage::iter_start(std::string fn, bool compressed, IterData& it
 		XLOG(ERR) << "LMDB: Failed to get cursor for iteration (" << mdb_strerror(rc) << ") sfs " << db_path;
 		return false;
 	}
+	else if (rc == MDB_NOTFOUND)
+	{
+		iter_data.iter_key.mv_data = nullptr;
+		iter_data.iter_key.mv_size = 0;
+	}
+
+	assert(iter_data.iter_key.mv_data != const_cast<char*>(fn.data()));
 
 	return true;
 }
