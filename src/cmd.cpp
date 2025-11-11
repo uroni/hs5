@@ -396,6 +396,7 @@ int actionRun(std::vector<std::string> args)
     {
         if(!alreadySetArgs.contains("--index_wal_path"))
         {
+            // Setting index_wal_path enables WAL (metadata-only)
             realArgs.push_back("--index_wal_path");
             realArgs.push_back(walPathArg.isSet() ? walPathArg.getValue() : metadataStoragePathVal);
         }
@@ -407,6 +408,7 @@ int actionRun(std::vector<std::string> args)
         else if(walModeArg.getValue()=="data-only")
         {
             realArgs.push_back("--nowal_write_meta");
+            realArgs.push_back("--wal_write_data");
         }
     }
 
