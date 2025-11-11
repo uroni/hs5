@@ -2039,8 +2039,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     {
                         XLOGF(DBG0, "Content length {} bytes for readObject HEAD of {}", rangeEnd, self->keyInfo.key);
                         // .send() sets the content length to the body length (which is zero)
-                        auto respHeaders = *resp.getHeaders();
-                        self->downstream_->sendHeaders(respHeaders);
+                        self->downstream_->sendHeaders(*resp.getHeaders());
                         self->downstream_->sendEOM();
                         return;
                     }
