@@ -70,6 +70,9 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=10-19")
     assert obj_range["Body"].read() == fdata[10:20]
 
+    with pytest.raises(ClientError, match="Range Not Satisfiable"):
+        obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range=f"bytes={100*1024*1024}-{100*1024*1024 +9}")
+
     dl_path = tmp_path / "download.txt"
     s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
     assert os.stat(dl_path).st_size == len(fdata)
