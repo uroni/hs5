@@ -2038,8 +2038,8 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     if(self->request_type==RequestType::HeadObject)
                     {
                         XLOGF(DBG0, "Content length {} bytes for readObject HEAD of {}", rangeEnd, self->keyInfo.key);
-                        // .send() sets the content length to the body length (which is zero)
-                        self->downstream_->sendHeaders(*resp.getHeaders());
+                        // .send() sets the content length to the body length (which is zero) -- https://github.com/facebook/proxygen/issues/556
+                        self->downstream_->sendHeaders(*const_cast<HTTPMessage*>(resp.getHeaders()));
                         self->downstream_->sendEOM();
                         return;
                     }
@@ -3356,7 +3356,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(200, "OK")
-                            .body(resp)
+                            .body(std::move(resp))
                             .sendWithEOM(); });
 }
 
