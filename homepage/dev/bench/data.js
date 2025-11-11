@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1762903245737,
+  "lastUpdate": 1762903267479,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -2774,6 +2774,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.2612045871924903",
             "extra": "mean: 15.21243609500001 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "3669468130fad1b8efaca161bc97145694456a2a",
+          "message": "Fix setting up data-only WAL mode",
+          "timestamp": "2025-11-12T00:11:59+01:00",
+          "tree_id": "6ea37c84dd809bcef765788de9cbc2832299f253",
+          "url": "https://github.com/uroni/hs5/commit/3669468130fad1b8efaca161bc97145694456a2a"
+        },
+        "date": 1762903266491,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07260629215976475,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1440222847159129",
+            "extra": "mean: 13.772911000599981 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.0655411273503943,
+            "unit": "iter/sec",
+            "range": "stddev: 0.2134706559179316",
+            "extra": "mean: 15.257595351600003 sec\nrounds: 5"
           }
         ]
       }
