@@ -93,7 +93,7 @@ class Hs5Runner:
             self.args.append("--data_file_alloc_chunk_size")
             self.args.append(str(data_file_alloc_chunk_size))
             self.args.append("--logging")
-            self.args.append("INFO")
+            self.args.append("DBG0")
 
         if self.manual_commit:
             self.args.append("--manual_commit")
