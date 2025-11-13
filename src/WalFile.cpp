@@ -190,7 +190,7 @@ bool WalFile::writeDelFreemapExt(const int64_t transid, const int64_t off, const
     return write(transid, info);
 }
 
-bool WalFile::writeData(CWData& data, bool* usedAlt)
+bool WalFile::writeData(CWData& data, DataItem* dataItem)
 {
     setChecksumAndSize(data);
 
@@ -199,14 +199,45 @@ bool WalFile::writeData(CWData& data, bool* usedAlt)
     if(currentFile().pwriteFull(data.getDataPtr(), data.getDataSize(), offset) != data.getDataSize())
     {
         return false;
-    }
+    }    
 
     ++_items;
 
-    if(usedAlt)
-        *usedAlt = useAltFile;
-
     offset += data.getDataSize();
+
+    if(dataItem == nullptr)
+        return true;
+
+    auto& item = *dataItem;
+
+    item.isAlt = useAltFile;   
+
+    const auto off = item.dataOff;;
+    const auto dataSize = item.data.size();
+
+    XLOGF(DBG0, "WalFile: queueing data {} write to data file at offset {} size {}", folly::crc32c(reinterpret_cast<const uint8_t*>(item.data.data()), item.data.size()), off, dataSize);
+
+    dataWriteQueue.push(std::move(item));
+    dataWriteCond.notify_one();
+
+    assert(dataItem->data.empty());
+
+    incrPendingData();
+
+    forEachDataItem(off, dataSize, [&](const int64_t block)
+    {
+        auto it = dataItems.find(block);
+        if(it != dataItems.end())
+        {
+            ++it->second.refs;
+        }
+        else
+        {
+            dataItems.insert({block, {.refs = 1}});
+        }
+        return false;
+    });
+
     return true;
 }
 
@@ -454,41 +485,19 @@ bool WalFile::writeData(const int64_t off, const char* data, const size_t dataSi
     wdata.addVarInt(off);
     wdata.addBuffer(data, dataSize);
 
-    bool usedAlt;
-
-    if(!writeData(wdata, &usedAlt))
-        return false;
-
-    if(!useThreadWrite)
-        return true;
-
-    DataItem item;
-    item.dataOff = off;
-    item.isAlt = usedAlt;
-    item.data.assign(data, data + dataSize);
-
-    XLOGF(DBG0, "WalFile: queueing data {} write to data file at offset {} size {}", folly::crc32c(reinterpret_cast<const uint8_t*>(item.data.data()), item.data.size()),off, dataSize);
-
+    if(useThreadWrite)
     {
-        std::scoped_lock lock(mutex);
-        dataWriteQueue.push(std::move(item));
-        dataWriteCond.notify_one();
+        DataItem item;
+        item.dataOff = off;
+        item.data.assign(data, data + dataSize);
 
-        incrPendingData();
-
-        forEachDataItem(off, dataSize, [&](const int64_t block)
-        {
-            auto it = dataItems.find(block);
-            if(it != dataItems.end())
-            {
-                ++it->second.refs;
-            }
-            else
-            {
-                dataItems.insert({block, {.refs = 1}});
-            }
+        if(!writeData(wdata, &item))
             return false;
-        });
+    }
+    else
+    {
+        if(!writeData(wdata))
+            return false;
     }
     
     return true;

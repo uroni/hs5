@@ -65,6 +65,9 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     assert len(bdata) == 10
     assert bdata == fdata[:10]
 
+    if os.getenv("ENABLE_WAL_WRITE_DATA") == "1":
+        time.sleep(1)
+        
     assert hs5.get_stats().used == len(fdata)
 
     obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=10-19")

@@ -73,14 +73,14 @@ class WalFile
 
     bool needsWrite(const SingleFileStorage::SFragInfo& info);
 
-    bool writeData(CWData& data, bool* usedAlt = nullptr);
-
     struct DataItem
     {
         int64_t dataOff;
         bool isAlt;
         std::vector<char> data;
     };
+
+    bool writeData(CWData& data, DataItem* dataItem = nullptr);
 
     std::condition_variable dataWriteCond;
     std::queue<DataItem> dataWriteQueue;
