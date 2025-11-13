@@ -48,7 +48,10 @@ class Hs5Runner:
             else:
                 data_file_alloc_chunk_size = int(data_file_alloc_chunk_size_str)
 
-        locs = [Path("builds/ninja-multi-vcpkg/Debug/hs5"),
+        locs = [Path("builds/ninja-multi-vcpkg-lld/Debug/hs5"),
+                Path("builds/ninja-multi-vcpkg-lld/RelWithDebInfo/hs5"),
+                Path("builds/ninja-multi-vcpkg-lld/Release/hs5"),
+                Path("builds/ninja-multi-vcpkg/Debug/hs5"),
                 Path("builds/ninja-multi-vcpkg/RelWithDebInfo/hs5"),
                 Path("builds/ninja-multi-vcpkg/Release/hs5"),
                 Path("build/hs5")]
