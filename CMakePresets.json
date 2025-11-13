@@ -18,6 +18,56 @@
                     "value": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake"
                 }
             }
+        },
+        {
+            "name": "ninja-multi-vcpkg-lld",
+            "displayName": "Ninja Multi-Config using lld",
+            "description": "Configure with vcpkg toolchain and generate Ninja project files for all configurations",
+            "binaryDir": "${sourceDir}/builds/${presetName}",
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": {
+                    "type": "FILEPATH",
+                    "value": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+                },
+                "CMAKE_EXE_LINKER_FLAGS": {
+                    "type": "STRING",
+                    "value": "-fuse-ld=lld"
+                },
+                "CMAKE_SHARED_LINKER_FLAGS": {
+                    "type": "STRING",
+                    "value": "-fuse-ld=lld"
+                }
+            }
+        },
+        {
+            "name": "ninja-multi-vcpkg-asan",
+            "displayName": "Ninja Multi-Config with AddressSanitizer",
+            "description": "Configure with vcpkg toolchain, generate Ninja project files, and enable AddressSanitizer",
+            "binaryDir": "${sourceDir}/builds/${presetName}",
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": {
+                    "type": "FILEPATH",
+                    "value": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+                },
+                "CMAKE_CXX_FLAGS": {
+                    "type": "STRING",
+                    "value": "-fsanitize=address -fno-omit-frame-pointer -g"
+                },
+                "CMAKE_C_FLAGS": {
+                    "type": "STRING",
+                    "value": "-fsanitize=address -fno-omit-frame-pointer -g"
+                },
+                "CMAKE_EXE_LINKER_FLAGS": {
+                    "type": "STRING",
+                    "value": "-fuse-ld=lld -fsanitize=address"
+                },
+                "CMAKE_SHARED_LINKER_FLAGS": {
+                    "type": "STRING",
+                    "value": "-fuse-ld=lld -fsanitize=address"
+                }
+            }
         }
     ],
     "buildPresets": [
@@ -26,6 +76,13 @@
             "configurePreset": "ninja-multi-vcpkg",
             "displayName": "Build (Debug)",
             "description": "Build with Ninja/vcpkg (Debug)",
+            "configuration": "Debug"
+        },
+        {
+            "name": "ninja-vcpkg-debug-lld",
+            "configurePreset": "ninja-multi-vcpkg-lld",
+            "displayName": "Build (Debug) with lld",
+            "description": "Build with Ninja/vcpkg (Debug with lld)",
             "configuration": "Debug"
         },
         {
@@ -47,6 +104,20 @@
             "configurePreset": "ninja-multi-vcpkg",
             "displayName": "Build",
             "description": "Build with Ninja/vcpkg"
+        },
+        {
+            "name": "ninja-vcpkg-debug-asan",
+            "configurePreset": "ninja-multi-vcpkg-asan",
+            "displayName": "Build (Debug with ASAN)",
+            "description": "Build with Ninja/vcpkg (Debug with AddressSanitizer)",
+            "configuration": "Debug"
+        },
+        {
+            "name": "ninja-vcpkg-release-asan",
+            "configurePreset": "ninja-multi-vcpkg-asan",
+            "displayName": "Build (Release with ASAN)",
+            "description": "Build with Ninja/vcpkg (Release with AddressSanitizer)",
+            "configuration": "Release"
         }
     ],
     "testPresets": [
@@ -71,6 +142,20 @@
             "configuration": "Release",
             "inherits": [
                 "test-ninja-vcpkg"
+            ]
+        },
+        {
+            "name": "test-ninja-vcpkg-asan",
+            "configurePreset": "ninja-multi-vcpkg-asan",
+            "hidden": true
+        },
+        {
+            "name": "test-debug-asan",
+            "description": "Test (Debug with ASAN)",
+            "displayName": "Test (Debug with ASAN)",
+            "configuration": "Debug",
+            "inherits": [
+                "test-ninja-vcpkg-asan"
             ]
         }
     ]
