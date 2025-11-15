@@ -7,6 +7,7 @@
 #include <folly/system/MemoryMapping.h>
 #include <folly/hash/Checksum.h>
 #include <folly/Random.h>
+#include <folly/system/ThreadName.h>
 
 const char walFileInitString[] = "WALFILE_INIT";
 const char dataTypeFragInfo = 0;
@@ -514,6 +515,8 @@ void WalFile::waitForWrites()
 
 void WalFile::dataWriteThread(std::stop_token stopToken)
 {
+    folly::setThreadName("Wal data writer");
+
     std::unique_lock lock(mutex);
 
     while(true)

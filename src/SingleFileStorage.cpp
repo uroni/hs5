@@ -25,6 +25,7 @@
 #include <folly/logging/xlog.h>
 #include <folly/ScopeGuard.h>
 #include <folly/io/IOBufQueue.h>
+#include <folly/system/ThreadName.h>
 #include "os_functions.h"
 #include "utils.h"
 #include <filesystem>
@@ -9197,6 +9198,7 @@ bool SingleFileStorage::start_thread(int64_t transid)
 	curr_transid = transid;
 
 	commit_thread_h = std::thread([this](){
+		folly::setThreadName("Idx db writer");
 		(*this)();
 	});
 

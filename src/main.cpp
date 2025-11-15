@@ -20,6 +20,7 @@
 #include <folly/portability/Unistd.h>
 #include <folly/Random.h>
 #include <folly/logging/xlog.h>
+#include <folly/system/ThreadName.h>
 #include <proxygen/httpserver/HTTPServer.h>
 #include <proxygen/httpserver/RequestHandlerFactory.h>
 #include <proxygen/lib/http/session/HTTPSessionBase.h>
@@ -266,6 +267,7 @@ int realMain(int argc, char* argv[])
     XLOGF(INFO, "Config: Bucket versioning: {}, Punch holes: {}, Stop on error: {}, Manual commit: {}", FLAGS_bucket_versioning, FLAGS_punch_holes, FLAGS_stop_on_error, FLAGS_manual_commit);
 
     std::thread t([&]() {
+      folly::setThreadName("http srv main");
       server->start();
       server.reset();
       });
