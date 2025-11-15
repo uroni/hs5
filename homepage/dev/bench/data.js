@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1763062783403,
+  "lastUpdate": 1763205954772,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -2888,6 +2888,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.25808651617347",
             "extra": "mean: 15.549033682399976 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "5893084caccb2d4a97f1d6c74e5022908ed4bd14",
+          "message": "Set thread names",
+          "timestamp": "2025-11-15T12:17:45+01:00",
+          "tree_id": "61bb622f94ec64b7bd4e234a3ebdc16cf21fe1be",
+          "url": "https://github.com/uroni/hs5/commit/5893084caccb2d4a97f1d6c74e5022908ed4bd14"
+        },
+        "date": 1763205954238,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07922001833456128,
+            "unit": "iter/sec",
+            "range": "stddev: 0.08223393915044828",
+            "extra": "mean: 12.623072059599997 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.07295380615581827,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1828972859727485",
+            "extra": "mean: 13.707304014600027 sec\nrounds: 5"
           }
         ]
       }
