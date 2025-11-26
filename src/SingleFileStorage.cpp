@@ -7587,7 +7587,8 @@ void SingleFileStorage::operator()()
 				if (commit_ok)
 				{
 					auto active_fn = data_file_path.parent_path() / "active";
-					if (!std::filesystem::exists(active_fn))
+					std::error_code ec;
+					if (!std::filesystem::exists(active_fn, ec))
 					{
 						int fd = open(active_fn.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
 						if (fd !=-1)
