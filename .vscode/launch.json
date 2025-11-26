@@ -8,7 +8,7 @@
             "name": "(gdb) Attach",
             "type": "cppdbg",
             "request": "attach",
-            "program": "/home/urpc/hs5/builds/ninja-multi-vcpkg/Debug/hs5",
+            "program": "/home/urpc/hs5/builds/ninja-multi-vcpkg-lld/Debug/hs5",
             "MIMode": "gdb",
             "setupCommands": [
                 {
