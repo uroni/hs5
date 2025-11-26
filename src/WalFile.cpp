@@ -203,14 +203,37 @@ bool WalFile::writeData(CWData& data, DataItem* dataItem)
 
     std::scoped_lock lock(mutex);
 
-    if(currentFile().pwriteFull(data.getDataPtr(), data.getDataSize(), offset) != data.getDataSize())
+    const auto typeOff = 2*sizeof(unsigned int);
+    const auto seqNoOff =  typeOff +  sizeof(char);
+    CRData checkData(data.getDataPtr() + seqNoOff, data.getDataSize() - seqNoOff);
+    int64_t msgSeqNo;
+    if(!checkData.getVarInt(&msgSeqNo))
+        abort();
+    if(msgSeqNo != seqNo)
     {
-        return false;
-    }    
+        XLOGF(DBG, "WalFile: writeData: seqNo changed from {} to {} -- rewriting data", msgSeqNo, seqNo);
+        const auto type = data.getDataPtr()[typeOff];
+        CWData data2;
+        writeDataHeader(data2, type, seqNo);
+        data2.addBuffer(checkData.getCurrDataPtr(), checkData.getLeft());
+        setChecksumAndSize(data2);
 
-    ++_items;
+        if(currentFile().pwriteFull(data2.getDataPtr(), data2.getDataSize(), offset) != data2.getDataSize())
+        {
+            return false;
+        }    
+        offset += data2.getDataSize();
+    }
+    else
+    {
+        if(currentFile().pwriteFull(data.getDataPtr(), data.getDataSize(), offset) != data.getDataSize())
+        {
+            return false;
+        }    
+        offset += data.getDataSize();
+    }
 
-    offset += data.getDataSize();
+    ++_items;    
 
     if(dataItem == nullptr)
         return true;
@@ -296,6 +319,9 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
         }        
         else if(type == dataTypeInit)
         {
+            if(hasInit)
+                throw std::runtime_error("WalFile: read: multiple WAL file headers found");
+
             hasInit = true;
             seqNo = msgSeqNo;
 
@@ -321,7 +347,9 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
 
         if(seqNo != msgSeqNo)
         {
-            XLOGF(WARN, "WalFile: read: seqNo mismatch, expected {}, got {}", seqNo, msgSeqNo);
+            XLOGF(WARN, "WalFile: read: seqNo mismatch, expected {}, got {} -- readFromAltFile={}", seqNo, msgSeqNo, readFromAltFile);
+            // TODO: Remove abort. This might occurr for some file systems on power fail
+            abort();
             break;
         }
 
@@ -489,7 +517,7 @@ void WalFile::reset(ResetPrep& prep, const bool sync, const std::optional<bool> 
 bool WalFile::writeData(const int64_t off, const char* data, const size_t dataSize, const bool useThreadWrite)
 {
     CWData wdata;
-    writeDataHeader(wdata, dataTypeDataFileData, seqNo);
+    writeDataHeader(wdata, dataTypeDataFileData, seqNo + 1);
     wdata.addVarInt(off);
     wdata.addBuffer(data, dataSize);
 
