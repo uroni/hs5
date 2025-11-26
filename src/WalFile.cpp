@@ -120,6 +120,12 @@ WalFile::WalFile(const std::string &path, const std::string_view walUuid, MultiF
     XLOGF(INFO, "WalFile initialized. Using {} file. primaryFileSeqNo={}, altFileSeqNo={}", 
         useAltFile ? "alt" : "primary", primaryFileSeqNo, altFileSeqNo);
 
+    if(primaryFileSeqNo!=0 && primaryFileSeqNo == altFileSeqNo)
+    {
+        XLOGF(ERR, "WalFile: Both WAL files have same seqNo {}.", primaryFileSeqNo);
+        abort();
+    }
+
     if(currentFile().size() == 0)
     {
         WalFile::ResetPrep prep(nullptr);
