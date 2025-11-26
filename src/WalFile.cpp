@@ -436,7 +436,8 @@ bool WalFile::switchFiles()
 
 void WalFile::reset(ResetPrep& prep, const bool sync, const std::optional<bool> useAltFileManual)
 {
-    if(!useAltFileManual)
+    const bool writeHeader = !useAltFile;
+    if(writeHeader)
     {
         offset = 0;
         _items = 0;
@@ -447,23 +448,23 @@ void WalFile::reset(ResetPrep& prep, const bool sync, const std::optional<bool> 
 
     file.truncate(0);
 
-    CWData data;
-    writeDataHeader(data, dataTypeInit, seqNo);
-
-    data.addString2(walFileInitString);
-    data.addString2(walUuid);
-
-    setChecksumAndSize(data);
-
-
-    if(file.pwriteFull(data.getDataPtr(), data.getDataSize(), 0) != data.getDataSize())
+    if(writeHeader)
     {
-        XLOGF(ERR, "WalFile: failed to write initial data after reset: {}", folly::errnoStr(errno));
-        abort();
-    }
+        CWData data;
+        writeDataHeader(data, dataTypeInit, seqNo);
 
-    if(!useAltFileManual)
-    {
+        data.addString2(walFileInitString);
+        data.addString2(walUuid);
+
+        setChecksumAndSize(data);
+
+
+        if(file.pwriteFull(data.getDataPtr(), data.getDataSize(), 0) != data.getDataSize())
+        {
+            XLOGF(ERR, "WalFile: failed to write initial data after reset: {}", folly::errnoStr(errno));
+            abort();
+        }
+
         offset += data.getDataSize();
     }
 
