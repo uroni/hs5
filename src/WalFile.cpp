@@ -517,7 +517,7 @@ void WalFile::reset(ResetPrep& prep, const bool sync, const std::optional<bool> 
 bool WalFile::writeData(const int64_t off, const char* data, const size_t dataSize, const bool useThreadWrite)
 {
     CWData wdata;
-    writeDataHeader(wdata, dataTypeDataFileData, seqNo + 1);
+    writeDataHeader(wdata, dataTypeDataFileData, seqNo);
     wdata.addVarInt(off);
     wdata.addBuffer(data, dataSize);
 
