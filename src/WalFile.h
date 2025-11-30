@@ -46,6 +46,14 @@ class WalFile
             ++primaryFilePendingData;
     }
 
+    bool lastPendingData(const bool alt)
+    {
+        if(alt)
+            return altFilePendingData == 1;
+        else
+            return primaryFilePendingData == 1;
+    }
+
     bool decrPendingData(const bool alt)
     {
         if(alt)

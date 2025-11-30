@@ -607,7 +607,7 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
             writeDoneCond.notify_all();
         }        
 
-        if(decrPendingData(item.isAlt))
+        if(lastPendingData(item.isAlt))
         {
             if(pendingReset)
             {
@@ -627,6 +627,9 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
                 reset(prep, true, item.isAlt);
                 pendingReset = false;
             }
+
+            const bool wasLast = decrPendingData(item.isAlt);
+            assert(wasLast);
 
             pendingDataCond.notify_all();
         }
