@@ -636,6 +636,11 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
         else if(item.dataOff == 0 && item.data.empty() && pendingReset)
         {
             assert(false);
+            decrPendingData(item.isAlt);
+        }
+        else
+        {            
+            decrPendingData(item.isAlt);
         }
     }
 
