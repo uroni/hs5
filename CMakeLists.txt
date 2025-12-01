@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21...4.0)
-project(hs5 VERSION 0.9.7 LANGUAGES CXX C)
+project(hs5 VERSION 0.9.8 LANGUAGES CXX C)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -22,7 +22,7 @@ set(APIGEN_SCHEMAS
   AddBucketParams
   AddBucketResp
   StatsParams
-  StatsResp
+  StatsResp#
   SessionCheckParams
   SessionCheckResp # Must be last
 )

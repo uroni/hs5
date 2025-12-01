@@ -470,7 +470,7 @@ bool WalFile::switchFiles()
 
 void WalFile::reset(ResetPrep& prep, const bool sync, const std::optional<bool> useAltFileManual)
 {
-    const bool writeHeader = !useAltFile;
+    const bool writeHeader = !useAltFileManual;
     if(writeHeader)
     {
         offset = 0;
@@ -611,6 +611,7 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
         {
             if(pendingReset)
             {
+                assert(item.dataOff == 0 && item.data.empty());
                 lock.unlock();
 
                 XLOGF(INFO, "WalFile: dataWriteThread: syncing data file");
@@ -626,6 +627,10 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
                 ResetPrep prep(nullptr);
                 reset(prep, true, item.isAlt);
                 pendingReset = false;
+            }
+            else
+            {
+                assert(item.dataOff != 0 || !item.data.empty());
             }
 
             const bool wasLast = decrPendingData(item.isAlt);
