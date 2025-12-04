@@ -5,9 +5,11 @@ import { AddRegular } from "@fluentui/react-icons";
 import { Pages, router, state } from "../App";
 import { ApiError, postApiV1B64Be5124B034028A58913931942E205AddBucket } from "../api";
 import { HapiError, Herror } from "../errorapi/HapiError";
+import { useQueryClient } from "@tanstack/react-query";
 
 
 const AddBucket = () => {
+    const queryClient = useQueryClient();
     const [isLoading, setLoading] = useState(false);
     const [bucketName, setBucketName] = useState('');
     const [bucketNameValidationMessage, setBucketNameValidationMessage] = useState("");
@@ -15,8 +17,11 @@ const AddBucket = () => {
     const handleSubmitInt = async (e : FormEvent<HTMLFormElement>) => {
         try
         {
-            const loginRes = await postApiV1B64Be5124B034028A58913931942E205AddBucket({requestBody: {ses: state.session, bucketName: bucketName}});
+            const addRes = await postApiV1B64Be5124B034028A58913931942E205AddBucket({requestBody: {ses: state.session, bucketName: bucketName}});
             state.pageAfterLogin = Pages.Buckets;
+            
+            await queryClient.invalidateQueries({ queryKey: ["buckets"] });
+            
             await router.navigate(`/${state.pageAfterLogin}`);
         }
         catch(apiE)

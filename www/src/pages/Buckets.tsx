@@ -1,5 +1,5 @@
 import { Button, createTableColumn, DataGrid, DataGridBody, DataGridCell, DataGridHeader, DataGridHeaderCell, DataGridProps, DataGridRow, makeStyles, Spinner, TableCellLayout, TableColumnDefinition, tokens } from '@fluentui/react-components';
-import { FormEvent, Suspense, useState } from 'react';
+import { FormEvent, Suspense, useEffect, useState } from 'react';
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { TableWrapper } from '../components/TableWrapper';
 import { Pagination, PaginationItemsPerPageSelector, usePagination } from '../components/Pagination';
@@ -68,12 +68,12 @@ const Buckets = () => {
 
   const snap = useSnapshot(state);
 
-  const statusResult = useSuspenseQuery({
+  const bucketsResult = useSuspenseQuery({
     queryKey: ["buckets", snap.session],
     queryFn: async () => { return await postApiV1B64Be5124B034028A58913931942E205List({requestBody: {ses: snap.session, path: "/"}}); },
   });
 
-  const data = statusResult.data!.objects as BucketType[];
+  const data = bucketsResult.data!.objects as BucketType[];
 
   const [sortState, setSortState] =
     useState<Parameters<NonNullable<DataGridProps["onSortChange"]>>[1]>();
@@ -83,6 +83,10 @@ const Buckets = () => {
   };
 
   const [sortedData, setSortedData] = useState(data);
+
+  useEffect(() => {
+    setSortedData(data);
+  }, [data]);
 
   const { setSearch, filteredItems } = useFilteredBySearch<BucketType>(
     sortedData,
