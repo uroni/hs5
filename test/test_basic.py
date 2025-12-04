@@ -583,3 +583,47 @@ def test_delete_multiple_objects(tmp_path: Path, hs5: Hs5Runner):
     # Check if all objects were reported as deleted (even if they didn't exist)
     assert response['ResponseMetadata']['HTTPStatusCode'] == 200
     assert 'Deleted' in response and len(response['Deleted']) == 5
+
+
+def test_url_encoded(hs5: Hs5Runner, tmp_path: Path):
+    
+    s3_client = hs5.get_s3_client()
+
+    tmpf = tmp_path / "file with spaces(1).txt"
+
+    with open(tmpf, "w") as upload_file:
+        upload_file.write("abc")
+
+    s3_client.upload_file(str(tmpf), hs5.testbucketname(), tmpf.name)
+
+    # Verify HEAD works with URL-encoded key
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key=tmpf.name)
+    assert obj_info["ContentLength"] == 3
+
+    # List bucket and verify object name
+    list_resp = s3_client.list_objects(Bucket=hs5.testbucketname())
+    assert not list_resp["IsTruncated"]
+    assert "Contents" in list_resp
+    objs = list_resp["Contents"]
+    assert len(objs) == 1
+    assert "Key" in objs[0] and objs[0]["Key"] == tmpf.name
+
+    dl_path = tmp_path / "download.txt"
+    s3_client.download_file(hs5.testbucketname(), tmpf.name, dl_path)
+
+    with open(dl_path, "r") as f:
+        data = f.read()
+        assert data == "abc"
+
+    # Delete the object and verify it's deleted via listing
+    s3_client.delete_object(Bucket=hs5.testbucketname(), Key=tmpf.name)
+    
+    list_resp = s3_client.list_objects(Bucket=hs5.testbucketname())
+    assert not list_resp["IsTruncated"]
+    assert "Contents" not in list_resp
+
+
+
+    
+
+    

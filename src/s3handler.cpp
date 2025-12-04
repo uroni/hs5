@@ -1097,23 +1097,24 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     {
         request_type = headers->getMethod() == HTTPMethod::GET ? RequestType::GetObject : RequestType::HeadObject;
 
-        const auto header_path = headers->getPathAsStringPiece();
-
-        if(header_path.empty())
+        std::string header_path_str;
+        if(!folly::tryUriUnescape(headers->getPathAsStringPiece(), header_path_str) ||header_path_str.empty())
         {
             ResponseBuilder(downstream_)
                         .status(500, "Internal error")
-                        .body("Path is empty")
+                        .body("Path is empty or cannot be unescaped")
                         .sendWithEOM();
             return;
         }
+
+        const auto header_path = std::string_view(header_path_str);
 
         running = true;
 
         const auto nextSlash = header_path.find('/', 1);
         if(nextSlash==std::string::npos || nextSlash == header_path.size()-1)
         {
-            const auto bucketName = header_path.subpiece(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
+            const auto bucketName = header_path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
             if(!checkSig(*headers, "", fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket", false))
             {
                 XLOGF(INFO, "Unauthorized list bucket: {}", bucketName);
@@ -1128,7 +1129,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }   
 
-        const auto resource = fmt::format("arn:aws:s3:::{}", header_path.subpiece(1));
+        const auto resource = fmt::format("arn:aws:s3:::{}", header_path.substr(1));
         const auto action = headers->getMethod() == HTTPMethod::GET ? "s3:GetObject" : "s3:HeadObject";
 
         auto accessKey = checkSig(*headers, "", resource, action, true);
@@ -1171,7 +1172,17 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         }
         auto remaining = std::atoll(cl.c_str());
         put_remaining = remaining;
-        const auto path = headers->getPathAsStringPiece();
+        std::string path_str;
+        if(!folly::tryUriUnescape(headers->getPathAsStringPiece(), path_str))
+        {
+            ResponseBuilder(downstream_)
+                        .status(500, "Internal error")
+                        .body("Path cannot be unescaped")
+                        .sendWithEOM();
+            return;
+        }
+
+        const auto path = std::string_view(path_str);
 
         std::string xid;
         if(!headers->getQueryStringAsStringPiece().empty())
@@ -1334,12 +1345,22 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     }
     else if(headers->getMethod() == HTTPMethod::DELETE)
     {
-        const auto path = headers->getPathAsStringPiece();
+        std::string path_str;
+        if(!folly::tryUriUnescape(headers->getPathAsStringPiece(), path_str))
+        {
+            ResponseBuilder(downstream_)
+                        .status(500, "Internal error")
+                        .body("Path cannot be unescaped")
+                        .sendWithEOM();
+            return;
+        }
+
+        const auto path = std::string_view(path_str);
         const auto isDeleteBucket = !path.empty() && path.find_first_of('/', 1)==std::string::npos;
 
         if(isDeleteBucket)
             keyInfo.key = path.substr(1);
-        else if(!setKeyInfoFromPath(headers->getPathAsStringPiece()))
+        else if(!setKeyInfoFromPath(path))
             return;
 
         request_type = RequestType::DeleteObject;
@@ -1367,6 +1388,18 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     }
     else if(headers->getMethod() == HTTPMethod::POST)
     {
+        std::string path_str;
+        if(!folly::tryUriUnescape(headers->getPathAsStringPiece(), path_str))
+        {
+            ResponseBuilder(downstream_)
+                        .status(500, "Internal error")
+                        .body("Path cannot be unescaped")
+                        .sendWithEOM();
+            return;
+        }
+
+        const auto path = std::string_view(path_str);
+        
         if(headers->getQueryStringAsStringPiece() == "delete")
         {
             std::string cl = headers->getHeaders().getSingleOrEmpty(
@@ -1380,7 +1413,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            if(headers->getPathAsStringPiece().size()<=1)
+            if(path.size()<=1)
             {
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
@@ -1389,7 +1422,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            const auto resource = fmt::format("arn:aws:s3:::{}", headers->getPathAsStringPiece().substr(1));
+            const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
             const auto payloadOpt = initPayloadHash(*headers);
             if(!payloadOpt)
             {
@@ -1401,12 +1434,12 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
             const auto payload = *payloadOpt;
 
-            const auto bucketName = headers->getPathAsStringPiece().substr(1);
+            const auto bucketName = path.substr(1);
 
             const auto accessKey = checkSig(*headers, payload, std::string_view(), std::string_view(), true);
             if(!accessKey)
             {
-                XLOGF(INFO, "Unauthorized delete object: {}", headers->getPathAsStringPiece());
+                XLOGF(INFO, "Unauthorized delete object: {}", path);
                 ResponseBuilder(downstream_)
                     .status(401, "Unauthorized")
                     .body("Verifying request authorization failed")
@@ -1460,7 +1493,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        if(!setKeyInfoFromPath(headers->getPathAsStringPiece()))
+        if(!setKeyInfoFromPath(path))
             return;
 
         const std::string uploadsStr = "uploads";
@@ -1468,12 +1501,12 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         if(headers->getQueryStringAsStringPiece() == uploadsStr ||
             headers->hasQueryParam("uploads"))
         {
-            const auto resource = fmt::format("arn:aws:s3:::{}", headers->getPathAsStringPiece().substr(1));
+            const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
             const auto action = "s3:CreateMultipartUpload";
 
             if(!checkSig(*headers, "", resource, action, true))
             {
-                XLOGF(INFO, "Unauthorized create multi-part upload: {}", headers->getPathAsStringPiece());
+                XLOGF(INFO, "Unauthorized create multi-part upload: {}", path);
                 ResponseBuilder(downstream_)
                     .status(401, "Unauthorized")
                     .body("Verifying request authorization failed")
