@@ -1470,7 +1470,7 @@ $(document).ready(() => {
     // Default AWS region and v4 signature
     AWS.config.update({ region: '' });
     AWS.config.update({ signatureVersion: 'v4' });
-    AWS.config.update({ endpoint: 'http://localhost:5173', endpointDiscoveryEnabled: false, s3BucketEndpoint: false, s3ForcePathStyle: true });
+    AWS.config.update({ endpoint: window.location.protocol + "//" + window.location.host, endpointDiscoveryEnabled: false, s3BucketEndpoint: false, s3ForcePathStyle: true });
     AWS.config.update({ accessKeyId: accessKey, secretAccessKey: secretAccessKey})
 
     DEBUG.log('InitSettingsController init');

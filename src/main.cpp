@@ -123,6 +123,8 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
 
     if(bucketName=="admin-b64be5124b034028a58913931942e205/")
         return true;
+    else if(bucketName == "explorer-87652e131c4b45bd851a74de6518889e/")
+        return true;
 
     return false;
   }
