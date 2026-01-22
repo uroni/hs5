@@ -352,6 +352,49 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):
     assert hs5.get_stats().used == 0
 
 
+def test_list_partial_uploads(tmp_path: Path, hs5: Hs5Runner):
+
+    assert hs5.get_stats().used == 0
+
+    s3_client = hs5.get_s3_client()
+
+    key = "partial_upload.dat"
+    part_path = tmp_path / "multipart_part.bin"
+    with open(part_path, "wb") as part_file:
+        part_file.write(os.urandom(6*1024*1024))
+
+    create_resp = s3_client.create_multipart_upload(Bucket=hs5.testbucketname(), Key=key)
+    upload_id = create_resp["UploadId"]
+
+    with open(part_path, "rb") as part_file:
+        s3_client.upload_part(
+            Bucket=hs5.testbucketname(),
+            Key=key,
+            PartNumber=1,
+            UploadId=upload_id,
+            Body=part_file
+        )
+
+    hs5.commit_storage(s3_client)
+
+    list_resp = s3_client.list_multipart_uploads(Bucket=hs5.testbucketname())
+    assert not list_resp["IsTruncated"]
+    assert "Uploads" in list_resp
+    uploads = list_resp["Uploads"]
+    assert len(uploads) == 1
+    assert "Key" in uploads[0] and uploads[0]["Key"] == key
+    assert "UploadId" in uploads[0] and uploads[0]["UploadId"] == upload_id
+
+    s3_client.abort_multipart_upload(Bucket=hs5.testbucketname(), Key=key, UploadId=upload_id)
+
+    hs5.commit_storage(s3_client)
+
+    list_resp = s3_client.list_multipart_uploads(Bucket=hs5.testbucketname())
+    assert not list_resp["IsTruncated"]
+    assert "Uploads" not in list_resp
+
+    assert hs5.get_stats().used == 0
+
 
 def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
     tmpfile = tmp_path / "ulfile.dat"

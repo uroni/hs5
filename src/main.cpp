@@ -235,8 +235,11 @@ int realMain(int argc, char* argv[])
     sfsoptions.common_prefix_func = s3key_common_prefix;
     sfsoptions.common_prefix_hash_func = s3key_common_prefix_hash;
     sfsoptions.wal_file_path = FLAGS_index_wal_path.empty() ? FLAGS_index_wal_path : (FLAGS_index_wal_path + os_file_sep() + "index.wal");
-    sfsoptions.on_delete_callback = [](const std::string& fn, const std::string& md5sum) -> std::vector<std::string> {
+    sfsoptions.on_delete_callback = [](const std::string& fn, const std::string& md5sum) -> std::vector<SingleFileStorage::SFragInfo> {
       return S3Handler::onDeleteCallback(fn, md5sum);
+    };
+    sfsoptions.modify_data_callback = [](const std::string& fn, std::string md5sum, std::string md5sumParam) -> std::optional<std::string> {
+      return S3Handler::onModifyCallback(fn, md5sum, md5sumParam);
     };
     sfsoptions.wal_write_meta = FLAGS_wal_write_meta;
     sfsoptions.wal_write_data = FLAGS_wal_write_data;    

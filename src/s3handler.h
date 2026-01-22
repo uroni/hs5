@@ -15,6 +15,7 @@
 #include <thread>
 #include <expat.h>
 #include <openssl/evp.h>
+#include "data.h"
 
 #include "ApiHandler.h"
 
@@ -91,6 +92,11 @@ struct MultiPartDownloadData
     std::vector<PartExt> exts;
 };
 
+std::pair<std::string, std::vector<MultiPartDownloadData::PartExt>> parsePartExts(const std::string& rdata);
+std::vector<MultiPartDownloadData::PartExt> parsePartExts(CRData& rdata);
+std::vector<MultiPartDownloadData::PartExt> addPartExt(std::vector<MultiPartDownloadData::PartExt> parts, const int64_t partSize, const int partNum);
+std::string serializePartExts(const std::string& nonce, const std::vector<MultiPartDownloadData::PartExt>& parts);
+
 std::string make_key(const std::string_view key, const int64_t bucketId, const int64_t version);
 std::string make_key(const KeyInfo& keyInfo);
 KeyInfoView extractKeyInfoView(const std::string_view key);
@@ -124,6 +130,12 @@ public:
 
     void onEgressResumed() noexcept override;
 
+    struct UploadIdDec
+    {
+        int64_t id;
+        std::string nonce;
+    };
+
     struct MultiPartUploadData
     {
         enum class ParseState
@@ -140,8 +152,7 @@ public:
         };
 
         ParseState parseState = ParseState::Init;
-        int64_t uploadId;
-        std::string verId;
+        UploadIdDec uploadId;
         
         struct PartData
         {
@@ -238,26 +249,28 @@ public:
     static int readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
     static int finalizeMultiPart(SingleFileStorage& sfs, const int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
 
-    static std::vector<std::string> onDeleteCallback(const std::string& fn, const std::string& md5sum);
+    static std::vector<SingleFileStorage::SFragInfo> onDeleteCallback(const std::string& fn, const std::string& md5sum);
+    static std::optional<std::string> onModifyCallback(const std::string& fn, std::string md5sum, std::string md5sumParam);
 
 private:
     void readFile(folly::EventBase *evb);
     void readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> self, int64_t offset);
 	void onBodyCPU(folly::EventBase *evb, int64_t offs, std::unique_ptr<folly::IOBuf> body);
-    void listObjects(proxygen::HTTPMessage& headers, const std::string& bucket);
-    void listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId);
+    void listObjects(proxygen::HTTPMessage& headers, const std::string& bucket, const bool partial);
+    void listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId, const bool partial);
     void getCommitObject(proxygen::HTTPMessage& headers);
     void getObject(proxygen::HTTPMessage& headers, const std::string& accessKey);
     void putObject(proxygen::HTTPMessage& headers);
     void putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId);
     void commit(proxygen::HTTPMessage& headers);
     void deleteObject(proxygen::HTTPMessage& headers);
+    void abortMultipartUpload(proxygen::HTTPMessage& headers, const std::string& uploadIdStr);
     void deleteBucket(proxygen::HTTPMessage& headers);
     bool commit();
 
     void listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& continuationToken, 
         const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter, const std::string& delimiter, const int64_t bucket,
-        const bool listV2, const std::string& bucketName);
+        const bool listV2, const std::string& bucketName, const bool partial, const std::string& markerVersionStr);
     void createMultipartUpload(proxygen::HTTPMessage& headers);
     void finalizeMultipartUpload();
     void finalizeCreateBucket();
@@ -269,6 +282,8 @@ private:
     std::optional<std::string> initPayloadHash(proxygen::HTTPMessage& message);
     void deleteObjects();
 
+    UploadIdDec decryptUploadId(const std::string& encdata);
+
     std::string fullKeyPath() const;
 
 	enum class RequestType
@@ -277,6 +292,7 @@ private:
 		GetObject,
 		HeadObject,
 		PutObject,
+        PutObjectPart,
         DeleteObject,
         ListObjects,
         CompleteMultipartUpload,

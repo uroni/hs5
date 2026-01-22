@@ -131,6 +131,48 @@ std::string uploadIdToStr(int64_t uploadId)
 	return key;
 }
 
+int64_t uploadIdFromStr(const std::string& key)
+{
+    if(key.size()==sizeof(unsigned char)+1)
+    {
+        unsigned char bnum;
+        memcpy(&bnum, &key[1], sizeof(bnum));
+        return folly::Endian::big(bnum);
+    }
+    else if(key.size()==sizeof(unsigned short)+1)
+    {
+        unsigned short bnum;
+        memcpy(&bnum, &key[1], sizeof(bnum));
+        return folly::Endian::big(bnum);
+    }
+    else if(key.size()==sizeof(unsigned int)+1)
+    {
+        unsigned int bnum;
+        memcpy(&bnum, &key[1], sizeof(bnum));
+        return folly::Endian::big(bnum);
+    }
+    else if(key.size()==sizeof(int64_t)+1)
+    {
+        int64_t bnum;
+        memcpy(&bnum, &key[1], sizeof(bnum));
+        return folly::Endian::big(bnum);
+    }
+    assert(false);
+    return -1;
+}
+
+std::pair<int64_t, int64_t> uploadIdFromStrDot(const std::string& key)
+{
+    const auto dotPos = key.find(".");
+    if(dotPos==std::string::npos)
+        return {-1, -1};
+
+    const auto uploadId1 = key.substr(0, dotPos);
+    const auto uploadId2 = key.substr(dotPos+1);
+
+    return {uploadIdFromStr(uploadId1), uploadIdFromStr(uploadId2)};
+}
+
 std::string encodeUriAws(const std::string_view str)
 {
     static char hexValues[] = "0123456789ABCDEF";
@@ -965,7 +1007,8 @@ enum class S3ErrorCode
     InternalError,
     NoSuchKey,
     BucketAlreadyExists,
-    InvalidPartOrder
+    InvalidPartOrder,
+    InvalidArgument
 };
 
 std::string_view s3errorCodeToStr(const S3ErrorCode code)
@@ -986,6 +1029,8 @@ std::string_view s3errorCodeToStr(const S3ErrorCode code)
             return "BucketAlreadyExists";
         case S3ErrorCode::InvalidPartOrder:
             return "InvalidPartOrder";
+        case S3ErrorCode::InvalidArgument:
+            return "InvalidArgument";
         default:
             return "InternalError";
     }
@@ -1022,6 +1067,83 @@ std::string s3errorXml(const S3ErrorCode code, const std::string_view& msg, cons
         "\t<Resource>{}</Resource>\n"
         "\t<RequestId>{}</RequestId>\n"
         "</Error>", s3errorCodeToStr(code), msg.empty() ? s3errorMsg(code) : msg, ressource, request_id);
+}
+
+std::pair<std::string, std::vector<MultiPartDownloadData::PartExt>> parsePartExts(const std::string& rdata)
+{
+    CRData crdata(rdata.data(), rdata.size());
+    std::string nonce;
+    crdata.getStr2(&nonce);
+    return {nonce, parsePartExts(crdata)};
+}
+
+std::vector<MultiPartDownloadData::PartExt> parsePartExts(CRData& rdata)
+{
+    std::vector<MultiPartDownloadData::PartExt> ret;
+    MultiPartDownloadData::PartExt part;
+    int64_t start, len;
+    while(rdata.getVarInt(&part.size) &&
+        rdata.getVarInt(&start) &&
+        rdata.getVarInt(&len))
+    {
+        part.start = start;
+        part.len = len;
+        ret.push_back(part);
+    }
+    return ret;
+}
+
+std::vector<MultiPartDownloadData::PartExt> addPartExt(std::vector<MultiPartDownloadData::PartExt> parts, const int64_t partSize, const int partNum)
+{
+    std::vector<MultiPartDownloadData::PartExt> newParts;
+    bool delParts = false;
+    for(auto& part: parts)
+    {
+        if(part.size == partSize && part.start + part.len == partNum)
+        {
+            ++part.len;
+            return parts;
+        }
+        else if(part.start >= partNum && part.start + part.len > partNum)
+        {
+            // split
+            const auto origEnd = part.start + part.len;
+            part.len = partNum - part.start;
+            delParts |= part.len==0;
+            const auto newPartLen = origEnd - partNum  - 1;
+            if(newPartLen>0)
+                newParts.push_back({partSize, partNum + 1, newPartLen});
+        }
+    }
+
+    parts.insert(parts.end(), newParts.begin(), newParts.end());
+    parts.push_back({partSize, partNum, 1});    
+
+    if(delParts)
+    {
+        std::vector<MultiPartDownloadData::PartExt> filteredParts;
+        for(auto& part: parts)
+        {
+            if(part.len>0)
+                filteredParts.push_back(part);
+        }
+        return filteredParts;
+    }
+
+    return parts;
+}
+
+std::string serializePartExts(const std::string& nonce, const std::vector<MultiPartDownloadData::PartExt>& parts)
+{
+    CWData wdata;
+    wdata.addString2(nonce);
+    for(const auto& part: parts)    
+    {
+        wdata.addVarInt(part.size);
+        wdata.addVarInt(part.start);
+        wdata.addVarInt(part.len);
+    }
+    return std::string(wdata.getDataPtr(), wdata.getDataSize());
 }
 
 std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& message)
@@ -1114,8 +1236,10 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         const auto nextSlash = header_path.find('/', 1);
         if(nextSlash==std::string::npos || nextSlash == header_path.size()-1)
         {
+            const auto partial = headers->hasQueryParam("uploads");
+
             const auto bucketName = header_path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
-            if(!checkSig(*headers, "", fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket", false))
+            if(!checkSig(*headers, "", fmt::format("arn:aws:s3:::{}", bucketName), partial ? "s3:ListMultipartUploads" : "s3:ListBucket", false))
             {
                 XLOGF(INFO, "Unauthorized list bucket: {}", bucketName);
                 ResponseBuilder(downstream_)
@@ -1124,8 +1248,14 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                     .sendWithEOM();
                 return;
             }
-            XLOGF(INFO, "List bucket {}", bucketName);
-            listObjects(*headers, std::string(bucketName));
+
+            if(partial)
+                XLOGF(INFO, "List partial uploads bucket {}", bucketName);
+            else
+                XLOGF(INFO, "List bucket {}", bucketName);
+            
+
+            listObjects(*headers, std::string(bucketName), partial);
             return;
         }   
 
@@ -1223,20 +1353,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                     partNumber=0;
                 }
             }
-            const auto uploadIdIt = queryParams.find("uploadId");
-            std::string uploadIdHex, uploadIdStr;
-            std::string uploadVerIdHex, uploadVerId;
-            if(uploadIdIt != queryParams.end() )
-            {
-                if(!folly::split("-", uploadIdIt->second, uploadIdHex, uploadVerIdHex)
-                 || !folly::unhexlify(uploadIdHex, uploadIdStr)
-                 || !folly::unhexlify(uploadVerIdHex, uploadVerId) )
-                 uploadIdStr.clear();
-            }
+            const auto uploadId = decryptUploadId(headers->getQueryParam("uploadId"));
 
-            auto uploadId = sfs.decrypt_id(uploadIdStr);
-
-            if(uploadId<0 || uploadVerId.empty())
+            if(uploadId.id<=0)
             {
                 XLOGF(INFO, "UploadId param not set in multi-part upload of {}", path);
                 ResponseBuilder(downstream_)
@@ -1256,7 +1375,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            XLOGF(DBG0, "PutObjectPart {} part {} uploadId {} length {}", path, partNumber, uploadId, remaining);
+            XLOGF(DBG0, "PutObjectPart {} part {} uploadId {} length {}", path, partNumber, uploadId.id, remaining);
 
             const auto action = "s3:PutObjectPart";
 
@@ -1270,7 +1389,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            putObjectPart(*headers, partNumber, uploadId, uploadVerId);
+            putObjectPart(*headers, partNumber, uploadId.id, uploadId.nonce);
             return;
         }
 
@@ -1365,8 +1484,12 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         request_type = RequestType::DeleteObject;
 
+        const auto uploadId = headers->getQueryParam("uploadId");
+        const auto abortMultipart = !uploadId.empty();
+
         const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
-        const auto action = isDeleteBucket ? "s3:DeleteBucket" : "s3:DeleteObject";
+        const auto action = abortMultipart ? "s3:AbortMultipartUpload" : 
+                (isDeleteBucket ? "s3:DeleteBucket" : "s3:DeleteObject");
 
         //TODO: Double-check that pre-signed delete is possible
         if(!checkSig(*headers, "", resource, action, true))
@@ -1381,7 +1504,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         XLOGF(INFO, "Delete {}", path);
 
-        if(isDeleteBucket)
+        if(abortMultipart)
+            abortMultipartUpload(*headers, uploadId);
+        else if(isDeleteBucket)
             deleteBucket(*headers);
         else
             deleteObject(*headers);
@@ -1525,20 +1650,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             const auto payload = *payloadOpt;
 
-            std::string uploadIdHex, uploadVerIdHex;
-            std::string uploadIdStr, uploadVerId;
-            const auto uploadIdIt = headers->getQueryParams().find("uploadId");
-            if(uploadIdIt != headers->getQueryParams().end())
-            {
-                if(!folly::split("-", uploadIdIt->second, uploadIdHex, uploadVerIdHex)
-                 || !folly::unhexlify(uploadIdHex, uploadIdStr)
-                 || !folly::unhexlify(uploadVerIdHex, uploadVerId) )
-                    uploadIdStr.clear();
-            }
+            const auto uploadId = decryptUploadId(headers->getQueryParam("uploadId"));
 
-            const auto uploadId = sfs.decrypt_id(uploadIdStr);
-
-            if(uploadId<0)
+            if(uploadId.id<=0)
             {
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
@@ -1570,14 +1684,13 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
             multiPartUploadData = std::make_unique<MultiPartUploadData>();
             multiPartUploadData->uploadId = uploadId;
-            multiPartUploadData->verId = uploadVerId;
 
             XML_SetUserData(xmlBody.parser, multiPartUploadData.get());
 
             XML_SetElementHandler(xmlBody.parser, multiPartUploadXmlElementStart, multiPartUploadXmlElementEnd);
             XML_SetCharacterDataHandler(xmlBody.parser, multiPartUploadXmlCharData);
 
-            XLOGF(INFO, "Complete multi-part upload of {} uploadId {}", keyInfo.key, uploadId);
+            XLOGF(INFO, "Complete multi-part upload of {} uploadId {}", keyInfo.key, uploadId.id);
         }
     }
 }
@@ -1627,7 +1740,7 @@ bool S3Handler::setKeyInfoFromPath(const std::string_view path)
     return true;
 }
 
-void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& bucket)
+void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& bucket, const bool partial)
 {
     auto bucketId = buckets::getBucket(bucket);
     if(!bucketId)
@@ -1642,9 +1755,9 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
     keyInfo.bucketId = *bucketId;
 
     const auto listType = headers.getQueryParam("list-type");
-    if(listType=="2")
+    if(!partial && listType=="2")
     {
-        listObjectsV2(headers, bucket, *bucketId);
+        listObjectsV2(headers, bucket, *bucketId, partial);
         return;
     }
     else if(!listType.empty())
@@ -1657,10 +1770,11 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
     }
 
     request_type = RequestType::ListObjects;
-    const auto marker = headers.getDecodedQueryParam("marker");
-    const auto maxKeys = headers.getIntQueryParam("max-keys", 1000);
+    const auto marker = partial ? headers.getDecodedQueryParam("key-marker") : headers.getDecodedQueryParam("marker");
+    const auto maxKeys = partial ? headers.getIntQueryParam("max-uploads", 1000) : headers.getIntQueryParam("max-keys", 1000);
     const auto prefix = headers.hasQueryParam("prefix") ? std::make_optional(headers.getDecodedQueryParam("prefix")) : std::nullopt;
     const auto delimiter = headers.getDecodedQueryParam("delimiter");
+    const auto uploadIdMarkerStr = partial ? headers.getDecodedQueryParam("upload-id-marker") : std::string();
 
     if(delimiter.size()>1)
     {
@@ -1674,13 +1788,13 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     folly::getGlobalCPUExecutor()->add(
-    [self = self, evb, marker, maxKeys, prefix, delimiter, bucket, bucketId]()
+    [self = self, evb, marker, maxKeys, prefix, delimiter, bucket, bucketId, partial, uploadIdMarkerStr]()
     {
-        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, std::nullopt, delimiter, *bucketId, false, bucket);
+        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, std::nullopt, delimiter, *bucketId, false, bucket, partial, uploadIdMarkerStr);
     });
 }
 
-void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId)
+void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId, const bool partial)
 {
     request_type = RequestType::ListObjects;
     const auto continuationToken = headers.getDecodedQueryParam("continuation-token");
@@ -1711,9 +1825,9 @@ void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string&
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     folly::getGlobalCPUExecutor()->add(
-    [self = self, evb, marker, maxKeys, prefix, startAfter, delimiter, bucket, bucketId]()
+    [self = self, evb, marker, maxKeys, prefix, startAfter, delimiter, bucket, bucketId, partial]()
     {
-        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, startAfter, delimiter, bucketId, true, bucket);
+        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, startAfter, delimiter, bucketId, true, bucket, partial, std::string());
     });
 }
 
@@ -2178,7 +2292,7 @@ std::pair<std::string, std::string> splitUploadId(const std::string& uploadId)
 
 void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId)
 {
-    request_type = RequestType::PutObject;
+    request_type = RequestType::PutObjectPart;
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb, partNumber, uploadId, uploadVerId]()
@@ -2201,7 +2315,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                 const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
                 const auto partsBucketId = buckets::getPartsBucket(self->keyInfo.bucketId);
 
-                auto readRes = self->sfs.read_prepare(make_key({.key = uploadIdToStr(uploadId), .version = 0, 
+                auto readRes = self->sfs.read_prepare(make_key({.key = self->keyInfo.key, .version = uploadId, 
                     .bucketId = partialUploadsBucketId}), 0);
                 if(readRes.err!=0)
                 {
@@ -2222,8 +2336,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
 
                 std::string dataPath, dataUploadVerId;
 
-                if(!rdata.getStr2(&dataPath) || !rdata.getStr2(&dataUploadVerId) ||
-                    dataPath != make_key(self->keyInfo) || dataUploadVerId!=uploadVerId)
+                if(!rdata.getStr2(&dataUploadVerId) || dataUploadVerId!=uploadVerId)
                 {
                     XLOGF(WARN, "Could not verify upload data for uploadId {} partNumber {}", uploadId, partNumber);
                     evb->runInEventBaseThread([self = self, readRes]()
@@ -2238,6 +2351,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                     return;
                 }
 
+                self->bodyData = self->keyInfo.key;
                 self->keyInfo = {.key = uploadIdToStr(uploadId) +"."+uploadIdToStr(partNumber), .version = 0, 
                     .bucketId = partsBucketId};
                 auto res = self->sfs.write_prepare(make_key(self->keyInfo), self->put_remaining);
@@ -2277,25 +2391,28 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb]()
             {
-                auto [uploadId, uploadIdEnc] = self->sfs.get_next_partid();
-                auto uploadVerId = random_uuid_binary();
+                const auto uploadId = self->sfs.get_next_partid();
+                const auto uploadIdEnc = self->sfs.encrypt_id_separate(uploadId, std::string());
 
                 CWData data;
-                data.addString2(make_key(self->keyInfo));
-                data.addString2(uploadVerId);
+                data.addString2(uploadIdEnc.nonce);
 
                 std::string md5sum(data.getDataPtr(), data.getDataSize());
                 const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
 
-                auto rc = self->sfs.write(make_key({.key = uploadIdToStr(uploadId), .version = 0, 
-                    .bucketId = partialUploadsBucketId}), nullptr, 0, 0, 0, md5sum,  false, false);
+                const auto tnow = std::chrono::system_clock::now();
+                const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        tnow.time_since_epoch()).count();
+
+                auto rc = self->sfs.write(make_key({.key = self->keyInfo.key, .version = uploadId, 
+                    .bucketId = partialUploadsBucketId}), nullptr, 0, 0, lastModified, md5sum,  false, false);
 
                 if(rc!=0)
                 {
                     XLOGF(WARN, "Could not write upload data for uploadId {} err {}", uploadId, rc);
                 }
          
-                evb->runInEventBaseThread([rc=rc, uploadIdEnc = uploadIdEnc, uploadVerId, self = self]()
+                evb->runInEventBaseThread([rc=rc, uploadIdEnc = uploadIdEnc, self = self]()
                                   {   
                                     if(rc!=0)        
                                     {
@@ -2311,7 +2428,7 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
    "\t<Bucket>{}</Bucket>"
    "\t<Key>{}</Key>"
    "\t<UploadId>{}-{}</UploadId>"
-"</InitiateMultipartUploadResult>", buckets::getBucketName(self->keyInfo.bucketId), self->keyInfo.key, folly::hexlify(uploadIdEnc), folly::hexlify(uploadVerId));
+"</InitiateMultipartUploadResult>", buckets::getBucketName(self->keyInfo.bucketId), self->keyInfo.key, folly::hexlify(uploadIdEnc.encryptedId), folly::hexlify(uploadIdEnc.nonce));
 
                                        ResponseBuilder(self->downstream_)
                         .status(200, "OK")
@@ -2323,6 +2440,27 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
             });
 }
 
+S3Handler::UploadIdDec S3Handler::decryptUploadId(const std::string& encdata)
+{
+    const auto dashPos = encdata.find('-');
+    if(dashPos==std::string::npos)
+        return UploadIdDec{-1, std::string()};
+
+    std::string encIdStr = encdata.substr(0, dashPos);
+    std::string nonceStr = encdata.substr(dashPos+1);
+
+    try
+    {
+        const auto nonce = folly::unhexlify(nonceStr);
+        return UploadIdDec { sfs.decrypt_id_separate(folly::unhexlify(encIdStr), nonce),
+            nonce };
+    }
+    catch(const std::exception&)
+    {
+        return UploadIdDec{-1, std::string()};
+    }
+}
+
 void S3Handler::finalizeMultipartUpload()
 {
     assert(multiPartUploadData.get()!=nullptr);
@@ -2332,18 +2470,16 @@ void S3Handler::finalizeMultipartUpload()
             {
                 const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
                 auto readRes = self->sfs.read_prepare(
-                    make_key({.key = uploadIdToStr(multiPartData->uploadId), .version = 0, 
+                    make_key({.key = self->keyInfo.key, .version = multiPartData->uploadId.id, 
                     .bucketId = partialUploadsBucketId}), 0);
                 CRData uploadData(readRes.md5sum.data(), readRes.md5sum.size());
-                std::string uploadFPath;
-                std::string uploadVerId;
+                std::string uploadFPath = make_key(self->keyInfo);
+                std::string uploadNonce;
                 if(readRes.err != 0 ||
-                    !uploadData.getStr2(&uploadFPath) ||
-                    uploadFPath!=make_key(self->keyInfo) ||
-                    !uploadData.getStr2(&uploadVerId) ||
-                    uploadVerId!=multiPartData->verId )
+                    !uploadData.getStr2(&uploadNonce) ||
+                    uploadNonce!=multiPartData->uploadId.nonce )
                 {
-                    XLOGF(WARN, "Could not find upload data for uploadId {} err {}", multiPartData->uploadId, readRes.err);
+                    XLOGF(WARN, "Could not find upload data for uploadId {} err {}", multiPartData->uploadId.id, readRes.err);
                     evb->runInEventBaseThread([self = self, readRes = readRes]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2365,7 +2501,7 @@ void S3Handler::finalizeMultipartUpload()
                 wdata.addChar(metadata_multipart_object);
                 const size_t md5sumOffset = wdata.getDataSize();
                 wdata.resize(wdata.getDataSize()+MD5_DIGEST_LENGTH);
-                wdata.addVarInt(multiPartData->uploadId);
+                wdata.addVarInt(multiPartData->uploadId.id);
                 wdata.addVarInt(multiPartData->parts.size());
 
                 EVP_MD_CTX* md5Ctx = EVP_MD_CTX_new();
@@ -2388,16 +2524,13 @@ void S3Handler::finalizeMultipartUpload()
 
                 for(const auto& part: multiPartData->parts)
                 {
-                    if(part.partNumber==7)
-                        int abc=5;
-
                     auto readPartRes = self->sfs.read_prepare(
-                        make_key({.key = uploadIdToStr(multiPartData->uploadId)+"."+uploadIdToStr(part.partNumber), .version = 0, 
+                        make_key({.key = uploadIdToStr(multiPartData->uploadId.id)+"."+uploadIdToStr(part.partNumber), .version = 0, 
                             .bucketId = partsBucketId}), SingleFileStorage::ReadSkipAddReading);
 
                     if(readPartRes.err!=0)
                     {
-                        XLOGF(WARN, "Could not read part data for uploadId {} partNumber {} err {}", multiPartData->uploadId, part.partNumber, readPartRes.err);
+                        XLOGF(WARN, "Could not read part data for uploadId {} partNumber {} err {}", multiPartData->uploadId.id, part.partNumber, readPartRes.err);
                         evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2453,27 +2586,21 @@ void S3Handler::finalizeMultipartUpload()
                 const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
                    tnow.time_since_epoch()).count();
 
-                auto writeRes = self->sfs.write_finalize(uploadFPath, {SingleFileStorage::Ext(0, 0, 0)}, lastModified, md5sum, false, true);
-                if(writeRes)
-                {
-                    XLOGF(WARN, "Could not finalize object for uploadId {} err {}", multiPartData->uploadId, writeRes);
-                     evb->runInEventBaseThread([self = self, writeRes]()
-                                              {
-                        ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error adding object to db. Err {}", writeRes), self->fullKeyPath(), ""))
-                            .sendWithEOM();
-                        self->finished_ = true; });
-                        return;
-                }
 
-                auto delRes = self->sfs.del(
-                    make_key({.key = uploadIdToStr(multiPartData->uploadId), .version = 0, 
-                        .bucketId = partialUploadsBucketId}), SingleFileStorage::DelAction::Del, false);
+                auto fragInfoFinalize = std::make_unique< SingleFileStorage::SFragInfo>(0, 0);
+                fragInfoFinalize->action = SingleFileStorage::FragAction::Add;
+                fragInfoFinalize->fn = uploadFPath;
+                fragInfoFinalize->md5sum = md5sum;
+                fragInfoFinalize->last_modified = lastModified;
+
+                const auto partFn = make_key({.key = self->keyInfo.key, .version = multiPartData->uploadId.id, 
+                        .bucketId = partialUploadsBucketId});
+
+                auto delRes = self->sfs.del(partFn, SingleFileStorage::DelAction::DelNoCallbackNoCheck, false, std::move(fragInfoFinalize));
 
                 if(delRes)
                 {
-                    XLOGF(WARN, "Could not delete upload metadata for uploadId {} err {}", multiPartData->uploadId, delRes);
+                    XLOGF(WARN, "Could not delete upload metadata for uploadId {} err {}", multiPartData->uploadId.id, delRes);
                     evb->runInEventBaseThread([self = self, delRes]()
                                               {
                         ResponseBuilder(self->downstream_)
@@ -2699,6 +2826,183 @@ void S3Handler::deleteObjects()
         );
 }
 
+void S3Handler::abortMultipartUpload(proxygen::HTTPMessage& headers, const std::string& uploadIdStr)
+{
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+
+    folly::getGlobalCPUExecutor()->add(
+        [self = this->self, evb, uploadIdStr]()
+        {
+            const auto uploadId = self->decryptUploadId(uploadIdStr);
+
+            if(uploadId.id<=0)
+            {
+                XLOGF(INFO, "Invalid uploadId {}", uploadIdStr);
+                evb->runInEventBaseThread([self = self]()
+                                            {
+                        ResponseBuilder(self->downstream_)
+                            .status(400, "Bad Request")
+                            .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid uploadId", self->keyInfo.key, ""))
+                            .sendWithEOM();
+                        self->finished_ = true; });
+                return;
+            }
+
+            XLOGF(INFO, "Aborting multipart upload for object {} uploadId {}", self->keyInfo.key, uploadIdStr);
+
+
+            const auto currPath = make_key(self->keyInfo.key, buckets::getPartialUploadsBucket(self->keyInfo.bucketId),
+                                            uploadId.id);
+            
+            const auto readRes = self->sfs.read_prepare(currPath, SingleFileStorage::ReadSkipAddReading);
+
+            if(readRes.err==ENOENT)
+            {
+                XLOGF(INFO, "Aborting multipart upload for object {} uploadId {} not found", self->keyInfo.key, uploadIdStr);
+                evb->runInEventBaseThread([self = self]()
+                                        {
+                        ResponseBuilder(self->downstream_)
+                            .status(204, "No Content")
+                            .sendWithEOM();
+                        self->finished_ = true; });
+                return;
+            }
+            else if(readRes.err != 0)
+            {
+                XLOGF(INFO, "Aborting multipart upload for object {} uploadId {} read err {}", self->keyInfo.key, uploadIdStr, readRes.err);
+                evb->runInEventBaseThread([self = self, readRes]()
+                                        {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Storage read error", self->keyInfo.key, ""))
+                            .sendWithEOM();
+                        self->finished_ = true; });
+                return;
+            }
+
+            CRData rdata(readRes.md5sum.data(), readRes.md5sum.size());
+            std::string nonce;
+            if(!rdata.getStr2(&nonce) ||
+                nonce!=uploadId.nonce)
+            {
+                XLOGF(WARN, "Aborting multipart upload for object {} uploadId {} verification failed", self->keyInfo.key, uploadIdStr);
+                evb->runInEventBaseThread([self = self]()
+                                        {
+                        ResponseBuilder(self->downstream_)
+                            .status(400, "Bad Request")
+                            .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid uploadId", self->keyInfo.key, ""))
+                            .sendWithEOM();
+                        self->finished_ = true; });
+                return;
+            }
+
+            /*const auto partsBucketId = buckets::getPartsBucket(self->keyInfo.bucketId);
+
+            self->sfs.list_commit();
+
+            const auto prefix = uploadIdToStr(uploadId.id)+".";
+
+            const auto iterStartVal = make_key({.key = prefix, .version=0, .bucketId = partsBucketId});
+            SingleFileStorage::IterData iter_data = {};
+                
+            if(!self->sfs.iter_start(iterStartVal, false, iter_data))
+            {
+                XLOGF(ERR, "Error starting listing parts for abort key {} uploadId {}", self->keyInfo.key, uploadIdStr);
+                evb->runInEventBaseThread([self = self]()
+                                                    {
+                                ResponseBuilder(self->downstream_)
+                                    .status(500, "Internal error")
+                                    .body(s3errorXml(S3ErrorCode::InternalError, "Error starting listing for deleting parts", self->keyInfo.key, ""))
+                                    .sendWithEOM(); 
+                                self->finished_ = true; });
+                return;
+            }
+
+            while(true)
+            {
+                std::string keyBin;
+                std::string data;
+                if(!self->sfs.iter_curr_val(keyBin, data, iter_data))
+                {
+                    break;
+                }
+
+                const auto keyInfo = extractKeyInfoView(keyBin);
+
+                if(!keyInfo.key.starts_with(prefix))
+                {
+                    break;
+                }
+
+                const auto res = self->sfs.del(keyBin, SingleFileStorage::DelAction::DelNoCheck, false);
+
+                if(res!=0)
+                {
+                    XLOGF(WARN, "Could not delete part '{}' for aborting uploadId {} err {}", folly::hexlify(keyBin), uploadIdStr, res);
+                    self->sfs.iter_stop(iter_data);
+                    evb->runInEventBaseThread([self = self]()
+                                                    {
+                                ResponseBuilder(self->downstream_)
+                                    .status(500, "Internal error")
+                                    .body(s3errorXml(S3ErrorCode::InternalError, "Could not delete part", self->keyInfo.key, ""))
+                                    .sendWithEOM(); 
+                                self->finished_ = true; });
+
+                    return;
+                }
+
+                if(!self->sfs.iter_next(iter_data))
+                {
+                    self->sfs.iter_stop(iter_data);
+                    evb->runInEventBaseThread([self = self]()
+                                                    {
+                                ResponseBuilder(self->downstream_)
+                                    .status(500, "Internal error")
+                                    .body(s3errorXml(S3ErrorCode::InternalError, "Error listing for deleting parts", self->keyInfo.key, ""))
+                                    .sendWithEOM(); 
+                                self->finished_ = true; });
+                    return;
+                }
+            }
+
+            self->sfs.iter_stop(iter_data);*/
+            
+            auto res = self->sfs.del(currPath, SingleFileStorage::DelAction::Del, false);
+
+            if(res==0)
+            {
+                res = self->commit() ? 0 : 1;
+            }
+
+            evb->runInEventBaseThread([self = self, res]()
+                                            {
+                    if(res==ENOENT)
+                    {
+                        XLOGF(INFO, "Removing object '{}' not found", self->keyInfo.key);
+                        ResponseBuilder(self->downstream_)
+                            .status(204, "No Content")
+                            .sendWithEOM();
+                    }
+                    else if(res!=0)
+                    {
+                        XLOGF(INFO, "Removing object '{}' err {}", self->keyInfo.key, res);
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Storage is dead", self->keyInfo.key, ""))
+                            .sendWithEOM();
+                    }
+                    else
+                    {
+                        ResponseBuilder(self->downstream_)
+                            .status(204, "No Content")
+                            .sendWithEOM();
+                    }
+                    self->finished_ = true;
+                                            });
+
+        });
+}
+
 void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
@@ -2708,8 +3012,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
         {
             XLOGF(INFO, "Removing object {}", self->keyInfo.key);
 
-            bool delNewest = false;
-            
+            bool delNewest = false;            
 
             if(self->withBucketVersioning && self->keyInfo.version==0)
             {
@@ -2717,7 +3020,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                 delNewest = true;
             }
 
-            const auto currPath = make_key(self->keyInfo);
+            const auto currPath =  make_key(self->keyInfo);
             int res;
 
             if(delNewest)
@@ -3180,25 +3483,27 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
 void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& marker,
     const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter,
     const std::string& delimiter, const int64_t bucketId,
-    const bool listV2, const std::string& bucketName)
+    const bool listV2, const std::string& bucketName, const bool partial, const std::string& markerVersionStr)
 {
+    const auto markerVersion = !markerVersionStr.empty() ? decryptUploadId(markerVersionStr).id : std::numeric_limits<int64_t>::max();
+    const auto listBucketId = partial ? buckets::getPartialUploadsBucket(bucketId) : bucketId;
     SingleFileStorage::IterData iter_data = {};
     std::string iterStartVal;
     if(!marker.empty())
     {
         if(startAfter && *startAfter>marker)
-            iterStartVal = make_key({.key = *startAfter, .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId});
+            iterStartVal = make_key({.key = *startAfter, .version=markerVersion, .bucketId = listBucketId});
         else
-            iterStartVal = make_key({.key = marker, .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId});
+            iterStartVal = make_key({.key = marker, .version=markerVersion, .bucketId = listBucketId});
     }
     else
     {
         if(startAfter)
-            iterStartVal = make_key({.key = *startAfter, .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId});
+            iterStartVal = make_key({.key = *startAfter, .version=markerVersion, .bucketId = listBucketId});
         else if(prefix)
-            iterStartVal = make_key({.key = *prefix, .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId});
+            iterStartVal = make_key({.key = *prefix, .version=markerVersion, .bucketId = listBucketId});
         else
-            iterStartVal = make_key({.key = {}, .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId});
+            iterStartVal = make_key({.key = {}, .version=markerVersion, .bucketId = listBucketId});
     }
 
     sfs.list_commit();
@@ -3243,7 +3548,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             break;
         }
 
-        if(keyInfo.bucketId != bucketId)
+        if(keyInfo.bucketId != listBucketId)
         {
             truncated = false;
             break;
@@ -3276,7 +3581,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             }
         }
 
-        if (outputKey)
+        if (outputKey && !partial)
         {
             lastOutputKeyStr = keyInfo.key;
 
@@ -3298,6 +3603,25 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 "\t</Contents>", escapeXML(keyInfo.key), format_last_modified(last_modified), getEtag(md5sum), size);
             ++keyCount;
         }
+        else if(outputKey && partial)
+        {
+            lastOutputKeyStr = keyInfo.key;
+
+            CRData rdata(md5sum.data(), md5sum.size());
+
+            std::string uploadNonce;
+            rdata.getStr2(&uploadNonce);
+
+            const auto encId =sfs.encrypt_id_separate(keyInfo.version, uploadNonce);
+
+            val_data += fmt::format("\t<Upload>\n"
+                "\t\t<Initiated>{}</Initiated>\n"
+                "\t\t<Key>{}</Key>\n"
+                "\t\t<UploadId>{}-{}</UploadId>\n"
+                "\t</Upload>", format_last_modified(last_modified), 
+                escapeXML(keyInfo.key), folly::hexlify(encId.encryptedId), folly::hexlify(encId.nonce));
+            ++keyCount;
+        }
 
         if(!sfs.iter_next(iter_data))
         {
@@ -3314,23 +3638,51 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     }
 
     std::string nextMarker;
+    std::string nextVersionMarker;
     if(truncated)
     {
         std::string data;
-        std::string keyBin;
-        sfs.iter_curr_val(keyBin, data, iter_data);
+        std::string keyBin, md5sum;
+        int64_t offset, size, last_modified;
+        std::vector<SingleFileStorage::SPunchItem> extra_exts;
+        sfs.iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data);
+
+        CRData rdata(md5sum.data(), md5sum.size());
+
+        std::string uploadNonce;
+        rdata.getStr2(&uploadNonce);
 
         const auto keyInfo = extractKeyInfoView(keyBin);
         nextMarker = keyInfo.key;
+        const auto encId = sfs.encrypt_id_separate(keyInfo.version, uploadNonce);
+        nextVersionMarker = folly::hexlify(encId.encryptedId) + "-" + folly::hexlify(encId.nonce);
     }
 
     sfs.iter_stop(iter_data);
 
-    std::string resp = fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    std::string resp;
+    
+    if(partial)
+    {
+        resp+=fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<ListMultipartUploadsResult>\n"
+        "\t<Bucket>{}</Bucket>\n"
+        "\t<KeyMarker>{}</KeyMarker>\n"
+        "\t<UploadIdMarker>{}</UploadIdMarker>\n"
+        "\t<NextKeyMarker>{}</NextKeyMarker>\n"
+        "\t<NextUploadIdMarker>{}</NextUploadIdMarker>\n"
+        "\t<IsTruncated>{}</IsTruncated>\n"
+        "\t<MaxUploads>{}</MaxUploads>\n", escapeXML(bucketName), escapeXML(marker), escapeXML(markerVersionStr),
+             escapeXML(nextMarker), nextVersionMarker, truncated ? "true" : "false", maxKeys);
+    }
+    else
+    {
+        resp = fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
         "<ListBucketResult>\n"
         "\t<Name>{}</Name>\n"
         "\t<IsTruncated>{}</IsTruncated>\n"
         "\t<MaxKeys>{}</MaxKeys>\n", escapeXML(bucketName), truncated ? "true" : "false", maxKeys);
+    }
 
 
     if(!listV2)
@@ -3342,7 +3694,12 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         resp+=fmt::format("\t<ContinuationToken>{}</ContinuationToken>\n", folly::hexlify(marker));
     }
 
-    if(listV2 && truncated)
+    if(partial && truncated)
+    {
+        resp+=fmt::format("\t<NextKeyMarker>{}</NextKeyMarker>\n", escapeXML(nextMarker));
+        resp+=fmt::format("\t<NextUploadIdMarker>{}</NextUploadIdMarker>\n", nextVersionMarker);
+    }
+    else if(listV2 && truncated)
     {
         resp+=fmt::format("\t<NextContinuationToken>{}</NextContinuationToken>\n", folly::hexlify(nextMarker));
     }
@@ -3383,7 +3740,10 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         }
     }
 
-    resp+="</ListBucketResult>";
+    if(partial)
+        resp+="</ListMultipartUploadsResult>";
+    else
+        resp+="</ListBucketResult>";
 
     evb->runInEventBaseThread([self = self, resp = std::move(resp)]()
                                               {
@@ -3580,7 +3940,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
         }
         return;
     }
-    else if(request_type != RequestType::PutObject)
+    else if(request_type != RequestType::PutObject && request_type != RequestType::PutObjectPart)
     {
         XLOGF(WARN, "Ignoring body received in request type {}", static_cast<int>(request_type));
         return;
@@ -3669,7 +4029,28 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
                 tnow.time_since_epoch()).count();
 
-        auto rc = sfs.write_finalize(make_key(keyInfo), extents, lastModified, md5sum, false, true);
+        // TODO: Check if multi-part upload is aborted here and synchronize
+
+        std::unique_ptr<SingleFileStorage::SFragInfo> addPart;
+        if(request_type == RequestType::PutObjectPart)
+        {
+            int64_t partSize = 0;
+            for(const auto& ext: extents)
+            {
+                partSize += ext.len;
+            }
+
+            const auto uploadId = uploadIdFromStrDot(keyInfo.key);
+            assert(uploadId.second>=0);
+
+            addPart = std::make_unique<SingleFileStorage::SFragInfo>();
+            addPart->action = SingleFileStorage::FragAction::ModifyData;
+            addPart->md5sum = serializePartExts(std::string(), {MultiPartDownloadData::PartExt{.size=partSize, .start=static_cast<int>(uploadId.second), .len=1}});
+            addPart->fn = make_key({.key = bodyData, .version = uploadId.first, 
+                    .bucketId = keyInfo.bucketId - 1});
+        }
+
+        auto rc = sfs.write_finalize(make_key(keyInfo), extents, lastModified, md5sum, false, true, std::move(addPart));
 
         extents.clear();
 
@@ -3858,7 +4239,7 @@ void S3Handler::onEOM() noexcept
         finalizeMultipartUpload();
         return;
     }
-    else if(request_type == RequestType::PutObject)
+    else if(request_type == RequestType::PutObject || request_type == RequestType::PutObjectPart)
     {
         if(finished_)
             return;
@@ -3917,7 +4298,7 @@ void S3Handler::onError(ProxygenError /*err*/) noexcept
     finished_ = true;
     paused_ = true;
 
-    if (request_type == RequestType::PutObject)
+    if (request_type == RequestType::PutObject || request_type == RequestType::PutObjectPart)
     {
         XLOGF(WARN, "Error obj {} stopping put", keyInfo.key);
 
@@ -3932,12 +4313,38 @@ void S3Handler::onError(ProxygenError /*err*/) noexcept
 }
 
 
-std::vector<std::string> S3Handler::onDeleteCallback(const std::string& fn, const std::string& md5sum)
+std::vector<SingleFileStorage::SFragInfo> S3Handler::onDeleteCallback(const std::string& fn, const std::string& md5sum)
 {
     const auto keyInfo = extractKeyInfoView(fn);
     if(buckets::isPartialUploadsBucket(keyInfo.bucketId))
     {
-        return {};
+        const auto parts = parsePartExts(md5sum);
+
+        int numParts = 0;
+        int64_t totalLength = 0;
+        for(const auto& ext: parts.second)
+        {
+            numParts += ext.len;
+            totalLength += ext.size * ext.len;
+        }
+
+        const auto partsBucketId = keyInfo.bucketId + 1;
+
+        XLOGF(INFO, "Abort multi-part upload found for object {} with total length {}. Deleting {} parts", keyInfo.key, totalLength, numParts);
+
+        std::vector<SingleFileStorage::SFragInfo> ret;
+        for(const auto& ext: parts.second)
+        {
+            for(auto partNum=ext.start; partNum<ext.start+ext.len; ++partNum)
+            {
+                SingleFileStorage::SFragInfo fragInfo;
+                fragInfo.action = SingleFileStorage::FragAction::Del;
+                fragInfo.fn = make_key({.key = uploadIdToStr(keyInfo.version)+"."+uploadIdToStr(partNum), .version = 0, 
+                            .bucketId = partsBucketId});
+                ret.push_back(fragInfo);
+            }
+        }
+        return ret;
     }
 
     int64_t totalLen;
@@ -3948,7 +4355,7 @@ std::vector<std::string> S3Handler::onDeleteCallback(const std::string& fn, cons
         return {};
     }
 
-    std::vector<std::string> ret;
+    std::vector<SingleFileStorage::SFragInfo> ret;
 
     if(multiPartDownloadData)
     {
@@ -3966,14 +4373,30 @@ std::vector<std::string> S3Handler::onDeleteCallback(const std::string& fn, cons
         {
             for(auto partNum=ext.start; partNum<ext.start+ext.len; ++partNum)
             {
-                const auto key = make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
+                SingleFileStorage::SFragInfo fragInfo;
+                fragInfo.action = SingleFileStorage::FragAction::Del;
+                fragInfo.fn = make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
                             .bucketId = partsBucketId});
-                ret.push_back(key);
+                ret.push_back(fragInfo);
             }
         }
     }
 
     return ret;
+}
+
+std::optional<std::string> S3Handler::onModifyCallback(const std::string& fn, std::string md5sum, std::string md5sumParam)
+{
+    const auto addParts = parsePartExts(md5sumParam);
+    auto existingParts = parsePartExts(md5sum);
+
+    for(const auto& part: addParts.second)
+    {
+        assert(part.len==1);
+        existingParts.second = addPartExt(std::move(existingParts.second), part.size, part.start);
+    }
+
+    return serializePartExts(existingParts.first, existingParts.second);
 }
 
 std::string S3Handler::fullKeyPath() const

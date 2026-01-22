@@ -428,8 +428,8 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	alloc_use_free_space_percent(options.alloc_use_free_space_percent),
 	runtime_id(options.runtime_id), manual_commit(options.manual_commit), stop_on_error(options.stop_on_error), punch_holes(options.punch_holes),
 	data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func),
-	common_prefix_hash_func(options.common_prefix_hash_func), on_delete_callback(options.on_delete_callback), wal_write_meta(options.wal_write_meta), 
-	wal_write_data(options.wal_write_data)
+	common_prefix_hash_func(options.common_prefix_hash_func), on_delete_callback(options.on_delete_callback), modify_data_callback(options.modify_data_callback), 
+	wal_write_meta(options.wal_write_meta), wal_write_data(options.wal_write_data)
 {
 	if(common_prefix_func==nullptr)
 		common_prefix_func = common_prefix_passthrough;
@@ -1201,6 +1201,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 			for (const auto& item : items)
 			{
 				if (item.action == SingleFileStorage::FragAction::Del
+					|| item.action == SingleFileStorage::FragAction::DelNoCallback
 					|| item.action == SingleFileStorage::FragAction::Add
 					|| item.action == SingleFileStorage::FragAction::AddNoDelOld
 					|| item.action == SingleFileStorage::FragAction::DelOld
@@ -1972,7 +1973,7 @@ int SingleFileStorage::write_ext(const Ext& ext, const char* data, size_t data_s
 }
 
 int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<Ext>& extents, int64_t last_modified, const std::string& md5sum,
-		bool no_del_old, bool is_fragment)
+		bool no_del_old, bool is_fragment, std::unique_ptr<SFragInfo> linked)
 {
 	std::unique_lock lock(mutex);
 	wait_queue(lock, false, true);
@@ -1989,6 +1990,7 @@ int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<E
 	curr_frag.fn = fn;
 	curr_frag.last_modified = last_modified;
 	curr_frag.md5sum = md5sum;
+	curr_frag.linked = linked.release();
 
 	++commit_items[common_prefix_hash_func(fn)];
 
@@ -2532,20 +2534,24 @@ int SingleFileStorage::read_finalize(const std::string& fn, const std::vector<Ex
 }
 
 int SingleFileStorage::del(const std::string_view fn, DelAction da,
-	bool background_queue)
+	bool background_queue, std::unique_ptr<SFragInfo> linked)
 {
 	if (is_dead)
 	{
 		return ENOTRECOVERABLE;
 	}
 
-	int rc = check_existence(fn, 0);
-	if(rc)
-		return rc;
+	if(da != DelAction::DelNoCheck && da != DelAction::DelNoCallbackNoCheck)
+	{
+		const auto rc = check_existence(fn, 0);
+		if(rc)
+			return rc;
+	}
 
 	SFragInfo curr_frag;
 	switch (da)
 	{
+	case DelAction::DelNoCheck:
 	case DelAction::Del:
 		curr_frag.action = FragAction::Del;
 		break;
@@ -2564,8 +2570,15 @@ int SingleFileStorage::del(const std::string_view fn, DelAction da,
 	case DelAction::AssertQueueEmpty:
 		curr_frag.action = FragAction::AssertDelQueueEmpty;
 		break;
+	case DelAction::DelNoCallbackNoCheck:
+		curr_frag.action = FragAction::DelNoCallback;
+		break;
+	default:
+		assert(false);
+		return EINVAL;
 	}
 	curr_frag.fn = fn;
+	curr_frag.linked = linked.release();
 
 	std::unique_lock lock(mutex);
 	wait_queue(lock, background_queue, false);
@@ -2962,7 +2975,7 @@ bool SingleFileStorage::iter_curr_val(std::string & fn, std::string & data, Iter
 }
 
 int64_t SingleFileStorage::remove_fn(const std::string & fn, MDB_txn * txn, MDB_txn* freespace_txn,
-	bool del_from_main, bool del_old, THREAD_ID tid)
+	bool del_from_main, bool del_old, THREAD_ID tid, const bool call_callback)
 {
 	int64_t commit_errors = 0;
 
@@ -2978,15 +2991,6 @@ int64_t SingleFileStorage::remove_fn(const std::string & fn, MDB_txn * txn, MDB_
 	}
 
 	SCOPE_EXIT{ mdb_cursor_close(mc); };
-
-	std::vector<std::string> del_other_fns;
-
-	SCOPE_EXIT{
-		for(const auto& del_fn: del_other_fns)
-		{
-			commit_errors += remove_fn(del_fn, txn, freespace_txn, del_from_main, del_old, tid);
-		}
-	};
 
 	if (has_mmap_read_error_reset(tid))
 	{
@@ -3057,9 +3061,10 @@ int64_t SingleFileStorage::remove_fn(const std::string & fn, MDB_txn * txn, MDB_
 					XLOG(WARN) << "LMDB: Error reading last_modified, md5sum txn=" << std::to_string(reinterpret_cast<int64_t>(txn)) << " sfs " << db_path;
 				}
 				
-				if(!md5sum.empty())
+				if(call_callback && !md5sum.empty())
 				{
-					del_other_fns = on_delete_callback(fn, md5sum);
+					const auto other_actions = on_delete_callback(fn, md5sum);
+					callback_queue.insert(callback_queue.end(), other_actions.begin(), other_actions.end());
 				}
 			}
 
@@ -3166,7 +3171,7 @@ int64_t SingleFileStorage::restore_fn(const std::string & fn, MDB_txn * txn, MDB
 	{
 		CRData rdata(reinterpret_cast<char*>(tval.mv_data), tval.mv_size, true);
 
-		commit_errors += remove_fn(fn, txn, freespace_txn, true, false, tid);
+		commit_errors += remove_fn(fn, txn, freespace_txn, true, false, tid, false);
 
 		int64_t fn_transid;
 		rdata.getVarInt(&fn_transid);
@@ -3984,7 +3989,7 @@ int64_t SingleFileStorage::reset_del_log_fn(MDB_txn * txn, MDB_txn* freespace_tx
 			{
 				XLOG(INFO) << "Restoring key " << decompress_filename(fn) << " transid "<< std::to_string(fn_transid)<<" to previous data sfs " << db_path<<" curr transid "<<std::to_string(transid);
 
-				commit_errors += remove_fn(fn, txn, freespace_txn, true, false, tid);
+				commit_errors += remove_fn(fn, txn, freespace_txn, true, false, tid, false);
 
 				MDB_val tval_offset;
 				tval_offset.mv_size = data_buf.size() - rdata.getStreampos();
@@ -4013,7 +4018,7 @@ int64_t SingleFileStorage::reset_del_log_fn(MDB_txn * txn, MDB_txn* freespace_tx
 			{
 				XLOG(INFO) << "Not restoring key " << decompress_filename(fn) << " transid "<<std::to_string(fn_transid)<<" to previous data sfs " << db_path<<" curr transid "<<std::to_string(transid);
 
-				commit_errors += remove_fn(fn, txn, freespace_txn, false, true, tid);
+				commit_errors += remove_fn(fn, txn, freespace_txn, false, true, tid, false);
 			}
 
 			rc = mdb_cursor_del(it_cursor, 0);
@@ -4091,7 +4096,7 @@ int64_t SingleFileStorage::reset_del_queue(MDB_txn * txn, MDB_txn* freespace_txn
 			{
 				XLOG(INFO) << "Deleting queued " << decompress_filename(fn) << " from main transid " << std::to_string(fn_transid) << " sfs " << db_path << " curr transid " << std::to_string(transid);
 
-				commit_errors += remove_fn(fn, txn, freespace_txn, true, false, tid);
+				commit_errors += remove_fn(fn, txn, freespace_txn, true, false, tid, false);
 			}
 			else
 			{
@@ -6988,7 +6993,7 @@ void SingleFileStorage::operator()()
 		}
 
 		int first_wait = 0;
-		while (pending_commits.empty() && commit_queue.empty()
+		while (pending_commits.empty() && commit_queue.empty() && callback_queue.empty()
 			&& (commit_background_queue.empty() || mdb_curr_sync )
 			&& !do_quit)
 		{
@@ -7026,7 +7031,12 @@ void SingleFileStorage::operator()()
 		}
 		else
 		{*/
-			if(!pending_commits.empty() 
+			if(!callback_queue.empty())
+			{
+				frag_info = callback_queue.front();
+				callback_queue.pop_front();
+			}
+			else if(!pending_commits.empty() 
 				&& std::chrono::steady_clock::now() - last_commit_time > 100ms)
 			{
 				frag_info = pending_commits.front();
@@ -7095,6 +7105,7 @@ void SingleFileStorage::operator()()
 		if (frag_info.action == FragAction::Add
 			|| frag_info.action == FragAction::AddNoDelOld
 			|| frag_info.action == FragAction::Del
+			|| frag_info.action == FragAction::DelNoCallback
 			|| frag_info.action == FragAction::DelOld
 			|| frag_info.action == FragAction::RestoreOld
 			|| frag_info.action==FragAction::DelWithQueued)
@@ -7150,7 +7161,8 @@ void SingleFileStorage::operator()()
 
 		if (frag_info.action == FragAction::FindFree
 			|| frag_info.action == FragAction::Del
-			|| frag_info.action == FragAction::DelWithQueued)
+			|| frag_info.action == FragAction::DelWithQueued
+			|| frag_info.action == FragAction::DelNoCallback )
 		{
 			mod_items += 2;
 		}
@@ -7188,6 +7200,15 @@ void SingleFileStorage::operator()()
 		else
 		{
 			can_skip_commit = false;
+
+			if(!actionWithCommitInfo(frag_info.action))
+			{
+				if (frag_info.linked != nullptr)
+				{
+					std::unique_ptr<SFragInfo> linked(frag_info.linked);
+					callback_queue.push_back(*linked);
+				}
+			}
 		}
 
 		if(frag_info.action == FragAction::Commit && 
@@ -7792,12 +7813,72 @@ void SingleFileStorage::operator()()
 				frag_info.commit_info->commit_done.notify_all();
 			}
 		}
+		else if(frag_info.action == FragAction::ModifyData)
+		{
+			const auto read_frag_info = get_frag_info(txn, frag_info.fn, true, false);
+
+			if(read_frag_info.offset != -1)
+			{
+				auto mod_data = modify_data_callback(frag_info.fn, std::move(read_frag_info.md5sum), std::move(frag_info.md5sum));
+				if(mod_data)
+				{
+					// TODO: Extract into function
+
+					CWData wdata;
+
+					int64_t encoded_first_offset;
+					if(read_frag_info.extra_exts.size() < max_inline_exts)
+					{
+						encoded_first_offset = encode_num_exts(read_frag_info.offset, static_cast<int64_t>(read_frag_info.extra_exts.size()));
+					}
+					else
+					{
+						encoded_first_offset = encode_max_num_exts(read_frag_info.offset);
+					}
+
+					wdata.addVarInt(encoded_first_offset);
+					wdata.addVarInt(read_frag_info.len);
+
+					if(read_frag_info.extra_exts.size() >= max_inline_exts)
+					{
+						wdata.addVarInt(read_frag_info.extra_exts.size());
+						wdata.addVarInt(0);
+					}
+
+					for (const SPunchItem& ext : read_frag_info.extra_exts)
+					{
+						wdata.addVarInt(ext.offset);
+						wdata.addVarInt(ext.len);
+					}
+
+					wdata.addVarInt(read_frag_info.last_modified);
+					wdata.addString2(*mod_data);
+
+					MDB_val tval;
+					tval.mv_data = wdata.getDataPtr();
+					tval.mv_size = wdata.getDataSize();
+
+					MDB_val tkey;
+					tkey.mv_data = const_cast<char*>(&frag_info.fn[0]);
+					tkey.mv_size = frag_info.fn.size();
+
+					rc = put_with_rewrite(txn, dbi_main, &tkey, &tval, tid, n_rewrite_pages);
+					if (rc)
+					{
+						XLOG(ERR) << "LMDB: Failed to put updated data in ModifyData (" << mdb_strerror(rc) << ") sfs " << db_path;
+						++commit_errors;
+					}
+				}
+			}
+		}
 		else if (frag_info.action == FragAction::Del
 			|| frag_info.action == FragAction::DelOld
-			|| frag_info.action == FragAction::DelWithQueued)
+			|| frag_info.action == FragAction::DelWithQueued
+			|| frag_info.action == FragAction::DelNoCallback)
 		{
-			bool del_old = frag_info.action == FragAction::DelOld;
-			commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, true, del_old, tid);
+			const bool del_old = frag_info.action == FragAction::DelOld;
+			const bool call_callback = frag_info.action != FragAction::DelNoCallback;
+			commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, true, del_old, tid, call_callback);
 
 			if (frag_info.action == FragAction::DelWithQueued)
 			{
@@ -7864,7 +7945,7 @@ void SingleFileStorage::operator()()
 		{
 			if (frag_info.action == FragAction::Add)
 			{
-				commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, false, false, tid);
+				commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, false, false, tid, true);
 			}
 			else
 			{
@@ -8267,9 +8348,15 @@ void SingleFileStorage::operator()()
 	{
 		SFragInfo frag_info;
 		while (!commit_queue.empty()
-			|| !commit_background_queue.empty())
+			|| !commit_background_queue.empty()
+			|| !callback_queue.empty())
 		{
-			if (!commit_background_queue.empty())
+			if(!callback_queue.empty())
+			{
+				frag_info = callback_queue.front();
+				callback_queue.pop_front();
+			}
+			else if (!commit_background_queue.empty())
 			{
 				frag_info = commit_background_queue.front();
 				commit_background_queue.pop_front();
@@ -8280,11 +8367,22 @@ void SingleFileStorage::operator()()
 				commit_queue.pop_front();
 			}
 
-			if (frag_info.commit_info != nullptr)
+			if(actionWithCommitInfo(frag_info.action))
 			{
-				std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
-				frag_info.commit_info->commit_errors = 1;
-				frag_info.commit_info->commit_done.notify_all();
+				if ( frag_info.commit_info != nullptr)
+				{
+					std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
+					frag_info.commit_info->commit_errors = 1;
+					frag_info.commit_info->commit_done.notify_all();
+				}
+			}
+			else 
+			{
+				if(frag_info.linked != nullptr)
+				{
+					std::unique_ptr<SFragInfo> linked_info(frag_info.linked);
+					callback_queue.push_back(*linked_info);
+				}
 			}
 		}
 		
@@ -9401,17 +9499,11 @@ SingleFileStorage::TmpMmapedPgIds::~TmpMmapedPgIds()
 	}
 }
 
-std::pair<int64_t, std::string> SingleFileStorage::get_next_partid()
+int64_t SingleFileStorage::get_next_partid()
 {
-	int64_t local_curr_partid;
-	{
-    	std::scoped_lock lock(reserved_extents_mutex);
-    	++curr_partid;
-		local_curr_partid = curr_partid;
-	}
-    
-	return std::make_pair(local_curr_partid,
-		encrypt_id(local_curr_partid));
+	std::scoped_lock lock(reserved_extents_mutex);
+	++curr_partid;
+	return curr_partid;
 }
 
 int64_t SingleFileStorage::get_next_version()
@@ -9429,6 +9521,16 @@ int64_t SingleFileStorage::decrypt_id(const std::string& encdata)
 std::string SingleFileStorage::encrypt_id(const int64_t id)
 {
 	return cryptId(id, enckey);
+}
+
+CryptResult SingleFileStorage::encrypt_id_separate(const int64_t id, const std::string& preNonce)
+{
+	return cryptIdSeparate(id, enckey, preNonce);
+}
+
+int64_t SingleFileStorage::decrypt_id_separate(const std::string& encdata, const std::string& nonce)
+{
+	return decryptIdSeparate(encdata, nonce, enckey);
 }
 
 namespace

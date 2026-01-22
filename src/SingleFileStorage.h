@@ -23,6 +23,7 @@
 #include <folly/io/IOBufQueue.h>
 #include <sodium.h>
 #include "File.h"
+#include "crypt.h"
 
 
 using THREAD_ID = pid_t;
@@ -78,12 +79,92 @@ public:
 		DelWithQueued = 2,
 		Queue = 3,
 		Unqueue = 4,
-		AssertQueueEmpty = 5
+		AssertQueueEmpty = 5,
+		DelNoCheck = 6,
+		DelNoCallbackNoCheck = 7
+	};
+
+	enum class FragAction
+	{
+		Add,
+		Del,
+		DelNoCallback,
+		Commit,
+		FindFree,
+		AddNoDelOld,
+		DelOld,
+		RestoreOld,
+		EmptyQueue,
+		ReadFragInfo,
+		ReadFragInfoWithoutParsing,
+		FreeExtents,
+		ResetDelLog,
+		GetDiskId,
+		QueueDel,
+		UnqueueDel,
+		DelWithQueued,
+		ResetDelQueue,
+		AssertDelQueueEmpty,
+		DelFreemapWal,
+		AddFreemapWal,
+		ModifyData
+	};
+
+	struct SFragInfo;
+
+	struct SCommitInfo
+	{
+		SCommitInfo()
+			: commit_errors(0),
+			frag_info(nullptr)
+		{}
+		int64_t commit_errors;
+		std::mutex commit_done_mutex;
+		std::condition_variable commit_done;
+		int64_t new_datafile_offset;
+		int64_t new_datafile_offset_end;
+		SFragInfo* frag_info;
+	};
+
+	bool actionWithCommitInfo(FragAction action)
+	{
+		return action == FragAction::Commit ||
+		action == FragAction::ResetDelLog ||
+		action == FragAction::ResetDelQueue ||
+		action == FragAction::GetDiskId ||
+		action == FragAction::FindFree ||
+		action == FragAction::ReadFragInfo ||
+		action == FragAction::ReadFragInfoWithoutParsing ||
+		action == FragAction::EmptyQueue;
+	}
+
+	struct SFragInfo
+	{
+		SFragInfo() : offset(-1), len(0),
+			last_modified(0), commit_info(nullptr) {
+		}
+		SFragInfo(int64_t offset, int64_t len)
+			: offset(offset), len(len),
+			last_modified(0), commit_info(nullptr) {}
+
+		FragAction action;
+		std::string fn;
+		int64_t offset;
+		int64_t len;
+		int64_t last_modified;
+		std::string md5sum;
+		union
+		{
+			SCommitInfo* commit_info;
+			SFragInfo* linked;
+		};
+		std::vector<SPunchItem> extra_exts;
 	};
 
 	typedef std::string(*common_prefix_func_t)(const std::string_view);
 	typedef size_t(*common_prefix_hash_func_t)(const std::string_view);
-	using on_delete_callback_t = std::function<std::vector<std::string>(const std::string&, const std::string&)>;
+	using on_delete_callback_t = std::function<std::vector<SingleFileStorage::SFragInfo>(const std::string&, const std::string&)>;
+	using modify_data_callback_t = std::function<std::optional<std::string>(const std::string&, std::string, std::string)>;
 	
 	struct SFSOptions
 	{
@@ -109,6 +190,7 @@ public:
 		common_prefix_func_t common_prefix_func = nullptr;
 		common_prefix_hash_func_t common_prefix_hash_func = nullptr;
 		on_delete_callback_t on_delete_callback;
+		modify_data_callback_t modify_data_callback;
 		bool wal_write_meta = true;
 		bool wal_write_data = false;
 	};
@@ -138,7 +220,7 @@ public:
 	int write_ext(const Ext& ext, const char* data, size_t data_size);
 
 	int write_finalize(const std::string& fn, const std::vector<Ext>& extents, int64_t last_modified, const std::string& md5sum,
-		bool no_del_old, bool is_fragment);
+		bool no_del_old, bool is_fragment, std::unique_ptr<SFragInfo> linked = nullptr);
 
 	int write(const std::string& fn,
 		const char* data, size_t data_size, const size_t data_alloc_size, 
@@ -178,7 +260,7 @@ public:
 	int read_finalize(const std::string& fn, const std::vector<Ext>& extents, unsigned int flags);
 
 	int del(const std::string_view fn, DelAction da,
-		bool background_queue);
+		bool background_queue, std::unique_ptr<SFragInfo> linked = nullptr);
 
 	bool restore_old(const std::string& fn);
 
@@ -311,13 +393,17 @@ public:
 		return manual_commit;
 	}
 
-    std::pair<int64_t, std::string> get_next_partid();
+    int64_t get_next_partid();
 
 	int64_t get_next_version();
 
 	int64_t decrypt_id(const std::string& encdata);
 
 	std::string encrypt_id(const int64_t id);
+	
+	CryptResult encrypt_id_separate(const int64_t id, const std::string& preNonce);
+
+	int64_t decrypt_id_separate(const std::string& encdata, const std::string& nonce);
 
 	void free_extents(const std::vector<Ext>& extents);
 
@@ -329,7 +415,7 @@ private:
 		int64_t last_modified, const std::string& md5sum, bool allow_defrag_lock, bool no_del_old);
 
 	int64_t remove_fn(const std::string& fn,
-		MDB_txn* txn, MDB_txn* freespace_txn, bool del_from_main, bool del_old, THREAD_ID tid);
+		MDB_txn* txn, MDB_txn* freespace_txn, bool del_from_main, bool del_old, THREAD_ID tid, const bool call_callback);
 
 	int64_t restore_fn(const std::string& fn,
 		MDB_txn* txn, MDB_txn* freespace_txn, THREAD_ID tid);
@@ -449,65 +535,7 @@ private:
 	};
 
 	bool read_pgids(MDB_txn* txn, MDB_dbi dbi, THREAD_ID tid, TmpMmapedPgIds& mmap_pg_ids);
-
-	enum class FragAction
-	{
-		Add,
-		Del,
-		Commit,
-		FindFree,
-		AddNoDelOld,
-		DelOld,
-		RestoreOld,
-		EmptyQueue,
-		ReadFragInfo,
-		ReadFragInfoWithoutParsing,
-		FreeExtents,
-		ResetDelLog,
-		GetDiskId,
-		QueueDel,
-		UnqueueDel,
-		DelWithQueued,
-		ResetDelQueue,
-		AssertDelQueueEmpty,
-		DelFreemapWal,
-		AddFreemapWal
-	};
-
-	struct SFragInfo;
-
-	struct SCommitInfo
-	{
-		SCommitInfo()
-			: commit_errors(0),
-			frag_info(nullptr)
-		{}
-		int64_t commit_errors;
-		std::mutex commit_done_mutex;
-		std::condition_variable commit_done;
-		int64_t new_datafile_offset;
-		int64_t new_datafile_offset_end;
-		SFragInfo* frag_info;
-	};
-
-	struct SFragInfo
-	{
-		SFragInfo() : offset(-1), len(0),
-			last_modified(0), commit_info(nullptr) {
-		}
-		SFragInfo(int64_t offset, int64_t len)
-			: offset(offset), len(len),
-			last_modified(0), commit_info(nullptr) {}
-
-		FragAction action;
-		std::string fn;
-		int64_t offset;
-		int64_t len;
-		int64_t last_modified;
-		std::string md5sum;
-		SCommitInfo* commit_info;
-		std::vector<SPunchItem> extra_exts;
-	};
+	
 
 	std::string compress_filename(const std::string& fn);
 
@@ -545,6 +573,7 @@ private:
 	std::set<int64_t> disallow_defrag_disk_id;
 	std::deque<SFragInfo> commit_queue;
 	std::deque<SFragInfo> commit_background_queue;
+	std::deque<SFragInfo> callback_queue;
 	std::thread commit_thread_h;
 	std::unordered_map<size_t, size_t> commit_items;
 
@@ -641,6 +670,7 @@ private:
 	common_prefix_func_t common_prefix_func;
 	common_prefix_hash_func_t common_prefix_hash_func;
 	on_delete_callback_t on_delete_callback;
+	modify_data_callback_t modify_data_callback;
 
 	int64_t curr_version = 0;
 
