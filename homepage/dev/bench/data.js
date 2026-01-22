@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1769090193741,
+  "lastUpdate": 1769091573616,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -3344,6 +3344,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.26132071588425526",
             "extra": "mean: 15.366243025800008 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "4457133406edf58879138e3eb3a2421d0bb46197",
+          "message": "Remove obsolete abort code\n\nReplaced by keeping track\nof parts per upload in db",
+          "timestamp": "2026-01-22T14:02:13+01:00",
+          "tree_id": "a27f89a449b2d766163bae4ddbf688054a1ef1b0",
+          "url": "https://github.com/uroni/hs5/commit/4457133406edf58879138e3eb3a2421d0bb46197"
+        },
+        "date": 1769091572614,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.075838312341263,
+            "unit": "iter/sec",
+            "range": "stddev: 0.13023903984804713",
+            "extra": "mean: 13.185947433800004 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06708154137488373,
+            "unit": "iter/sec",
+            "range": "stddev: 0.16839264335748913",
+            "extra": "mean: 14.907230506399992 sec\nrounds: 5"
           }
         ]
       }
