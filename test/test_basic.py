@@ -22,6 +22,7 @@ import filecmp
 import io
 import requests
 import hashlib
+import aioboto3
 
 def create_random_file(fn: Path, size: int) -> int:
     with open(fn, "wb") as f:
@@ -665,8 +666,33 @@ def test_url_encoded(hs5: Hs5Runner, tmp_path: Path):
     assert not list_resp["IsTruncated"]
     assert "Contents" not in list_resp
 
+def test_read_commit_info(hs5: Hs5Runner, tmp_path: Path):
+    if not hs5.manual_commit:
+        pytest.skip("Skipping read commit info test in automatic commit mode")
+
+    s3_client = hs5.get_s3_client()
+
+    runtime_id_io = io.BytesIO()
+    s3_client.download_fileobj(hs5.testbucketname(), "a711e93e-93b4-4a9e-8a0b-688797470002", runtime_id_io)
+    runtime_id_io.seek(0)
+    rid = runtime_id_io.read().decode()
+
+    assert len(rid) > 5
 
 
+@pytest.mark.asyncio
+async def test_read_commit_info_async(hs5: Hs5Runner):
+    if not hs5.manual_commit:
+        pytest.skip("Skipping read commit info test in automatic commit mode")
+
+    s3_client = aioboto3.Session(aws_access_key_id="root", aws_secret_access_key=hs5._root_key)
+    async with s3_client.client("s3", endpoint_url=hs5.get_url()) as s3:
+        runtime_id_io = io.BytesIO()
+        await s3.download_fileobj(hs5.testbucketname(), "a711e93e-93b4-4a9e-8a0b-688797470002", runtime_id_io)
+        runtime_id_io.seek(0)
+        rid = runtime_id_io.read().decode()
+
+        assert len(rid) > 5
     
 
     

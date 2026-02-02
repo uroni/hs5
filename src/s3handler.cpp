@@ -1836,10 +1836,15 @@ void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
     const auto runtime_id = sfs.get_runtime_id();
     if(request_type==RequestType::HeadObject)
     {
-        ResponseBuilder(self->downstream_).status(200, "OK").header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(runtime_id.size())).sendWithEOM();
+        XLOGF(DBG0, "Head commit object, runtime id size {}", runtime_id.size());
+        auto resp = std::move(ResponseBuilder(self->downstream_).status(200, "OK").header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(runtime_id.size())));
+        // Work-around for it not setting the Content-Length header properly for HEAD requests
+        self->downstream_->sendHeaders(*const_cast<HTTPMessage*>(resp.getHeaders()));
+        self->downstream_->sendEOM();
         return;
     }
 
+    XLOGF(DBG0, "Get commit object, runtime id size {}", runtime_id.size());
     ResponseBuilder(self->downstream_)
                         .status(200, "OK")
                         .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(runtime_id.size()))
