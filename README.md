@@ -56,8 +56,6 @@ docker run -d \
 or via docker compose
 
 ```yml
-version: '3.8'
-
 volumes:
   hs5-data:
   hs5-metadata:
@@ -68,7 +66,9 @@ services:
     container_name: hs5
     restart: unless-stopped
     environment:
+      - INIT_ROOT_ACCESS_KEY=root
       - INIT_ROOT_PASSWORD=password
+      - INIT_CREATE_BUCKET=test
     volumes:
       - hs5-metadata:/metadata
       - hs5-data:/data

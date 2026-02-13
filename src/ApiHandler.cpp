@@ -41,6 +41,7 @@ using namespace proxygen;
 DEFINE_string(init_root_password, "", "Initial password of root account");
 DEFINE_string(init_root_access_key, "", "Initial name of access key of root account. Default: root");
 DEFINE_string(init_root_secret_access_key, "", "Initial secret access key of root account. Default: Password of root account");
+DEFINE_string(init_create_bucket, "", "Comma separated list of buckets to create on initialization. Example: \"bucket1,bucket2\"");
 
 using json = nlohmann::json;
 
@@ -48,7 +49,6 @@ thread_local DbDao ApiHandler::dao;
 
 void ApiHandler::init()
 {
-    DbDao dao;
     if(!dao.hasUser())
     {
         sqlgen::ScopedManualCommitWriteTransaction trans(&dao.getDb());
@@ -125,6 +125,25 @@ void ApiHandler::init()
 
         if(printSecretAccessKey)
             std::cout << fmt::format("Added initial root account. Username: {} Password: {}", initRootAccessKey, initSecretAccessKey) << std::endl;
+
+        auto initialBuckets = FLAGS_init_create_bucket;
+        if(const auto initialBucketsEnv = getenv("INIT_CREATE_BUCKET"); initialBucketsEnv!=nullptr)
+            initialBuckets = initialBucketsEnv;
+
+        if(!initialBuckets.empty())
+        {
+            XLOGF(INFO, "Creating initial buckets from parameters");
+            std::vector<std::string> bucketsToCreate;
+            folly::split(',', initialBuckets, bucketsToCreate, true);
+            for(const auto& bucketName : bucketsToCreate)
+            {
+                if(bucketName.empty())
+                    continue;
+
+                buckets::addBucket(bucketName, false);
+                XLOGF(INFO, "Created initial bucket {}", bucketName);
+            }
+        }
     }
     else
     {

@@ -129,7 +129,9 @@ ConfigResult readConfigFile(const std::string& fn)
         {"DATA_STORAGE_PATH", "data_path"},
         {"METADATA_STORAGE_PATH", "index_path"},
         {"SERVER_IP", "ip"},
+        {"INIT_ROOT_ACCESS_KEY", "init_root_access_key"},
         {"INIT_ROOT_PASSWORD", "init_root_password"},
+        {"INIT_CREATE_BUCKET", "init_create_bucket"},
         {"COMMIT_AFTER_MS", "commit_after_ms"}
     };
 
@@ -244,8 +246,16 @@ int actionRun(std::vector<std::string> args)
 		"Server IP/hostname to bind to (default 0.0.0.0)",
 		false, "0.0.0.0", "ip", cmd);
 
+    TCLAP::ValueArg<std::string> initRootAccessKeyArg("", "init-root-access-key",
+		"Initial root account name/access key (instead of \"root\")",
+		false, "", "string", cmd);
+
     TCLAP::ValueArg<std::string> initRootPasswordArg("", "init-root-password",
 		"Initial root account password",
+		false, "", "string", cmd);
+
+    TCLAP::ValueArg<std::string> initCreateBucketArg("", "init-create-bucket",
+		"Create this bucket on initialization",
 		false, "", "string", cmd);
 
     TCLAP::SwitchArg manualCommitArg("", "manual-commit",
@@ -354,11 +364,25 @@ int actionRun(std::vector<std::string> args)
         realArgs.push_back(ipArg.getValue());
     }
 
+     if(!alreadySetArgs.contains("--init_root_access_key") &&
+        initRootAccessKeyArg.isSet())
+    {
+        realArgs.push_back("--init_root_access_key");
+        realArgs.push_back(initRootAccessKeyArg.getValue());
+    }
+
     if(!alreadySetArgs.contains("--init_root_password") &&
         initRootPasswordArg.isSet())
     {
         realArgs.push_back("--init_root_password");
         realArgs.push_back(initRootPasswordArg.getValue());
+    }
+
+    if(!alreadySetArgs.contains("--init-create-bucket") &&
+        initCreateBucketArg.isSet())
+    {
+        realArgs.push_back("--init-create-bucket");
+        realArgs.push_back(initCreateBucketArg.getValue());
     }
 
     if(!alreadySetArgs.contains("--manual_commit")
