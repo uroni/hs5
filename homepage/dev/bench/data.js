@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1769091573616,
+  "lastUpdate": 1770977067737,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -3382,6 +3382,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.16839264335748913",
             "extra": "mean: 14.907230506399992 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "e6713a8c941a705ae244e672cadca2534504091b",
+          "message": "Add feature to create initial buckets via params",
+          "timestamp": "2026-02-13T10:53:08+01:00",
+          "tree_id": "276fd859af986b1d3405aecf97aa017767f8d329",
+          "url": "https://github.com/uroni/hs5/commit/e6713a8c941a705ae244e672cadca2534504091b"
+        },
+        "date": 1770977067281,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.06674100840273099,
+            "unit": "iter/sec",
+            "range": "stddev: 0.17322586664615772",
+            "extra": "mean: 14.983291741200015 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.060110334260532375,
+            "unit": "iter/sec",
+            "range": "stddev: 0.10705622033253585",
+            "extra": "mean: 16.63607451700009 sec\nrounds: 5"
           }
         ]
       }
