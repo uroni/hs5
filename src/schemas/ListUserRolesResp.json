@@ -12,9 +12,12 @@
                     },
                     "roleName": {
                         "type": "string"
+                    },
+                    "system": {
+                        "type": "boolean"
                     }
                 },
-                "required": ["id", "roleName"]
+                "required": ["id", "roleName", "system"]
             }
         },
         "nextMarker": {

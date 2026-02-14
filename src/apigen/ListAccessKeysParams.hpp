@@ -18,6 +18,6 @@ namespace Api {
     struct ListAccessKeysParams {
         std::optional<std::string> continuationToken;
         std::string ses;
-        std::string username;
+        std::string userId;
     };
 }

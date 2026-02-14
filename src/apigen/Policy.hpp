@@ -18,5 +18,6 @@ namespace Api {
         std::string document;
         std::string id;
         std::string name;
+        bool system;
     };
 }

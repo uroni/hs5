@@ -16,6 +16,6 @@ namespace Api {
 
     struct AddAccessKeyParams {
         std::string ses;
-        std::string username;
+        std::string userId;
     };
 }

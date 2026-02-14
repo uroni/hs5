@@ -1,12 +1,19 @@
 import * as React from 'react';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import HeaderBar from './components/HeaderBar';
 import NavSidebar from './components/NavSidebar';
 import { proxy, useSnapshot } from 'valtio';
 import { createHashRouter, RouterProvider } from 'react-router-dom';
 import LoginPage from './pages/Login';
 import Buckets from './pages/Buckets';
-import { FluentProvider, teamsLightTheme, teamsDarkTheme, makeStyles } from '@fluentui/react-components';
+import Users from './pages/Users';
+import UserRoles from './pages/UserRoles';
+import UserAccessKeys from './pages/UserAccessKeys';
+import Roles from './pages/Roles';
+import Policies from './pages/Policies';
+import RolePolicies from './pages/RolePolicies';
+import ChangePassword from './pages/ChangePassword';
+import { FluentProvider, teamsLightTheme, teamsDarkTheme, makeStyles, Spinner } from '@fluentui/react-components';
 import { useStackStyles } from './components/StackStyles';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError, postApiV1B64Be5124B034028A58913931942E205SessionCheck } from './api';
@@ -22,7 +29,14 @@ export enum Pages {
   Buckets = "buckets",
   Login = "login",
   About = "about",
-  AddBucket = "AddBucket"
+  AddBucket = "AddBucket",
+  Users = "users",
+  UserRoles = "userRoles",
+  UserAccessKeys = "userAccessKeys",
+  Roles = "roles",
+  Policies = "policies",
+  RolePolicies = "rolePolicies",
+  ChangePassword = "changePassword"
 }
 
 export const state = proxy({
@@ -112,7 +126,9 @@ export const router = createHashRouter([
   {
     path: `/${Pages.Buckets}`,
     element: (
-      <Buckets />
+      <Suspense fallback={<Spinner />}>
+        <Buckets />
+      </Suspense>
     ),
     loader: async () => {
       state.pageAfterLogin = Pages.Buckets;
@@ -123,10 +139,103 @@ export const router = createHashRouter([
   {
     path: `/${Pages.AddBucket}`,
     element: (
-      <AddBucket />
+      <Suspense fallback={<Spinner />}>
+        <AddBucket />
+      </Suspense>
     ),
     loader: async () => {
       state.pageAfterLogin = Pages.AddBucket;
+      await jumpToLoginPageIfNeccessary();
+      return null;
+    }
+  },
+  {
+    path: `/${Pages.Users}`,
+    element: (
+      <Suspense fallback={<Spinner />}>
+        <Users />
+      </Suspense>
+    ),
+    loader: async () => {
+      state.pageAfterLogin = Pages.Users;
+      await jumpToLoginPageIfNeccessary();
+      return null;
+    }
+  },
+  {
+    path: `/${Pages.UserRoles}/:username/:userId`,
+    element: (
+      <Suspense fallback={<Spinner />}>
+        <UserRoles />
+      </Suspense>
+    ),
+    loader: async () => {
+      state.pageAfterLogin = Pages.Users;
+      await jumpToLoginPageIfNeccessary();
+      return null;
+    }
+  },
+  {
+    path: `/${Pages.UserAccessKeys}/:username/:userId`,
+    element: (
+      <Suspense fallback={<Spinner />}>
+        <UserAccessKeys />
+      </Suspense>
+    ),
+    loader: async () => {
+      state.pageAfterLogin = Pages.Users;
+      await jumpToLoginPageIfNeccessary();
+      return null;
+    }
+  },
+  {
+    path: `/${Pages.Roles}`,
+    element: (
+      <Suspense fallback={<Spinner />}>
+        <Roles />
+      </Suspense>
+    ),
+    loader: async () => {
+      state.pageAfterLogin = Pages.Roles;
+      await jumpToLoginPageIfNeccessary();
+      return null;
+    }
+  },
+  {
+    path: `/${Pages.Policies}`,
+    element: (
+      <Suspense fallback={<Spinner />}>
+        <Policies />
+      </Suspense>
+    ),
+    loader: async () => {
+      state.pageAfterLogin = Pages.Policies;
+      await jumpToLoginPageIfNeccessary();
+      return null;
+    }
+  },
+  {
+    path: `/${Pages.RolePolicies}/:roleName/:roleId`,
+    element: (
+      <Suspense fallback={<Spinner />}>
+        <RolePolicies />
+      </Suspense>
+    ),
+    loader: async () => {
+      state.pageAfterLogin = Pages.Roles;
+      await jumpToLoginPageIfNeccessary();
+      return null;
+    }
+  },
+  {
+    path: `/${Pages.ChangePassword}`,
+    element: (
+      <Suspense fallback={<Spinner />}>
+        <ChangePassword />
+      </Suspense>
+    ),
+    loader: async () => {
+      state.pageAfterLogin = Pages.ChangePassword;
       await jumpToLoginPageIfNeccessary();
       return null;
     }

@@ -38,11 +38,14 @@ namespace Api {
             {"argon_encoding", Herror::argonEncoding},
             {"bucket_already_exists", Herror::bucketAlreadyExists},
             {"bucket_not_found", Herror::bucketNotFound},
+            {"error_deleting_bucket", Herror::errorDeletingBucket},
+            {"error_deleting_object", Herror::errorDeletingObject},
             {"error_listing_in_iteration", Herror::errorListingInIteration},
             {"error_starting_listing", Herror::errorStartingListing},
             {"internal_db_error", Herror::internalDbError},
             {"invalid_parameters", Herror::invalidParameters},
             {"invalid_path", Herror::invalidPath},
+            {"invalid_policy_document", Herror::invalidPolicyDocument},
             {"no_such_function", Herror::noSuchFunction},
             {"password_wrong", Herror::passwordWrong},
             {"session_not_found", Herror::sessionNotFound},
@@ -64,11 +67,14 @@ namespace Api {
             case Herror::argonEncoding: j = "argon_encoding"; break;
             case Herror::bucketAlreadyExists: j = "bucket_already_exists"; break;
             case Herror::bucketNotFound: j = "bucket_not_found"; break;
+            case Herror::errorDeletingBucket: j = "error_deleting_bucket"; break;
+            case Herror::errorDeletingObject: j = "error_deleting_object"; break;
             case Herror::errorListingInIteration: j = "error_listing_in_iteration"; break;
             case Herror::errorStartingListing: j = "error_starting_listing"; break;
             case Herror::internalDbError: j = "internal_db_error"; break;
             case Herror::invalidParameters: j = "invalid_parameters"; break;
             case Herror::invalidPath: j = "invalid_path"; break;
+            case Herror::invalidPolicyDocument: j = "invalid_policy_document"; break;
             case Herror::noSuchFunction: j = "no_such_function"; break;
             case Herror::passwordWrong: j = "password_wrong"; break;
             case Herror::sessionNotFound: j = "session_not_found"; break;

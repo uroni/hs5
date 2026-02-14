@@ -5,7 +5,7 @@
 #include "s3handler.h"
 #include "Action.h"
 
-class PolicyParseError : std::runtime_error
+class PolicyParseError : public std::runtime_error
 {
 public:
     PolicyParseError(std::string msg)
@@ -45,10 +45,9 @@ public:
 
     AccessCheckResult checkAccess(const Action action, const std::string_view resource) const;
 
-private:
-
-    bool resourceMatch(const std::string_view policyResource, const std::string_view resource) const;
-
     std::vector<Statement> statements;
+
+private:
+    bool resourceMatch(const std::string_view policyResource, const std::string_view resource) const;    
 };
 

@@ -63,3 +63,270 @@ export type PostApiV1B64Be5124B034028A58913931942E205AddBucketData = {
 export type PostApiV1B64Be5124B034028A58913931942E205AddBucketResponse = ({
     dummy?: string;
 });
+
+export type PostApiV1B64Be5124B034028A58913931942E205RemoveUserData = {
+    requestBody?: {
+        ses: string;
+        username: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205RemoveUserResponse = ({
+    dummy?: string;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205ListUsersData = {
+    requestBody?: {
+        ses: string;
+        continuationToken?: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205ListUsersResponse = ({
+    users: Array<{
+        username: string;
+        id: string;
+        system: boolean;
+    }>;
+    nextMarker: string;
+    isTruncated: boolean;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205AddAccessKeyData = {
+    requestBody?: {
+        ses: string;
+        userId: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205AddAccessKeyResponse = ({
+    id: string;
+    accessKey: string;
+    secretKey: string;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205ListAccessKeysData = {
+    requestBody?: {
+        ses: string;
+        userId: string;
+        continuationToken?: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205ListAccessKeysResponse = ({
+    accessKeys: Array<{
+        id: string;
+        accessKeyId: string;
+    }>;
+    nextMarker: string;
+    isTruncated: boolean;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205RemoveAccessKeyData = {
+    requestBody?: {
+        ses: string;
+        id: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205RemoveAccessKeyResponse = ({
+    dummy?: string;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205AddPolicyData = {
+    requestBody?: {
+        ses: string;
+        policyName: string;
+        policyDocument: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205AddPolicyResponse = ({
+    dummy?: string;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205RemovePolicyData = {
+    requestBody?: {
+        ses: string;
+        id: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205RemovePolicyResponse = ({
+    dummy?: string;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205ListPoliciesData = {
+    requestBody?: {
+        ses: string;
+        continuationToken?: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205ListPoliciesResponse = ({
+    policies: Array<{
+        id: string;
+        name: string;
+        document: string;
+        system: boolean;
+    }>;
+    nextMarker: string;
+    isTruncated: boolean;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205AddRoleData = {
+    requestBody?: {
+        ses: string;
+        roleName: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205AddRoleResponse = ({
+    dummy?: string;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205RemoveRoleData = {
+    requestBody?: {
+        ses: string;
+        id: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205RemoveRoleResponse = ({
+    dummy?: string;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205ListRolesData = {
+    requestBody?: {
+        ses: string;
+        continuationToken?: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205ListRolesResponse = ({
+    roles: Array<{
+        id: string;
+        roleName: string;
+        system: boolean;
+    }>;
+    nextMarker: string;
+    isTruncated: boolean;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205AddUserRoleData = {
+    requestBody?: {
+        ses: string;
+        userId: string;
+        roleId: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205AddUserRoleResponse = ({
+    dummy?: string;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205RemoveUserRoleData = {
+    requestBody?: {
+        ses: string;
+        id: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205RemoveUserRoleResponse = ({
+    dummy?: string;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205ListUserRolesData = {
+    requestBody?: {
+        ses: string;
+        userId: string;
+        continuationToken?: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205ListUserRolesResponse = ({
+    userRoles: Array<{
+        id: string;
+        roleName: string;
+        system: boolean;
+    }>;
+    nextMarker: string;
+    isTruncated: boolean;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205AddRolePolicyData = {
+    requestBody?: {
+        ses: string;
+        roleId: string;
+        policyId: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205AddRolePolicyResponse = ({
+    dummy?: string;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205RemoveRolePolicyData = {
+    requestBody?: {
+        ses: string;
+        id: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205RemoveRolePolicyResponse = ({
+    dummy?: string;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205ListRolePoliciesData = {
+    requestBody?: {
+        ses: string;
+        roleId: string;
+        continuationToken?: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205ListRolePoliciesResponse = ({
+    rolePolicies: Array<{
+        id: string;
+        policyId: string;
+        policyName: string;
+        system: boolean;
+    }>;
+    nextMarker: string;
+    isTruncated: boolean;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205ChangePolicyData = {
+    requestBody?: {
+        ses: string;
+        id: string;
+        document: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205ChangePolicyResponse = ({
+    dummy?: string;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205DeleteBucketData = {
+    requestBody?: {
+        ses: string;
+        bucketName: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205DeleteBucketResponse = ({
+    dummy?: string;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205ChangePasswordData = {
+    requestBody?: {
+        ses: string;
+        oldPassword: string;
+        password: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205ChangePasswordResponse = ({
+    dummy?: string;
+});

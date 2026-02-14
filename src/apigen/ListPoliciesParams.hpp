@@ -18,6 +18,5 @@ namespace Api {
     struct ListPoliciesParams {
         std::optional<std::string> continuationToken;
         std::string ses;
-        nlohmann::json roleId;
     };
 }

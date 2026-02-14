@@ -15,9 +15,12 @@
                     },
                     "policyName": {
                         "type": "string"
+                    },
+                    "system": {
+                        "type": "boolean"
                     }
                 },
-                "required": ["id", "policyId", "policyName"]
+                "required": ["id", "policyId", "policyName", "system"]
             }
         },
         "nextMarker": {

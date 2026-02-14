@@ -1,13 +1,14 @@
-import { Button, createTableColumn, DataGrid, DataGridBody, DataGridCell, DataGridHeader, DataGridHeaderCell, DataGridProps, DataGridRow, makeStyles, Spinner, TableCellLayout, TableColumnDefinition, tokens } from '@fluentui/react-components';
-import { FormEvent, Suspense, useEffect, useState } from 'react';
-import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import { Button, createTableColumn, DataGrid, DataGridBody, DataGridCell, DataGridHeader, DataGridHeaderCell, DataGridProps, DataGridRow, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Field, Input, makeStyles, Spinner, TableCellLayout, TableColumnDefinition, tokens } from '@fluentui/react-components';
+import { FormEvent, startTransition, Suspense, useEffect, useState } from 'react';
+import { useQuery, useSuspenseQuery, useQueryClient } from "@tanstack/react-query";
 import { TableWrapper } from '../components/TableWrapper';
 import { Pagination, PaginationItemsPerPageSelector, usePagination } from '../components/Pagination';
 import { filterBySearch, SearchBox, useFilteredBySearch } from '../components/SearchBox';
-import {postApiV1B64Be5124B034028A58913931942E205List, PostApiV1B64Be5124B034028A58913931942E205ListResponse} from '../api';
+import { ApiError, postApiV1B64Be5124B034028A58913931942E205List, PostApiV1B64Be5124B034028A58913931942E205ListResponse, postApiV1B64Be5124B034028A58913931942E205DeleteBucket } from '../api';
 import { Pages, router, state } from '../App';
 import { useSnapshot } from 'valtio';
-import { AddRegular, DeleteRegular } from '@fluentui/react-icons';
+import { AddRegular, DeleteRegular, FolderOpenRegular } from '@fluentui/react-icons';
+import { HapiError } from '../errorapi/HapiError';
 
 type BucketType = {
   name: string;
@@ -23,30 +24,6 @@ function filterBuckets(item: BucketType, search: string) {
 
   return filterBySearch(search, searchableFields);
 }
-
-const columns: TableColumnDefinition<BucketType>[] = [
-  createTableColumn<BucketType>({
-    columnId: "name",
-    renderHeaderCell: () => {
-      return "Bucket name";
-    },
-    compare: (a, b) => {
-      return a.name.localeCompare(b.name);
-    },
-    renderCell: (item) => {
-      return <TableCellLayout>{item.name}</TableCellLayout>;
-    },
-  }),
-  createTableColumn<BucketType>({
-    columnId: "action",
-    renderHeaderCell: () => {
-      return "Actions";
-    },
-    renderCell: (item) => {
-      return <TableCellLayout><Button icon={<DeleteRegular />}>Delete</Button></TableCellLayout>;
-    }
-  }),
-];
 
 const useStyles = makeStyles({
   gridActions: {
@@ -65,6 +42,7 @@ function browseToBucket(item: BucketType)
 const Buckets = () => {
 
   const classes = useStyles();
+  const queryClient = useQueryClient();
 
   const snap = useSnapshot(state);
 
@@ -95,6 +73,85 @@ const Buckets = () => {
 
   const { itemsPerPage, setItemsPerPage, pageData, page, setPage } =
     usePagination(filteredItems);
+
+  // Delete bucket state
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [bucketToDelete, setBucketToDelete] = useState<BucketType | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+
+  const handleDeleteBucket = async (bucket: BucketType) => {
+    setIsDeleting(bucket.name);
+    setDeleteError('');
+    try {
+      await postApiV1B64Be5124B034028A58913931942E205DeleteBucket({
+        requestBody: { ses: snap.session, bucketName: bucket.name }
+      });
+      await queryClient.invalidateQueries({ queryKey: ["buckets", snap.session] });
+      setDeleteDialogOpen(false);
+      setBucketToDelete(null);
+      setDeleteConfirmText('');
+    } catch (apiE) {
+      if (apiE instanceof ApiError) {
+        const e = apiE.body as HapiError;
+        setDeleteError(e.msg || 'Failed to delete bucket');
+      } else {
+        setDeleteError('Failed to delete bucket');
+      }
+    } finally {
+      setIsDeleting(null);
+    }
+  };
+
+  const columns: TableColumnDefinition<BucketType>[] = [
+    createTableColumn<BucketType>({
+      columnId: "name",
+      renderHeaderCell: () => {
+        return "Bucket name";
+      },
+      compare: (a, b) => {
+        return a.name.localeCompare(b.name);
+      },
+      renderCell: (item) => {
+        return <TableCellLayout>{item.name}</TableCellLayout>;
+      },
+    }),
+    createTableColumn<BucketType>({
+      columnId: "action",
+      renderHeaderCell: () => {
+        return "Actions";
+      },
+      renderCell: (item) => {
+        return (
+          <TableCellLayout>
+            <Button
+              icon={<FolderOpenRegular />}
+              onClick={(e) => {
+                e.stopPropagation();
+                browseToBucket(item);
+              }}
+            >
+              Browse
+            </Button>
+            <Button
+              icon={<DeleteRegular />}
+              disabled={isDeleting === item.name}
+              onClick={(e) => {
+                e.stopPropagation();
+                setBucketToDelete(item);
+                setDeleteConfirmText('');
+                setDeleteError('');
+                setDeleteDialogOpen(true);
+              }}
+            >
+              {isDeleting === item.name ? 'Deleting...' : 'Delete'}
+            </Button>
+          </TableCellLayout>
+        );
+      }
+    }),
+  ];
 
   return (
     <>
@@ -163,7 +220,7 @@ const Buckets = () => {
                     key={item.name}
                   >
                     {({ renderCell }) => (
-                      <DataGridCell onClick={ () => browseToBucket(item) }>{renderCell(item)}</DataGridCell>
+                      <DataGridCell>{renderCell(item)}</DataGridCell>
                     )}
                   </DataGridRow>
                 )}
@@ -178,14 +235,58 @@ const Buckets = () => {
             />
             <div className={classes.gridActions}>
               <Button onClick={() => {
-                state.pageAfterLogin = Pages.AddBucket;
-                router.navigate(`/${state.pageAfterLogin}`);
+                startTransition(() => {
+                  state.pageAfterLogin = Pages.AddBucket;
+                  router.navigate(`/${state.pageAfterLogin}`);
+                });
               }} icon={<AddRegular />}>
                 Add Bucket
               </Button>
             </div>
         </div>
       </TableWrapper>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={(_, data) => {
+        setDeleteDialogOpen(data.open);
+        if (!data.open) {
+          setDeleteConfirmText('');
+          setDeleteError('');
+        }
+      }}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Delete Bucket</DialogTitle>
+            <DialogContent>
+              <p>Are you sure you want to delete the bucket "{bucketToDelete?.name}"?</p>
+              <p>This action cannot be undone. All objects in the bucket will be permanently deleted.</p>
+              <Field 
+                label={`Type "${bucketToDelete?.name}" to confirm`}
+                validationMessage={deleteError}
+                validationState={deleteError ? "error" : "none"}
+              >
+                <Input
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  placeholder="Enter bucket name"
+                />
+              </Field>
+            </DialogContent>
+            <DialogActions>
+              <DialogTrigger disableButtonEnhancement>
+                <Button appearance="secondary">Cancel</Button>
+              </DialogTrigger>
+              <Button
+                appearance="primary"
+                onClick={() => bucketToDelete && handleDeleteBucket(bucketToDelete)}
+                disabled={isDeleting !== null || deleteConfirmText !== bucketToDelete?.name}
+              >
+                {isDeleting !== null ? 'Deleting...' : 'Delete'}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </Suspense>
     </>
   );

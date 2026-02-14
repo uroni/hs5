@@ -5,9 +5,9 @@
       "ses": {
         "type": "string"
       },
-      "username": {
+      "userId": {
         "type": "string"
       }
     },
-    "required": ["ses", "username"]
+    "required": ["ses", "userId"]
   }

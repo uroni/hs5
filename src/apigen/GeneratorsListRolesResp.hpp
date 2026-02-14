@@ -24,12 +24,14 @@ namespace Api {
     inline void from_json(const json & j, Role& x) {
         x.id = j.at("id").get<std::string>();
         x.roleName = j.at("roleName").get<std::string>();
+        x.system = j.at("system").get<bool>();
     }
 
     inline void to_json(json & j, const Role & x) {
         j = json::object();
         j["id"] = x.id;
         j["roleName"] = x.roleName;
+        j["system"] = x.system;
     }
 
     inline void from_json(const json & j, ListRolesResp& x) {

@@ -25,6 +25,7 @@ namespace Api {
         x.document = j.at("document").get<std::string>();
         x.id = j.at("id").get<std::string>();
         x.name = j.at("name").get<std::string>();
+        x.system = j.at("system").get<bool>();
     }
 
     inline void to_json(json & j, const Policy & x) {
@@ -32,6 +33,7 @@ namespace Api {
         j["document"] = x.document;
         j["id"] = x.id;
         j["name"] = x.name;
+        j["system"] = x.system;
     }
 
     inline void from_json(const json & j, ListPoliciesResp& x) {

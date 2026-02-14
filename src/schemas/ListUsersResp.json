@@ -9,9 +9,15 @@
                 "properties": {
                     "username": {
                         "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "system": {
+                        "type": "boolean"
                     }
                 },
-                "required": ["username"]
+                "required": ["username", "id", "system"]
             }
         },
         "nextMarker": {

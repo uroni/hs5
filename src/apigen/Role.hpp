@@ -17,5 +17,6 @@ namespace Api {
     struct Role {
         std::string id;
         std::string roleName;
+        bool system;
     };
 }

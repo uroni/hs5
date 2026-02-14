@@ -15,9 +15,12 @@
                     },
                     "document": {
                         "type": "string"
+                    },
+                    "system": {
+                        "type": "boolean"
                     }
                 },
-                "required": ["id", "name", "document"]
+                "required": ["id", "name", "document", "system"]
             }
         },
         "nextMarker": {

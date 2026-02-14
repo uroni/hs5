@@ -20,7 +20,10 @@
                 "bucket_already_exists",
                 "invalid_parameters",
                 "internal_db_error",
-                "access_denied"
+                "access_denied",
+                "error_deleting_object",
+                "error_deleting_bucket",
+                "invalid_policy_document"
             ]
         },
         "msg" : {

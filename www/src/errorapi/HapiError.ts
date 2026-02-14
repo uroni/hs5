@@ -14,11 +14,13 @@ export interface HapiError {
 }
 
 export enum Herror {
+    AccessDenied = "access_denied",
     ArgonEncoding = "argon_encoding",
     BucketAlreadyExists = "bucket_already_exists",
     BucketNotFound = "bucket_not_found",
     ErrorListingInIteration = "error_listing_in_iteration",
     ErrorStartingListing = "error_starting_listing",
+    InternalDBError = "internal_db_error",
     InvalidParameters = "invalid_parameters",
     InvalidPath = "invalid_path",
     NoSuchFunction = "no_such_function",
@@ -201,11 +203,13 @@ const typeMap: any = {
         { json: "msg", js: "msg", typ: "" },
     ], "any"),
     "Herror": [
+        "access_denied",
         "argon_encoding",
         "bucket_already_exists",
         "bucket_not_found",
         "error_listing_in_iteration",
         "error_starting_listing",
+        "internal_db_error",
         "invalid_parameters",
         "invalid_path",
         "no_such_function",

@@ -46,6 +46,12 @@ set(APIGEN_SCHEMAS
   RemoveRolePolicyResp
   ListRolePoliciesParams
   ListRolePoliciesResp
+  ChangePolicyParams
+  ChangePolicyResp
+  DeleteBucketParams
+  DeleteBucketResp
+  ChangePasswordParams
+  ChangePasswordResp
   LoginParams
   LoginResp    
   ListParams

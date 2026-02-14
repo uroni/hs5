@@ -3,7 +3,7 @@
 import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
-import type { PostApiV1B64Be5124B034028A58913931942E205LoginData, PostApiV1B64Be5124B034028A58913931942E205LoginResponse, PostApiV1B64Be5124B034028A58913931942E205AddUserData, PostApiV1B64Be5124B034028A58913931942E205AddUserResponse, PostApiV1B64Be5124B034028A58913931942E205ListData, PostApiV1B64Be5124B034028A58913931942E205ListResponse, PostApiV1B64Be5124B034028A58913931942E205SessionCheckData, PostApiV1B64Be5124B034028A58913931942E205SessionCheckResponse, PostApiV1B64Be5124B034028A58913931942E205AddBucketData, PostApiV1B64Be5124B034028A58913931942E205AddBucketResponse } from './types.gen';
+import type { PostApiV1B64Be5124B034028A58913931942E205LoginData, PostApiV1B64Be5124B034028A58913931942E205LoginResponse, PostApiV1B64Be5124B034028A58913931942E205AddUserData, PostApiV1B64Be5124B034028A58913931942E205AddUserResponse, PostApiV1B64Be5124B034028A58913931942E205ListData, PostApiV1B64Be5124B034028A58913931942E205ListResponse, PostApiV1B64Be5124B034028A58913931942E205SessionCheckData, PostApiV1B64Be5124B034028A58913931942E205SessionCheckResponse, PostApiV1B64Be5124B034028A58913931942E205AddBucketData, PostApiV1B64Be5124B034028A58913931942E205AddBucketResponse, PostApiV1B64Be5124B034028A58913931942E205RemoveUserData, PostApiV1B64Be5124B034028A58913931942E205RemoveUserResponse, PostApiV1B64Be5124B034028A58913931942E205ListUsersData, PostApiV1B64Be5124B034028A58913931942E205ListUsersResponse, PostApiV1B64Be5124B034028A58913931942E205AddAccessKeyData, PostApiV1B64Be5124B034028A58913931942E205AddAccessKeyResponse, PostApiV1B64Be5124B034028A58913931942E205ListAccessKeysData, PostApiV1B64Be5124B034028A58913931942E205ListAccessKeysResponse, PostApiV1B64Be5124B034028A58913931942E205RemoveAccessKeyData, PostApiV1B64Be5124B034028A58913931942E205RemoveAccessKeyResponse, PostApiV1B64Be5124B034028A58913931942E205AddPolicyData, PostApiV1B64Be5124B034028A58913931942E205AddPolicyResponse, PostApiV1B64Be5124B034028A58913931942E205RemovePolicyData, PostApiV1B64Be5124B034028A58913931942E205RemovePolicyResponse, PostApiV1B64Be5124B034028A58913931942E205ListPoliciesData, PostApiV1B64Be5124B034028A58913931942E205ListPoliciesResponse, PostApiV1B64Be5124B034028A58913931942E205AddRoleData, PostApiV1B64Be5124B034028A58913931942E205AddRoleResponse, PostApiV1B64Be5124B034028A58913931942E205RemoveRoleData, PostApiV1B64Be5124B034028A58913931942E205RemoveRoleResponse, PostApiV1B64Be5124B034028A58913931942E205ListRolesData, PostApiV1B64Be5124B034028A58913931942E205ListRolesResponse, PostApiV1B64Be5124B034028A58913931942E205AddUserRoleData, PostApiV1B64Be5124B034028A58913931942E205AddUserRoleResponse, PostApiV1B64Be5124B034028A58913931942E205RemoveUserRoleData, PostApiV1B64Be5124B034028A58913931942E205RemoveUserRoleResponse, PostApiV1B64Be5124B034028A58913931942E205ListUserRolesData, PostApiV1B64Be5124B034028A58913931942E205ListUserRolesResponse, PostApiV1B64Be5124B034028A58913931942E205AddRolePolicyData, PostApiV1B64Be5124B034028A58913931942E205AddRolePolicyResponse, PostApiV1B64Be5124B034028A58913931942E205RemoveRolePolicyData, PostApiV1B64Be5124B034028A58913931942E205RemoveRolePolicyResponse, PostApiV1B64Be5124B034028A58913931942E205ListRolePoliciesData, PostApiV1B64Be5124B034028A58913931942E205ListRolePoliciesResponse, PostApiV1B64Be5124B034028A58913931942E205ChangePolicyData, PostApiV1B64Be5124B034028A58913931942E205ChangePolicyResponse, PostApiV1B64Be5124B034028A58913931942E205DeleteBucketData, PostApiV1B64Be5124B034028A58913931942E205DeleteBucketResponse, PostApiV1B64Be5124B034028A58913931942E205ChangePasswordData, PostApiV1B64Be5124B034028A58913931942E205ChangePasswordResponse } from './types.gen';
 
 /**
  * Login with username and password to service
@@ -92,6 +92,386 @@ export const postApiV1B64Be5124B034028A58913931942E205AddBucket = (data: PostApi
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/addBucket',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Remove a user
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205RemoveUser = (data: PostApiV1B64Be5124B034028A58913931942E205RemoveUserData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205RemoveUserResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/removeUser',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * List users
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205ListUsers = (data: PostApiV1B64Be5124B034028A58913931942E205ListUsersData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ListUsersResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/listUsers',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Add access key
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205AddAccessKey = (data: PostApiV1B64Be5124B034028A58913931942E205AddAccessKeyData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205AddAccessKeyResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/addAccessKey',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * List access keys
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205ListAccessKeys = (data: PostApiV1B64Be5124B034028A58913931942E205ListAccessKeysData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ListAccessKeysResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/listAccessKeys',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Remove access key
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205RemoveAccessKey = (data: PostApiV1B64Be5124B034028A58913931942E205RemoveAccessKeyData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205RemoveAccessKeyResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/removeAccessKey',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Add policy
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205AddPolicy = (data: PostApiV1B64Be5124B034028A58913931942E205AddPolicyData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205AddPolicyResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/addPolicy',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Remove policy
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205RemovePolicy = (data: PostApiV1B64Be5124B034028A58913931942E205RemovePolicyData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205RemovePolicyResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/removePolicy',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * List policies
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205ListPolicies = (data: PostApiV1B64Be5124B034028A58913931942E205ListPoliciesData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ListPoliciesResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/listPolicies',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Add role
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205AddRole = (data: PostApiV1B64Be5124B034028A58913931942E205AddRoleData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205AddRoleResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/addRole',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Remove role
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205RemoveRole = (data: PostApiV1B64Be5124B034028A58913931942E205RemoveRoleData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205RemoveRoleResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/removeRole',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * List roles
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205ListRoles = (data: PostApiV1B64Be5124B034028A58913931942E205ListRolesData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ListRolesResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/listRoles',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Add user role
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205AddUserRole = (data: PostApiV1B64Be5124B034028A58913931942E205AddUserRoleData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205AddUserRoleResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/addUserRole',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Remove user role
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205RemoveUserRole = (data: PostApiV1B64Be5124B034028A58913931942E205RemoveUserRoleData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205RemoveUserRoleResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/removeUserRole',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * List user roles
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205ListUserRoles = (data: PostApiV1B64Be5124B034028A58913931942E205ListUserRolesData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ListUserRolesResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/listUserRoles',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Add role policy
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205AddRolePolicy = (data: PostApiV1B64Be5124B034028A58913931942E205AddRolePolicyData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205AddRolePolicyResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/addRolePolicy',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Remove role policy
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205RemoveRolePolicy = (data: PostApiV1B64Be5124B034028A58913931942E205RemoveRolePolicyData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205RemoveRolePolicyResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/removeRolePolicy',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * List role policies
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205ListRolePolicies = (data: PostApiV1B64Be5124B034028A58913931942E205ListRolePoliciesData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ListRolePoliciesResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/listRolePolicies',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Change policy
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205ChangePolicy = (data: PostApiV1B64Be5124B034028A58913931942E205ChangePolicyData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ChangePolicyResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/changePolicy',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Delete bucket
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205DeleteBucket = (data: PostApiV1B64Be5124B034028A58913931942E205DeleteBucketData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205DeleteBucketResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/deleteBucket',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Change password
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const postApiV1B64Be5124B034028A58913931942E205ChangePassword = (data: PostApiV1B64Be5124B034028A58913931942E205ChangePasswordData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ChangePasswordResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/changePassword',
         body: data.requestBody,
         mediaType: 'application/json',
         errors: {

@@ -25,6 +25,7 @@ namespace Api {
         x.id = j.at("id").get<std::string>();
         x.policyId = j.at("policyId").get<std::string>();
         x.policyName = j.at("policyName").get<std::string>();
+        x.system = j.at("system").get<bool>();
     }
 
     inline void to_json(json & j, const RolePolicy & x) {
@@ -32,6 +33,7 @@ namespace Api {
         j["id"] = x.id;
         j["policyId"] = x.policyId;
         j["policyName"] = x.policyName;
+        j["system"] = x.system;
     }
 
     inline void from_json(const json & j, ListRolePoliciesResp& x) {

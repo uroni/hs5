@@ -82,9 +82,9 @@ void refreshAuthCache()
 
         auto userRoles = dao.getUserRoles(newUser.user.id);
         newUser.roles.reserve(userRoles.size());
-        for(const auto& roleId: userRoles)
+        for(const auto& userRole: userRoles)
         {
-            auto itRole = roles.find(roleId);
+            auto itRole = roles.find(userRole.role_id);
             if(itRole != roles.end())
             {
                 newUser.roles.push_back(&itRole->second);

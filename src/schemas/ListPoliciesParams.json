@@ -9,5 +9,5 @@
         "type": "string"
       }
     },
-    "required": ["ses", "roleId"]
+    "required": ["ses"]
   }

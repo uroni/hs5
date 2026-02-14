@@ -22,11 +22,15 @@ namespace Api {
     void to_json(json & j, const ListUsersResp & x);
 
     inline void from_json(const json & j, User& x) {
+        x.id = j.at("id").get<std::string>();
+        x.system = j.at("system").get<bool>();
         x.username = j.at("username").get<std::string>();
     }
 
     inline void to_json(json & j, const User & x) {
         j = json::object();
+        j["id"] = x.id;
+        j["system"] = x.system;
         j["username"] = x.username;
     }
 

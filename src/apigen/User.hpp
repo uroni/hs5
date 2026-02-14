@@ -15,6 +15,8 @@ namespace Api {
     using nlohmann::json;
 
     struct User {
+        std::string id;
+        bool system;
         std::string username;
     };
 }

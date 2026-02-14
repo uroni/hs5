@@ -108,4 +108,424 @@ paths:
             application/json:
               schema:
                 $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/removeUser:
+    post:
+      description: Remove a user
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/RemoveUserParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/RemoveUserResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/listUsers:
+    post:
+      description: List users
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/ListUsersParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/ListUsersResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/addAccessKey:
+    post:
+      description: Add access key
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/AddAccessKeyParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/AddAccessKeyResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/listAccessKeys:
+    post:
+      description: List access keys
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/ListAccessKeysParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/ListAccessKeysResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/removeAccessKey:
+    post:
+      description: Remove access key
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/RemoveAccessKeyParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/RemoveAccessKeyResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/addPolicy:
+    post:
+      description: Add policy
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/AddPolicyParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/AddPolicyResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/removePolicy:
+    post:
+      description: Remove policy
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/RemovePolicyParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/RemovePolicyResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/listPolicies:
+    post:
+      description: List policies
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/ListPoliciesParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/ListPoliciesResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/addRole:
+    post:
+      description: Add role
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/AddRoleParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/AddRoleResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/removeRole:
+    post:
+      description: Remove role
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/RemoveRoleParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/RemoveRoleResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/listRoles:
+    post:
+      description: List roles
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/ListRolesParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/ListRolesResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/addUserRole:
+    post:
+      description: Add user role
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/AddUserRoleParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/AddUserRoleResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/removeUserRole:
+    post:
+      description: Remove user role
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/RemoveUserRoleParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/RemoveUserRoleResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/listUserRoles:
+    post:
+      description: List user roles
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/ListUserRolesParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/ListUserRolesResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/addRolePolicy:
+    post:
+      description: Add role policy
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/AddRolePolicyParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/AddRolePolicyResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/removeRolePolicy:
+    post:
+      description: Remove role policy
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/RemoveRolePolicyParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/RemoveRolePolicyResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/listRolePolicies:
+    post:
+      description: List role policies
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/ListRolePoliciesParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/ListRolePoliciesResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/changePolicy:
+    post:
+      description: Change policy
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/ChangePolicyParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/ChangePolicyResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/deleteBucket:
+    post:
+      description: Delete bucket
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/DeleteBucketParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/DeleteBucketResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/changePassword:
+    post:
+      description: Change password
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/ChangePasswordParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/ChangePasswordResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
     

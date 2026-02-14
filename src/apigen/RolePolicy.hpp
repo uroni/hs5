@@ -18,5 +18,6 @@ namespace Api {
         std::string id;
         std::string policyId;
         std::string policyName;
+        bool system;
     };
 }

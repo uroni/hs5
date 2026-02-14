@@ -37,6 +37,8 @@ class DbDao
 	sqlgen::DatabaseQuery _getPolicyStatementActions;
 	sqlgen::DatabaseQuery _getPolicyStatementResources;
 	sqlgen::DatabaseQuery _getPolicies;
+	sqlgen::DatabaseQuery _changePolicy;
+	sqlgen::DatabaseQuery _deletePolicyStatements;
 	sqlgen::DatabaseQuery _getPoliciesOfRole;
 	sqlgen::DatabaseQuery _getPolicy;
 	sqlgen::DatabaseQuery _getRoles;
@@ -48,6 +50,7 @@ class DbDao
 	sqlgen::DatabaseQuery _addPolicyStatement;
 	sqlgen::DatabaseQuery _addPolicyStatementAction;
 	sqlgen::DatabaseQuery _addPolicyStatementResource;
+	sqlgen::DatabaseQuery _changeUserPassword;
 	//@-SQLGenVariablesEnd
 
 public:
@@ -88,6 +91,7 @@ public:
 		int64_t modified;
 		int ver;
 		std::string data;
+		int system;
 	};
 	struct PolicyOfRole
 	{
@@ -99,6 +103,7 @@ public:
 		int64_t modified;
 		int ver;
 		std::string data;
+		int system;
 	};
 	struct PolicyStatement
 	{
@@ -110,12 +115,14 @@ public:
 	{
 		int64_t id;
 		std::string name;
+		int system;
 	};
 	struct RolePolicy
 	{
 		int64_t id;
 		int64_t policy_id;
 		int64_t role_id;
+		int system;
 	};
 	struct User
 	{
@@ -124,6 +131,12 @@ public:
 		std::string name;
 		int password_state;
 		std::string password;
+		int system;
+	};
+	struct UserRole
+	{
+		int64_t role_id;
+		int system;
 	};
 
 
@@ -155,6 +168,8 @@ public:
 	std::vector<int> getPolicyStatementActions(int64_t statement_id);
 	std::vector<std::string> getPolicyStatementResources(int64_t statement_id);
 	std::vector<Policy> getPolicies();
+	void changePolicy(const std::string& data, int64_t id);
+	void deletePolicyStatements(int64_t policy_id);
 	std::vector<PolicyOfRole> getPoliciesOfRole(int64_t role_id);
 	std::optional<Policy> getPolicy(int64_t id);
 	std::vector<Role> getRoles();
@@ -162,9 +177,10 @@ public:
 	std::optional<Role> getRole(int64_t id);
 	std::vector<RolePolicy> getRolePolicies(int64_t role_id);
 	std::optional<RolePolicy> getRolePolicyById(int64_t id);
-	std::vector<int64_t> getUserRoles(int64_t user_id);
+	std::vector<UserRole> getUserRoles(int64_t user_id);
 	int64_t addPolicyStatement(int64_t policy_id, const std::string& sid, int effect);
 	int64_t addPolicyStatementAction(int64_t statement_id, int action);
 	int64_t addPolicyStatementResource(int64_t statement_id, const std::string& resource);
+	void changeUserPassword(const std::string& password, int64_t user_id);
 	//@-SQLGenFunctionsEnd
 };

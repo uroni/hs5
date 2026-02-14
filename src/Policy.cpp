@@ -4,6 +4,7 @@
  */
 #include "Policy.h"
 #include "DbDao.h"
+#include "Action.h"
 #include <nlohmann/json.hpp>
 #include <fmt/core.h>
 
@@ -58,7 +59,11 @@ Policy::Policy(const std::string& data)
 
         if(itAction->is_string())
         {
-            newStmt.actions.push_back(*itAction);
+            const auto actionId = actionFromStr(std::string(*itAction));
+            if(actionId == Action::Unknown)
+                throw PolicyParseError(fmt::format("Unknown action {} in stmt {}", std::string(*itAction), newStmt.sid));
+
+            newStmt.actions.push_back(actionId);
         }
         else if(itAction->is_array())
         {
@@ -67,7 +72,11 @@ Policy::Policy(const std::string& data)
                 if(!val.is_string())
                     throw PolicyParseError(fmt::format("Invalid object in action in stmt {}", newStmt.sid));
 
-                newStmt.actions.push_back(val);
+                const auto actionId = actionFromStr(std::string(val));
+                if(actionId == Action::Unknown)
+                    throw PolicyParseError(fmt::format("Unknown action {} in stmt {}", std::string(val), newStmt.sid));
+
+                newStmt.actions.push_back(actionId);
             }
         }
         else

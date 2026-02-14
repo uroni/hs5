@@ -37,7 +37,11 @@ enum class Action
     ListBuckets=30,
     ListMultipartUploads=31,
     AbortMultipartUpload=32,
-    CreateMultipartUpload=33
+    CreateMultipartUpload=33,
+    ChangePolicy=34,
+    CreateUser=35,
+    ChangePassword=36,
+    ChangeOwnPassword=37
 };
 
 Action actionFromStr(const std::string_view action);

@@ -50,6 +50,12 @@
 #include "apigen/AddBucketParams.hpp"
 #include "apigen/StatsParams.hpp"
 #include "apigen/StatsResp.hpp"
+#include "apigen/ChangePolicyParams.hpp"
+#include "apigen/ChangePolicyResp.hpp"
+#include "apigen/DeleteBucketParams.hpp"
+#include "apigen/DeleteBucketResp.hpp"
+#include "apigen/ChangePasswordParams.hpp"
+#include "apigen/ChangePasswordResp.hpp"
 #include "Session.h"
 #include <proxygen/httpserver/RequestHandler.h>
 
@@ -111,6 +117,9 @@ private:
     Api::ListResp listBuckets(const Api::ListParams& params, const ApiSessionStorage& sessionStorage);
     Api::AddBucketResp addBucket(const Api::AddBucketParams& params, const ApiSessionStorage& sessionStorage);
     Api::StatsResp stats(const Api::StatsParams& params, const ApiSessionStorage& sessionStorage);
+    Api::ChangePolicyResp changePolicy(const Api::ChangePolicyParams& params, const ApiSessionStorage& sessionStorage);
+    Api::DeleteBucketResp deleteBucket(const Api::DeleteBucketParams& params, const ApiSessionStorage& sessionStorage);
+    Api::ChangePasswordResp changePassword(const Api::ChangePasswordParams& params, const ApiSessionStorage& sessionStorage);
 
     std::string func;
     std::string body;

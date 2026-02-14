@@ -21,13 +21,11 @@ namespace Api {
     inline void from_json(const json & j, ListPoliciesParams& x) {
         x.continuationToken = get_stack_optional<std::string>(j, "continuationToken");
         x.ses = j.at("ses").get<std::string>();
-        x.roleId = get_untyped(j, "roleId");
     }
 
     inline void to_json(json & j, const ListPoliciesParams & x) {
         j = json::object();
         j["continuationToken"] = x.continuationToken;
         j["ses"] = x.ses;
-        j["roleId"] = x.roleId;
     }
 }
