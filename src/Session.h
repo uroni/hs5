@@ -3,6 +3,7 @@
 #include <string>
 #include <chrono>
 #include <utility>
+#include <optional>
 
 struct ApiSessionStorage
 {
@@ -68,5 +69,7 @@ public:
 SessionScope getSession(const std::string_view jsSes, const std::string_view cookieSes);
 
 bool hasSession(const std::string_view accessKey);
+
+std::optional<int64_t> getSessionUserId(const std::string_view accessKey);
 
 

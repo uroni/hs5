@@ -2,6 +2,8 @@
 
 #include "SingleFileStorage.h"
 #include "Buckets.h"
+#include "Policy.h"
+#include "Action.h"
 #include <condition_variable>
 #include <memory>
 #include <proxygen/httpserver/HTTPServer.h>
@@ -286,23 +288,8 @@ private:
 
     std::string fullKeyPath() const;
 
-	enum class RequestType
-	{
-		Unknown,
-		GetObject,
-		HeadObject,
-		PutObject,
-        PutObjectPart,
-        DeleteObject,
-        ListObjects,
-        CompleteMultipartUpload,
-        CreateBucket,
-        DeleteObjects,
-        DeleteBucket
-	};
-
 	std::shared_ptr<S3Handler> self;
-	RequestType request_type = RequestType::Unknown;
+	Action request_action = Action::Unknown;
 
     KeyInfo keyInfo;
     std::atomic<bool> paused_{ false };

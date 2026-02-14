@@ -14,3 +14,4 @@ vcpkg_installed
 *.sqlgenbackup
 .test_venv
 minio
+quicktype-bundled.js

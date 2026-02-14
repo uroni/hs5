@@ -6,6 +6,40 @@
 #include "DbDao.h"
 #include "apigen/AddUserParams.hpp"
 #include "apigen/AddUserResp.hpp"
+#include "apigen/RemoveUserParams.hpp"
+#include "apigen/RemoveUserResp.hpp"
+#include "apigen/ListUsersParams.hpp"
+#include "apigen/ListUsersResp.hpp"
+#include "apigen/AddAccessKeyParams.hpp"
+#include "apigen/AddAccessKeyResp.hpp"
+#include "apigen/ListAccessKeysParams.hpp"
+#include "apigen/ListAccessKeysResp.hpp"
+#include "apigen/RemoveAccessKeyParams.hpp"
+#include "apigen/RemoveAccessKeyResp.hpp"
+#include "apigen/AddPolicyParams.hpp"
+#include "apigen/AddPolicyResp.hpp"
+#include "apigen/RemovePolicyParams.hpp"
+#include "apigen/RemovePolicyResp.hpp"
+#include "apigen/ListPoliciesParams.hpp"
+#include "apigen/ListPoliciesResp.hpp"
+#include "apigen/AddRoleParams.hpp"
+#include "apigen/AddRoleResp.hpp"
+#include "apigen/RemoveRoleParams.hpp"
+#include "apigen/RemoveRoleResp.hpp"
+#include "apigen/ListRolesParams.hpp"
+#include "apigen/ListRolesResp.hpp"
+#include "apigen/AddUserRoleParams.hpp"
+#include "apigen/AddUserRoleResp.hpp"
+#include "apigen/RemoveUserRoleParams.hpp"
+#include "apigen/RemoveUserRoleResp.hpp"
+#include "apigen/ListUserRolesParams.hpp"
+#include "apigen/ListUserRolesResp.hpp"
+#include "apigen/AddRolePolicyParams.hpp"
+#include "apigen/AddRolePolicyResp.hpp"
+#include "apigen/RemoveRolePolicyParams.hpp"
+#include "apigen/RemoveRolePolicyResp.hpp"
+#include "apigen/ListRolePoliciesParams.hpp"
+#include "apigen/ListRolePoliciesResp.hpp"
 #include "apigen/Herror.hpp"
 #include "apigen/LoginParams.hpp"
 #include "apigen/LoginResp.hpp"
@@ -55,6 +89,23 @@ public:
 
 private:
     Api::AddUserResp addUser(const Api::AddUserParams& params, const ApiSessionStorage& sessionStorage);
+    Api::RemoveUserResp removeUser(const Api::RemoveUserParams& params, const ApiSessionStorage& sessionStorage);
+    Api::ListUsersResp listUsers(const Api::ListUsersParams& params, const ApiSessionStorage& sessionStorage);
+    Api::AddAccessKeyResp addAccessKey(const Api::AddAccessKeyParams& params, const ApiSessionStorage& sessionStorage);
+    Api::ListAccessKeysResp listAccessKeys(const Api::ListAccessKeysParams& params, const ApiSessionStorage& sessionStorage);
+    Api::RemoveAccessKeyResp removeAccessKey(const Api::RemoveAccessKeyParams& params, const ApiSessionStorage& sessionStorage);
+    Api::AddPolicyResp addPolicy(const Api::AddPolicyParams& params, const ApiSessionStorage& sessionStorage);
+    Api::RemovePolicyResp removePolicy(const Api::RemovePolicyParams& params, const ApiSessionStorage& sessionStorage);
+    Api::ListPoliciesResp listPolicies(const Api::ListPoliciesParams& params, const ApiSessionStorage& sessionStorage);
+    Api::AddRoleResp addRole(const Api::AddRoleParams& params, const ApiSessionStorage& sessionStorage);
+    Api::RemoveRoleResp removeRole(const Api::RemoveRoleParams& params, const ApiSessionStorage& sessionStorage);
+    Api::ListRolesResp listRoles(const Api::ListRolesParams& params, const ApiSessionStorage& sessionStorage);
+    Api::AddUserRoleResp addUserRole(const Api::AddUserRoleParams& params, const ApiSessionStorage& sessionStorage);
+    Api::RemoveUserRoleResp removeUserRole(const Api::RemoveUserRoleParams& params, const ApiSessionStorage& sessionStorage);
+    Api::ListUserRolesResp listUserRoles(const Api::ListUserRolesParams& params, const ApiSessionStorage& sessionStorage);
+    Api::AddRolePolicyResp addRolePolicy(const Api::AddRolePolicyParams& params, const ApiSessionStorage& sessionStorage);
+    Api::RemoveRolePolicyResp removeRolePolicy(const Api::RemoveRolePolicyParams& params, const ApiSessionStorage& sessionStorage);
+    Api::ListRolePoliciesResp listRolePolicies(const Api::ListRolePoliciesParams& params, const ApiSessionStorage& sessionStorage);
     std::pair<Api::LoginResp, std::string> login(const Api::LoginParams& params);
     Api::ListResp list(const Api::ListParams& params, const ApiSessionStorage& sessionStorage);
     Api::ListResp listBuckets(const Api::ListParams& params, const ApiSessionStorage& sessionStorage);

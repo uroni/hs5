@@ -1,0 +1,28 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "userRoles": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "roleName": {
+                        "type": "string"
+                    }
+                },
+                "required": ["id", "roleName"]
+            }
+        },
+        "nextMarker": {
+            "type": "string"
+        },
+        "isTruncated": {
+            "type": "boolean"
+        }
+    },
+    "required": ["userRoles", "nextMarker", "isTruncated"]
+}

@@ -2,6 +2,8 @@
 #include <string>
 #include <stdexcept>
 #include <vector>
+#include "s3handler.h"
+#include "Action.h"
 
 class PolicyParseError : std::runtime_error
 {
@@ -17,24 +19,36 @@ struct Statement
 
     enum class Effect
     {
-        Allow,
-        Deny
+        Deny = 0,
+        Allow = 1,
     };
 
     Effect effect = Effect::Deny;
 
-    std::vector<std::string> actions;
+    std::vector<Action> actions;
     std::vector<std::string> resources;
 };
 
 class Policy
 {
 public:
-    Policy(std::string data);
+    Policy(const std::string& data);
+    Policy(std::vector<Statement> statements);
+    Policy(int64_t policyId);
 
-    std::vector<Statement> statements;
+    enum class AccessCheckResult
+    {
+        Deny,
+        Allow,
+        NoMatch
+    };    
+
+    AccessCheckResult checkAccess(const Action action, const std::string_view resource) const;
 
 private:
-    std::string data;
+
+    bool resourceMatch(const std::string_view policyResource, const std::string_view resource) const;
+
+    std::vector<Statement> statements;
 };
 

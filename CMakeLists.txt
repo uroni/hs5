@@ -3,18 +3,49 @@ project(hs5 VERSION 0.11.0 LANGUAGES CXX C)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-add_custom_target(sqlgen)
-add_custom_command(
-  TARGET   sqlgen
-  PRE_LINK
-  COMMAND  "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/sqlite-cpp-sqlgen" "template.db" "DbDao.cpp"
-  WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+add_custom_target(sqlgen
+  COMMAND "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/sqlite-cpp-sqlgen" "template.db" "DbDao.cpp"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/src"
 )
 
 set(APIGEN_SCHEMAS
   HapiError
   AddUserParams
   AddUserResp
+  RemoveUserParams
+  RemoveUserResp
+  ListUsersParams
+  ListUsersResp
+  AddAccessKeyParams
+  AddAccessKeyResp
+  ListAccessKeysParams
+  ListAccessKeysResp
+  RemoveAccessKeyParams
+  RemoveAccessKeyResp
+  AddPolicyParams
+  AddPolicyResp
+  RemovePolicyParams
+  RemovePolicyResp
+  ListPoliciesParams
+  ListPoliciesResp
+  AddRoleParams
+  AddRoleResp
+  RemoveRoleParams
+  RemoveRoleResp
+  ListRolesParams
+  ListRolesResp
+  AddUserRoleParams
+  AddUserRoleResp
+  RemoveUserRoleParams
+  RemoveUserRoleResp
+  ListUserRolesParams
+  ListUserRolesResp
+  AddRolePolicyParams
+  AddRolePolicyResp
+  RemoveRolePolicyParams
+  RemoveRolePolicyResp
+  ListRolePoliciesParams
+  ListRolePoliciesResp
   LoginParams
   LoginResp    
   ListParams
@@ -39,7 +70,7 @@ foreach(SCHEMA ${APIGEN_SCHEMAS})
   add_custom_command(
     TARGET   apigen
     POST_BUILD 
-    COMMAND  "quicktype" "-s" "schema" "src/schemas/${SCHEMA}.json" "-o" "src/apigen/${SCHEMA}.cpp" "--include-location" "global-include" "--type-style" "pascal-case" "--member-style" "camel-case"  "--enumerator-style" "camel-case" "--no-boost" "--source-style" "multi-source" "--namespace" "Api" "--code-format" "with-struct"
+    COMMAND  "${CMAKE_CURRENT_LIST_DIR}/quicktype-bundled.js" "-s" "schema" "src/schemas/${SCHEMA}.json" "-o" "src/apigen/${SCHEMA}.cpp" "--include-location" "global-include" "--type-style" "pascal-case" "--member-style" "camel-case"  "--enumerator-style" "camel-case" "--no-boost" "--source-style" "multi-source" "--namespace" "Api" "--code-format" "with-struct"
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
   )
   add_custom_command(TARGET apigen
@@ -101,6 +132,7 @@ add_executable(hs5
     src/WalFile.cpp
     wwwgen/www_files.cpp
     src/DuckDbFs.cpp
+    src/Action.cpp
     ${SCHEMA_SOURCES}
     )
 

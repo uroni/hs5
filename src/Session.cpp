@@ -96,18 +96,33 @@ void unlockSession(SessionStorage& storage)
     unlockCond.notify_all();
 }
 
-bool hasSession(const std::string_view accessKey)
+SessionStorage* getSessionStorage(const std::string_view accessKey)
 {
-    std::scoped_lock lock(mutex);
     const auto it = accessKeyToSession.find(std::string(accessKey));
     if(it==accessKeyToSession.end())
-        return false;
+        return nullptr;
     
     const auto now = std::chrono::steady_clock::now();
     if(now - it->second->second.usedAt > sessionTimeout)
-        return false;
+        return nullptr;
 
     it->second->second.usedAt = now;
 
-    return true;
+    return &it->second->second;
+}
+
+bool hasSession(const std::string_view accessKey)
+{
+    std::scoped_lock lock(mutex);
+    return getSessionStorage(accessKey) != nullptr;
+}
+
+std::optional<int64_t> getSessionUserId(const std::string_view accessKey)
+{
+    std::scoped_lock lock(mutex);
+    auto* sessionStorage = getSessionStorage(accessKey);
+    if(sessionStorage==nullptr)
+        return {};
+
+    return sessionStorage->apiStorage.userId;
 }

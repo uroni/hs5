@@ -3,14 +3,13 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 #include "Policy.h"
-
+#include "DbDao.h"
 #include <nlohmann/json.hpp>
 #include <fmt/core.h>
 
 using json = nlohmann::json;
 
-Policy::Policy(std::string data)
- : data(std::move(data))
+Policy::Policy(const std::string& data)
 {
     json j;
 
@@ -103,3 +102,92 @@ Policy::Policy(std::string data)
     }
 }
 
+Policy::Policy(std::vector<Statement> statements)
+    : statements(std::move(statements))
+{
+
+}
+
+Policy::Policy(int64_t policyId)
+{
+    DbDao dbDao;
+    const auto stmts = dbDao.getPolicyStatements(policyId);
+    for(const auto& stmt: stmts)
+    {
+        Statement newStmt;
+        newStmt.sid = stmt.sid;
+        newStmt.effect = stmt.effect == 0 ? Statement::Effect::Deny : Statement::Effect::Allow;
+
+        newStmt.resources = dbDao.getPolicyStatementResources(stmt.id);
+
+        const auto actions = dbDao.getPolicyStatementActions(stmt.id);
+        newStmt.actions.reserve(actions.size());
+        for(const auto& action: actions)
+        {
+            newStmt.actions.push_back(static_cast<Action>(action));
+        }
+
+        statements.emplace_back(std::move(newStmt));
+    }
+}
+
+bool Policy::resourceMatch(const std::string_view policyResource, const std::string_view resource) const
+{
+    size_t p = 0, r = 0;
+    size_t starIdx = std::string::npos;
+    size_t matchIdx = 0;
+
+    while (r < resource.size()) {
+        if (p < policyResource.size() && (policyResource[p] == '?' || policyResource[p] == resource[r])) {
+            p++;
+            r++;
+        } else if (p < policyResource.size() && policyResource[p] == '*') {
+            starIdx = p;
+            matchIdx = r;
+            p++;
+        } else if (starIdx != std::string::npos) {
+            p = starIdx + 1;
+            matchIdx++;
+            r = matchIdx;
+        } else {
+            return false;
+        }
+    }
+
+    while (p < policyResource.size() && policyResource[p] == '*') {
+        p++;
+    }
+
+    return p == policyResource.size();
+}
+
+Policy::AccessCheckResult Policy::checkAccess(const Action action, const std::string_view resource) const
+{
+    auto ret = AccessCheckResult::NoMatch;
+    for(const auto& stmt: statements)
+    {
+        if(std::find(stmt.actions.begin(), stmt.actions.end(), action) == stmt.actions.end()
+           && std::find(stmt.actions.begin(), stmt.actions.end(), Action::AllActions) == stmt.actions.end())
+            continue;
+
+        bool hasResourceMatch = false;
+        for(const auto& resPattern: stmt.resources)
+        {
+            if(resourceMatch(resPattern, resource))
+            {
+                hasResourceMatch = true;
+                break;
+            }
+        }
+
+        if(!hasResourceMatch)
+            continue;
+
+        if(stmt.effect == Statement::Effect::Allow)
+            ret = AccessCheckResult::Allow;
+        else
+            return AccessCheckResult::Deny;
+    }
+
+    return ret;
+}

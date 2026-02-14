@@ -18,7 +18,9 @@
                 "invalid_path",
                 "error_listing_in_iteration",
                 "bucket_already_exists",
-                "invalid_parameters"
+                "invalid_parameters",
+                "internal_db_error",
+                "access_denied"
             ]
         },
         "msg" : {

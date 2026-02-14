@@ -8,13 +8,31 @@
 #include <map>
 #include "DbDao.h"
 #include "Session.h"
+#include "Policy.h"
 
 namespace
 {
     std::shared_mutex mutex;
 
     std::map<std::string, DbDao::AccessKey> accessKeys;
-    std::map<int64_t, DbDao::User> users;
+
+    std::map<int64_t, Policy> policies;
+
+    struct Role
+    {
+        std::vector<Policy*> policies;
+    };
+
+    std::map<int64_t, Role> roles;
+
+    struct User
+    {
+        DbDao::User user;
+        std::vector<Role*> roles;
+    };
+
+    std::map<int64_t, User> users;
+
 }
 
 void refreshAuthCache()
@@ -30,11 +48,49 @@ void refreshAuthCache()
         accessKeys.insert(std::make_pair(std::move(accessKey.key), std::move(accessKey)));
     }
 
+    const auto newPolicies = dao.getPolicies();
+    policies.clear();
+    for(const auto& policy: newPolicies)
+    {
+        policies.emplace(policy.id, Policy(policy.id));
+    }
+
+    const auto newRoles = dao.getRoles();
+    roles.clear();
+    for(const auto& role: newRoles)
+    {
+        const auto rolePolicies = dao.getRolePolicies(role.id);
+        Role newRole;
+        newRole.policies.reserve(rolePolicies.size());
+        for(const auto& rolePolicy: rolePolicies)
+        {
+            auto itPolicy = policies.find(rolePolicy.policy_id);
+            if(itPolicy != policies.end())
+            {
+                newRole.policies.push_back(&itPolicy->second);
+            }
+        }
+        roles.insert(std::make_pair(role.id, std::move(newRole)));
+    }
+
     auto newUsers = dao.getUsers();
     users.clear();
-    for(auto user: newUsers)
+    for(auto& user: newUsers)
     {
-        users.insert(std::make_pair(user.id, std::move(user)));
+        User newUser;
+        newUser.user = std::move(user);
+
+        auto userRoles = dao.getUserRoles(newUser.user.id);
+        newUser.roles.reserve(userRoles.size());
+        for(const auto& roleId: userRoles)
+        {
+            auto itRole = roles.find(roleId);
+            if(itRole != roles.end())
+            {
+                newUser.roles.push_back(&itRole->second);
+            }
+        }
+        users.insert(std::make_pair(user.id, std::move(newUser)));
     }
 }
 
@@ -65,8 +121,55 @@ std::string getSecretKey(const std::string_view accessKey)
     return it->second.secret_key;
 }
 
-bool isAuthorized(const std::string_view resource, const std::string_view action, const std::string_view accessKey)
+bool isAuthorizedNoLock(const std::string_view resource, const Action action, const int64_t userId)
 {
-    return true;
+    auto userIt = users.find(userId);
+    if(userIt == users.end())
+        return false;
+
+    const auto user = &userIt->second;
+    
+    Policy::AccessCheckResult finalRes = Policy::AccessCheckResult::NoMatch;
+    for(const auto& role: user->roles)
+    {
+        for(const auto& policy: role->policies)
+        {
+            const auto res = policy->checkAccess(action, resource);
+            if(res == Policy::AccessCheckResult::Deny)
+                return false;
+            else if(res == Policy::AccessCheckResult::Allow)
+                finalRes = res;
+        }
+    }
+
+    return finalRes == Policy::AccessCheckResult::Allow;
+}
+
+bool isAuthorized(const std::string_view resource, const Action action, const int64_t userId)
+{
+    std::shared_lock lock{mutex};
+    return isAuthorizedNoLock(resource, action, userId);
+}
+
+bool isAuthorized(const std::string_view resource, const Action action, const std::string_view accessKey)
+{
+    std::shared_lock lock{mutex};
+
+    const auto it = accessKeys.find(std::string(accessKey));
+
+    if(it==accessKeys.end())
+        return false;
+
+    auto userId = it->second.user_id;
+    if(userId == 0)
+    {
+        const auto sessionUserId = getSessionUserId(accessKey);
+        if(!sessionUserId)
+            return false;
+
+        userId = *sessionUserId;
+    }
+
+    return isAuthorizedNoLock(resource, action, userId);
 }
 

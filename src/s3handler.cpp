@@ -295,7 +295,7 @@ std::string getCanonicalizedResource(const HTTPMessage& headers)
 }
 
 std::optional<std::string> checkSigQueryStringV2(HTTPMessage &headers, const std::string_view ressource,
-              const std::string_view action)
+              const Action action)
 {
     const auto httpVerb = headers.getMethodString(); 
 
@@ -356,7 +356,7 @@ std::optional<std::string> checkSigQueryStringV2(HTTPMessage &headers, const std
 std::optional<std::string> checkSig(HTTPMessage &headers,
               const std::string_view payload,
               const std::string_view ressource,
-              const std::string_view action,
+              const Action action,
               const bool allowPresigned)
 {
     const char alg_name[] = "AWS4-HMAC-SHA256";
@@ -616,12 +616,12 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
     if(calculatedSignature != requestSignature)
     {
         XLOGF(INFO, "Signature mismatch for {}?{} method {} access key {} resource {} action {} payload hash {} expected {} got {} used host={}", headers.getPathAsStringPiece(),
-             headers.getQueryStringAsStringPiece(), headers.getMethodString(), accessKey, ressource, action, payload, calculatedSignature, requestSignature, usedHost);
+             headers.getQueryStringAsStringPiece(), headers.getMethodString(), accessKey, ressource, static_cast<int>(action), payload, calculatedSignature, requestSignature, usedHost);
         return std::nullopt;
     }
 
     XLOGF(INFO, "Signature OK for {}?{} method {} access key {} resource {} action {} payload hash {}", headers.getPathAsStringPiece(), headers.getQueryStringAsStringPiece(),
-         headers.getMethodString(), accessKey, ressource, action, payload);
+         headers.getMethodString(), accessKey, ressource, static_cast<int>(action), payload);
 
     return std::string(accessKey);
 }
@@ -1217,7 +1217,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
     if (headers->getMethod() == HTTPMethod::GET || headers->getMethod() == HTTPMethod::HEAD)
     {
-        request_type = headers->getMethod() == HTTPMethod::GET ? RequestType::GetObject : RequestType::HeadObject;
+        request_action = headers->getMethod() == HTTPMethod::GET ? Action::GetObject : Action::HeadObject;
 
         std::string header_path_str;
         if(!folly::tryUriUnescape(headers->getPathAsStringPiece(), header_path_str) ||header_path_str.empty())
@@ -1239,7 +1239,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const auto partial = headers->hasQueryParam("uploads");
 
             const auto bucketName = header_path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
-            if(!checkSig(*headers, "", fmt::format("arn:aws:s3:::{}", bucketName), partial ? "s3:ListMultipartUploads" : "s3:ListBucket", false))
+            if(!checkSig(*headers, "", fmt::format("arn:aws:s3:::{}", bucketName), partial ? Action::ListMultipartUploads : Action::ListObjects, false))
             {
                 XLOGF(INFO, "Unauthorized list bucket: {}", bucketName);
                 ResponseBuilder(downstream_)
@@ -1260,7 +1260,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         }   
 
         const auto resource = fmt::format("arn:aws:s3:::{}", header_path.substr(1));
-        const auto action = headers->getMethod() == HTTPMethod::GET ? "s3:GetObject" : "s3:HeadObject";
+        const auto action = headers->getMethod() == HTTPMethod::GET ? Action::GetObject : Action::HeadObject;
 
         auto accessKey = checkSig(*headers, "", resource, action, true);
 
@@ -1377,7 +1377,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             XLOGF(DBG0, "PutObjectPart {} part {} uploadId {} length {}", path, partNumber, uploadId.id, remaining);
 
-            const auto action = "s3:PutObjectPart";
+            const auto action = Action::PutObjectPart;
 
             if(!checkSig(*headers, payload, resource, action, true))
             {
@@ -1393,7 +1393,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        const auto action = createBucket ? "s3:CreateBucket" : "s3:PutObject";
+        const auto action = createBucket ? Action::CreateBucket : Action::PutObject;
 
         if(!checkSig(*headers, payload, resource, action, true))
         {
@@ -1417,7 +1417,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            request_type = RequestType::CreateBucket;
+            request_action = Action::CreateBucket;
             return;
         }
 
@@ -1437,7 +1437,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             commit(*headers);
             // Don't handle EOM
-            request_type = RequestType::HeadObject;
+            request_action = Action::HeadObject;
             return;
         }        
 
@@ -1453,7 +1453,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                     .body("Server is stopping")
                     .sendWithEOM();
             // Don't handle EOM
-            request_type = RequestType::HeadObject;
+            request_action = Action::HeadObject;
             return;
         }
 
@@ -1482,14 +1482,14 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         else if(!setKeyInfoFromPath(path))
             return;
 
-        request_type = RequestType::DeleteObject;
+        request_action = Action::DeleteObject;
 
         const auto uploadId = headers->getQueryParam("uploadId");
         const auto abortMultipart = !uploadId.empty();
 
         const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
-        const auto action = abortMultipart ? "s3:AbortMultipartUpload" : 
-                (isDeleteBucket ? "s3:DeleteBucket" : "s3:DeleteObject");
+        const auto action = abortMultipart ? Action::AbortMultipartUpload 
+                : (isDeleteBucket ? Action::DeleteBucket : Action::DeleteObject);
 
         //TODO: Double-check that pre-signed delete is possible
         if(!checkSig(*headers, "", resource, action, true))
@@ -1561,7 +1561,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             const auto bucketName = path.substr(1);
 
-            const auto accessKey = checkSig(*headers, payload, std::string_view(), std::string_view(), true);
+            const auto accessKey = checkSig(*headers, payload, resource, Action::DeleteObjects, true);
             if(!accessKey)
             {
                 XLOGF(INFO, "Unauthorized delete object: {}", path);
@@ -1594,7 +1594,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            request_type = RequestType::DeleteObjects;
+            request_action = Action::DeleteObjects;
             put_remaining = std::atoll(cl.c_str());
 
             xmlBody.init();
@@ -1627,7 +1627,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             headers->hasQueryParam("uploads"))
         {
             const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
-            const auto action = "s3:CreateMultipartUpload";
+            const auto action = Action::CreateMultipartUpload;
 
             if(!checkSig(*headers, "", resource, action, true))
             {
@@ -1672,7 +1672,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
             put_remaining = std::atoll(cl.c_str());
-            request_type = RequestType::CompleteMultipartUpload;
+            request_action = Action::CompleteMultipartUpload;
             xmlBody.init();
             if(xmlBody.parser == nullptr)
             {
@@ -1769,7 +1769,7 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
         return;
     }
 
-    request_type = RequestType::ListObjects;
+    request_action = Action::ListObjects;
     const auto marker = partial ? headers.getDecodedQueryParam("key-marker") : headers.getDecodedQueryParam("marker");
     const auto maxKeys = partial ? headers.getIntQueryParam("max-uploads", 1000) : headers.getIntQueryParam("max-keys", 1000);
     const auto prefix = headers.hasQueryParam("prefix") ? std::make_optional(headers.getDecodedQueryParam("prefix")) : std::nullopt;
@@ -1796,7 +1796,7 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
 
 void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId, const bool partial)
 {
-    request_type = RequestType::ListObjects;
+    request_action = Action::ListObjects;
     const auto continuationToken = headers.getDecodedQueryParam("continuation-token");
     const auto maxKeys = headers.getIntQueryParam("max-keys", 1000);
     const auto prefix = headers.hasQueryParam("prefix") ? std::make_optional(headers.getDecodedQueryParam("prefix")) : std::nullopt;
@@ -1834,7 +1834,7 @@ void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string&
 void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
 {
     const auto runtime_id = sfs.get_runtime_id();
-    if(request_type==RequestType::HeadObject)
+    if(request_action==Action::HeadObject)
     {
         XLOGF(DBG0, "Head commit object, runtime id size {}", runtime_id.size());
         auto resp = std::move(ResponseBuilder(self->downstream_).status(200, "OK").header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(runtime_id.size())));
@@ -2062,7 +2062,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
             [self = self, evb, accessKey, range=headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_RANGE)]()
             { 
                 unsigned int flags = 0;
-                if(self->request_type == RequestType::HeadObject)
+                if(self->request_action == Action::HeadObject)
                     flags |= SingleFileStorage::ReadMetaOnly;
                 
                 std::string findPath;
@@ -2088,7 +2088,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         if(res.err==ENOENT)
                         {
                             const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
-                            if(isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket", accessKey))
+                            if(isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), Action::ListObjects, accessKey))
                             {
                                 ResponseBuilder(self->downstream_)
                                     .status(404, "Not found")
@@ -2136,7 +2136,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                 if(res.md5sum.size()==1 && res.md5sum[0] == metadata_tombstone)
                 {
                     const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
-                    if(isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), "s3:ListBucket", accessKey))
+                    if(isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), Action::ListObjects, accessKey))
                     {
                         evb->runInEventBaseThread([self = self, res]()
                         {
@@ -2187,7 +2187,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "binary/octet-stream")
                         .header("Last-Modified", format_last_modified(last_modified)));
 
-                    if(self->request_type==RequestType::HeadObject)
+                    if(self->request_action==Action::HeadObject)
                     {
                         XLOGF(DBG0, "Content length {} bytes for readObject HEAD of {}", rangeEnd, self->keyInfo.key);
                         // .send() sets the content length to the body length (which is zero) -- https://github.com/facebook/proxygen/issues/556
@@ -2202,7 +2202,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     }
                                               });
 
-                if (self->request_type == RequestType::HeadObject)
+                if (self->request_action == Action::HeadObject)
                     return;
 
                 self->extents = std::move(res.extents);
@@ -2215,7 +2215,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
 void S3Handler::putObject(proxygen::HTTPMessage& headers)
 {
-    request_type = RequestType::PutObject;
+    request_action = Action::PutObject;
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb]()
@@ -2297,7 +2297,7 @@ std::pair<std::string, std::string> splitUploadId(const std::string& uploadId)
 
 void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId)
 {
-    request_type = RequestType::PutObjectPart;
+    request_action = Action::PutObjectPart;
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb, partNumber, uploadId, uploadVerId]()
@@ -2755,7 +2755,7 @@ void S3Handler::deleteObjects()
                 {
                     auto version = obj.versionId.value_or(0);
                     const auto resource = fmt::format("arn:aws:s3:::{}/{}", bucketName, obj.key);
-                    const auto action = "s3:DeleteObject";
+                    const auto action = Action::DeleteObject;
 
                     if(!isAuthorized(resource, action, deleteObjectsData->accessKey))
                     {
@@ -3798,17 +3798,17 @@ void S3Handler::readBodyThread(folly::EventBase *evb)
 
 void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 {
-    if(request_type == RequestType::Unknown)
+    if(request_action == Action::Unknown)
         return;
 
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     size_t body_bytes = body->length();
 
-    XLOGF(DBG0, "Received body of {} bytes for request type {} for obj {}", body_bytes, static_cast<int>(request_type), keyInfo.key);
+    XLOGF(DBG0, "Received body of {} bytes for request type {} for obj {}", body_bytes, static_cast<int>(request_action), keyInfo.key);
 
-    if(request_type == RequestType::CompleteMultipartUpload ||
-        request_type == RequestType::DeleteObjects)
+    if(request_action == Action::CompleteMultipartUpload ||
+        request_action == Action::DeleteObjects)
     {
         if(payloadHash)
             EVP_DigestUpdate(payloadHash->evpMdCtx.ctx, body->data(), body->length());
@@ -3840,7 +3840,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
         }
         return;
     }
-    else if(request_type == RequestType::CreateBucket)
+    else if(request_action == Action::CreateBucket)
     {
         if(payloadHash)
             EVP_DigestUpdate(payloadHash->evpMdCtx.ctx, body->data(), body->length());
@@ -3874,9 +3874,9 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
         }
         return;
     }
-    else if(request_type != RequestType::PutObject && request_type != RequestType::PutObjectPart)
+    else if(request_action != Action::PutObject && request_action != Action::PutObjectPart)
     {
-        XLOGF(WARN, "Ignoring body received in request type {}", static_cast<int>(request_type));
+        XLOGF(WARN, "Ignoring body received in request type {}", static_cast<int>(request_action));
         return;
     }
 
@@ -3966,7 +3966,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         // TODO: Check if multi-part upload is aborted here and synchronize
 
         std::unique_ptr<SingleFileStorage::SFragInfo> addPart;
-        if(request_type == RequestType::PutObjectPart)
+        if(request_action == Action::PutObjectPart)
         {
             int64_t partSize = 0;
             for(const auto& ext: extents)
@@ -4118,7 +4118,7 @@ void S3Handler::onEOM() noexcept
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
-    if(request_type == RequestType::CompleteMultipartUpload)
+    if(request_action == Action::CompleteMultipartUpload)
     {
         if(finished_)
             return;
@@ -4173,7 +4173,7 @@ void S3Handler::onEOM() noexcept
         finalizeMultipartUpload();
         return;
     }
-    else if(request_type == RequestType::PutObject || request_type == RequestType::PutObjectPart)
+    else if(request_action == Action::PutObject || request_action == Action::PutObjectPart)
     {
         if(finished_)
             return;
@@ -4184,7 +4184,7 @@ void S3Handler::onEOM() noexcept
         bodyQueue.emplace(BodyObj{.offset = done_bytes, .body = {}, .unpause = false});
         startReadBodyThread(evb);
     }
-    else if(request_type == RequestType::CreateBucket)
+    else if(request_action == Action::CreateBucket)
     {
         if(finished_)
             return;
@@ -4192,7 +4192,7 @@ void S3Handler::onEOM() noexcept
         finalizeCreateBucket();
         return;
     }
-    else if(request_type == RequestType::DeleteObjects)
+    else if(request_action == Action::DeleteObjects)
     {
         if(finished_)
             return;
@@ -4232,7 +4232,7 @@ void S3Handler::onError(ProxygenError /*err*/) noexcept
     finished_ = true;
     paused_ = true;
 
-    if (request_type == RequestType::PutObject || request_type == RequestType::PutObjectPart)
+    if (request_action == Action::PutObject || request_action == Action::PutObjectPart)
     {
         XLOGF(WARN, "Error obj {} stopping put", keyInfo.key);
 

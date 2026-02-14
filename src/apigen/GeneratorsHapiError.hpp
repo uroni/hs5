@@ -33,31 +33,40 @@ namespace Api {
     }
 
     inline void from_json(const json & j, Herror & x) {
-        if (j == "argon_encoding") x = Herror::argonEncoding;
-        else if (j == "bucket_already_exists") x = Herror::bucketAlreadyExists;
-        else if (j == "bucket_not_found") x = Herror::bucketNotFound;
-        else if (j == "error_listing_in_iteration") x = Herror::errorListingInIteration;
-        else if (j == "error_starting_listing") x = Herror::errorStartingListing;
-        else if (j == "invalid_parameters") x = Herror::invalidParameters;
-        else if (j == "invalid_path") x = Herror::invalidPath;
-        else if (j == "no_such_function") x = Herror::noSuchFunction;
-        else if (j == "password_wrong") x = Herror::passwordWrong;
-        else if (j == "session_not_found") x = Herror::sessionNotFound;
-        else if (j == "session_required") x = Herror::sessionRequired;
-        else if (j == "unexpected_continuation_token") x = Herror::unexpectedContinuationToken;
-        else if (j == "unknown_password_hashing") x = Herror::unknownPasswordHashing;
-        else if (j == "user_already_exists") x = Herror::userAlreadyExists;
-        else if (j == "user_not_found") x = Herror::userNotFound;
-        else { throw std::runtime_error("Input JSON does not conform to schema!"); }
+        static std::unordered_map<std::string, Herror> enumValues {
+            {"access_denied", Herror::accessDenied},
+            {"argon_encoding", Herror::argonEncoding},
+            {"bucket_already_exists", Herror::bucketAlreadyExists},
+            {"bucket_not_found", Herror::bucketNotFound},
+            {"error_listing_in_iteration", Herror::errorListingInIteration},
+            {"error_starting_listing", Herror::errorStartingListing},
+            {"internal_db_error", Herror::internalDbError},
+            {"invalid_parameters", Herror::invalidParameters},
+            {"invalid_path", Herror::invalidPath},
+            {"no_such_function", Herror::noSuchFunction},
+            {"password_wrong", Herror::passwordWrong},
+            {"session_not_found", Herror::sessionNotFound},
+            {"session_required", Herror::sessionRequired},
+            {"unexpected_continuation_token", Herror::unexpectedContinuationToken},
+            {"unknown_password_hashing", Herror::unknownPasswordHashing},
+            {"user_already_exists", Herror::userAlreadyExists},
+            {"user_not_found", Herror::userNotFound},
+        };
+        auto iter = enumValues.find(j.get<std::string>());
+        if (iter != enumValues.end()) {
+            x = iter->second;
+        }
     }
 
     inline void to_json(json & j, const Herror & x) {
         switch (x) {
+            case Herror::accessDenied: j = "access_denied"; break;
             case Herror::argonEncoding: j = "argon_encoding"; break;
             case Herror::bucketAlreadyExists: j = "bucket_already_exists"; break;
             case Herror::bucketNotFound: j = "bucket_not_found"; break;
             case Herror::errorListingInIteration: j = "error_listing_in_iteration"; break;
             case Herror::errorStartingListing: j = "error_starting_listing"; break;
+            case Herror::internalDbError: j = "internal_db_error"; break;
             case Herror::invalidParameters: j = "invalid_parameters"; break;
             case Herror::invalidPath: j = "invalid_path"; break;
             case Herror::noSuchFunction: j = "no_such_function"; break;
@@ -68,7 +77,7 @@ namespace Api {
             case Herror::unknownPasswordHashing: j = "unknown_password_hashing"; break;
             case Herror::userAlreadyExists: j = "user_already_exists"; break;
             case Herror::userNotFound: j = "user_not_found"; break;
-            default: throw std::runtime_error("Unexpected value in enumeration \"[object Object]\": " + std::to_string(static_cast<int>(x)));
+            default: throw std::runtime_error("Unexpected value in enumeration \"Herror\": " + std::to_string(static_cast<int>(x)));
         }
     }
 }
