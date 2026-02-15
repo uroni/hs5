@@ -1,4 +1,4 @@
-name: "Build and Deploy"
+name: "Build and Deploy gh pages"
 on:
   # push:
   #   branches:
@@ -44,6 +44,10 @@ jobs:
         with:
           ruby-version: 3.3
           bundler-cache: true
+      
+      - name: Install jekyll dependencies
+        working-directory: homepage
+        run: bundle install
 
       - name: Build site
         run: bundle exec jekyll b -d "_site${{ steps.pages.outputs.base_path }}"
