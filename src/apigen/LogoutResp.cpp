@@ -4,20 +4,14 @@
 //
 //  Then include this file, and then do
 //
-//     UserRole.hpp data = nlohmann::json::parse(jsonString);
+//     LogoutResp.cpp data = nlohmann::json::parse(jsonString);
 
 #pragma once
 
+#include <optional>
 #include <nlohmann/json.hpp>
 #include "helper.hpp"
 
+#include "LogoutResp.hpp"
 namespace Api {
-    using nlohmann::json;
-
-    struct UserRole {
-        std::string id;
-        std::string roleId;
-        std::string roleName;
-        bool system;
-    };
 }

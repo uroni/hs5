@@ -999,27 +999,29 @@ std::vector<DbDao::Role> DbDao::getRoles()
 
 /**
 * @-SQLGenAccess
-* @func vector<Role> DbDao::getRolesByUserId
-* @return int64 id, string name, int system
+* @func vector<UserRole> DbDao::getRolesByUserId
+* @return int64 id, int64 role_id, string name, int system
 * @sql
-*      SELECT id, name, system FROM roles WHERE id IN (SELECT role_id FROM user_roles WHERE user_id=:user_id(int64))
+*      SELECT ur.id AS id, r.id AS role_id, name, ur.system AS system 
+*		FROM (roles r INNER JOIN user_roles ur ON r.id=ur.role_id) WHERE ur.user_id=:user_id(int64)
 */
-std::vector<DbDao::Role> DbDao::getRolesByUserId(int64_t user_id)
+std::vector<DbDao::UserRole> DbDao::getRolesByUserId(int64_t user_id)
 {
 	if(!_getRolesByUserId.prepared())
 	{
-		_getRolesByUserId=db.prepare("SELECT id, name, system FROM roles WHERE id IN (SELECT role_id FROM user_roles WHERE user_id=?)");
+		_getRolesByUserId=db.prepare("SELECT ur.id AS id, r.id AS role_id, name, ur.system AS system  FROM (roles r INNER JOIN user_roles ur ON r.id=ur.role_id) WHERE ur.user_id=?");
 	}
 	_getRolesByUserId.bind(user_id);
 	auto& cursor=_getRolesByUserId.cursor();
-	std::vector<DbDao::Role> ret;
+	std::vector<DbDao::UserRole> ret;
 	while(cursor.next())
 	{
 		ret.emplace_back();
-		DbDao::Role& obj=ret.back();
+		DbDao::UserRole& obj=ret.back();
 		cursor.get(0, obj.id);
-		cursor.get(1, obj.name);
-		cursor.get(2, obj.system);
+		cursor.get(1, obj.role_id);
+		cursor.get(2, obj.name);
+		cursor.get(3, obj.system);
 	}
 	_getRolesByUserId.reset();
 	return ret;
@@ -1136,6 +1138,33 @@ std::vector<DbDao::UserRole> DbDao::getUserRoles(int64_t user_id)
 	}
 	_getUserRoles.reset();
 	return ret;
+}
+
+/**
+* @-SQLGenAccess
+* @func optional<UserRole> DbDao::getUserRole
+* @return int64 role_id, int system
+* @sql
+*      SELECT role_id, system FROM user_roles WHERE id=:id(int64)
+*/
+std::optional<DbDao::UserRole> DbDao::getUserRole(int64_t id)
+{
+	if(!_getUserRole.prepared())
+	{
+		_getUserRole=db.prepare("SELECT role_id, system FROM user_roles WHERE id=?");
+	}
+	_getUserRole.bind(id);
+	auto& cursor=_getUserRole.cursor();
+	if(cursor.next())
+	{
+		UserRole ret;
+		cursor.get(0, ret.role_id);
+		cursor.get(1, ret.system);
+		_getUserRole.reset();
+		return ret;
+	}
+	_getUserRole.reset();
+	return {};
 }
 
 /**

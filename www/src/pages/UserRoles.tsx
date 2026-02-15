@@ -48,7 +48,7 @@ const UserRoles = () => {
 
   const classes = useStyles();
   const queryClient = useQueryClient();
-  const { username, userId } = useParams<{ username: string; userId: string }>();
+  const { username, systemUser, userId } = useParams<{ username: string; systemUser: string, userId: string }>();
 
   const snap = useSnapshot(state);
 
@@ -162,7 +162,7 @@ const UserRoles = () => {
           <TableCellLayout>
             <Button
               icon={<DeleteRegular />}
-              disabled={isRemoving === item.roleId || item.system}
+              disabled={isRemoving === item.roleId || ( item.system && systemUser == "1")}
               onClick={(e) => {
                 e.stopPropagation();
                 setRoleToRemove(item);

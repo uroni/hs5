@@ -1,13 +1,34 @@
 import logoImage from '../assets/hs5.png'
 import { useSnapshot } from 'valtio';
-import { state } from '../App';
+import { Pages, router, state } from '../App';
 import { useStackStyles } from './StackStyles';
-import { Avatar, Image } from '@fluentui/react-components';
+import { Avatar, Image, Menu, MenuList, MenuItem, MenuTrigger, MenuPopover, MenuButton } from '@fluentui/react-components';
+import { postApiV1B64Be5124B034028A58913931942E205Logout } from '../api';
+import { startTransition } from 'react';
+import { KeyRegular, PowerRegular } from '@fluentui/react-icons';
+
+function navigateToChangePassword() {
+  startTransition(() => {
+    router.navigate(`/${Pages.ChangePassword}`);
+  });
+}
 
 export const HeaderBar = () => {
 
   const snap = useSnapshot(state);
   const styles = useStackStyles();
+
+  const handleLogout = async () => {
+    await postApiV1B64Be5124B034028A58913931942E205Logout({requestBody: {ses: snap.session}});
+    state.loggedIn = false;
+    state.session = "";
+    state.accessKey = "";
+    state.secretAccessKey = "";
+    startTransition(() => {
+        router.navigate(`/`);
+      });
+  }
+
 
   return (
     <div className={styles.stackHorizontal} style={{alignItems: "center"}}>
@@ -20,9 +41,21 @@ export const HeaderBar = () => {
         <div className={styles.itemGrow}>
 
         </div>
-        <div className={styles.item}>
-          <Avatar aria-label='guest' />
+        {snap.loggedIn && 
+        <div style={{paddingRight: "10px"}}>
+          <Menu positioning={{ autoSize: true }}>
+            <MenuTrigger disableButtonEnhancement>
+              <MenuButton appearance="transparent"><Avatar aria-label='guest' /></MenuButton>
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                <MenuItem onClick={() => navigateToChangePassword()} icon={<KeyRegular />}>Change password</MenuItem>
+                <MenuItem onClick={() => handleLogout()} icon={<PowerRegular />}>Logout</MenuItem>                
+              </MenuList>
+            </MenuPopover>
+          </Menu>
         </div>
+      }
       </div>
   );
 }

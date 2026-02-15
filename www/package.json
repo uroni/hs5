@@ -13,7 +13,7 @@
     "format": "pnpm exec prettier . --write"
   },
   "dependencies": {
-    "@fluentui/react-components": "^9.60.0",
+    "@fluentui/react-components": "^9.73.0",
     "@fluentui/react-experiments": "^8.14.197",
     "@fluentui/react-icons": "^2.0.239",
     "@tanstack/react-query": "^5.56.2",

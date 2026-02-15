@@ -247,6 +247,7 @@ export type PostApiV1B64Be5124B034028A58913931942E205ListUserRolesData = {
 export type PostApiV1B64Be5124B034028A58913931942E205ListUserRolesResponse = ({
     userRoles: Array<{
         id: string;
+        roleId: string;
         roleName: string;
         system: boolean;
     }>;
@@ -328,5 +329,15 @@ export type PostApiV1B64Be5124B034028A58913931942E205ChangePasswordData = {
 };
 
 export type PostApiV1B64Be5124B034028A58913931942E205ChangePasswordResponse = ({
+    dummy?: string;
+});
+
+export type PostApiV1B64Be5124B034028A58913931942E205LogoutData = {
+    requestBody?: {
+        ses: string;
+    };
+};
+
+export type PostApiV1B64Be5124B034028A58913931942E205LogoutResponse = ({
     dummy?: string;
 });

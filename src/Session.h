@@ -64,9 +64,20 @@ public:
     {
         return storage->apiStorage;
     }
+
+    void unlock()
+    {
+        if(storage!=nullptr)
+        {
+            unlockSession(*storage);
+            storage = nullptr;
+        }
+    }
 };
 
 SessionScope getSession(const std::string_view jsSes, const std::string_view cookieSes);
+
+bool invalidateSession(const std::string_view jsSes, const std::string_view cookieSes);
 
 bool hasSession(const std::string_view accessKey);
 

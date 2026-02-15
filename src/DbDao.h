@@ -47,6 +47,7 @@ class DbDao
 	sqlgen::DatabaseQuery _getRolePolicies;
 	sqlgen::DatabaseQuery _getRolePolicyById;
 	sqlgen::DatabaseQuery _getUserRoles;
+	sqlgen::DatabaseQuery _getUserRole;
 	sqlgen::DatabaseQuery _addPolicyStatement;
 	sqlgen::DatabaseQuery _addPolicyStatementAction;
 	sqlgen::DatabaseQuery _addPolicyStatementResource;
@@ -135,7 +136,9 @@ public:
 	};
 	struct UserRole
 	{
+		int64_t id;
 		int64_t role_id;
+		std::string name;
 		int system;
 	};
 
@@ -173,11 +176,12 @@ public:
 	std::vector<PolicyOfRole> getPoliciesOfRole(int64_t role_id);
 	std::optional<Policy> getPolicy(int64_t id);
 	std::vector<Role> getRoles();
-	std::vector<Role> getRolesByUserId(int64_t user_id);
+	std::vector<UserRole> getRolesByUserId(int64_t user_id);
 	std::optional<Role> getRole(int64_t id);
 	std::vector<RolePolicy> getRolePolicies(int64_t role_id);
 	std::optional<RolePolicy> getRolePolicyById(int64_t id);
 	std::vector<UserRole> getUserRoles(int64_t user_id);
+	std::optional<UserRole> getUserRole(int64_t id);
 	int64_t addPolicyStatement(int64_t policy_id, const std::string& sid, int effect);
 	int64_t addPolicyStatementAction(int64_t statement_id, int action);
 	int64_t addPolicyStatementResource(int64_t statement_id, const std::string& resource);

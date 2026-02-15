@@ -61,16 +61,20 @@ SessionScope getSession(const std::string_view jsSes, const std::string_view coo
 {
     std::unique_lock lock{mutex};
 
+    auto it = sessionData.find(fmt::format("{}{}",jsSes, cookieSes));
+
+    if(it == sessionData.end())
+        return SessionScope(nullptr);
+
     while(true)
     {
-        auto it = sessionData.find(fmt::format("{}{}",jsSes, cookieSes));
-
-        if(it == sessionData.end())
-            return SessionScope(nullptr);
-
         if(it->second.locked)
         {
             unlockCond.wait(lock);
+
+            it = sessionData.find(fmt::format("{}{}",jsSes, cookieSes));
+            if(it == sessionData.end())
+                return SessionScope(nullptr);
         }
 
         const auto now = std::chrono::steady_clock::now();
@@ -80,13 +84,47 @@ SessionScope getSession(const std::string_view jsSes, const std::string_view coo
             return SessionScope(nullptr);
         }
 
-        it->second.usedAt = std::chrono::steady_clock::now();
+        if(!it->second.locked)
+        {
+            it->second.usedAt = std::chrono::steady_clock::now();
 
-        return SessionScope(&it->second);
+            return SessionScope(&it->second);
+        }
     }
 
     assert(false);
     return SessionScope(nullptr);
+}
+
+bool invalidateSession(const std::string_view jsSes, const std::string_view cookieSes)
+{
+    std::unique_lock lock{mutex};
+
+    auto it = sessionData.find(fmt::format("{}{}",jsSes, cookieSes));
+
+    if(it == sessionData.end())
+        return false;
+
+    while(true)
+    {
+        if(it->second.locked)
+        {
+            unlockCond.wait(lock);
+        }
+
+        it = sessionData.find(fmt::format("{}{}",jsSes, cookieSes));
+
+        if(it == sessionData.end())
+            return true;
+        
+        if(!it->second.locked)
+        {
+            removeSession(it);
+            return true;
+        }
+    }
+    assert(false);
+    return true;
 }
 
 void unlockSession(SessionStorage& storage)

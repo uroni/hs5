@@ -26,7 +26,7 @@ function filterUsers(item: UserType, search: string) {
 
 function navigateToUserRoles(user: UserType) {
   startTransition(() => {
-    router.navigate(`/${Pages.UserRoles}/${encodeURIComponent(user.username)}/${encodeURIComponent(user.id)}`);
+    router.navigate(`/${Pages.UserRoles}/${encodeURIComponent(user.username)}/${user.system ? "1" : "0"}/${encodeURIComponent(user.id)}`);
   });
 }
 

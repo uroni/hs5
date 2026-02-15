@@ -50,7 +50,7 @@ const RolePolicies = () => {
 
   const classes = useStyles();
   const queryClient = useQueryClient();
-  const { roleId, roleName } = useParams<{ roleId: string; roleName: string }>();
+  const { roleId, system, roleName } = useParams<{ roleId: string; system: string; roleName: string }>();
 
   const snap = useSnapshot(state);
 
@@ -164,7 +164,7 @@ const RolePolicies = () => {
           <TableCellLayout>
             <Button
               icon={<DeleteRegular />}
-              disabled={isRemoving === item.id || item.system}
+              disabled={isRemoving === item.id || (item.system && system === "1")}
               onClick={(e) => {
                 e.stopPropagation();
                 setPolicyToRemove(item);

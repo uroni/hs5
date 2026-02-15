@@ -62,6 +62,8 @@
 #include "apigen/GeneratorsDeleteBucketResp.hpp"
 #include "apigen/GeneratorsChangePasswordParams.hpp"
 #include "apigen/GeneratorsChangePasswordResp.hpp"
+#include "apigen/GeneratorsLogoutParams.hpp"
+#include "apigen/GeneratorsLogoutResp.hpp"
 #include <argon2.h>
 #include <folly/Random.h>
 #include <iostream>
@@ -281,7 +283,8 @@ void ApiHandler::onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexc
         && func!="sessionCheck"
         && func!="addBucket"
         && func!="stats"
-        && func!="deleteBucket")
+        && func!="deleteBucket"
+        && func!="logout")
     {
         ResponseBuilder(downstream_)
             .status(404, "Not found")
@@ -459,6 +462,8 @@ ApiHandler::ApiResponse ApiHandler::runRequest()
                 resp = stats(params, *session);
             else if(func=="changePassword")
                 resp = changePassword(params, *session);
+            else if(func=="logout")
+                resp = logout(params, session);
         }
         
     }
@@ -1014,7 +1019,10 @@ Api::RemoveUserRoleResp ApiHandler::removeUserRole(const Api::RemoveUserRolePara
 {
     const auto roleId = sfs.decrypt_id(params.id);
 
-    const auto role = dao.getRole(roleId);
+    const auto userRole = dao.getUserRole(roleId);
+    if(!userRole)
+        throw ApiError(Api::Herror::accessDenied);
+    const auto role = dao.getRole(userRole->role_id);
     if(!role)
         throw ApiError(Api::Herror::accessDenied);
     if(!isAuthorized("arn:hs5:role:::"+role->name, Action::RemoveUserRole, sessionStorage.userId))
@@ -1051,6 +1059,7 @@ Api::ListUserRolesResp ApiHandler::listUserRoles(const Api::ListUserRolesParams&
     {
         Api::UserRole item;
         item.id = sfs.encrypt_id(role.id);
+        item.roleId = sfs.encrypt_id(role.role_id);
         item.roleName = role.name;
         item.system = role.system == 1;
         resp.userRoles.push_back(std::move(item));
@@ -1251,6 +1260,16 @@ Api::ChangePasswordResp ApiHandler::changePassword(const Api::ChangePasswordPara
         throw ApiError(Api::Herror::internalDbError, "Error changing password");
 
     refreshAuthCache();
+
+    return {};
+}
+
+Api::LogoutResp ApiHandler::logout(const Api::LogoutParams& params, SessionScope& sessionStorage)
+{
+    sessionStorage.unlock();
+
+    if(!invalidateSession(params.ses, cookieSes))
+        throw ApiError(Api::Herror::sessionNotFound);
 
     return {};
 }

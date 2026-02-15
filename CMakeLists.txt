@@ -58,6 +58,8 @@ set(APIGEN_SCHEMAS
   ListResp
   AddBucketParams
   AddBucketResp
+  LogoutParams
+  LogoutResp
   StatsParams
   StatsResp#
   SessionCheckParams

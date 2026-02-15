@@ -26,7 +26,7 @@ function filterRoles(item: RoleType, search: string) {
 
 function navigateToRolePolicies(role: RoleType) {
   startTransition(() => {
-    router.navigate(`/${Pages.RolePolicies}/${encodeURIComponent(role.roleName)}/${encodeURIComponent(role.id)}`);
+    router.navigate(`/${Pages.RolePolicies}/${encodeURIComponent(role.roleName)}/${role.system ? "1" : "0"}/${encodeURIComponent(role.id)}`);
   });
 }
 

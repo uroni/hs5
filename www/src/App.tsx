@@ -13,7 +13,7 @@ import Roles from './pages/Roles';
 import Policies from './pages/Policies';
 import RolePolicies from './pages/RolePolicies';
 import ChangePassword from './pages/ChangePassword';
-import { FluentProvider, teamsLightTheme, teamsDarkTheme, makeStyles, Spinner } from '@fluentui/react-components';
+import { FluentProvider, teamsLightTheme, teamsDarkTheme, makeStyles, Spinner, webDarkTheme, webLightTheme, teamsHighContrastTheme, teamsLightV21Theme, teamsDarkV21Theme } from '@fluentui/react-components';
 import { useStackStyles } from './components/StackStyles';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError, postApiV1B64Be5124B034028A58913931942E205SessionCheck } from './api';
@@ -23,7 +23,7 @@ import AddBucket from './pages/AddBucket';
 
 const initialDark = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
 const initialTheme =
-  initialDark ? teamsDarkTheme : teamsLightTheme;
+  initialDark ? teamsDarkV21Theme : teamsLightV21Theme;
 
 export enum Pages {
   Buckets = "buckets",
@@ -163,7 +163,7 @@ export const router = createHashRouter([
     }
   },
   {
-    path: `/${Pages.UserRoles}/:username/:userId`,
+    path: `/${Pages.UserRoles}/:username/:systemUser/:userId`,
     element: (
       <Suspense fallback={<Spinner />}>
         <UserRoles />
@@ -215,7 +215,7 @@ export const router = createHashRouter([
     }
   },
   {
-    path: `/${Pages.RolePolicies}/:roleName/:roleId`,
+    path: `/${Pages.RolePolicies}/:roleName/:system/:roleId`,
     element: (
       <Suspense fallback={<Spinner />}>
         <RolePolicies />
@@ -255,7 +255,7 @@ const App: React.FunctionComponent = () => {
 
   useEffect(() => {
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', event => {
-      setTheme(event.matches ? teamsDarkTheme : teamsLightTheme);
+      setTheme(event.matches ? teamsDarkV21Theme : teamsLightV21Theme);
     });
   }, []);
 
@@ -271,12 +271,8 @@ const App: React.FunctionComponent = () => {
                 </div>
                 <div className={styles.itemGrow}>
                   <div className={styles.stackHorizontal}>
-                    {snap.loggedIn &&
-                      <div className={styles.item} style={{ borderRight: "1px solid", padding: "10pt" }}>
-                        <NavSidebar />
-                      </div>
-                    }
-                    <div className={styles.itemGrow} style={{padding: "10pt"}}>
+                    <NavSidebar open={snap.loggedIn} />
+                    <div className={styles.itemGrow} style={{padding: "20pt"}}>
                       <RouterProvider router={router} />
                     </div>
                 </div>

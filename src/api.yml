@@ -528,4 +528,24 @@ paths:
             application/json:
               schema:
                 $ref: 'schemas/HapiError.json'
-    
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/logout:
+    post:
+      description: Logout
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/LogoutParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/LogoutResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
