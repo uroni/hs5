@@ -60,6 +60,7 @@ chmod +x hs5
 ```
 
 By default, data and metadata are stored in the current directory. On first run, the root password will be printed to stdout.
+Per default it listens on port 80.
 
 ## Basic Usage
 
@@ -68,8 +69,8 @@ HS5 is API-compatible with AWS S3. You can use standard S3 tools (like `awscli`,
 Example: Using AWS CLI
 
 ```bash
-aws --endpoint-url http://localhost:8085 s3 cp testfile.txt s3://testbucket/testfile.txt
-aws --endpoint-url http://localhost:8085 s3 ls s3://testbucket
+aws --endpoint-url http://localhost:80 s3 cp testfile.txt s3://testbucket/testfile.txt
+aws --endpoint-url http://localhost:80 s3 ls s3://testbucket
 ```
 
 ## Next Steps
