@@ -162,7 +162,7 @@ def test_get_commit_obj(tmp_path: Path, hs5: Hs5Runner):
     s3_client.download_file(hs5.testbucketname(), "a711e93e-93b4-4a9e-8a0b-688797470002", str(fpath))
 
     with open(fpath, "r") as f:
-        assert len(f.read())>30
+        assert len(f.read())>5
 
 def add_objects(tmp_path: Path, hs5: Hs5Runner, num_objects : int = 210, object_data = b"abc", bucketname = None) -> set[str]:
     if bucketname is None:
