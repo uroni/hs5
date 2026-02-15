@@ -12,7 +12,7 @@ High-performance scale-up self-hosted simple storage service (HS5)
 
 Freely available under the [LGPLv3+](https://github.com/uroni/hs5#LGPL-3.0-1-ov-file) license.
 
-Homepage at [https://uroni.github.io/hs5/](https://uroni.github.io/hs5/)
+Homepage at [https://www.hs5.eu](https://www.hs5.eu)
 
 Table of Contents
 =================
