@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771162301382,
+  "lastUpdate": 1771162597944,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -3724,6 +3724,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.11913986413485801",
             "extra": "mean: 16.07973402340001 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3000ce09109b7095030cf70f2b96e66dccf01020",
+          "message": "Modify Jekyll build command and artifact upload path\n\nUpdated Jekyll build command to use new baseurl and changed artifact path.",
+          "timestamp": "2026-02-15T14:27:33+01:00",
+          "tree_id": "84459e91b0486746bfa926ee05b93fe976d553ac",
+          "url": "https://github.com/uroni/hs5/commit/3000ce09109b7095030cf70f2b96e66dccf01020"
+        },
+        "date": 1771162596873,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07104492571187006,
+            "unit": "iter/sec",
+            "range": "stddev: 0.38054190134320265",
+            "extra": "mean: 14.075600614399992 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06377811803438325,
+            "unit": "iter/sec",
+            "range": "stddev: 0.24308939921075481",
+            "extra": "mean: 15.679358858800015 sec\nrounds: 5"
           }
         ]
       }
