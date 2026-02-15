@@ -247,7 +247,7 @@ int actionRun(std::vector<std::string> args)
 		false, "0.0.0.0", "ip", cmd);
 
     TCLAP::ValueArg<std::string> initRootAccessKeyArg("", "init-root-access-key",
-		"Initial root account name/access key (instead of \"root\")",
+		"Initial root account access key (instead of default \"root\")",
 		false, "", "string", cmd);
 
     TCLAP::ValueArg<std::string> initRootPasswordArg("", "init-root-password",
