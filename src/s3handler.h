@@ -266,7 +266,7 @@ private:
     void getObject(proxygen::HTTPMessage& headers, const std::string& accessKey);
     void putObject(proxygen::HTTPMessage& headers);
     void putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId);
-    void commit(proxygen::HTTPMessage& headers);
+    void manualCommit(proxygen::HTTPMessage& headers);
     void deleteObject(proxygen::HTTPMessage& headers);
     void abortMultipartUpload(proxygen::HTTPMessage& headers, const std::string& uploadIdStr);
     void deleteBucket(proxygen::HTTPMessage& headers);

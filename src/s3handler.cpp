@@ -1443,7 +1443,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         {
             XLOGF(DBG0, "PutObject {} COMMIT", path);
 
-            commit(*headers);
+            manualCommit(*headers);
             // Don't handle EOM
             request_action = Action::HeadObject;
             return;
@@ -2014,7 +2014,7 @@ std::string S3Handler::getEtagParsedMultipart(const std::string& md5sum)
         return fmt::format("\"{}\"", folly::hexlify(md5sum));
 }
 
-void S3Handler::commit(proxygen::HTTPMessage& headers)
+void S3Handler::manualCommit(proxygen::HTTPMessage& headers)
 {
     if(put_remaining>0)
     {
@@ -2022,6 +2022,14 @@ void S3Handler::commit(proxygen::HTTPMessage& headers)
             ResponseBuilder(self->downstream_)
                     .status(500, "Internal error")
                     .body(s3errorXml(S3ErrorCode::InternalError, "put_remaining > 0", fullKeyPath(), ""))
+                    .sendWithEOM();
+        return;
+    }
+    else if(!sfs.get_manual_commit())
+    {
+        XLOGF(DBG0, "Manual commit disabled, returning OK", keyInfo.key);
+        ResponseBuilder(self->downstream_)
+                    .status(200, "OK")
                     .sendWithEOM();
         return;
     }
