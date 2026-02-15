@@ -41,6 +41,7 @@
 #include <string_view>
 #include "Auth.h"
 #include "main.h"
+#include "Buckets.h"
 
 using namespace proxygen;
 
@@ -1239,7 +1240,10 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const auto partial = headers->hasQueryParam("uploads");
 
             const auto bucketName = header_path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
-            if(!checkSig(*headers, "", fmt::format("arn:aws:s3:::{}", bucketName), partial ? Action::ListMultipartUploads : Action::ListObjects, false))
+            const auto action = bucketName.empty() ? Action::ListBuckets : (partial ? Action::ListMultipartUploads : Action::ListObjects);
+            const auto resource = bucketName.empty() ? std::string() : fmt::format("arn:aws:s3:::{}", bucketName);
+            auto accessKey = checkSig(*headers, "", resource, action, true);
+            if(!accessKey)
             {
                 XLOGF(INFO, "Unauthorized list bucket: {}", bucketName);
                 ResponseBuilder(downstream_)
@@ -1249,13 +1253,17 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            if(partial)
+            if(bucketName.empty())
+                XLOGF(INFO, "List buckets");
+            else if(partial)
                 XLOGF(INFO, "List partial uploads bucket {}", bucketName);
             else
                 XLOGF(INFO, "List bucket {}", bucketName);
-            
 
-            listObjects(*headers, std::string(bucketName), partial);
+            if(bucketName.empty())
+                listBuckets(*headers, std::move(*accessKey));
+            else
+                listObjects(*headers, std::string(bucketName), partial);
             return;
         }   
 
@@ -1829,6 +1837,50 @@ void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string&
     {
         self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, startAfter, delimiter, bucketId, true, bucket, partial, std::string());
     });
+}
+
+void S3Handler::listBuckets(proxygen::HTTPMessage& headers, std::string accessKey)
+{
+    request_action = Action::ListBuckets;
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+    folly::getGlobalCPUExecutor()->add(
+    [self = self, evb, accessKey = std::move(accessKey)]()
+    {
+        self->listBuckets(evb, self, std::move(accessKey));
+    });
+}
+
+void S3Handler::listBuckets(folly::EventBase* evb, std::shared_ptr<S3Handler> self, std::string accessKey)
+{
+    const auto buckets = buckets::getBucketNames();
+
+    std::string resp;
+    resp.reserve(80 + buckets.objects.size() * 90 + 40); 
+    
+    resp += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                        "<ListAllMyBucketsResult>\n"
+                        "\t<Buckets>\n";
+
+    
+    for(const auto& bucket: buckets.objects)
+    {
+        if(isAuthorized("arn:aws:s3:::" + bucket.name, Action::ListBuckets, accessKey))
+        {
+            resp += fmt::format("\t\t<Bucket><Name>{}</Name><BucketArn>arn:aws:s3:::{}</BucketArn></Bucket>\n", bucket.name, bucket.name);   
+        }
+    }
+
+    resp+= "\t</Buckets>\n"
+            "</ListAllMyBucketsResult>";
+
+    evb->runInEventBaseThread([self = self, resp = std::move(resp)]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(200, "OK")
+                            .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
+                            .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(resp.size()))
+                            .body(std::move(resp))
+                            .sendWithEOM(); });
 }
 
 void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)

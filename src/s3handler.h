@@ -260,6 +260,8 @@ private:
 	void onBodyCPU(folly::EventBase *evb, int64_t offs, std::unique_ptr<folly::IOBuf> body);
     void listObjects(proxygen::HTTPMessage& headers, const std::string& bucket, const bool partial);
     void listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId, const bool partial);
+    void listBuckets(proxygen::HTTPMessage& headers, std::string accessKey);
+    void listBuckets(folly::EventBase *evb, std::shared_ptr<S3Handler> self, std::string accessKey);
     void getCommitObject(proxygen::HTTPMessage& headers);
     void getObject(proxygen::HTTPMessage& headers, const std::string& accessKey);
     void putObject(proxygen::HTTPMessage& headers);
