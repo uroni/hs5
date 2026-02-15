@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771161733671,
+  "lastUpdate": 1771161837387,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -3572,6 +3572,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.24977862820776148",
             "extra": "mean: 17.459174605399983 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ad94f808ba52a01c9669a3e702a2848869fb706e",
+          "message": "Enhance GitHub Actions workflow for Jekyll site\n\nUpdated workflow name for clarity and added Jekyll dependency installation step.",
+          "timestamp": "2026-02-15T14:14:59+01:00",
+          "tree_id": "20b4b3303c23a320df1e20b78d7262c29b7f4e02",
+          "url": "https://github.com/uroni/hs5/commit/ad94f808ba52a01c9669a3e702a2848869fb706e"
+        },
+        "date": 1771161836586,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07147832490915193,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1800340075009541",
+            "extra": "mean: 13.990255105600022 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06364009354417773,
+            "unit": "iter/sec",
+            "range": "stddev: 0.07490604686050625",
+            "extra": "mean: 15.713364709400048 sec\nrounds: 5"
           }
         ]
       }
