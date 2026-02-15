@@ -117,13 +117,15 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
 
     const auto bucketEnd = path.find_first_of('/', 1);
     if(bucketEnd == std::string::npos)
-        return path=="/favicon.ico" || path=="/index.html";
+        return path=="/index.html";
 
     const auto bucketName = path.substr(1, bucketEnd);
 
     if(bucketName=="admin-b64be5124b034028a58913931942e205/")
         return true;
     else if(bucketName == "explorer-87652e131c4b45bd851a74de6518889e/")
+        return true;
+    else if(bucketName == "favicon-45ea1ea9212449f78613105e96c05997/")
         return true;
 
     return false;
