@@ -47,12 +47,12 @@ jobs:
 
       - name: Build site
         run: bundle exec jekyll b -d "_site${{ steps.pages.outputs.base_path }}"
-        cwd: homepage
+        working-directory: homepage
         env:
           JEKYLL_ENV: "production"
 
       - name: Test site
-        cwd: homepage
+        working-directory: homepage
         run: |
           bundle exec htmlproofer _site \
             \-\-disable-external \
