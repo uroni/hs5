@@ -1885,7 +1885,7 @@ void S3Handler::listBuckets(folly::EventBase* evb, std::shared_ptr<S3Handler> se
 
 void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
 {
-    const auto runtime_id = sfs.get_runtime_id();
+    const auto runtime_id = sfs.get_manual_commit() ? sfs.get_runtime_id() : "DISABLED";
     if(request_action==Action::HeadObject)
     {
         XLOGF(DBG0, "Head commit object, runtime id size {}", runtime_id.size());
@@ -1901,7 +1901,7 @@ void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
                         .status(200, "OK")
                         .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(runtime_id.size()))
                         .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "binary/octet-stream")
-                        .body(fmt::format("{}", sfs.get_runtime_id()))
+                        .body(runtime_id)
                         .sendWithEOM();
 }
 
