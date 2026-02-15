@@ -124,6 +124,8 @@ The main object storage consists of (mostly) two files. One is an `index.lmdb` L
 
  Step 5 makes sure that we notice a restart of `hs5`. In that case, we have to re-upload the two objects since they might not be flushed to disk. If the comparison at step 5 fails, you could also abort, but `objA` and `objB` might be stored in the bucket. You might want to add some periodic task that checks for such orphaned objects or keep track of potentially orphaned objects somehow and clean them up regularly.
 
+See [hs5_commit.py](https://github.com/uroni/hs5/blob/main/test/hs5_commit.py) for a Python implementation of this.
+
 ## WAL for performance
 
 HS5 has an optional Write-Ahead-Log (WAL) mode where it logs data and/or metadata into a file first before writing it to the respective files. This can be used to improve performance if the metadata/data file is slower than the WAL file w.r.t. latency, e.g., the data path is network storage and the wal path is local flash storage. Enable this mode with `--wal-mode all` (or `metadata-only`/`data-only`).
