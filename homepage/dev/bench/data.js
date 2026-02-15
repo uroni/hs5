@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771185387860,
+  "lastUpdate": 1771189861623,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -4104,6 +4104,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.24985050947303367",
             "extra": "mean: 16.021222980799983 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "a054a22426c30f4863736f116fbf2f99414fddb0",
+          "message": "Fix init-root-access-key cmd param documentation",
+          "timestamp": "2026-02-15T20:53:44+01:00",
+          "tree_id": "50df356c271093fed66d2a9275221d901f95322c",
+          "url": "https://github.com/uroni/hs5/commit/a054a22426c30f4863736f116fbf2f99414fddb0"
+        },
+        "date": 1771189860973,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.0706919556818601,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1421209183770296",
+            "extra": "mean: 14.1458811028 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06058156968627712,
+            "unit": "iter/sec",
+            "range": "stddev: 0.4785112400456046",
+            "extra": "mean: 16.506670348400018 sec\nrounds: 5"
           }
         ]
       }
