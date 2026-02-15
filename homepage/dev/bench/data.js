@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771162763211,
+  "lastUpdate": 1771163154529,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -3800,6 +3800,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.04265543136345702",
             "extra": "mean: 15.554725760000053 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "c08fffab7c3a9175663293fbf409a74cc53feb4d",
+          "message": "Delete zone identifier files",
+          "timestamp": "2026-02-15T14:36:04+01:00",
+          "tree_id": "f253e4e00cf46da5678689d372d97ce51bae9ce1",
+          "url": "https://github.com/uroni/hs5/commit/c08fffab7c3a9175663293fbf409a74cc53feb4d"
+        },
+        "date": 1771163153546,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07206454122935003,
+            "unit": "iter/sec",
+            "range": "stddev: 0.10798723565107922",
+            "extra": "mean: 13.876449956399995 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06078598924367984,
+            "unit": "iter/sec",
+            "range": "stddev: 0.22861139007545173",
+            "extra": "mean: 16.45115942740002 sec\nrounds: 5"
           }
         ]
       }
