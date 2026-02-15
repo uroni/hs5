@@ -19,7 +19,7 @@ export const NavSidebar = ({open }: {open: boolean}) => {
 
   return (
     <>
-    <NavDrawer open={open} modal={false} position="left" size="small" type="inline" selectedValue={snap.activePage} onNavItemSelect={onNavSelect}>
+    <NavDrawer open={open} size="small" type="inline" selectedValue={snap.activePage} onNavItemSelect={onNavSelect}>
       <NavDrawerBody>
         <NavItem value={Pages.Buckets} icon={<FolderOpenRegular />}>
             Buckets
