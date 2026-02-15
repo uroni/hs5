@@ -169,6 +169,13 @@ def test_put_empty(tmp_path: Path, hs5: Hs5Runner):
     assert os.stat(dl_path).st_size == len(fdata)
 
 
+def test_list_buckets(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    buckets = s3_client.list_buckets()
+    assert "Buckets" in buckets
+    bucket_names = [b["Name"] for b in buckets["Buckets"]]
+    assert hs5.testbucketname() in bucket_names
+
 def test_multipage_list(tmp_path: Path, hs5: Hs5Runner):
 
     ul_files = add_objects(tmp_path, hs5)
