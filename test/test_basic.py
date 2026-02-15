@@ -23,6 +23,7 @@ import io
 import requests
 import hashlib
 import aioboto3
+from hs5_commit import Hs5Commit, Hs5RestartError
 
 def create_random_file(fn: Path, size: int) -> int:
     with open(fn, "wb") as f:
@@ -114,6 +115,46 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     assert "Contents" not in list_resp
 
     assert hs5.get_stats().used == 0
+
+def test_put_get_commit_context(tmp_path: Path, hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    fdata = os.urandom(1*1024*1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+
+    with Hs5Commit(s3_client, hs5.testbucketname()) as commit:
+        with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
+            s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+
+    hs5.restart()
+
+    dl_path = tmp_path / "download.txt"
+    s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
+    assert os.stat(dl_path).st_size == len(fdata)
+
+def test_put_get_commit_context_restart_fail(tmp_path: Path, hs5: Hs5Runner):
+    if not hs5.manual_commit:
+        pytest.skip("Skip test in manual commit disabled mode")
+
+    s3_client = hs5.get_s3_client()
+
+    fdata = os.urandom(1*1024*1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+
+    with pytest.raises(Hs5RestartError):
+        with Hs5Commit(s3_client, hs5.testbucketname()) as commit:
+            with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
+                s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+
+            hs5.restart()
+
+    with pytest.raises(ClientError):
+        dl_path = tmp_path / "download.txt"
+        s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
+
+    
 
 def test_get_commit_obj(tmp_path: Path, hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
@@ -696,6 +737,10 @@ def test_read_commit_info(hs5: Hs5Runner, tmp_path: Path):
     rid = runtime_id_io.read().decode()
 
     assert len(rid) > 5
+
+    obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="a711e93e-93b4-4a9e-8a0b-688797470002")
+    data = obj["Body"].read().decode()
+    assert data == rid
 
 
 @pytest.mark.asyncio
