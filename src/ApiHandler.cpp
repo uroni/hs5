@@ -1214,28 +1214,101 @@ Api::DeleteBucketResp ApiHandler::deleteBucket(const Api::DeleteBucketParams& pa
     do
     {
         hasObjects = false;
+
+        std::mutex delQueueMutex;
+        std::condition_variable delQueueCv;
+        std::queue<std::string> delQueue;
+        std::string delErrorKeyBin;
+        int delErrorCode = 0;
+        size_t delCount = 0;
+
+        std::jthread delThread([&]() {
+
+            while(true)
+            {
+                std::string keyBin;
+
+                {
+                    std::unique_lock lock(delQueueMutex);
+                    delQueueCv.wait(lock, [&] { return !delQueue.empty(); });
+
+                    if(delQueue.empty())
+                        break;
+
+                    keyBin = std::move(delQueue.front());
+                    delQueue.pop();
+                }
+
+                if(keyBin.empty())
+                    break;
+
+                auto res = sfs.del(keyBin, SingleFileStorage::DelAction::Del, false);
+                if(res!=0)
+                {
+                    std::scoped_lock lock(delQueueMutex);
+                    delErrorCode = res;
+                    delErrorKeyBin = std::move(keyBin);
+                    break;
+                }
+            }
+        });
+
         std::ignore = listBucket(sfs, make_key({.key = "", .version=std::numeric_limits<int64_t>::max(), .bucketId = bucketId}),
             bucketId, [](const auto&){ return false; }, [&](const auto& keyInfo, int64_t, int64_t, 
             const auto&, int64_t, const std::string&, const std::string& keyBin)
         {
             hasObjects = true;
-            auto res = sfs.del(keyBin, SingleFileStorage::DelAction::Del, false);
-            if(res!=0)
-                throw ApiError(Api::Herror::errorDeletingObject, fmt::format("Error deleting object with key {}: {}", keyInfo.key, res));
+
+            ++delCount;
+
+            std::unique_lock lock(delQueueMutex);
+
+            if(!delErrorKeyBin.empty())
+                throw ApiError(Api::Herror::errorDeletingObject, fmt::format("Error deleting object with key {} in bucket {}: {}", extractKeyInfoView(delErrorKeyBin).key, params.bucketName, delErrorCode));
+            
+            while(delQueue.size()>=5000)
+            {
+                lock.unlock();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                lock.lock();
+            }
+
+            delQueue.push(keyBin);
+            delQueueCv.notify_one();
+
             return true;
         });
 
+        {
+            std::scoped_lock lock(delQueueMutex);
+            delQueue.push(std::string());
+            delQueueCv.notify_one();
+        }
+
+        delThread.join();
+
+        if(!delErrorKeyBin.empty())
+            throw ApiError(Api::Herror::errorDeletingObject, fmt::format("Error deleting object with key {} in bucket {}: {}", extractKeyInfoView(delErrorKeyBin).key, params.bucketName, delErrorCode));
+
+        XLOGF(INFO, "Deleted {} objects from bucket {}", delCount, params.bucketName);
+
         if(hasObjects)
         {
-            int rc = sfs.commit(false, -1, FLAGS_pre_sync_commit);
-            if(rc!=0)
-                throw ApiError(Api::Herror::errorDeletingObject, fmt::format("Error committing deletion of objects in bucket {}: {}", params.bucketName, rc));
+            const auto rc = sfs.commit(false, -1, FLAGS_pre_sync_commit);
+            if(!rc)
+            {
+                XLOGF(WARN, "Error committing deletion of objects in bucket {}", params.bucketName);
+                throw ApiError(Api::Herror::errorDeletingObject, fmt::format("Error committing deletion of objects in bucket {}", params.bucketName));
+            }
         }
 
         if(!bucketDeleted)
         {
             if(!buckets::deleteBucket(bucketId))
+            {
+                XLOGF(WARN, "Error deleting bucket {} with id {}", params.bucketName, bucketId);
                 throw ApiError(Api::Herror::errorDeletingBucket, fmt::format("Error deleting bucket {}", params.bucketName));
+            }
             bucketDeleted = true;
         }
 

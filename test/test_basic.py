@@ -164,7 +164,10 @@ def test_get_commit_obj(tmp_path: Path, hs5: Hs5Runner):
     with open(fpath, "r") as f:
         assert len(f.read())>30
 
-def add_objects(tmp_path: Path, hs5: Hs5Runner, num_objects : int = 210, object_data = b"abc") -> set[str]:
+def add_objects(tmp_path: Path, hs5: Hs5Runner, num_objects : int = 210, object_data = b"abc", bucketname = None) -> set[str]:
+    if bucketname is None:
+        bucketname = hs5.testbucketname()
+
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(object_data)
 
@@ -172,7 +175,7 @@ def add_objects(tmp_path: Path, hs5: Hs5Runner, num_objects : int = 210, object_
     ul_files = set[str]()
     for i in range(0, num_objects):
         s3name = f"{i}.txt"
-        s3_client.upload_file(upload_file.name, hs5.testbucketname(), s3name)
+        s3_client.upload_file(upload_file.name, bucketname, s3name)
         ul_files.add(s3name)
 
     hs5.commit_storage(s3_client)
@@ -192,6 +195,7 @@ def delete_all_objects(hs5: Hs5Runner, bucket: str):
     hs5.commit_storage(s3_client)
 
     assert hs5.get_stats().used == 0
+
 
 def test_put_empty(tmp_path: Path, hs5: Hs5Runner):
     fdata = ""

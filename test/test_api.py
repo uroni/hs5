@@ -1,8 +1,10 @@
 from dataclasses import dataclass
+from pathlib import Path
 import requests
 from hs5_fixture import Hs5Runner, hs5
 import boto3
 from botocore.client import Config
+from botocore.exceptions import ClientError
 
 @dataclass
 class LoginData:
@@ -215,3 +217,56 @@ def test_add_new_root_user(hs5: Hs5Runner):
     resp = s3.list_buckets()
     assert "Buckets" in resp
     assert hs5.testbucketname() in [b.get("Name") for b in resp["Buckets"]]
+
+
+def test_delete_bucket_via_api(hs5: Hs5Runner, tmp_path: Path):
+    s3_client = hs5.get_s3_client()
+
+    bucketname = "testbucket_to_delete"
+
+    s3_client.create_bucket(Bucket=bucketname)
+
+    bucket_info = s3_client.head_bucket(Bucket=bucketname)
+    assert bucket_info["ResponseMetadata"]["HTTPStatusCode"] == 200
+
+    from test_basic import add_objects
+    add_objects(tmp_path, hs5, num_objects=10, object_data=b"abc", bucketname=bucketname)
+
+    objs = s3_client.list_objects_v2(Bucket=bucketname)
+    assert "Contents" in objs
+    assert len(objs["Contents"]) == 10
+
+
+    url = hs5.get_api_url()
+    login_data = get_session(hs5)
+    response = login_data.req.post(
+        url + "deleteBucket",
+        json={
+            "ses": login_data.ses,
+            "bucketName": bucketname
+        }
+    )
+    assert response.status_code == 200
+
+    # Check that bucket is deleted
+    try:
+        s3_client.head_bucket(Bucket=bucketname)
+        assert False, "Bucket should be deleted"
+    except ClientError as e:
+        assert "Error" in e.response
+        assert "Message" in e.response["Error"]
+        assert e.response["Error"]["Message"] == "Not Found"
+        pass
+
+    # Check that listing objects in the deleted bucket returns an error
+    try:
+        s3_client.list_objects_v2(Bucket=bucketname)
+        assert False, "Bucket should be deleted"
+    except ClientError as e:
+        assert "Error" in e.response
+        assert "Message" in e.response["Error"]
+        assert e.response["Error"]["Message"] == "The specified bucket does not exist"
+        pass
+
+
+
