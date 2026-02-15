@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771162085257,
+  "lastUpdate": 1771162301382,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -3686,6 +3686,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.16548919595067993",
             "extra": "mean: 15.520137420799983 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f5c3c8bf87d575415bbdc62b0bc26ac7d4df8d08",
+          "message": "Update artifact path for GitHub Pages deployment",
+          "timestamp": "2026-02-15T14:22:16+01:00",
+          "tree_id": "b05962132becd6980f4fbd05b57264b85a9e4b1d",
+          "url": "https://github.com/uroni/hs5/commit/f5c3c8bf87d575415bbdc62b0bc26ac7d4df8d08"
+        },
+        "date": 1771162300368,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.06982123228460416,
+            "unit": "iter/sec",
+            "range": "stddev: 0.061914495008349724",
+            "extra": "mean: 14.322290903199995 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06219008340217266,
+            "unit": "iter/sec",
+            "range": "stddev: 0.11913986413485801",
+            "extra": "mean: 16.07973402340001 sec\nrounds: 5"
           }
         ]
       }
