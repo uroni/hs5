@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771165610255,
+  "lastUpdate": 1771184560929,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -3990,6 +3990,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.09833529359572296",
             "extra": "mean: 15.107225478999975 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "7502de1f78eb98ec37b9c546ea89875f690d9c51",
+          "message": "Add user management api tests",
+          "timestamp": "2026-02-15T20:34:04+01:00",
+          "tree_id": "52d39cf78187dedd0817273b0066b1ca6623f682",
+          "url": "https://github.com/uroni/hs5/commit/7502de1f78eb98ec37b9c546ea89875f690d9c51"
+        },
+        "date": 1771184559853,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08681567952532837,
+            "unit": "iter/sec",
+            "range": "stddev: 0.09635243357212268",
+            "extra": "mean: 11.518656600600025 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.0750080838034611,
+            "unit": "iter/sec",
+            "range": "stddev: 0.13604644562306906",
+            "extra": "mean: 13.331896367600006 sec\nrounds: 5"
           }
         ]
       }
