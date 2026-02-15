@@ -42,7 +42,16 @@ void refreshAuthCache()
     std::scoped_lock lock{mutex};
 
     auto newAccessKeys = dao.getAccessKeys();
-    accessKeys.clear();
+
+    // Keep session access keys
+    for(auto it=accessKeys.begin(); it!=accessKeys.end();)
+    {
+        if(it->second.id>=0)
+            it = accessKeys.erase(it);
+        else
+            ++it;
+    }
+
     for(auto accessKey : newAccessKeys)
     {
         accessKeys.insert(std::make_pair(std::move(accessKey.key), std::move(accessKey)));
@@ -97,7 +106,7 @@ void refreshAuthCache()
 void addAccessKey(const std::string_view accessKey, const std::string_view secretKey)
 {
     std::scoped_lock lock{mutex};
-    accessKeys.insert(std::make_pair(std::string(accessKey), DbDao::AccessKey{.key = std::string(accessKey), .secret_key = std::string(secretKey)}));
+    accessKeys.insert(std::make_pair(std::string(accessKey), DbDao::AccessKey{.id=-1, .key = std::string(accessKey), .secret_key = std::string(secretKey)}));
 }
 
 void removeAccessKey(const std::string_view accessKey)

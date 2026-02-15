@@ -778,6 +778,11 @@ Api::AddAccessKeyResp ApiHandler::addAccessKey(const Api::AddAccessKeyParams& pa
 
     dao.addAccessKey(user->id, "", accessKeyHex, secretAccessKeyHex, 0);
 
+    if(dao.getDb().getLastChanges() != 1)
+        throw ApiError(Api::Herror::internalDbError, fmt::format("Error adding access key for user {}", user->name));
+        
+    refreshAuthCache();
+
     Api::AddAccessKeyResp resp;
     resp.accessKey = accessKeyHex;
     resp.secretKey = secretAccessKeyHex;
