@@ -3524,16 +3524,18 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 size += ext.len;
             }
 
+            std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
+            if(!self->parseMultipartInfo(md5sum, size, multiPartDownloadData))
+            {
+                XLOGF(WARN, "Error parsing multipart info for key {} with md5sum {}", keyInfo.key, folly::hexlify(md5sum));
+            }
+
             val_data += fmt::format("\t<Contents>\n"
                 "\t\t<Key>{}</Key>\n"
                 "\t\t<LastModified>{}</LastModified>\n"
                 "\t\t<ETag>{}</ETag>\n"
                 "\t\t<Size>{}</Size>\n"
                 "\t\t<StorageClass>STANDARD</StorageClass>\n"
-                "\t\t<Owner>\n"
-                "\t\t\t<ID>75aa57f09aa0c8caeab4f8c24e99d10f8e7faeebf76c078efc7c6caea54ba06a</ID>\n"
-                "\t\t\t<DisplayName>mtd@amazon.com</DisplayName>\n"
-                "\t\t</Owner>\n"
                 "\t</Contents>", escapeXML(keyInfo.key), format_last_modified(last_modified), getEtag(md5sum), size);
             ++keyCount;
         }

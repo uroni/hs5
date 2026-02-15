@@ -345,6 +345,17 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):
     bdata = obj_range["Body"].read()
     assert len(bdata) == size
 
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert obj["ContentLength"] == ul_size
+
+    objs = s3_client.list_objects(Bucket=hs5.testbucketname())
+    assert "Contents" in objs
+    assert len(objs["Contents"]) == 1
+    assert "Key" in objs["Contents"][0]
+    assert objs["Contents"][0]["Key"] == "upload.txt"
+    assert "Size" in objs["Contents"][0]
+    assert objs["Contents"][0]["Size"] == ul_size
+
 
     s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt")
 
