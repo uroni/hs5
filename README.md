@@ -12,6 +12,9 @@ High-performance scale-up self-hosted simple storage service (HS5)
 
 Freely available under the [LGPLv3+](https://github.com/uroni/hs5#LGPL-3.0-1-ov-file) license.
 
+HS5 has a web interface to manage buckets and configure users.
+![HS5 Screenshot](https://hs5.eu/assets/img/Screenshot1.png)
+
 Homepage at [https://www.hs5.eu](https://www.hs5.eu)
 
 Table of Contents
@@ -78,6 +81,8 @@ services:
       - "8085:80"
 ```
 
+Access the S3 API and the web interface at port 8085 in this case.
+
 ### On Linux (AMD64, glibc >= 2.35)
 
 Download the hs5 binary and run it:
@@ -87,7 +92,7 @@ wget https://github.com/uroni/hs5/releases/latest/download/hs5.xz -O - | xz -d >
 chmod +x hs5
 ./hs5 run
 ```
-Data and metadata will be stored in the current directory by default. It'll print the randomly generated root password to stdout on the first run.
+Data and metadata will be stored in the current directory by default. It'll print the randomly generated root password to stdout on the first run. Access the S3 API and the web interface at port 80 per default.
 
 ## How the storage works #
 
