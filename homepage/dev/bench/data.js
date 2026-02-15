@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771161837387,
+  "lastUpdate": 1771161956724,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -3610,6 +3610,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.07490604686050625",
             "extra": "mean: 15.713364709400048 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "76cb0624353f8ebf0a4b52c77c6e7012daf94c50",
+          "message": "Change site URL in _config.yml\n\nUpdated the site URL in the configuration file.",
+          "timestamp": "2026-02-15T14:17:00+01:00",
+          "tree_id": "a1fe8527e680e31904f2f952dd4498d296e5a9e2",
+          "url": "https://github.com/uroni/hs5/commit/76cb0624353f8ebf0a4b52c77c6e7012daf94c50"
+        },
+        "date": 1771161956267,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.06944776530154388,
+            "unit": "iter/sec",
+            "range": "stddev: 0.3663090280099812",
+            "extra": "mean: 14.399311419999993 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.05776303646587591,
+            "unit": "iter/sec",
+            "range": "stddev: 0.29262767665043155",
+            "extra": "mean: 17.312109286200005 sec\nrounds: 5"
           }
         ]
       }
