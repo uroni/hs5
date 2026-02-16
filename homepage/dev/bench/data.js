@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771236284762,
+  "lastUpdate": 1771236985024,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -4484,6 +4484,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.14669523709733953",
             "extra": "mean: 14.311762000800082 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "938629faa3c3b8fdd624d402de307c9013fdc1a8",
+          "message": "Upgrade duckdb ui extension",
+          "timestamp": "2026-02-16T10:25:47+01:00",
+          "tree_id": "38a011d87deebe785508b2d9a50cbbba70dad5bf",
+          "url": "https://github.com/uroni/hs5/commit/938629faa3c3b8fdd624d402de307c9013fdc1a8"
+        },
+        "date": 1771236984609,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.06966775871677308,
+            "unit": "iter/sec",
+            "range": "stddev: 0.22475536791401196",
+            "extra": "mean: 14.353841984000008 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06321908640231615,
+            "unit": "iter/sec",
+            "range": "stddev: 0.11301260702247005",
+            "extra": "mean: 15.818007771199984 sec\nrounds: 5"
           }
         ]
       }
