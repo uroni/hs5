@@ -44,8 +44,8 @@ if("ui" IN_LIST FEATURES)
     vcpkg_from_github(
         OUT_SOURCE_PATH DUCKDB_UI_SOURCE_PATH
         REPO duckdb/duckdb-ui
-        REF aab29c57f4133873f9ce70cdc3a34b0f5ab989b4
-        SHA512 a20b6a21701eafeba46acba376d7cf1d218e1534d710915eac4eef44e08f453ce2543dc0b12bcd642e81efece376145538728373cebdae20baadc8b09508a16b
+        REF 56d7e670b7e25094d4a216a27495eef06d058cfd
+        SHA512 a5e694de59ab284903baadd264117a3a2f7ef4846d8b30a6890d18a49dada95f61e7919f420376ecd158d36ec07476ec2501866f294cd8f576f83d46c31a2fc5
         HEAD_REF main
     )
     file(RENAME "${DUCKDB_UI_SOURCE_PATH}" "${SOURCE_PATH}/extension/ui")
