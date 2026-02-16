@@ -108,6 +108,7 @@ void DuckDbFileHandle::Initialize()
 
         extents = std::move(res.extents);
         fsize = res.total_len;
+        lastModified = res.last_modified;
     }
 }
 
@@ -188,6 +189,13 @@ int64_t DuckDbFileHandle::Read(char *buffer, int64_t bsize)
     const auto toread = (std::min)(bsize, fsize - pos);
     Read(buffer, toread, pos);
     return toread;
+}
+
+time_t DuckDbFileHandle::LastModifiedTime()
+{
+    constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
+    const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(lastModified));
+    return lastModifiedTp;
 }
 
 void DuckDbFs::RemoveDirectory(const std::string &path, duckdb::optional_ptr<duckdb::FileOpener> opener)
@@ -415,4 +423,9 @@ duckdb::unique_ptr<duckdb::FileHandle> DuckDbFs::OpenFile(const std::string &pat
 int64_t DuckDbFs::GetFileSize(duckdb::FileHandle &handle)
 {
     return handle.Cast<DuckDbFileHandle>().FileSize();
+}
+
+time_t DuckDbFs::GetLastModifiedTime(duckdb::FileHandle &handle)
+{
+    return handle.Cast<DuckDbFileHandle>().LastModifiedTime();
 }

@@ -24,6 +24,8 @@ public:
         return fsize;
     }
 
+    time_t LastModifiedTime();
+
 private:
     struct PartExt
     {
@@ -35,6 +37,8 @@ private:
     int64_t bucketId = 0;
 
     int64_t fsize = 0;
+
+    int64_t lastModified = 0;
 
     int64_t pos = 0;
 
@@ -105,6 +109,8 @@ public:
     }
 
     virtual int64_t GetFileSize(duckdb::FileHandle &handle);
+
+    virtual time_t GetLastModifiedTime(duckdb::FileHandle &handle) override;
 private:
     SingleFileStorage& sfs;
     const bool withBucketVersioning;
