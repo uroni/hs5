@@ -1255,7 +1255,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             {
                 XLOGF(INFO, "Unauthorized list bucket: {}", bucketName);
                 ResponseBuilder(downstream_)
-                    .status(401, "Unauthorized")
+                    .status(403, "Forbidden")
                     .body("Verifying request authorization failed")
                     .sendWithEOM();
                 return;
@@ -1284,7 +1284,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         {
             XLOGF(INFO, "Get object unauthorized: {}", header_path);
              ResponseBuilder(downstream_)
-                    .status(401, "Unauthorized")
+                    .status(403, "Forbidden")
                     .body("Verifying request authorization failed")
                     .sendWithEOM();
                 return;
@@ -1399,7 +1399,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             {
                 XLOGF(INFO, "Unauthorized putObjectPart: {}", path);
                 ResponseBuilder(downstream_)
-                    .status(401, "Unauthorized")
+                    .status(403, "Forbidden")
                     .body("Verifying request authorization failed")
                     .sendWithEOM();
                 return;
@@ -1415,7 +1415,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         {
             XLOGF(INFO, "Unauthorized putObject: {}", path);
             ResponseBuilder(downstream_)
-                .status(401, "Unauthorized")
+                .status(403, "Forbidden")
                 .body("Verifying request authorization failed")
                 .sendWithEOM();
             return;
@@ -1517,7 +1517,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         {
             XLOGF(INFO, "Unauthorized delete object: {}", path);
             ResponseBuilder(downstream_)
-                .status(401, "Unauthorized")
+                .status(403, "Forbidden")
                 .body("Verifying request authorization failed")
                 .sendWithEOM();
             return;
@@ -1587,7 +1587,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             {
                 XLOGF(INFO, "Unauthorized delete object: {}", path);
                 ResponseBuilder(downstream_)
-                    .status(401, "Unauthorized")
+                    .status(403, "Forbidden")
                     .body("Verifying request authorization failed")
                     .sendWithEOM();
                 return;
@@ -1654,7 +1654,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             {
                 XLOGF(INFO, "Unauthorized create multi-part upload: {}", path);
                 ResponseBuilder(downstream_)
-                    .status(401, "Unauthorized")
+                    .status(403, "Forbidden")
                     .body("Verifying request authorization failed")
                     .sendWithEOM();
                 return;
