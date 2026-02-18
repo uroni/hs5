@@ -42,6 +42,7 @@ def test_put_get_minio(benchmark: BenchmarkFixture, tmp_path: Path, minio: Minio
     assert bdata == fdata[:10]
 
 
+@pytest.mark.skipif(os.getenv("RUSTFS_ENABLED") != "1", reason="RUSTFS_ENABLED environment variable not set to 1")
 def test_put_get_rustfs(benchmark: BenchmarkFixture, tmp_path: Path, rustfs: RustfsRunner):
     """
     Make sure the rustfs fixture is working
@@ -144,7 +145,7 @@ def test_perf_upload_many_files_minio(benchmark: BenchmarkFixture, minio: MinioR
     """
     benchmark(upload_many_files, lambda: minio.get_s3_client(), tmp_path)
 
-@pytest.mark.skip(reason="Skip RustFS performance test for now")
+@pytest.mark.skipif(os.getenv("RUSTFS_ENABLED") != "1", reason="RUSTFS_ENABLED environment variable not set to 1")
 def test_perf_upload_many_files_rustfs(benchmark: BenchmarkFixture, rustfs: RustfsRunner, tmp_path: Path):
     """
     Test the performance of uploading 10,000 files to RustFS.
