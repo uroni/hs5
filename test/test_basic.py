@@ -77,6 +77,11 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     assert len(bdata) == 10
     assert bdata == fdata[:10]
 
+    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=-10")
+    bdata = obj_range["Body"].read()
+    assert len(bdata) == 10
+    assert bdata == fdata[-10:]
+
     if os.getenv("ENABLE_WAL_WRITE_DATA") == "1":
         time.sleep(1)
         
@@ -396,6 +401,24 @@ def test_list_one(tmp_path: Path, hs5: Hs5Runner):
         contToken = res.get("NextContinuationToken")
 
     assert keys == ["one", "three", "two"]
+
+def test_list_start_after(tmp_path: Path, hs5: Hs5Runner):
+    with open(tmp_path / "upload.txt", "w") as upload_file:
+        upload_file.write("abc")
+
+    s3_client = hs5.get_s3_client()
+
+    for fn in ["a", "b", "c", "d"]:
+        s3_client.upload_file(upload_file.name, hs5.testbucketname(), fn)
+
+    objs = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), StartAfter="b")
+    assert "Contents" in objs
+    assert len(objs["Contents"]) == 2
+
+    assert "Key" in objs["Contents"][0]
+    assert objs["Contents"][0]["Key"] == "c"
+    
+
 
 def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):
 

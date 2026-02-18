@@ -3709,17 +3709,24 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     const auto listBucketId = partial ? buckets::getPartialUploadsBucket(bucketId) : bucketId;
     SingleFileStorage::IterData iter_data = {};
     std::string iterStartVal;
+    bool excludeStartAfter = false;
     if(!marker.empty())
     {
         if(startAfter && *startAfter>marker)
+        {
             iterStartVal = make_key({.key = *startAfter, .version=markerVersion, .bucketId = listBucketId});
+            excludeStartAfter = true;
+        }
         else
             iterStartVal = make_key({.key = marker, .version=markerVersion, .bucketId = listBucketId});
     }
     else
     {
         if(startAfter)
+        {
             iterStartVal = make_key({.key = *startAfter, .version=markerVersion, .bucketId = listBucketId});
+            excludeStartAfter = true;
+        }
         else if(prefix)
             iterStartVal = make_key({.key = *prefix, .version=markerVersion, .bucketId = listBucketId});
         else
@@ -3786,6 +3793,20 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             lastOutputKeyStr = keyInfo.key;
             ++skippedKeys;
             outputKey = false;
+        }
+
+        if(excludeStartAfter)
+        {
+            if(keyInfo.key == *startAfter)
+            {
+                outputKey = false;
+                ++skippedKeys;
+            }
+            else
+            {
+                excludeStartAfter = false;
+            }
+            
         }
 
         if(outputKey && !delimiter.empty())
