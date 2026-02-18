@@ -3157,6 +3157,7 @@ void S3Handler::abortMultipartUpload(proxygen::HTTPMessage& headers, const std::
                     {
                         XLOGF(INFO, "Removing object '{}' not found", self->keyInfo.key);
                         ResponseBuilder(self->downstream_)
+                            .status(204, "No Content")
                             .sendWithEOM();
                     }
                     else if(res!=0)
@@ -3226,6 +3227,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                     {
                         XLOGF(INFO, "Removing object '{}' not found", self->keyInfo.key);
                         ResponseBuilder(self->downstream_)
+                            .status(204, "No Content")
                             .sendWithEOM();
                     }
                     else if(res!=0)
