@@ -3801,17 +3801,28 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         std::string keyBin, md5sum;
         int64_t offset, size, last_modified;
         std::vector<SingleFileStorage::SPunchItem> extra_exts;
-        sfs.iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data);
+        if(sfs.iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
+        {
+            const auto keyInfo = extractKeyInfoView(keyBin);
+            if(keyInfo.bucketId == listBucketId)
+            {
+                nextMarker = keyInfo.key;
 
-        CRData rdata(md5sum.data(), md5sum.size());
+                if(partial)
+                {
+                    CRData rdata(md5sum.data(), md5sum.size());
+                    std::string uploadNonce;
+                    rdata.getStr2(&uploadNonce);
 
-        std::string uploadNonce;
-        rdata.getStr2(&uploadNonce);
-
-        const auto keyInfo = extractKeyInfoView(keyBin);
-        nextMarker = keyInfo.key;
-        const auto encId = sfs.encrypt_id_separate(keyInfo.version, uploadNonce);
-        nextVersionMarker = folly::hexlify(encId.encryptedId) + "-" + folly::hexlify(encId.nonce);
+                    const auto encId = sfs.encrypt_id_separate(keyInfo.version, uploadNonce);
+                    nextVersionMarker = folly::hexlify(encId.encryptedId) + "-" + folly::hexlify(encId.nonce);
+                }
+            }
+        }
+        else
+        {
+            truncated=false;
+        }
     }
 
     sfs.iter_stop(iter_data);

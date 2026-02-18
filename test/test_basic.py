@@ -360,6 +360,38 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
     assert "a/" in prefixes
     assert "b/" in prefixes
 
+def test_list_one(tmp_path: Path, hs5: Hs5Runner):
+    with open(tmp_path / "upload.txt", "w") as upload_file:
+        upload_file.write("abc")
+
+    s3_client = hs5.get_s3_client()
+
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "one")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "two")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "three")
+
+    hs5.commit_storage(s3_client)
+
+    keys = list[str]()
+
+    cont = True
+    contToken : str | None = None
+    while cont:
+        args = {}
+        if contToken:
+            args["ContinuationToken"] = contToken
+        res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), MaxKeys=1, **args)
+
+        assert "Contents" in res
+        objs = res["Contents"]
+        assert objs is not None
+        assert len(objs) == 1
+        assert "Key" in objs[0]
+        keys.append(objs[0]["Key"])
+        cont = res["IsTruncated"]
+        contToken = res.get("NextContinuationToken")
+
+    assert keys == ["one", "three", "two"]
 
 def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):
 
