@@ -1346,11 +1346,16 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             xid = headers->getDecodedQueryParam("x-id");
         }
 
-        const auto createBucket = !path.empty() && path.find_first_of('/', 1)==std::string::npos && (xid.empty() || xid == "CreateBucket");
+        bool createBucket = false;
+        const auto nextSlash = path.empty() ? std::string::npos : path.find('/', 1);
+        if(!path.empty() && (nextSlash==std::string::npos || nextSlash == path.size()-1) && (xid.empty() || xid == "CreateBucket") )
+        {
+            createBucket = true;
+            const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
+            keyInfo.key = bucketName;
+        }
 
-        if(createBucket)
-            keyInfo.key = path.substr(1);
-        else if(!setKeyInfoFromPath(path))
+        if(!createBucket && !setKeyInfoFromPath(path))
             return;
 
         const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
