@@ -1254,10 +1254,15 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             if(!accessKey)
             {
                 XLOGF(INFO, "Unauthorized list bucket: {}", bucketName);
-                ResponseBuilder(downstream_)
-                    .status(403, "Forbidden")
-                    .body("Verifying request authorization failed")
-                    .sendWithEOM();
+                if(headers->getMethod() == HTTPMethod::HEAD)
+                    ResponseBuilder(downstream_)
+                        .status(403, "Forbidden")
+                        .sendWithEOM();
+                else
+                    ResponseBuilder(downstream_)
+                        .status(403, "Forbidden")
+                        .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
+                        .sendWithEOM();
                 return;
             }
 
@@ -1283,11 +1288,16 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         if(!accessKey)
         {
             XLOGF(INFO, "Get object unauthorized: {}", header_path);
-             ResponseBuilder(downstream_)
+            if(headers->getMethod() == HTTPMethod::HEAD)
+                ResponseBuilder(downstream_)
                     .status(403, "Forbidden")
-                    .body("Verifying request authorization failed")
                     .sendWithEOM();
-                return;
+            else
+                ResponseBuilder(downstream_)
+                    .status(403, "Forbidden")
+                    .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
+                    .sendWithEOM();
+            return;
         }
 
         if(header_path.find(c_commit_uuid)!=std::string::npos)
@@ -1400,7 +1410,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 XLOGF(INFO, "Unauthorized putObjectPart: {}", path);
                 ResponseBuilder(downstream_)
                     .status(403, "Forbidden")
-                    .body("Verifying request authorization failed")
+                    .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
                     .sendWithEOM();
                 return;
             }
@@ -1416,7 +1426,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             XLOGF(INFO, "Unauthorized putObject: {}", path);
             ResponseBuilder(downstream_)
                 .status(403, "Forbidden")
-                .body("Verifying request authorization failed")
+                .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
                 .sendWithEOM();
             return;
         }
@@ -1518,7 +1528,6 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             XLOGF(INFO, "Unauthorized delete object: {}", path);
             ResponseBuilder(downstream_)
                 .status(403, "Forbidden")
-                .body("Verifying request authorization failed")
                 .sendWithEOM();
             return;
         }
@@ -1588,7 +1597,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 XLOGF(INFO, "Unauthorized delete object: {}", path);
                 ResponseBuilder(downstream_)
                     .status(403, "Forbidden")
-                    .body("Verifying request authorization failed")
+                    .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
                     .sendWithEOM();
                 return;
             }
@@ -1655,7 +1664,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 XLOGF(INFO, "Unauthorized create multi-part upload: {}", path);
                 ResponseBuilder(downstream_)
                     .status(403, "Forbidden")
-                    .body("Verifying request authorization failed")
+                    .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
                     .sendWithEOM();
                 return;
             }
@@ -3080,7 +3089,6 @@ void S3Handler::abortMultipartUpload(proxygen::HTTPMessage& headers, const std::
                                             {
                         ResponseBuilder(self->downstream_)
                             .status(400, "Bad Request")
-                            .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid uploadId", self->keyInfo.key, ""))
                             .sendWithEOM();
                         self->finished_ = true; });
                 return;
@@ -3100,7 +3108,6 @@ void S3Handler::abortMultipartUpload(proxygen::HTTPMessage& headers, const std::
                 evb->runInEventBaseThread([self = self]()
                                         {
                         ResponseBuilder(self->downstream_)
-                            .status(204, "No Content")
                             .sendWithEOM();
                         self->finished_ = true; });
                 return;
@@ -3112,7 +3119,6 @@ void S3Handler::abortMultipartUpload(proxygen::HTTPMessage& headers, const std::
                                         {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, "Storage read error", self->keyInfo.key, ""))
                             .sendWithEOM();
                         self->finished_ = true; });
                 return;
@@ -3128,7 +3134,6 @@ void S3Handler::abortMultipartUpload(proxygen::HTTPMessage& headers, const std::
                                         {
                         ResponseBuilder(self->downstream_)
                             .status(400, "Bad Request")
-                            .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid uploadId", self->keyInfo.key, ""))
                             .sendWithEOM();
                         self->finished_ = true; });
                 return;
@@ -3147,7 +3152,6 @@ void S3Handler::abortMultipartUpload(proxygen::HTTPMessage& headers, const std::
                     {
                         XLOGF(INFO, "Removing object '{}' not found", self->keyInfo.key);
                         ResponseBuilder(self->downstream_)
-                            .status(204, "No Content")
                             .sendWithEOM();
                     }
                     else if(res!=0)
@@ -3155,7 +3159,6 @@ void S3Handler::abortMultipartUpload(proxygen::HTTPMessage& headers, const std::
                         XLOGF(INFO, "Removing object '{}' err {}", self->keyInfo.key, res);
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, "Storage is dead", self->keyInfo.key, ""))
                             .sendWithEOM();
                     }
                     else
@@ -3218,7 +3221,6 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                     {
                         XLOGF(INFO, "Removing object '{}' not found", self->keyInfo.key);
                         ResponseBuilder(self->downstream_)
-                            .status(204, "No Content")
                             .sendWithEOM();
                     }
                     else if(res!=0)
@@ -3226,7 +3228,6 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                         XLOGF(INFO, "Removing object '{}' err {}", self->keyInfo.key, res);
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, "Storage is dead", self->keyInfo.key, ""))
                             .sendWithEOM();
                     }
                     else
@@ -3267,7 +3268,6 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
                                                         {
                                     ResponseBuilder(self->downstream_)
                                         .status(500, "Internal error")
-                                        .body(s3errorXml(S3ErrorCode::InternalError, "Error starting listing for empty check", self->keyInfo.key, ""))
                                         .sendWithEOM(); });
                     return;
                 }
@@ -3302,7 +3302,6 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
                         XLOGF(INFO, "Bucket '{}' not found", self->keyInfo.key);
                         ResponseBuilder(self->downstream_)
                             .status(404, "Not found")
-                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", self->fullKeyPath(), ""))
                             .sendWithEOM();
                     }
                     else if(hasObjects)
@@ -3310,7 +3309,6 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
                         XLOGF(INFO, "Bucket '{}' contains objects", self->keyInfo.key);
                         ResponseBuilder(self->downstream_)
                             .status(400, "BucketContainsObjects")
-                            .body(s3errorXml(S3ErrorCode::BucketNotEmpty, "", self->fullKeyPath(), ""))
                             .sendWithEOM();
                     }
                     else
