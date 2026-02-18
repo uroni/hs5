@@ -1354,8 +1354,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
             keyInfo.key = bucketName;
         }
-
-        if(!createBucket && !setKeyInfoFromPath(path))
+        else if(!setKeyInfoFromPath(path))
             return;
 
         const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
@@ -1364,7 +1363,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         const auto payload = *payloadOpt;
 
-        if(!createBucket && !headers->getQueryStringAsStringPiece().empty() && (xid.empty() || xid == "UploadPart"))
+        if(!createBucket && headers->hasQueryParam("uploadId") && (xid.empty() || xid == "UploadPart"))
         {
             int partNumber = 0;
             const auto& queryParams = headers->getQueryParams();
@@ -1511,10 +1510,14 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         }
 
         const auto path = std::string_view(path_str);
-        const auto isDeleteBucket = !path.empty() && path.find_first_of('/', 1)==std::string::npos;
-
-        if(isDeleteBucket)
-            keyInfo.key = path.substr(1);
+        bool isDeleteBucket = false;
+        const auto nextSlash = path.empty() ? std::string::npos : path.find('/', 1);
+        if(!path.empty() && (nextSlash==std::string::npos || nextSlash == path.size()-1) )
+        {
+            isDeleteBucket = true;
+            const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
+            keyInfo.key = bucketName;
+        }
         else if(!setKeyInfoFromPath(path))
             return;
 
@@ -3315,7 +3318,7 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
                     {
                         XLOGF(INFO, "Bucket '{}' contains objects", self->keyInfo.key);
                         ResponseBuilder(self->downstream_)
-                            .status(400, "BucketContainsObjects")
+                            .status(409, "BucketNotEmpty")
                             .sendWithEOM();
                     }
                     else
