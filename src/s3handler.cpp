@@ -1067,7 +1067,7 @@ std::string s3errorXml(const S3ErrorCode code, const std::string_view& msg, cons
         "\t<Message>{}</Message>\n"
         "\t<Resource>{}</Resource>\n"
         "\t<RequestId>{}</RequestId>\n"
-        "</Error>", s3errorCodeToStr(code), msg.empty() ? s3errorMsg(code) : msg, ressource, request_id);
+        "</Error>", s3errorCodeToStr(code), msg.empty() ? s3errorMsg(code) : escapeXML(msg), escapeXML(ressource), escapeXML(request_id));
 }
 
 std::pair<std::string, std::vector<MultiPartDownloadData::PartExt>> parsePartExts(const std::string& rdata)
