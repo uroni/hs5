@@ -2122,6 +2122,16 @@ std::string format_last_modified(const int64_t lastModified)
     return datebuf;
 }
 
+std::string format_last_modified_rfc1123(const int64_t lastModified)
+{
+    constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
+    const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(lastModified));
+
+    char datebuf[sizeof("Fri, 08 Oct 2011 07:07:09 GMT")];
+    std::strftime(datebuf, sizeof(datebuf), "%a, %d %b %Y %H:%M:%S GMT", std::gmtime(&lastModifiedTp));
+    return datebuf;
+}
+
 void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& accessKey)
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
@@ -2252,7 +2262,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(rangeEnd-rangeStart))
                         .header(proxygen::HTTP_HEADER_ETAG, self->getEtagParsedMultipart(md5sum))
                         .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "binary/octet-stream")
-                        .header("Last-Modified", format_last_modified(last_modified)));
+                        .header("Last-Modified", format_last_modified_rfc1123(last_modified)));
 
                     if(self->request_action==Action::HeadObject)
                     {
