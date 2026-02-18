@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771240108181,
+  "lastUpdate": 1771412954005,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -4598,6 +4598,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.06751942237105894",
             "extra": "mean: 15.41197748300001 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "1a10a01d21cc846ce8a60bac8aea011020ab01e8",
+          "message": "Add partNumber parameter support",
+          "timestamp": "2026-02-18T11:57:54+01:00",
+          "tree_id": "53e1230fc91d40c79836bf1c49aefeec6f330f9b",
+          "url": "https://github.com/uroni/hs5/commit/1a10a01d21cc846ce8a60bac8aea011020ab01e8"
+        },
+        "date": 1771412952642,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.06521450011163633,
+            "unit": "iter/sec",
+            "range": "stddev: 0.7137818924941287",
+            "extra": "mean: 15.334013114999994 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06242132894003831,
+            "unit": "iter/sec",
+            "range": "stddev: 0.40897595838052786",
+            "extra": "mean: 16.020165174 sec\nrounds: 5"
           }
         ]
       }
