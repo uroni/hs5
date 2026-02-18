@@ -222,7 +222,7 @@ def test_add_new_root_user(hs5: Hs5Runner):
 def test_delete_bucket_via_api(hs5: Hs5Runner, tmp_path: Path):
     s3_client = hs5.get_s3_client()
 
-    bucketname = "testbucket_to_delete"
+    bucketname = "testbucket-to-delete"
 
     s3_client.create_bucket(Bucket=bucketname)
 
