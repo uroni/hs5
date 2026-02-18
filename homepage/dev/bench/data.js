@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771440303638,
+  "lastUpdate": 1771444324578,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -5130,6 +5130,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.12052380578690994",
             "extra": "mean: 15.512281086400014 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "a27a922a79477a7a088242b9dcd347cb2fcffb1d",
+          "message": "Add performance comparison with rustfs",
+          "timestamp": "2026-02-18T20:42:30+01:00",
+          "tree_id": "f6856cadcddb0d07f76ed1fed2ed0d33d86baa10",
+          "url": "https://github.com/uroni/hs5/commit/a27a922a79477a7a088242b9dcd347cb2fcffb1d"
+        },
+        "date": 1771444323801,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07401894253085327,
+            "unit": "iter/sec",
+            "range": "stddev: 0.16167451381295556",
+            "extra": "mean: 13.51005520760001 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06621503760368695,
+            "unit": "iter/sec",
+            "range": "stddev: 0.08151625456846076",
+            "extra": "mean: 15.102309629199976 sec\nrounds: 5"
           }
         ]
       }
