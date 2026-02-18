@@ -25,6 +25,7 @@ Table of Contents
  * [How the storage works](#how-the-storage-works)
  * [Durability guarantees](#durability-guarantees)
  * [Manual commit mode](#manual-commit-mode)
+ * [Performance](#performance)
  * [DuckDB](#duckdb-ui)
 
 # About HS5
@@ -38,6 +39,7 @@ In general, HS5 is suited for storing S3 objects on a single node only. Therefor
 For a discussion about data durability, see the "Durability guarantees" section.
 
  * [Minio](https://min.io/) (No longer actively maintained as of 2026.) Started off with similar goals as HS5 but became a system that wants to be "Hyperscale" and "AI scale" with questionable interpretations of the AGPLv3 ([[1]](https://github.com/minio/minio/discussions/13571#discussioncomment-1583482) [[2]](https://blog.min.io/weka-violates-minios-open-source-licenses/)). I also had my [issues](https://github.com/minio/minio/issues/3536) with its data durability guarantees in the past, but it might be good (on Linux) at this point. It stores each object as (multiple) files on the file system, which limits the performance of small objects to the performance of the file system. It is not compatible with S3 (S3 has arbitrary delimiters, not just `/`).
+ * [RustFS](https://rustfs.com/) Similar goals to MinIO, but written in a different programming language. Currently less stable (alpha) and less performant with a single node and the tests I did, than MinIO. See [performace](#performance) section.
  * [seaweedfs](https://github.com/seaweedfs/seaweedfs) Compared to HS5, it can be used with multiple nodes. To ensure data durability, you must [enable fsync per bucket](https://github.com/seaweedfs/seaweedfs/wiki/Path-Specific-Configuration). The main differentiating factor is that seaweedfs keeps the [object -> disk] location index completely in memory. This is a trade-off with fewer disk accesses for reading and writing objects while incurring a scan at startup time and causing memory usage proportional to the number of objects. Because of the long startup time and memory usage, it might be unsuited for testing purposes or in scenarios where fast node restarts are necessary or where memory is shared with other applications.
  * [Ceph](https://ceph.io) (radosgw) Widely used distributed storage system that is well-designed, tested, and in production at several (large) cloud service providers. If you want to store a large amount of data on multiple nodes, you should go with this one. There might still be scalability limits with the number of objects per bucket, but HS5 should not be better in that area.
 
@@ -129,6 +131,29 @@ See [hs5_commit.py](https://github.com/uroni/hs5/blob/main/test/hs5_commit.py) f
 ## WAL for performance
 
 HS5 has an optional Write-Ahead-Log (WAL) mode where it logs data and/or metadata into a file first before writing it to the respective files. This can be used to improve performance if the metadata/data file is slower than the WAL file w.r.t. latency, e.g., the data path is network storage and the wal path is local flash storage. Enable this mode with `--wal-mode all` (or `metadata-only`/`data-only`).
+
+## Performance #
+
+There is a rudimentary [performance test suite](https://github.com/uroni/hs5/blob/main/test/test_perf.py) (contributions welcome). Currently it has one test that uploads 10000 small files with default application settings (see source code):
+
+
+**Performance Benchmark Results:**
+
+| Test Name                        |    Min (s) |    Max (s) |   Mean (s) | StdDev (s) | Median (s) |   IQR (s) | Outliers |   OPS   | Rounds | Iterations |
+|-----------------------------------|-----------:|-----------:|-----------:|-----------:|-----------:|----------:|---------:|--------:|--------:|-----------:|
+| test_perf_upload_many_files_hs5   |     7.2555 |     8.7556 |     8.0066 |    0.6549  |    7.8952  |   1.1767  |    2;0   | 0.1249  |      5 |          1 |
+| test_perf_upload_many_files_minio |     8.1981 |     9.9005 |     9.2088 |    0.6345  |    9.2654  |   0.7111  |    2;0   | 0.1086  |      5 |          1 |
+| test_perf_upload_many_files_rustfs|    10.7288 |    14.0298 |    11.7157 |    1.3398  |   11.1023  |   1.3234  |    1;0   | 0.0854  |      5 |          1 |
+
+**Legend:**
+- **Min/Max/Mean/Median/IQR/StdDev:** Time in seconds
+- **OPS:** Operations Per Second (1 / Mean)
+- **Outliers:** 1 Standard Deviation from Mean; 1.5 IQR from 1st/3rd Quartile
+
+
+Legend:
+  Outliers: 1 Standard Deviation from Mean; 1.5 IQR (InterQuartile Range) from 1st Quartile and 3rd Quartile.
+  OPS: Operations Per Second, computed as 1 / Mean
 
 ## DuckDB UI #
 

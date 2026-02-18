@@ -11,9 +11,11 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from mypy_boto3_s3 import S3Client
+import pytest
 
 from minio_fixture import minio, MinioRunner
 from hs5_fixture import hs5_perf, Hs5Runner
+from rustfs_fixture import rustfs, RustfsRunner
 from pytest_benchmark.fixture import BenchmarkFixture
 from multiprocessing import Pool
 
@@ -119,3 +121,10 @@ def test_perf_upload_many_files_minio(benchmark: BenchmarkFixture, minio: MinioR
     Test the performance of uploading 10,000 files to MinIO.
     """
     benchmark(upload_many_files, lambda: minio.get_s3_client(), tmp_path)
+
+@pytest.mark.skip(reason="Skip RustFS performance test for now")
+def test_perf_upload_many_files_rustfs(benchmark: BenchmarkFixture, rustfs: RustfsRunner, tmp_path: Path):
+    """
+    Test the performance of uploading 10,000 files to RustFS.
+    """
+    benchmark(upload_many_files, lambda: rustfs.get_s3_client(), tmp_path)
