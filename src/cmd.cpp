@@ -11,6 +11,7 @@
 #include <tclap/CmdLine.h>
 #include <stdlib.h>
 #include "main.h"
+#include "os_functions.h"
 
 void showVersion()
 {
@@ -343,17 +344,23 @@ int actionRun(std::vector<std::string> args)
             metadataStoragePathVal = metadataStoragePathArg.isSet() ? metadataStoragePathArg.getValue() : storagePathArg.getValue();
             realArgs.push_back("--index_path");
             realArgs.push_back(metadataStoragePathVal);
+            realArgs.push_back("--db_path");
+            realArgs.push_back(metadataStoragePathVal + os_file_sep() + "hs5.db");
         }
         else if(auto metadataPath = getenv("METADATA_PATH"); metadataPath)
         {
             realArgs.push_back("--index_path");
             realArgs.push_back(metadataPath);
+            realArgs.push_back("--db_path");
+            realArgs.push_back(metadataPath + os_file_sep() + "hs5.db");
             metadataStoragePathVal = metadataPath;
         }
         else if(auto metadataPath = getenv("STORAGE_PATH"); metadataPath)
         {
             realArgs.push_back("--index_path");
             realArgs.push_back(metadataPath);
+            realArgs.push_back("--db_path");
+            realArgs.push_back(metadataPath + os_file_sep() + "hs5.db");
             metadataStoragePathVal = metadataPath;
         }
     }
@@ -378,10 +385,10 @@ int actionRun(std::vector<std::string> args)
         realArgs.push_back(initRootPasswordArg.getValue());
     }
 
-    if(!alreadySetArgs.contains("--init-create-bucket") &&
+    if(!alreadySetArgs.contains("--init_create_bucket") &&
         initCreateBucketArg.isSet())
     {
-        realArgs.push_back("--init-create-bucket");
+        realArgs.push_back("--init_create_bucket");
         realArgs.push_back(initCreateBucketArg.getValue());
     }
 
