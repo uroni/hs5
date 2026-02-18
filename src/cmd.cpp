@@ -320,7 +320,7 @@ int actionRun(std::vector<std::string> args)
         {
             const auto dataPath = dataStoragePathArg.isSet() ? dataStoragePathArg.getValue() : storagePathArg.getValue();
             realArgs.push_back("--data_path");
-            realArgs.push_back(dataStoragePathArg.getValue());
+            realArgs.push_back(dataPath);
         }
         else if(auto dataPath = getenv("DATA_PATH"); dataPath)
         {
