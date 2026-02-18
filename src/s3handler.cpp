@@ -1536,6 +1536,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             XLOGF(INFO, "Unauthorized delete object: {}", path);
             ResponseBuilder(downstream_)
                 .status(403, "Forbidden")
+                .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
                 .sendWithEOM();
             return;
         }
