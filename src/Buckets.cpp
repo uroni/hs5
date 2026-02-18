@@ -40,11 +40,15 @@ void refreshBucketCache()
 
     bucketNames.clear();
     buckets.clear();
-    currMaxId = dao.getMaxBucketId() + 1;
+    const auto dbBuckets = dao.getBuckets();
+
+    if(!dbBuckets.empty())
+    {
+        currMaxId = dao.getMaxBucketId();
+        nextId();    
+    }
 
     XLOGF(INFO, "Init max bucket id {}", currMaxId);
-
-    const auto dbBuckets = dao.getBuckets();
 
     for(const auto& bucket: dbBuckets)
     {
