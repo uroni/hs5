@@ -1560,7 +1560,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         const auto path = std::string_view(path_str);
         
-        if(headers->getQueryStringAsStringPiece() == "delete")
+        if(headers->hasQueryParam("delete"))
         {
             std::string cl = headers->getHeaders().getSingleOrEmpty(
                     proxygen::HTTP_HEADER_CONTENT_LENGTH);
@@ -1594,7 +1594,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
             const auto payload = *payloadOpt;
 
-            const auto bucketName = path.substr(1);
+            const auto bucketName = path[path.size()- 1] =='/' ? path.substr(1, path.size()-2) : path.substr(1);
 
             const auto accessKey = checkSig(*headers, payload, resource, Action::DeleteObjects, true);
             if(!accessKey)
