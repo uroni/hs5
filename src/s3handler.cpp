@@ -2136,7 +2136,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = self, evb, accessKey, range=headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_RANGE)]()
+            [self = self, evb, accessKey, range=headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_RANGE), partNumberStr = headers.getQueryParamPtr("partNumber")]()
             { 
                 unsigned int flags = 0;
                 if(self->request_action == Action::HeadObject)
@@ -2242,7 +2242,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                 const auto md5sum = (!res.md5sum.empty() && res.md5sum[0] == metadata_object ) ? res.md5sum.substr(1, MD5_DIGEST_LENGTH) : "";
                 #endif
 
-                const auto [rangeStart, rangeEnd] = parseRange(range, res.total_len);
+                auto [rangeStart, rangeEnd] = parseRange(range, res.total_len);
 
                 if(!range.empty() && 
                     (rangeStart<0 || rangeEnd<0 || rangeStart>=rangeEnd || rangeEnd > res.total_len) )
@@ -2256,11 +2256,84 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     return;
                 }
 
-                evb->runInEventBaseThread([self = self, hasRange=!range.empty(), rangeStart, rangeEnd, md5sum, last_modified = res.last_modified]()
+                std::optional<std::string> partNumberEtag;
+                std::optional<int64_t> partNumberSize;
+                if(partNumberStr)
+                {
+                    if(!range.empty())
+                    {
+                        evb->runInEventBaseThread([self = self]()
+                                {
+                                    ResponseBuilder(self->downstream_)
+                                        .status(400, "Bad Request")
+                                        .body(s3errorXml(S3ErrorCode::InvalidArgument, "Cannot specify both Range header and partNumber parameter", self->fullKeyPath(), ""))
+                                        .sendWithEOM();
+                            });
+                        return;
+                    }
+
+                    int partNumber;
+                    try
+                    {
+                        partNumber = std::atoi(partNumberStr->c_str()) - 1;
+                    }
+                    catch(const std::exception&)
+                    {
+                        evb->runInEventBaseThread([self = self]()
+                                {
+                                    ResponseBuilder(self->downstream_)
+                                        .status(400, "Bad Request")
+                                        .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid partNumber parameter", self->fullKeyPath(), ""))
+                                        .sendWithEOM();
+                            });
+                        return;
+                    }
+
+                    if( (!self->multiPartDownloadData && partNumber != 0)
+                         || partNumber<0 || partNumber>=self->multiPartDownloadData->numParts)
+                    {
+                        evb->runInEventBaseThread([self = self, partNumber]()
+                                {
+                                    ResponseBuilder(self->downstream_)
+                                        .status(400, "Bad Request")
+                                        .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid partNumber parameter", self->fullKeyPath(), ""))
+                                        .sendWithEOM();
+                            });
+                        return;
+                    }
+
+                    if(self->multiPartDownloadData)
+                    {
+                        std::vector<SingleFileStorage::Ext> exts;
+                        std::string partNumberEtagOut;
+                        int64_t partNumberOffset;
+                        int64_t partNumberSizeOut;
+                        const auto rc = seekMultipart(self->sfs, partNumber, self->keyInfo.bucketId, *self->multiPartDownloadData, exts, partNumberEtagOut, partNumberOffset, partNumberSizeOut);
+                        if(rc!=0)
+                        {
+                            XLOGF(WARN, "Error seeking to part number {} of key {}: {}",
+                                partNumber+1, self->keyInfo.key, rc);
+                            evb->runInEventBaseThread([self = self, rc]()
+                                    {
+                                        ResponseBuilder(self->downstream_)
+                                            .status(500, "Internal error")
+                                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error seeking to part: {}", rc), self->fullKeyPath(), ""))
+                                            .sendWithEOM();
+                            });
+                            return;
+                        }
+
+                        rangeStart = partNumberOffset;
+                        rangeEnd = partNumberOffset + partNumberSizeOut;
+                        partNumberEtag = partNumberEtagOut;
+                    }
+                }
+
+                evb->runInEventBaseThread([self = self, hasRange=!range.empty() || partNumberSize, rangeStart, rangeEnd, md5sum, partNumberEtag, last_modified = res.last_modified]()
                                               {
                     auto resp = std::move(ResponseBuilder(self->downstream_).status(hasRange ? 206 : 200, hasRange ? "Partial Content" : "OK")
                         .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(rangeEnd-rangeStart))
-                        .header(proxygen::HTTP_HEADER_ETAG, self->getEtagParsedMultipart(md5sum))
+                        .header(proxygen::HTTP_HEADER_ETAG, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum))
                         .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "binary/octet-stream")
                         .header("Last-Modified", format_last_modified_rfc1123(last_modified)));
 
@@ -3211,10 +3284,60 @@ int S3Handler::seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
         }
     }
 
-    return readMultipartExt(sfs, seekOffset, bucketId, multiPartDownloadData, extents);
+    std::string etag;
+    return readMultipartExt(sfs, seekOffset, bucketId, multiPartDownloadData, extents, etag);
 }
 
-int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents)
+int S3Handler::seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen)
+{
+
+    if(multiPartDownloadData.exts.empty())
+    {
+        XLOG(WARN, "No multi-part parts found in seek to partNumber");
+        return ENOENT;
+    }
+
+    if(partNumber<0)
+    {
+        XLOG(WARN, "Invalid partNumber {} in seek", partNumber);
+        return EINVAL;
+    }
+
+    XLOGF(DBG0, "Seeking multi-part to partNumber {}", partNumber);
+
+    multiPartDownloadData.extIdx = 0;
+    multiPartDownloadData.currExt = multiPartDownloadData.exts[multiPartDownloadData.extIdx];
+
+    int currPart = 0;
+    offset = 0;
+    while(currPart < partNumber)
+    {    
+        const auto toSeek = (std::min)(partNumber - currPart, multiPartDownloadData.currExt.len); 
+
+        currPart += toSeek;
+        offset += toSeek*multiPartDownloadData.currExt.size;
+
+        if(currPart == partNumber)
+        {
+            multiPartDownloadData.currExt.start += toSeek;
+            multiPartDownloadData.currExt.len -= toSeek;
+            break;
+        }
+
+        ++multiPartDownloadData.extIdx;
+        if(multiPartDownloadData.extIdx>=multiPartDownloadData.exts.size())
+        {
+            XLOGF(WARN, "Out of multi-part parts size {} in seek", multiPartDownloadData.exts.size());
+            return ENOENT;
+        }
+        multiPartDownloadData.currExt = multiPartDownloadData.exts[multiPartDownloadData.extIdx];
+    }
+
+    partLen = multiPartDownloadData.currExt.size;
+    return readMultipartExt(sfs, offset, bucketId, multiPartDownloadData, extents, etag);
+}
+
+int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string& etag)
 {
     auto partNum = multiPartDownloadData.currExt.start;
     const auto partsBucketId = buckets::getPartsBucket(bucketId);
@@ -3241,7 +3364,9 @@ int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
         size += ext.len;
     }
 
-    XLOGF(DBG0, "Multi-part ext offset {} partNum {} extents {} size {}", offset, partNum, extents.size(), size);
+    etag = getEtag(res.md5sum);
+
+    XLOGF(DBG0, "Multi-part ext offset {} partNum {} extents {} size {} etag {}", offset, partNum, extents.size(), size, etag);
 
     return 0;
 }
@@ -3295,7 +3420,8 @@ int S3Handler::readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int6
         multiPartDownloadData.needsFinalize = false;
     }
 
-    const auto rc = readMultipartExt(sfs, offset, bucketId, multiPartDownloadData, extents);
+    std::string etag;
+    const auto rc = readMultipartExt(sfs, offset, bucketId, multiPartDownloadData, extents, etag);
     if(rc)
     {
         XLOGF(WARN, "Error reading next multipart extents code {}", rc);

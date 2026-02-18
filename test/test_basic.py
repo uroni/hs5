@@ -375,7 +375,11 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):
             size -= len(buf)
 
     s3_client = hs5.get_s3_client()
-    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "upload.txt")
+
+    MB = 1024 * 1024
+    config = TransferConfig(multipart_chunksize=8 * MB)
+
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "upload.txt", Config=config)
 
     hs5.commit_storage(s3_client)
 
@@ -405,8 +409,38 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):
     bdata = obj_range["Body"].read()
     assert len(bdata) == size
 
+    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=1)
+    bdata = obj_range["Body"].read()
+    md5sum = hashlib.md5(bdata).hexdigest()
+    assert len(bdata) == 8*MB
+    with open(upload_file.name, "rb") as f:
+        assert bdata == f.read(8*MB)
+    assert obj_range["ETag"].strip('"').lower() == md5sum.lower()
+
+    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=2)
+    bdata = obj_range["Body"].read()
+    md5sum = hashlib.md5(bdata).hexdigest()
+    assert len(bdata) == 8*MB
+    with open(upload_file.name, "rb") as f:
+        f.seek(8*MB)
+        assert bdata == f.read(8*MB) 
+    assert obj_range["ETag"].strip('"').lower() == md5sum.lower()
+
     obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj["ContentLength"] == ul_size
+
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=2)
+    assert obj["ContentLength"] == 8*MB
+    assert obj["ETag"].strip('"').lower() == md5sum.lower()
+
+    with pytest.raises(ClientError):
+        s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=(70*MB)//(8*MB))
+
+    with pytest.raises(ClientError): 
+        s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=0)
+
+    with pytest.raises(ClientError):
+        s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=100)
 
     objs = s3_client.list_objects(Bucket=hs5.testbucketname())
     assert "Contents" in objs
