@@ -204,6 +204,12 @@ void ApiHandler::init()
                 if(bucketName.empty())
                     continue;
 
+                if(!buckets::isValidBucketName(bucketName))
+                {
+                    XLOGF(WARNING, "Invalid bucket name {}. Skipping creation of this bucket.", bucketName);
+                    continue;
+                }
+
                 buckets::addBucket(bucketName, false);
                 XLOGF(INFO, "Created initial bucket {}", bucketName);
             }
