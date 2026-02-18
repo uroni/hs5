@@ -621,11 +621,14 @@ def test_create_bucket(hs5: Hs5Runner, tmp_path: Path):
 
     s3_client = hs5.get_s3_client()
 
-    bucketname = "testbucket_created"
+    bucketname = "testbucket-created"
 
     s3_client.create_bucket(Bucket=bucketname)
     with pytest.raises(ClientError):
         s3_client.create_bucket(Bucket=bucketname)
+
+    with pytest.raises(ClientError):
+        s3_client.create_bucket(Bucket="INVALID")
 
     fdata = os.urandom(2*1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:

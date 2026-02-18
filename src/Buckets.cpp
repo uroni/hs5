@@ -78,6 +78,43 @@ int64_t addBucket(const std::string_view bucketName, bool failIfAlreadyExists)
     return id;
 }
 
+bool isValidBucketName(const std::string_view bucketName)
+{
+    if(bucketName.size()<3 || bucketName.size()>63)
+        return false;
+
+    if(bucketName.starts_with("xn--") || bucketName.starts_with("sthree-") || bucketName.starts_with("amzn-s3-demo-") 
+        || bucketName.ends_with("-s3alias") || bucketName.ends_with("--ol-s3") || bucketName.ends_with(".mrap") || bucketName.ends_with("--x-s3") 
+        || bucketName.ends_with("--table-s3") )
+        return false;
+
+    // TODO: Check for IP address like names (e.g. 192.168.5.4)
+
+    size_t lastPeriod = std::string_view::npos;
+    for(size_t i=0;i<bucketName.size();++i)
+    {
+        const auto c = bucketName[i];
+        if(i==0 || i == bucketName.size()-1)
+        {
+            if((c>='a' && c<='z') || (c>='0' && c<='9'))
+                continue;
+            return false;
+        }
+        else if((c>='a' && c<='z') || (c>='0' && c<='9') || c=='-' || c=='.')
+        {
+            if(c=='.')
+            {
+                if(lastPeriod != std::string_view::npos && i-1 == lastPeriod)
+                    return false;
+                lastPeriod = i;
+            }
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
 std::optional<int64_t> getBucket(const std::string_view bucketName)
 {
     std::unique_lock lock{mutex};

@@ -704,6 +704,9 @@ Api::AddBucketResp ApiHandler::addBucket(const Api::AddBucketParams& params, con
     if(!isAuthorized("arn:aws:s3:::buckets", Action::CreateBucket, sessionStorage.userId))
         throw ApiError(Api::Herror::accessDenied);
 
+    if(!buckets::isValidBucketName(params.bucketName))
+        throw ApiError(Api::Herror::invalidBucketName, fmt::format("Bucket name {} is not valid", params.bucketName));
+
     const auto bucketId = buckets::addBucket(params.bucketName, true);
     if(bucketId<0)
         throw ApiError(Api::Herror::bucketAlreadyExists);

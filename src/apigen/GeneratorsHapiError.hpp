@@ -43,6 +43,7 @@ namespace Api {
             {"error_listing_in_iteration", Herror::errorListingInIteration},
             {"error_starting_listing", Herror::errorStartingListing},
             {"internal_db_error", Herror::internalDbError},
+            {"invalid_bucket_name", Herror::invalidBucketName},
             {"invalid_parameters", Herror::invalidParameters},
             {"invalid_path", Herror::invalidPath},
             {"invalid_policy_document", Herror::invalidPolicyDocument},
@@ -72,6 +73,7 @@ namespace Api {
             case Herror::errorListingInIteration: j = "error_listing_in_iteration"; break;
             case Herror::errorStartingListing: j = "error_starting_listing"; break;
             case Herror::internalDbError: j = "internal_db_error"; break;
+            case Herror::invalidBucketName: j = "invalid_bucket_name"; break;
             case Herror::invalidParameters: j = "invalid_parameters"; break;
             case Herror::invalidPath: j = "invalid_path"; break;
             case Herror::invalidPolicyDocument: j = "invalid_policy_document"; break;

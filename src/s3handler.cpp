@@ -1009,7 +1009,8 @@ enum class S3ErrorCode
     NoSuchKey,
     BucketAlreadyExists,
     InvalidPartOrder,
-    InvalidArgument
+    InvalidArgument,
+    InvalidBucketName
 };
 
 std::string_view s3errorCodeToStr(const S3ErrorCode code)
@@ -1032,6 +1033,8 @@ std::string_view s3errorCodeToStr(const S3ErrorCode code)
             return "InvalidPartOrder";
         case S3ErrorCode::InvalidArgument:
             return "InvalidArgument";
+        case S3ErrorCode::InvalidBucketName:
+            return "InvalidBucketName";
         default:
             return "InternalError";
     }
@@ -2861,6 +2864,20 @@ void S3Handler::finalizeCreateBucket()
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb]()
             {
+                if(!buckets::isValidBucketName(self->keyInfo.key))
+                {
+                    XLOGF(WARN, "Invalid bucket name {}", self->keyInfo.key);
+                    evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(400, "Bad Request")
+                            .body(s3errorXml(S3ErrorCode::InvalidBucketName, "Invalid bucket name", self->fullKeyPath(), ""))
+                            .sendWithEOM();
+                        self->finished_ = true;
+                                              });
+                    return;
+                }
+
                 const auto bucketId = buckets::addBucket(self->keyInfo.key, true);
 
                 if(bucketId < 0)

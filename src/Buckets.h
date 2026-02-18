@@ -11,6 +11,8 @@ void refreshBucketCache();
 
 int64_t addBucket(const std::string_view bucketName, bool failIfAlreadyExists);
 
+bool isValidBucketName(const std::string_view bucketName);
+
 std::optional<int64_t> getBucket(const std::string_view bucketName);
 
 bool deleteBucket(int64_t bucketId);

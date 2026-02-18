@@ -23,7 +23,8 @@
                 "access_denied",
                 "error_deleting_object",
                 "error_deleting_bucket",
-                "invalid_policy_document"
+                "invalid_policy_document",
+                "invalid_bucket_name"
             ]
         },
         "msg" : {
