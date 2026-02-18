@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771436103725,
+  "lastUpdate": 1771436104919,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -4940,6 +4940,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.12235556886702818",
             "extra": "mean: 15.506248852600015 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "4520330a947076e538e1b44cd304cd56c13a5253",
+          "message": "Make bucket deletion parsing more robust",
+          "timestamp": "2026-02-18T18:24:50+01:00",
+          "tree_id": "03d3673c7ad9898baadba957c2f841a708e08531",
+          "url": "https://github.com/uroni/hs5/commit/4520330a947076e538e1b44cd304cd56c13a5253"
+        },
+        "date": 1771436104074,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.06634631869317736,
+            "unit": "iter/sec",
+            "range": "stddev: 0.16484919532657621",
+            "extra": "mean: 15.072426318399994 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.05834343215426818,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1578115670037977",
+            "extra": "mean: 17.13988983979997 sec\nrounds: 5"
           }
         ]
       }
