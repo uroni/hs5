@@ -2148,8 +2148,8 @@ std::pair<int64_t, int64_t> parseRange(const std::string_view range, int64_t fil
         auto endStr = std::string(byteRange.substr(dashPos+1));
         if(startStr.empty() && !endStr.empty())
         {
-            start = 0;
-            end = fileSize - std::stoll(endStr);
+            start = fileSize - std::stoll(endStr);
+            end = fileSize;
         }
         else if(!startStr.empty() && endStr.empty())
         {
