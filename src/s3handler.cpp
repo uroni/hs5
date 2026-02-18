@@ -3324,7 +3324,7 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
                     else
                     {
                         ResponseBuilder(self->downstream_)
-                            .status(200, "OK")
+                            .status(204, "No Content")
                             .sendWithEOM();
                     }
                                             }
