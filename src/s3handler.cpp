@@ -1759,6 +1759,13 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
                             .sendWithEOM();
         return;
     }
+    else if(headers.getMethod() == HTTPMethod::HEAD)
+    {
+        ResponseBuilder(self->downstream_)
+                            .status(200, "OK")
+                            .sendWithEOM();
+        return;
+    }
 
     keyInfo.bucketId = *bucketId;
 

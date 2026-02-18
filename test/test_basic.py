@@ -39,6 +39,14 @@ def create_random_file(fn: Path, size: int) -> int:
 
     return crc
 
+def test_head_bucket(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    hb = s3_client.head_bucket(Bucket=hs5.testbucketname())
+    assert hb["ResponseMetadata"]["HTTPStatusCode"] == 200
+
+    with pytest.raises(ClientError):
+        s3_client.head_bucket(Bucket=hs5.testbucketname() + "-nonexistent")
 
 
 def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
