@@ -660,6 +660,18 @@ void CWData::addVarInt( int64_t ta )
 	assert(p==needed_bytes);
 }
 
+size_t CWData::varIntLen(int64_t ta)
+{
+	return sqlite3VarintLen(static_cast<u64>(ta));
+}
+
+char* CWData::putVarInt(char* buffer, int64_t ta)
+{
+	int needed_bytes = sqlite3VarintLen(static_cast<u64>(ta));
+	sqlite3PutVarint(reinterpret_cast<unsigned char*>(buffer), static_cast<u64>(ta));
+	return buffer + needed_bytes;
+}
+
 CRData::CRData(const char* c,size_t datalength, bool pCopy)
 {
 	data=NULL;

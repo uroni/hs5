@@ -18,6 +18,7 @@
 #include <expat.h>
 #include <openssl/evp.h>
 #include "data.h"
+#include "ContentType.h"
 
 #include "ApiHandler.h"
 
@@ -94,18 +95,27 @@ struct MultiPartDownloadData
     std::vector<PartExt> exts;
 };
 
-std::pair<std::string, std::vector<MultiPartDownloadData::PartExt>> parsePartExts(const std::string& rdata);
+struct ParsePartRes
+{
+    std::string nonce;
+    ContentType contentType;
+    std::vector<MultiPartDownloadData::PartExt> parts;
+};
+
+ParsePartRes parsePartExtsFromStr(const std::string& rdata);
 std::vector<MultiPartDownloadData::PartExt> parsePartExts(CRData& rdata);
 std::vector<MultiPartDownloadData::PartExt> addPartExt(std::vector<MultiPartDownloadData::PartExt> parts, const int64_t partSize, const int partNum);
-std::string serializePartExts(const std::string& nonce, const std::vector<MultiPartDownloadData::PartExt>& parts);
+std::string serializePartExts(const ParsePartRes& partRes);
 
 std::string make_key(const std::string_view key, const int64_t bucketId, const int64_t version);
 std::string make_key(const KeyInfo& keyInfo);
 KeyInfoView extractKeyInfoView(const std::string_view key);
 
-const char metadata_object = 0;
-const char metadata_multipart_object = 1;
-const char metadata_tombstone = 2;
+const unsigned char metadata_object = 0;
+const unsigned char metadata_multipart_object = 1;
+const unsigned char metadata_tombstone = 2;
+const unsigned char metadata_flag_with_content_type = 4;
+const unsigned char metadata_known_flags = metadata_flag_with_content_type;
 
 class S3Handler : public proxygen::RequestHandler
 {
@@ -243,7 +253,7 @@ public:
         }
     };
 
-    static bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData);
+    static bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, ContentType* contentType);
     static std::string getEtag(const std::string& md5sum);
     
     static int seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
@@ -308,6 +318,7 @@ private:
     std::unique_ptr<MultiPartUploadData> multiPartUploadData;
     std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
     std::unique_ptr<DeleteObjectsData> deleteObjectsData;
+    ContentType contentType;
 
 	std::mutex extents_mutex;
 	std::condition_variable extents_cond;

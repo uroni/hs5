@@ -96,7 +96,7 @@ void DuckDbFileHandle::Initialize()
             throw duckdb::IOException("Failed to prepare read: " + std::to_string(res.err));
         }
 
-        if(!S3Handler::parseMultipartInfo(res.md5sum, res.total_len, multiPartDownloadData))
+        if(!S3Handler::parseMultipartInfo(res.md5sum, res.total_len, multiPartDownloadData, nullptr))
         {
             throw duckdb::IOException("Failed to parse multipart info for file: " + path);
         }

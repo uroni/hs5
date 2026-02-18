@@ -26,6 +26,8 @@ public:
 	void addVoidPtr(void *ptr);
 	void addBuffer(const char* buffer, size_t bsize);
 	void addVarInt(int64_t ta);
+	static size_t varIntLen(int64_t ta);
+	static char* putVarInt(char* buffer, int64_t ta);
 
 	void clear();
 
