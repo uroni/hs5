@@ -41,6 +41,28 @@ def test_put_get_minio(benchmark: BenchmarkFixture, tmp_path: Path, minio: Minio
     assert len(bdata) == 10
     assert bdata == fdata[:10]
 
+
+def test_put_get_rustfs(benchmark: BenchmarkFixture, tmp_path: Path, rustfs: RustfsRunner):
+    """
+    Make sure the rustfs fixture is working
+    """
+
+    fdata = os.urandom(29*1024*1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+    
+    s3_client = rustfs.get_s3_client()
+    with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
+        s3_client.put_object(Bucket=rustfs.testbucketname(), Key="upload.txt", Body=upload_file)
+
+    obj_info = s3_client.head_object(Bucket=rustfs.testbucketname(), Key="upload.txt")
+    assert obj_info["ContentLength"] == len(fdata)
+
+    obj_range = s3_client.get_object(Bucket=rustfs.testbucketname(), Key="upload.txt", Range="bytes=0-9")
+    bdata = obj_range["Body"].read()
+    assert len(bdata) == 10
+    assert bdata == fdata[:10]
+
 @dataclass
 class FileUpload:
     tmp_path: Path
