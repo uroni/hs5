@@ -20,7 +20,7 @@ from pytest_benchmark.fixture import BenchmarkFixture
 from multiprocessing import Pool
 
 
-def test_put_get_minio(benchmark: BenchmarkFixture, tmp_path: Path, minio: MinioRunner):
+def test_put_get_minio(tmp_path: Path, minio: MinioRunner):
     """
     Make sure the minio fixture is working
     """
@@ -43,7 +43,7 @@ def test_put_get_minio(benchmark: BenchmarkFixture, tmp_path: Path, minio: Minio
 
 
 @pytest.mark.skipif(os.getenv("RUSTFS_ENABLED") != "1", reason="RUSTFS_ENABLED environment variable not set to 1")
-def test_put_get_rustfs(benchmark: BenchmarkFixture, tmp_path: Path, rustfs: RustfsRunner):
+def test_put_get_rustfs(tmp_path: Path, rustfs: RustfsRunner):
     """
     Make sure the rustfs fixture is working
     """
