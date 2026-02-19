@@ -5,6 +5,7 @@
 #include <iostream>
 #include "config.h"
 #include <folly/String.h>
+#include <folly/system/HardwareConcurrency.h>
 #include <map>
 #include <set>
 #include <fstream>
@@ -133,7 +134,9 @@ ConfigResult readConfigFile(const std::string& fn)
         {"INIT_ROOT_ACCESS_KEY", "init_root_access_key"},
         {"INIT_ROOT_PASSWORD", "init_root_password"},
         {"INIT_CREATE_BUCKET", "init_create_bucket"},
-        {"COMMIT_AFTER_MS", "commit_after_ms"}
+        {"COMMIT_AFTER_MS", "commit_after_ms"},
+        {"WORKER_THREADS", "folly_global_cpu_executor_threads"},
+        {"HTTP_WORKER_THREADS", "http_worker_threads"},
     };
 
     for(const auto& [key, val]: settings)
@@ -279,6 +282,14 @@ int actionRun(std::vector<std::string> args)
     TCLAP::ValueArg<std::string> walPathArg("", "wal-path",
         "Path to write performance WAL file to (default same as meta storage path)",
         false, "", "path", cmd);
+
+    TCLAP::ValueArg<int64_t> workerThreadsArg("", "worker-threads",
+        "Max number of worker threads to use (default number of CPU cores times two)",
+        false, 0, "threads", cmd);
+
+    TCLAP::ValueArg<int64_t> httpWorkerThreadsArg("", "http-worker-threads",
+        "Max number of worker threads to use for HTTP server (default number of CPU cores)",
+        false, 0, "threads", cmd);
 
     std::vector<std::string> walModes;
     walModes.push_back("disabled");
@@ -440,6 +451,40 @@ int actionRun(std::vector<std::string> args)
         {
             realArgs.push_back("--nowal_write_meta");
             realArgs.push_back("--wal_write_data");
+        }
+    }
+
+    if(!alreadySetArgs.contains("--folly_global_cpu_executor_threads"))
+    {
+        if(workerThreadsArg.isSet())
+        {
+            realArgs.push_back("--folly_global_cpu_executor_threads");
+            realArgs.push_back(std::to_string(workerThreadsArg.getValue()));
+        }
+        else if(auto workerThreadsEnv = getenv("WORKER_THREADS"); workerThreadsEnv)
+        {
+            realArgs.push_back("--folly_global_cpu_executor_threads");
+            realArgs.push_back(workerThreadsEnv);
+        }
+        else
+        {
+            const auto workerThreads = folly::hardware_concurrency() * 2;
+            realArgs.push_back("--folly_global_cpu_executor_threads");
+            realArgs.push_back(std::to_string(workerThreads));
+        }
+    }
+
+    if(!alreadySetArgs.contains("--http_worker_threads"))
+    {
+        if(httpWorkerThreadsArg.isSet())
+        {
+            realArgs.push_back("--http_worker_threads");
+            realArgs.push_back(std::to_string(httpWorkerThreadsArg.getValue()));
+        }
+        else if(auto workerThreadsEnv = getenv("HTTP_WORKER_THREADS"); workerThreadsEnv)
+        {
+            realArgs.push_back("--http_worker_threads");
+            realArgs.push_back(workerThreadsEnv);
         }
     }
 

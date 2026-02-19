@@ -1,6 +1,7 @@
 # Copyright Martin Raiber. All Rights Reserved.
 # SPDX-License-Identifier: LGPL-3.0-or-later
 from dataclasses import dataclass
+import multiprocessing
 from pathlib import Path
 from shutil import rmtree
 import subprocess
@@ -72,7 +73,8 @@ class Hs5Runner:
             str(curr_port),
             "--init_root_password", self._root_key,
             "--with_stop_command", "true",
-            "--bucket_versioning=false"]
+            "--bucket_versioning=false",
+            f"--folly_global_cpu_executor_threads={multiprocessing.cpu_count()*2}"]
 
         if os.environ.get("MANUAL_COMMIT") == "1":
             self.manual_commit = True

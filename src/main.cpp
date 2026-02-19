@@ -52,9 +52,9 @@ DEFINE_string(ip, "localhost", "IP/Hostname to bind to");
 DEFINE_int64(data_file_size_limit_mb, 0, "Max data file size (0 for unlimited)");
 DEFINE_int64(data_file_alloc_chunk_size, 512*1024*1024, "Data file chunk allocation size");
 DEFINE_double(alloc_use_free_space_percent, 10, "If this amount of free space percentage is available in the data file, use free space in data file instead of extending data file. Use >100% to disable");
-DEFINE_int32(threads,
+DEFINE_int32(http_worker_threads,
              0,
-             "Number of threads to listen on. Numbers <= 0 "
+             "Number of HTTP worker threads to use. Numbers <= 0 "
              "will use the number of cores on this machine.");
 DEFINE_bool(manual_commit, false, "Manually commit by putting to a711e93e-93b4-4a9e-8a0b-688797470002");
 DEFINE_string(index_path, ".", "Path where to put the index file");
@@ -218,6 +218,10 @@ int realMain(int argc, char* argv[])
       IPs.push_back({folly::SocketAddress(FLAGS_ip, FLAGS_h2_port, true), proxygen::HTTPServer::Protocol::HTTP2});
     }
 
+    IPs[0].acceptorSocketOptions = folly::SocketOptionMap {
+      {{SOL_SOCKET, SO_RCVBUFFORCE, folly::SocketOptionKey::ApplyPos::POST_BIND}, 32*1024*1024}
+    };
+
     if(FLAGS_server_url.empty())
       FLAGS_server_url = fmt::format("http://{}:{}", FLAGS_ip, FLAGS_http_port);
 
@@ -252,10 +256,11 @@ int realMain(int argc, char* argv[])
       return 1;
     }
 
-    proxygen::HTTPSessionBase::setMaxReadBufferSize(16*1024);
+    proxygen::HTTPSessionBase::setMaxReadBufferSize(32*1024);
+    proxygen::HTTPSessionBase::setDefaultReadBufferLimit(128*1024);
 
     proxygen::HTTPServerOptions options;
-    options.threads = static_cast<size_t>(FLAGS_threads);
+    options.threads = static_cast<size_t>(FLAGS_http_worker_threads);
     options.idleTimeout = 60s;
     options.shutdownOn = {SIGINT, SIGTERM};
     options.enableContentCompression = false;
