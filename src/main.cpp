@@ -218,10 +218,6 @@ int realMain(int argc, char* argv[])
       IPs.push_back({folly::SocketAddress(FLAGS_ip, FLAGS_h2_port, true), proxygen::HTTPServer::Protocol::HTTP2});
     }
 
-    IPs[0].acceptorSocketOptions = folly::SocketOptionMap {
-      {{SOL_SOCKET, SO_RCVBUFFORCE, folly::SocketOptionKey::ApplyPos::POST_BIND}, 32*1024*1024}
-    };
-
     if(FLAGS_server_url.empty())
       FLAGS_server_url = fmt::format("http://{}:{}", FLAGS_ip, FLAGS_http_port);
 
@@ -256,8 +252,7 @@ int realMain(int argc, char* argv[])
       return 1;
     }
 
-    proxygen::HTTPSessionBase::setMaxReadBufferSize(32*1024);
-    proxygen::HTTPSessionBase::setDefaultReadBufferLimit(128*1024);
+    proxygen::HTTPSessionBase::setMaxReadBufferSize(16*1024);
 
     proxygen::HTTPServerOptions options;
     options.threads = static_cast<size_t>(FLAGS_http_worker_threads);
