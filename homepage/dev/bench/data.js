@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771506695795,
+  "lastUpdate": 1771539170856,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -5206,6 +5206,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.14863866806782988",
             "extra": "mean: 15.647220741599995 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "ab6ca0e5fb4c4ce3104d3e50ac30db20561bfe37",
+          "message": "Increase http read buffer size and make it configurable",
+          "timestamp": "2026-02-19T23:02:00+01:00",
+          "tree_id": "afcc11b3065dca32c89280dcbc52dd5ff7824130",
+          "url": "https://github.com/uroni/hs5/commit/ab6ca0e5fb4c4ce3104d3e50ac30db20561bfe37"
+        },
+        "date": 1771539170115,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07326900474960511,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1375521934190582",
+            "extra": "mean: 13.648336065400008 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06583156071568827,
+            "unit": "iter/sec",
+            "range": "stddev: 0.06313918168895712",
+            "extra": "mean: 15.190282428800003 sec\nrounds: 5"
           }
         ]
       }
