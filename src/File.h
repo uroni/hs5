@@ -281,6 +281,17 @@ public:
         }, size, spos, false) == 0;
     }
 
+    
+    bool alloc(__off64_t len)
+    {
+        if(len<=0)
+            return false;
+
+        return mapOp([&](const File& file, size_t count, size_t offset) {
+            return posix_fallocate(file.fd(), 0, offset+count) == 0 ? 1 : -1;
+        }, 1, len-1, true) == 1;
+    }
+
     void truncate(__off64_t len)
     {
         const auto csize = size();

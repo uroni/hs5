@@ -30,6 +30,7 @@
 #include "utils.h"
 #include <filesystem>
 #include <cstdlib>
+#include <sys/vfs.h>
 
 #include <string>
 #include <system_error>
@@ -49,6 +50,7 @@ DEFINE_int64(max_wal_size_mb, 1000, "Maximum WAL file size in MiB before resetti
 DEFINE_int64(max_wal_items, 10000, "Maxmimum amount of items in WAL file before resetting");
 DEFINE_bool(check_freespace_on_startup, false, "Check data file freespace on startup");
 DEFINE_bool(wal_write_thread, true, "Use a separate thread for WAL file data writes");
+DEFINE_bool(preallocate_data, true, "Preallocate data file space to improve performance and fragmentation");
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -435,6 +437,20 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 		common_prefix_func = common_prefix_passthrough;
 	if(common_prefix_hash_func==nullptr)
 		common_prefix_hash_func = common_prefix_hash_func_passthrough;
+
+	{
+		struct statfs data_file_statfs;
+		const auto rc = statfs(options.data_path.c_str(), &data_file_statfs);
+		if(rc==0)
+		{
+			if(data_file_statfs.f_type == 0x9123683e)
+			{
+				XLOGF(INFO, "Detected Btrfs filesystem for data file storage. Disabling prealloc");
+				// We only use prealloc for performance and it does not improve performance on btrfs
+				FLAGS_preallocate_data = false;
+			}
+		}
+	}
 
 	int64_t index_file_size = 0;
 
@@ -1825,6 +1841,7 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
 
 	std::vector<Ext> extents;
 	size_t data_size_remaining = data_size;
+	int64_t alloc_fsize = -1;
 	{
 		std::lock_guard lock(datafileoffset_mutex);
 
@@ -1836,6 +1853,8 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
 				&& data_file_offset >= data_file_offset_end)
 			{
 				XLOG(DBG) << "Current data offset " << std::to_string(data_file_offset) << " out of extent end (" << std::to_string(data_file_offset_end) << "). Searching for new free extent...";
+
+				const auto fsize = data_file_max_size;
 
 				SCommitInfo commit_info;
 				std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
@@ -1870,6 +1889,11 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
 				data_file_offset = commit_info.new_datafile_offset;
 				data_file_offset_end = commit_info.new_datafile_offset_end;
 
+				if(data_file_offset_end > fsize)
+				{
+					alloc_fsize = data_file_offset_end;
+				}
+
 				XLOG(DBG0) << "Found new free extent (" << std::to_string(data_file_offset) << ", " << std::to_string(data_file_offset_end) << "). Size " << folly::prettyPrint(data_file_offset_end - data_file_offset, folly::PRETTY_BYTES_IEC);
 			}
 
@@ -1897,6 +1921,11 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
 
 			extents.push_back(curr_ext);
 		}
+	}
+
+	if(FLAGS_preallocate_data && alloc_fsize > 0)
+	{
+		data_file.alloc(alloc_fsize);
 	}
 
 	return WritePrepareResult{0, extents};
