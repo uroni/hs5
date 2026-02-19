@@ -79,7 +79,7 @@ class Hs5Runner:
         if os.environ.get("MANUAL_COMMIT") == "1":
             self.manual_commit = True
         
-        if os.environ.get("ENABLE_WAL") == "1":
+        if os.environ.get("ENABLE_WAL") == "1" or perf:
             self.args.append("--index_wal_path")
             self.args.append(".")
 
