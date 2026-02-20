@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771539170856,
+  "lastUpdate": 1771577704814,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -5244,6 +5244,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.06313918168895712",
             "extra": "mean: 15.190282428800003 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "90b909bcdcee9f54c8897bffb8bbc1ae228d6c07",
+          "message": "Add WAL mode that logs only small object data",
+          "timestamp": "2026-02-20T09:45:54+01:00",
+          "tree_id": "5b844a0dba9f5034d9070d80d09d1ccf3fc06813",
+          "url": "https://github.com/uroni/hs5/commit/90b909bcdcee9f54c8897bffb8bbc1ae228d6c07"
+        },
+        "date": 1771577704343,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.0831042307644599,
+            "unit": "iter/sec",
+            "range": "stddev: 0.030801341333378952",
+            "extra": "mean: 12.033081719199993 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06748462726624609,
+            "unit": "iter/sec",
+            "range": "stddev: 0.08817915515863382",
+            "extra": "mean: 14.818189571599987 sec\nrounds: 5"
           }
         ]
       }
