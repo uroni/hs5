@@ -134,26 +134,20 @@ HS5 has an optional Write-Ahead-Log (WAL) mode where it logs data and/or metadat
 
 ## Performance #
 
-There is a rudimentary [performance test suite](https://github.com/uroni/hs5/blob/main/test/test_perf.py) (contributions welcome). Currently it has one test that uploads 10000 small files with default application settings (see source code):
+There is a rudimentary [performance test suite](https://github.com/uroni/hs5/blob/main/test/test_perf.py) (contributions welcome). Currently it has one test that uploads 10000 small files with default application settings, HS5 runs with `--wal-mode full` (see source code):
 
 
 **Performance Benchmark Results:**
 
-| Test Name                        |    Min (s) |    Max (s) |   Mean (s) | StdDev (s) | Median (s) |   IQR (s) | Outliers |   OPS   | Rounds | Iterations |
-|-----------------------------------|-----------:|-----------:|-----------:|-----------:|-----------:|----------:|---------:|--------:|--------:|-----------:|
-| test_perf_upload_many_files_hs5   |     7.2555 |     8.7556 |     8.0066 |    0.6549  |    7.8952  |   1.1767  |    2;0   | 0.1249  |      5 |          1 |
-| test_perf_upload_many_files_minio |     8.1981 |     9.9005 |     9.2088 |    0.6345  |    9.2654  |   0.7111  |    2;0   | 0.1086  |      5 |          1 |
-| test_perf_upload_many_files_rustfs|    10.7288 |    14.0298 |    11.7157 |    1.3398  |   11.1023  |   1.3234  |    1;0   | 0.0854  |      5 |          1 |
+
+| Test Name                        |    Min (s) |    Max (s) |   Mean (s) | StdDev (s) | Median (s) |
+|-----------------------------------|-----------:|-----------:|-----------:|-----------:|-----------:|
+| test_perf_upload_many_files_hs5   |   11.1064  |   13.4288  |   11.9456  |   0.9238   |  11.7138   |
+| test_perf_upload_many_files_rustfs|   13.4040  |   17.9559  |   15.4104  |   1.7089   |  15.1843   |
+| test_perf_upload_many_files_minio |   17.7951  |   20.6695  |   18.6946  |   1.1828   |  18.1048   |
 
 **Legend:**
-- **Min/Max/Mean/Median/IQR/StdDev:** Time in seconds
-- **OPS:** Operations Per Second (1 / Mean)
-- **Outliers:** 1 Standard Deviation from Mean; 1.5 IQR from 1st/3rd Quartile
-
-
-Legend:
-  Outliers: 1 Standard Deviation from Mean; 1.5 IQR (InterQuartile Range) from 1st Quartile and 3rd Quartile.
-  OPS: Operations Per Second, computed as 1 / Mean
+- **Min/Max/Mean/Median/StdDev:** Time in seconds
 
 ## DuckDB UI #
 
