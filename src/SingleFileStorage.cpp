@@ -2349,7 +2349,10 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 		}
 
 		if(!(flags & ReadSkipAddReading))
+		{
+			std::lock_guard lock(mutex);
 			add_reading_item(frag_info);
+		}
 	}
 
 	ReadPrepareResult res = {0};
