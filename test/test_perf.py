@@ -20,6 +20,7 @@ from pytest_benchmark.fixture import BenchmarkFixture
 from multiprocessing import Pool
 
 
+@pytest.mark.skipif(os.getenv("MINIO_ENABLED") != "1", reason="MINIO_ENABLED environment variable not set to 1")
 def test_put_get_minio(tmp_path: Path, minio: MinioRunner):
     """
     Make sure the minio fixture is working
