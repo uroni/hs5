@@ -304,7 +304,7 @@ int actionRun(std::vector<std::string> args)
         "Specifies what to write to performance WAL file (default disabled)",
         false, "disabled", &walModesConstraint, cmd);
 
-    TCLAP::ValueArg<int64_t> walDataThresholdArg("", "wal-data-threshold",
+    TCLAP::ValueArg<int64_t> walSmallObjectLimitArg("", "wal-small-object-limit",
         "Number of bytes below which to log object data to WAL file if wal-mode is full or data-only"
         " (default 6000 bytes)",
         false, 6000, "bytes", cmd);
@@ -443,7 +443,7 @@ int actionRun(std::vector<std::string> args)
 
     if(walModeArg.isSet() && walModeArg.getValue()!="disabled")
     {
-        const auto walDataThreshold = walDataThresholdArg.getValue() > 0 ? walDataThresholdArg.getValue() : -1;
+        const auto walSmallObjectLimit = walSmallObjectLimitArg.getValue() > 0 ? walSmallObjectLimitArg.getValue() : -1;
         if(!alreadySetArgs.contains("--index_wal_path"))
         {
             // Setting index_wal_path enables WAL (metadata-only)
@@ -454,13 +454,13 @@ int actionRun(std::vector<std::string> args)
         if(walModeArg.getValue()=="full")
         {
             realArgs.push_back("--wal_write_data");
-            realArgs.push_back(std::to_string(walDataThreshold));
+            realArgs.push_back(std::to_string(walSmallObjectLimit));
         }
         else if(walModeArg.getValue()=="data-only")
         {
             realArgs.push_back("--nowal_write_meta");
             realArgs.push_back("--wal_write_data");
-            realArgs.push_back(std::to_string(walDataThreshold));
+            realArgs.push_back(std::to_string(walSmallObjectLimit));
         }
         else if(walModeArg.getValue()=="all-data-only")
         {

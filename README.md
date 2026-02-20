@@ -132,6 +132,8 @@ See [hs5_commit.py](https://github.com/uroni/hs5/blob/main/test/hs5_commit.py) f
 
 HS5 has an optional Write-Ahead-Log (WAL) mode where it logs data and/or metadata into a file first before writing it to the respective files. This can be used to improve performance if the metadata/data file is slower than the WAL file w.r.t. latency, e.g., the data path is network storage and the wal path is local flash storage. Enable this mode with `--wal-mode all` (or `metadata-only`/`data-only`).
 
+When logging data in WAL mode `data-only` or `full` it logs only objects with size smaller than `--wal-small-object-limit` (6000 bytes per default). Use WAL mode `all-data-only` or `full-all-data` to make it log all data.
+
 ## Performance #
 
 There is a rudimentary [performance test suite](https://github.com/uroni/hs5/blob/main/test/test_perf.py) (contributions welcome). Currently it has one test that uploads 10000 small files with default application settings, HS5 runs with `--wal-mode full` (see source code):
