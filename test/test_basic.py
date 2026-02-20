@@ -22,7 +22,6 @@ import filecmp
 import io
 import requests
 import hashlib
-import aioboto3
 from hs5_commit import Hs5Commit, Hs5RestartError
 
 def create_random_file(fn: Path, size: int) -> int:
@@ -854,10 +853,12 @@ def test_read_commit_info(hs5: Hs5Runner, tmp_path: Path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.environ.get("AIOBOTO3_TEST") != "1", reason="Requires aioboto3")
 async def test_read_commit_info_async(hs5: Hs5Runner):
     if not hs5.manual_commit:
         pytest.skip("Skipping read commit info test in automatic commit mode")
 
+    import aioboto3
     s3_client = aioboto3.Session(aws_access_key_id="root", aws_secret_access_key=hs5._root_key)
     async with s3_client.client("s3", endpoint_url=hs5.get_url()) as s3:
         runtime_id_io = io.BytesIO()
