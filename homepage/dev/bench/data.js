@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771581939591,
+  "lastUpdate": 1771587536993,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -5358,6 +5358,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.6983774291048",
             "extra": "mean: 16.38538540779996 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "5bd6da6ca0dc2e5b2573027fa1145af4fe5c2a74",
+          "message": "Rename param to wal-small-object-limit",
+          "timestamp": "2026-02-20T10:56:23+01:00",
+          "tree_id": "6da17891c36640663f55cb10dc6d6cf3ccaa3f31",
+          "url": "https://github.com/uroni/hs5/commit/5bd6da6ca0dc2e5b2573027fa1145af4fe5c2a74"
+        },
+        "date": 1771587536570,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08389307884189154,
+            "unit": "iter/sec",
+            "range": "stddev: 0.048872838550285055",
+            "extra": "mean: 11.919934442800013 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06693289693345833,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1208409125839603",
+            "extra": "mean: 14.940336453600015 sec\nrounds: 5"
           }
         ]
       }
