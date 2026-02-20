@@ -738,6 +738,7 @@ def test_upload_long_key(hs5: Hs5Runner, tmp_path: Path):
     assert not list["IsTruncated"]
     assert "Contents" not in list
 
+@pytest.mark.skipif(os.environ.get("ENABLE_WAL") == "1" and os.environ.get("ENABLE_WAL_WRITE_META") != "0", reason="With metadata WAL, space reuse is delayed to WAL commit")
 def test_datafile_space_reused(hs5_large_small_alloc_chunksize: Hs5Runner):
     """
     Make sure that the datafile space is reused after a delete

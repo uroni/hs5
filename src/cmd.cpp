@@ -295,12 +295,19 @@ int actionRun(std::vector<std::string> args)
     walModes.push_back("disabled");
 	walModes.push_back("metadata-only");
     walModes.push_back("data-only");
+    walModes.push_back("all-data-only");
 	walModes.push_back("full");
+    walModes.push_back("full-all-data");
 
     TCLAP::ValuesConstraint<std::string> walModesConstraint(walModes);
     TCLAP::ValueArg<std::string> walModeArg("", "wal-mode",
         "Specifies what to write to performance WAL file (default disabled)",
         false, "disabled", &walModesConstraint, cmd);
+
+    TCLAP::ValueArg<int64_t> walDataThresholdArg("", "wal-data-threshold",
+        "Number of bytes below which to log object data to WAL file if wal-mode is full or data-only"
+        " (default 6000 bytes)",
+        false, 6000, "bytes", cmd);
 
     std::vector<std::string> realArgs;
 	realArgs.push_back(args[0]);
@@ -436,6 +443,7 @@ int actionRun(std::vector<std::string> args)
 
     if(walModeArg.isSet() && walModeArg.getValue()!="disabled")
     {
+        const auto walDataThreshold = walDataThresholdArg.getValue() > 0 ? walDataThresholdArg.getValue() : -1;
         if(!alreadySetArgs.contains("--index_wal_path"))
         {
             // Setting index_wal_path enables WAL (metadata-only)
@@ -446,11 +454,24 @@ int actionRun(std::vector<std::string> args)
         if(walModeArg.getValue()=="full")
         {
             realArgs.push_back("--wal_write_data");
+            realArgs.push_back(std::to_string(walDataThreshold));
         }
         else if(walModeArg.getValue()=="data-only")
         {
             realArgs.push_back("--nowal_write_meta");
             realArgs.push_back("--wal_write_data");
+            realArgs.push_back(std::to_string(walDataThreshold));
+        }
+        else if(walModeArg.getValue()=="all-data-only")
+        {
+            realArgs.push_back("--nowal_write_meta");
+            realArgs.push_back("--wal_write_data");
+            realArgs.push_back("-1");
+        }
+        else if(walModeArg.getValue()=="full-all-data")
+        {
+            realArgs.push_back("--wal_write_data");
+            realArgs.push_back("-1");
         }
     }
 

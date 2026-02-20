@@ -192,7 +192,7 @@ public:
 		on_delete_callback_t on_delete_callback;
 		modify_data_callback_t modify_data_callback;
 		bool wal_write_meta = true;
-		bool wal_write_data = false;
+		int64_t wal_write_data = 0;
 	};
 
 	SingleFileStorage(SFSOptions options);
@@ -217,7 +217,7 @@ public:
 
 	WritePrepareResult write_prepare(const std::string& fn, size_t data_size);
 
-	int write_ext(const Ext& ext, const char* data, size_t data_size);
+	int write_ext(const Ext& ext, const char* data, size_t data_size, const bool complete_obj);
 
 	int write_finalize(const std::string& fn, const std::vector<Ext>& extents, int64_t last_modified, const std::string& md5sum,
 		bool no_del_old, bool is_fragment, std::unique_ptr<SFragInfo> linked = nullptr);
@@ -629,6 +629,7 @@ private:
 
 	relaxed_atomic<bool> is_dead;
 	relaxed_atomic<bool> write_offline;
+	std::atomic<bool> data_file_dirty;
 
 	int64_t prev_transid;
 	int64_t curr_transid;
@@ -677,7 +678,7 @@ private:
 	std::unique_ptr<WalFile> wal_file;
 	bool needs_wal_file_reset = false;
 	bool wal_write_meta = true;
-	bool wal_write_data = false;
+	int64_t wal_write_data = 0;
 	char wal_uuid[16];
 	size_t startup_wal_items = 0;
 	bool wal_startup_finished = true;

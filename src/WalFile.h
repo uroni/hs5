@@ -12,8 +12,10 @@ class WalFile
 {
     File primaryFile;
     size_t primaryFilePendingData = 0;
+    std::set<int64_t> primaryFileDirtyBlocks;
     File altFile;
     size_t altFilePendingData = 0;
+    std::set<int64_t> altFileDirtyBlocks;
 
     bool pendingReset = false;
 
@@ -33,9 +35,34 @@ class WalFile
         return useAltFile ? primaryFile : altFile;
     }
 
+    std::set<int64_t>& dirtyBlocks()
+    {
+        return useAltFile ? altFileDirtyBlocks : primaryFileDirtyBlocks;
+    }
+
+    std::set<int64_t>& altDirtyBlocks()
+    {
+        return useAltFile ? primaryFileDirtyBlocks : altFileDirtyBlocks;
+    }
+
+    const std::set<int64_t>& dirtyBlocks() const
+    {
+        return useAltFile ? altFileDirtyBlocks : primaryFileDirtyBlocks;
+    }
+
+    const std::set<int64_t>& altDirtyBlocks() const
+    {
+        return useAltFile ? primaryFileDirtyBlocks : altFileDirtyBlocks;
+    }
+
     File& currentFileManual(bool alt)
     {
         return alt ? altFile : primaryFile;
+    }
+
+    std::set<int64_t>& dirtyBlocksManual(bool alt)
+    {
+        return alt ? primaryFileDirtyBlocks : altFileDirtyBlocks;
     }
     
     void incrPendingData()
@@ -102,8 +129,10 @@ class WalFile
 
     std::condition_variable writeDoneCond;
 
+    bool trackDirtyBlocks;
+
 public:
-    WalFile(const std::string &path, const std::string_view walUuid, MultiFile& dataFile);
+    WalFile(const std::string &path, const std::string_view walUuid, MultiFile& dataFile, const bool trackDirtyBlocks);
 
     bool write(const int64_t transid, const SingleFileStorage::SFragInfo& info);
     bool writeData(const int64_t off, const char* data, const size_t dataSize, const bool useThreadWrite);
@@ -177,6 +206,8 @@ public:
     void waitForWrites();
 
     void waitForWriteout(const int64_t off, const size_t dataSize);
+
+    bool isDirty(const int64_t off, const size_t dataSize) const;
 
     void wakeupDataWriteThread()
     {

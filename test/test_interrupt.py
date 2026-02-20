@@ -17,7 +17,11 @@ class UploadResult:
     md5: str
 
 def upload_file(hs5: Hs5Runner, tmp_path: Path, s3_client: S3Client) -> UploadResult:
-    fdata = os.urandom(1*1024*1024 + 52)
+    
+    if random.choice([True, False]):
+        fdata = os.urandom(1*1024*1024 + 52)
+    else:
+        fdata = os.urandom(3000)
 
     tpath = tmp_path / (uuid4().hex + ".dat")
     with open(tpath, "wb") as upload_file:

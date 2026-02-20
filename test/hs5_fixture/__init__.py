@@ -83,8 +83,13 @@ class Hs5Runner:
             self.args.append("--index_wal_path")
             self.args.append(".")
 
-        if os.environ.get("ENABLE_WAL_WRITE_DATA") == "1":
+        if os.environ.get("ENABLE_WAL_WRITE_DATA") == "1" or perf:
             self.args.append("--wal_write_data")
+            wal_thres = os.environ.get("WAL_WRITE_DATA_THRESHOLD")
+            self.args.append("6000" if wal_thres is None else wal_thres)
+        else:
+            self.args.append("--wal_write_data")
+            self.args.append("0")
 
         if os.environ.get("ENABLE_WAL_WRITE_META") == "0":
             self.args.append("--nowal_write_meta")

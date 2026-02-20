@@ -16,6 +16,7 @@ const char dataTypeInit = 2;
 const char dataTypeSync = 3;
 
 const int64_t waitBlockSize = 64 * 1024;
+const int64_t dirtyBlockSize = 64*1024;
 
 
 DEFINE_bool(wal_write_delay, false, "Delay WAL writes for testing");
@@ -94,11 +95,12 @@ bool forEachDataItem(const int64_t off, const size_t dataSize, auto fn)
 
 } // namespace
 
-WalFile::WalFile(const std::string &path, const std::string_view walUuid, MultiFile& dataFile)
+WalFile::WalFile(const std::string &path, const std::string_view walUuid, MultiFile& dataFile, const bool trackDirtyBlocks)
     : primaryFile(path+"1", O_RDWR | O_CREAT | O_APPEND, 0644), 
     altFile(path+"2", O_RDWR | O_CREAT | O_APPEND, 0644),
     dataFile(dataFile),
-    walUuid(walUuid)
+    walUuid(walUuid),
+    trackDirtyBlocks(trackDirtyBlocks)
 {
     seqNo = 1;
 
@@ -254,6 +256,15 @@ bool WalFile::writeData(CWData& data, DataItem* dataItem)
 
     incrPendingData();
 
+    if(trackDirtyBlocks)
+    {
+        forEachDataItem(off, dataSize, [&](const int64_t block)
+        {
+            dirtyBlocks().insert(block);
+            return false;
+        });
+    }
+
     forEachDataItem(off, dataSize, [&](const int64_t block)
     {
         auto it = dataItems.find(block);
@@ -276,6 +287,7 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
     std::scoped_lock lock(mutex);
 
     File& file = readFromAltFile ? currentAltFile() : currentFile();
+    auto& currDirtyBlocks = readFromAltFile ? altDirtyBlocks() : dirtyBlocks();
 
     folly::MemoryMapping mapping(file.dupCloseOnExec());
 
@@ -401,6 +413,15 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
             const size_t data_size = data.getLeft();
             const char* data_ptr = data.getCurrDataPtr();
 
+            if(trackDirtyBlocks)
+            {
+                forEachDataItem(data_off, data_size, [&](const int64_t block)
+                {
+                    currDirtyBlocks.insert(block);
+                    return false;
+                });
+            }
+
             XLOGF(INFO, "WalFile: recovery: writing data {} to data file at offset {} size {}", folly::crc32c(reinterpret_cast<const uint8_t*>(data_ptr), data_size), data_off, data_size);
 
             if(!data_file)
@@ -479,6 +500,7 @@ void WalFile::reset(ResetPrep& prep, const bool sync, const std::optional<bool> 
     }
 
     File& file = useAltFileManual ? currentFileManual(*useAltFileManual) : currentFile();
+    auto& currDirtyBlocks = useAltFileManual ? dirtyBlocksManual(*useAltFileManual) : dirtyBlocks();
 
     file.truncate(0);
 
@@ -511,11 +533,15 @@ void WalFile::reset(ResetPrep& prep, const bool sync, const std::optional<bool> 
         }
     }
 
+    currDirtyBlocks.clear();
+
     prep.unlock();
 }
 
 bool WalFile::writeData(const int64_t off, const char* data, const size_t dataSize, const bool useThreadWrite)
 {
+    XLOGF(DBG0, "Log data {} to offset {} {}", dataSize, off, useThreadWrite ? "using thread write" : "direct write");
+
     CWData wdata;
     writeDataHeader(wdata, dataTypeDataFileData, seqNo);
     wdata.addVarInt(off);
@@ -676,4 +702,21 @@ void WalFile::waitForWriteout(const int64_t off, const size_t dataSize)
 
         return;
     }
+}
+
+bool WalFile::isDirty(const int64_t off, const size_t dataSize) const
+{
+    bool ret = false;
+    std::scoped_lock lock(mutex);
+    return forEachDataItem(off, dataSize, [&](const int64_t block)
+    {
+        if(dirtyBlocks().contains(block) || altDirtyBlocks().contains(block))
+        {
+           ret=true;
+           return true;
+        }
+        return false;
+    });
+
+    return ret;
 }

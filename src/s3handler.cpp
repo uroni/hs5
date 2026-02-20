@@ -4293,7 +4293,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         }
 
         if(!extents.empty())
-            XLOGF(INFO, "Finalize object {} ext off {} len {}", keyInfo.key, extents[0].data_file_offset, extents[0].len);
+            XLOGF(INFO, "Finalize object {} ext off {} len {} extents {}", keyInfo.key, extents[0].data_file_offset, extents[0].len, extents.size());
         else 
             XLOGF(INFO, "Finalize empty object {}", keyInfo.key);
 
@@ -4422,8 +4422,9 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         int64_t ext_offset = offset - it->obj_offset;
         auto curr_ext = SingleFileStorage::Ext(it->obj_offset + ext_offset, it->data_file_offset + ext_offset, it->len - ext_offset);
         int64_t wlen = std::min(static_cast<int64_t>(data_size), curr_ext.len);
+        const bool complete_obj = extents.size()==1 && extents[0].len==wlen;
 
-        auto rc = sfs.write_ext(curr_ext, reinterpret_cast<const char*>(data), wlen);
+        auto rc = sfs.write_ext(curr_ext, reinterpret_cast<const char*>(data), wlen, complete_obj);
         if (rc != 0)
         {
             sfs.free_extents(extents);

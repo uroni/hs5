@@ -1200,11 +1200,12 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	}
 
 	if(!options.wal_file_path.empty()
-		&& (wal_write_data || wal_write_meta) )
+		&& (wal_write_data != 0 || wal_write_meta) )
 	{
-		auto wal_mode = (wal_write_meta && !wal_write_data) ? "meta_only" : (wal_write_data && !wal_write_meta) ? "data_only" : "full";
+		const auto data_log_str = wal_write_data < 0 ? " (logging all data)" : " (logging data <= " + folly::prettyPrint(wal_write_data, folly::PRETTY_BYTES_IEC) + ")";
+		const auto wal_mode = (wal_write_meta && wal_write_data==0) ? "meta_only" : (wal_write_data != 0 && !wal_write_meta) ?  ("data_only" + data_log_str) : ("full" + data_log_str);
 		XLOGF(INFO, "Opening WAL file at {} mode {} {}", options.wal_file_path, wal_mode, FLAGS_wal_write_thread ? "with write thread" : "no write thread");
-		wal_file = std::make_unique<WalFile>(options.wal_file_path, wal_uuid, data_file);
+		wal_file = std::make_unique<WalFile>(options.wal_file_path, wal_uuid, data_file, FLAGS_wal_write_thread && wal_write_data>0);
 
 		const auto readResAlt = wal_file->read(curr_transid, &data_file, false, true);
 		if(!readResAlt.items.empty())
@@ -1931,7 +1932,7 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
 	return WritePrepareResult{0, extents};
 }
 
-int SingleFileStorage::write_ext(const Ext& ext, const char* data, size_t data_size)
+int SingleFileStorage::write_ext(const Ext& ext, const char* data, size_t data_size, const bool complete_obj)
 {
 	std::shared_lock copy_lock(data_file_copy_mutex);
 
@@ -1972,8 +1973,28 @@ int SingleFileStorage::write_ext(const Ext& ext, const char* data, size_t data_s
 
 	EXT_DEBUG(XLOG(INFO) << "Writing " << data_file_path << " to offset " << std::to_string(ext.data_file_offset) << " len " << std::to_string(data_size));
 
-	const auto walWrite = wal_write_data && wal_file;
+	auto walWrite = (wal_write_data < 0 || (complete_obj && wal_write_data > 0 && data_size <= static_cast<size_t>(wal_write_data))) && wal_file;
 	const auto walWriteThread = walWrite && FLAGS_wal_write_thread;
+
+	if(wal_file && !walWrite && wal_write_data>=0)
+	{
+		if(wal_write_data > 0)
+		{
+			if(FLAGS_wal_write_thread && wal_file->isDirty(ext.data_file_offset, data_size))
+			{
+				XLOGF(DBG0, "Ignoring WAL write limit {} since we have dirty data in WAL for write at offset {} size {}.", wal_write_data, ext.data_file_offset, data_size);
+				walWrite=true;
+			}
+			else if(FLAGS_wal_write_thread && complete_obj)
+			{
+				XLOGF(DBG0, "Not writing data size {} to WAL file due to wal_write_data limit {}.", data_size, wal_write_data);
+			}
+		}
+
+		//TODO: Extend dirty mechanism to non-WAL usage
+		if(!walWrite)
+			data_file_dirty = true;
+	}
 
 	if (!walWriteThread && sel_data_file->pwriteFullFillPage(data, data_size, ext.data_file_offset) != data_size )
 	{
@@ -2459,7 +2480,7 @@ SingleFileStorage::ReadExtResult SingleFileStorage::read_ext(const Ext& ext, con
 	auto data = buf.preallocate(bufsize, bufsize);
 	auto bufptr = reinterpret_cast<char*>(data.first);
 
-	if(wal_file && wal_write_data)
+	if(wal_file && wal_write_data != 0)
 	{
 		wal_file->waitForWriteout(ext.data_file_offset, toread);
 	}
@@ -2518,7 +2539,7 @@ int SingleFileStorage::read_ext(const Ext& ext, const unsigned int flags, const 
 		sel_data_file_dio = &new_data_file_dio;
 	}
 
-	if(wal_file && wal_write_data)
+	if(wal_file && wal_write_data != 0)
 	{
 		wal_file->waitForWriteout(ext.data_file_offset, toread);
 	}
@@ -7247,7 +7268,7 @@ void SingleFileStorage::operator()()
 			wal_file && wal_file->size() < FLAGS_max_wal_size_mb*1024*1024
 			&& wal_file->items() < FLAGS_max_wal_items)
 		{
-			if(!wal_write_data)
+			if(wal_write_data >= 0 && data_file_dirty.exchange(false))
 			{
 				if (data_file.fsyncNoInt()!=0)
 				{
@@ -7395,7 +7416,7 @@ void SingleFileStorage::operator()()
 
 			auto wal_file_reset = true;
 
-			if(wal_file && !from_startup_wal && !wal_write_meta && wal_write_data && wal_file->items() < FLAGS_max_wal_items &&
+			if(wal_file && !from_startup_wal && !wal_write_meta && wal_write_data!=0 && wal_file->items() < FLAGS_max_wal_items &&
 				wal_file->size() < FLAGS_max_wal_size_mb*1024*1024)
 			{
 				wal_file_reset = false;
@@ -7420,7 +7441,7 @@ void SingleFileStorage::operator()()
 					++commit_errors;
 				}
 			}
-			else if(wal_file_reset && FLAGS_wal_write_thread && wal_write_data)
+			else if(wal_file_reset && FLAGS_wal_write_thread && wal_write_data!=0)
 			{
 				wal_file->waitForWrites();
 
@@ -7727,9 +7748,9 @@ void SingleFileStorage::operator()()
 
 				if(wal_file && wal_file_reset)
 				{
-					if(!FLAGS_wal_write_thread || !wal_write_data)
+					if(!FLAGS_wal_write_thread || wal_write_data==0)
 					{
-						wal_file->reset(walFileResetPrep, wal_write_data, std::nullopt);
+						wal_file->reset(walFileResetPrep, wal_write_data!=0, std::nullopt);
 					}
 					else
 					{
@@ -9604,6 +9625,9 @@ int SingleFileStorage::add_new_object(MDB_txn* txn, const THREAD_ID tid, const s
 
 void SingleFileStorage::wait_for_wal_startup_finished()
 {
+	if(!wal_file)
+		return;
+
 	XLOGF(INFO, "Waiting for WAL startup to finish for sfs {}", db_path);
 	std::unique_lock lock(mutex);
 	while (!wal_startup_finished)

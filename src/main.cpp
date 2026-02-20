@@ -65,7 +65,7 @@ DEFINE_string(server_url, "", "URL of server");
 DEFINE_bool(bucket_versioning, false, "Enable bucket versioning");
 DEFINE_string(index_wal_path, "", "Path where to put the index WAL file. Disabled if empty");
 DEFINE_bool(wal_write_meta, true, "Write metadata to WAL file");
-DEFINE_bool(wal_write_data, false, "Write actual data to WAL file in addition to metadata");
+DEFINE_int32(wal_write_data, 0, "Write objects smaller than defined to WAL file in addition to metadata (-1 to write all data, 0 to disable)");
 DEFINE_bool(run_duckdb, false, "Run DuckDB UI");
 DEFINE_int32(duckdb_port, 4213, "Port to listen on with DuckDB UI protocol");
 DEFINE_bool(enable_core_dumps, false, "Enable core dumps on crashes");
@@ -247,7 +247,7 @@ int realMain(int argc, char* argv[])
     sfsoptions.wal_write_meta = FLAGS_wal_write_meta;
     sfsoptions.wal_write_data = FLAGS_wal_write_data;    
 
-    if(!FLAGS_wal_write_meta && !FLAGS_wal_write_data)
+    if(!FLAGS_wal_write_meta && FLAGS_wal_write_data==0)
     {
       XLOGF(ERR, "Either writing metadata or data to WAL file must be enabled");
       return 1;
