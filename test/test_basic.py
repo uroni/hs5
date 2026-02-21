@@ -178,7 +178,15 @@ def test_put_get_commit_context_restart_fail(tmp_path: Path, hs5: Hs5Runner):
 def test_get_commit_obj(tmp_path: Path, hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     fpath = tmp_path / "commit_uuid.txt"
-    s3_client.download_file(hs5.testbucketname(), "a711e93e-93b4-4a9e-8a0b-688797470002", str(fpath))
+    try:
+        s3_client.download_file(hs5.testbucketname(), "a711e93e-93b4-4a9e-8a0b-688797470002", str(fpath))
+    except ClientError as e:
+        if ("Error" not in e.response or
+           "Code" not in e.response["Error"] or
+           e.response["Error"]["Code"] != "404"):
+            raise
+        assert not hs5.manual_commit
+        return
 
     with open(fpath, "r") as f:
         assert len(f.read())>5
