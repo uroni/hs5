@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771596321196,
+  "lastUpdate": 1771688518199,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -5662,6 +5662,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.10968672265051205",
             "extra": "mean: 15.76005319860002 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "73a30d4a41ba80ea988dfeaf8b893832f5ebc1a3",
+          "message": "Implement chunked upload support",
+          "timestamp": "2026-02-21T16:32:40+01:00",
+          "tree_id": "b00251842f564a0c89e0b8a12afa3b8ee882c37e",
+          "url": "https://github.com/uroni/hs5/commit/73a30d4a41ba80ea988dfeaf8b893832f5ebc1a3"
+        },
+        "date": 1771688517205,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08373112004177204,
+            "unit": "iter/sec",
+            "range": "stddev: 0.09174615500262193",
+            "extra": "mean: 11.942990843799976 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.0648114618102809,
+            "unit": "iter/sec",
+            "range": "stddev: 0.9110699737120295",
+            "extra": "mean: 15.429369621800015 sec\nrounds: 5"
           }
         ]
       }
