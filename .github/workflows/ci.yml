@@ -92,6 +92,8 @@ jobs:
 
       - uses: pavelzw/pytest-action@v2
         if: matrix.benchmark == 0
+        env:
+          GOLANG_TEST: "1"
         with:
           emoji: false
           custom-arguments: -p no:sugar --benchmark-skip test --timeout=300

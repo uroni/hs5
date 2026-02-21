@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 import random
 from typing import AnyStr, Optional, Union
+from unittest.mock import patch
 from uuid import uuid4
 import boto3
 from botocore.exceptions import ClientError
@@ -23,6 +24,8 @@ import io
 import requests
 import hashlib
 from hs5_commit import Hs5Commit, Hs5RestartError
+from awsgosdktest import UploadAwsSdkGo, goawssdk_test_fixture
+from miniosdktest import UploadMinioGo, miniosdk_test_fixture
 
 def create_random_file(fn: Path, size: int) -> int:
     with open(fn, "wb") as f:
@@ -562,15 +565,15 @@ def test_list_partial_uploads(tmp_path: Path, hs5: Hs5Runner):
 
 
 def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
+
     tmpfile = tmp_path / "ulfile.dat"
     with open(tmpfile, "wb") as f:
         fsize = 0
-        while fsize<1*1024*1024*1024:
+        while fsize<1*1024*1024:
             f.write(os.urandom(512*1024))
             fsize += 512*1024
 
     s3_client = hs5_large.get_s3_client()
-
     with open(tmpfile, "rb") as f:
         s3_client.put_object(Bucket=hs5_large.testbucketname(), Key="upload.dat", Body=f)
 
@@ -578,6 +581,35 @@ def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
     s3_client.download_file(hs5_large.testbucketname(), "upload.dat", str(dl_path))
 
     assert filecmp.cmp(tmpfile, dl_path)
+
+@pytest.mark.parametrize("size", [512*1024, 5*1024*1024+12, 101, 51*1024*1024])
+@pytest.mark.parametrize("checksum_algorithm", ["CRC32", "CRC32C", "SHA1", "SHA256", "CRC64NVME"])
+def test_put_chunked(hs5_large: Hs5Runner, tmp_path: Path, size: int, checksum_algorithm: str):
+
+    tmpfile = tmp_path / f"ulfile_{size}.dat"
+    with open(tmpfile, "wb") as f: 
+        f.write(os.urandom(size))
+
+    import botocore.httpchecksum
+    def resolve_override(request, operation_model, params):
+        botocore.httpchecksum.resolve_request_checksum_algorithm(request, operation_model, params)
+        botocore.httpchecksum.resolve_response_checksum_algorithms(request, operation_model, params)
+        if operation_model.name == "PutObject":
+            checksum_context = request["context"]["checksum"]
+            checksum_context["request_algorithm"]["in"] = "trailer"
+
+    with patch("botocore.httpchecksum.DEFAULT_CHECKSUM_ALGORITHM", new=checksum_algorithm):
+        with patch("botocore.client.resolve_checksum_context", new=resolve_override):
+            s3_client = hs5_large.get_s3_client()
+
+            tmpfile = tmp_path / f"ulfile_{size}.dat"
+            with open(tmpfile, "rb") as f:
+                s3_client.put_object(Bucket=hs5_large.testbucketname(), Key=f"upload_{size}.dat", Body=f)
+
+            dl_path = tmp_path / f"download_{size}.dat"
+            s3_client.download_file(hs5_large.testbucketname(), f"upload_{size}.dat", str(dl_path))
+
+            assert filecmp.cmp(tmpfile, dl_path)
 
 def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
@@ -867,6 +899,50 @@ async def test_read_commit_info_async(hs5: Hs5Runner):
         rid = runtime_id_io.read().decode()
 
         assert len(rid) > 5
-    
 
-    
+@pytest.mark.skipif(os.environ.get("GOLANG_TEST") != "1", reason="Requires golang")
+@pytest.mark.parametrize("size", [512*1024, 5*1024*1024+12, 101, 51*1024*1024]) 
+def test_awsgosdk_upload(hs5: Hs5Runner, tmp_path: Path, goawssdk_test_fixture: UploadAwsSdkGo, size: int):
+    s3_client = hs5.get_s3_client()
+
+    fdata = os.urandom(size)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+
+    goawssdk_test_fixture.upload(hs5.testbucketname(), "upload.txt", tmp_path / "upload.txt")
+
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert obj_info["ContentLength"] == len(fdata)
+
+    dl_path = tmp_path / "download.txt"
+    s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
+    assert filecmp.cmp(tmp_path / "upload.txt", dl_path)
+
+    dl_path2 = tmp_path / "download2.txt"
+    goawssdk_test_fixture.download(hs5.testbucketname(), "upload.txt",
+        dl_path2)
+    assert filecmp.cmp(tmp_path / "upload.txt", dl_path2)   
+
+@pytest.mark.skipif(os.environ.get("GOLANG_TEST") != "1", reason="Requires golang")
+@pytest.mark.parametrize("size", [512*1024, 5*1024*1024+12, 101, 51*1024*1024])                                                      
+def test_miniosdk_upload(hs5: Hs5Runner, tmp_path: Path, miniosdk_test_fixture: UploadMinioGo, size: int):
+    s3_client = hs5.get_s3_client()
+
+    fdata = os.urandom(size)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+
+    miniosdk_test_fixture.upload(hs5.testbucketname(), "upload.txt", tmp_path / "upload.txt")
+
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert obj_info["ContentLength"] == len(fdata)
+
+    dl_path = tmp_path / "download.txt"
+    s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
+    assert filecmp.cmp(tmp_path / "upload.txt", dl_path)
+
+    dl_path2 = tmp_path / "download2.txt"
+    miniosdk_test_fixture.download(hs5.testbucketname(), "upload.txt", dl_path2)
+    assert filecmp.cmp(tmp_path / "upload.txt", dl_path2)
+
+

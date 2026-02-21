@@ -53,6 +53,19 @@
             "name": "Launch Edge against localhost",
             "url": "http://localhost:5173",
             "webRoot": "${workspaceFolder}/www"
+        },
+         {
+            "name": "Python: Debug Pytest",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/test/.venv/bin/pytest",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "envFile": "${workspaceFolder}/.env",
+            "cwd": "${workspaceFolder}",
+            "args": [
+            "test/test_basic.py::test_miniosdk_upload[101]"
+            ]
         }
     ]
 }

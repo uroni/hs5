@@ -41,7 +41,8 @@ enum class Action
     ChangePolicy=34,
     CreateUser=35,
     ChangePassword=36,
-    ChangeOwnPassword=37
+    ChangeOwnPassword=37,
+    GetBucketLocation=38
 };
 
 Action actionFromStr(const std::string_view action);

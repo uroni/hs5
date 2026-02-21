@@ -16,10 +16,9 @@
 #include <vector>
 #include <thread>
 #include <expat.h>
-#include <openssl/evp.h>
 #include "data.h"
 #include "ContentType.h"
-
+#include "PayloadHash.h"
 #include "ApiHandler.h"
 
 class ExpatXmlParser
@@ -35,26 +34,6 @@ public:
     {
         if(parser!=nullptr)
             XML_ParserFree(parser);
-    }
-};
-
-class EvpMdCtx
-{
-public:
-    EVP_MD_CTX* ctx = nullptr;
-
-    bool init(const EVP_MD *type) {
-        assert(ctx==nullptr);
-        ctx = EVP_MD_CTX_new();
-        if(ctx==nullptr)
-            return false;
-        
-        return EVP_DigestInit(ctx, type)==1;
-    }
-    
-    ~EvpMdCtx() {
-        if(ctx != nullptr)
-            EVP_MD_CTX_free(ctx);
     }
 };
 
@@ -209,50 +188,6 @@ public:
         std::string accessKey;
     };
 
-    struct PayloadHash
-    {
-        enum class Method
-        {
-            Sha256
-        };
-        Method method;
-        std::string expectedHash;
-        EvpMdCtx evpMdCtx;
-
-        bool checkSize()
-        {
-            if(method==Method::Sha256)
-                return expectedHash.size() == SHA256_DIGEST_LENGTH;
-
-            return true;
-        }
-
-        std::string final()
-        {
-            std::string binHash;
-            switch(method)
-            {
-                case Method::Sha256:
-                    binHash.resize(SHA256_DIGEST_LENGTH);
-                    break;
-                default:
-                    return std::string();
-            }
-            EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&binHash[0]), nullptr);
-            return binHash;
-        }
-
-        bool isFinalExpected()
-        {
-            const bool ok = expectedHash == final();
-            if(ok)
-            {
-                XLOGF(INFO, "Payload hash {} ok", folly::hexlify(expectedHash));
-            }
-            return ok;
-        }
-    };
-
     static bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, ContentType* contentType);
     static std::string getEtag(const std::string& md5sum);
     
@@ -268,11 +203,13 @@ public:
 private:
     void readFile(folly::EventBase *evb);
     void readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> self, int64_t offset);
+    void onBodyChunked(std::unique_ptr<folly::IOBuf> body);
 	void onBodyCPU(folly::EventBase *evb, int64_t offs, std::unique_ptr<folly::IOBuf> body);
     void listObjects(proxygen::HTTPMessage& headers, const std::string& bucket, const bool partial);
     void listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId, const bool partial);
     void listBuckets(proxygen::HTTPMessage& headers, std::string accessKey);
     void listBuckets(folly::EventBase *evb, std::shared_ptr<S3Handler> self, std::string accessKey);
+    void getBucketLocation(proxygen::HTTPMessage& headers, const std::string& bucket);
     void getCommitObject(proxygen::HTTPMessage& headers);
     void getObject(proxygen::HTTPMessage& headers, const std::string& accessKey);
     void putObject(proxygen::HTTPMessage& headers);
@@ -326,7 +263,7 @@ private:
 	std::vector<SingleFileStorage::Ext> extents;
     bool extentsInitialized = false;
     EvpMdCtx evpMdCtx;
-    std::unique_ptr<PayloadHash> payloadHash;
+    std::unique_ptr<PayloadHashBase> payloadHash;
 
     struct BodyObj
     {
@@ -338,4 +275,31 @@ private:
     std::mutex bodyMutex;
     bool hasBodyThread = false;
     std::queue<BodyObj> bodyQueue;
+
+    struct AwsChunkedEncoding
+    {
+        enum class State
+        {
+            SizeCr,
+            SizeLf,
+            Data,
+            DataEnd,
+            TrailerCr,
+            TrailerLf,
+            Finished,
+            Failed
+        };
+
+        bool isSigned = false;
+        std::string header;
+        State state = State::SizeCr;
+        size_t chunkSize = 0;     
+        EvpMdCtx evpMdCtx;
+        std::string stringToSignHeader;
+        std::string signingKey;
+        std::string currSig;
+        std::string expectedSig;
+    };
+
+    std::unique_ptr<AwsChunkedEncoding> awsChunkedEncoding;
 };

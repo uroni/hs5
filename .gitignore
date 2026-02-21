@@ -16,3 +16,5 @@ vcpkg_installed
 minio
 quicktype-bundled.js
 template.db
+test/awsgosdktest/gosdktest
+test/miniosdktest/miniosdktest

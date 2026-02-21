@@ -48,7 +48,10 @@ using namespace proxygen;
 const char c_commit_uuid[] = "a711e93e-93b4-4a9e-8a0b-688797470002";
 const char c_stop_uuid[] = "3db7da22-8ce2-4420-a8ca-f09f0b8e0e61";
 const char unsigned_payload[] = "UNSIGNED-PAYLOAD";
+const char streaming_unsigned_payload_trailer[] = "STREAMING-UNSIGNED-PAYLOAD-TRAILER";
+const char streaming_sha256_payload[] = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD";
 
+DEFINE_string(aws_region, "us-east-1", "AWS region to return for location");
 DEFINE_bool(with_stop_command, false, "Allow stopping via putting to stop object");
 DEFINE_bool(allow_sig_v2, true, "Allow aws sig v2");
 DEFINE_string(host_override, "", "Override host for s3 requests");
@@ -358,7 +361,10 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
               const std::string_view payload,
               const std::string_view ressource,
               const Action action,
-              const bool allowPresigned)
+              const bool allowPresigned,
+              std::string* sha256Output = nullptr,
+              std::string* stringToSignHeaderOutput = nullptr,
+              std::string* signingKeyOutput = nullptr)
 {
     const char alg_name[] = "AWS4-HMAC-SHA256";
     constexpr std::string_view alg = "AWS4-HMAC-SHA256 ";
@@ -607,12 +613,34 @@ std::optional<std::string> checkSig(HTTPMessage &headers,
         credentialScopeToks[1], credentialScopeToks[2], credentialScopeToks[3],
         credentialScopeToks[4], hashedCanonicalRequest);
 
+    if(stringToSignHeaderOutput)
+    {
+        *stringToSignHeaderOutput = folly::sformat(
+            "{}\n{}/{}/{}/{}\n", requestDateTime,
+            credentialScopeToks[1], credentialScopeToks[2], credentialScopeToks[3],
+            credentialScopeToks[4]);
+    }
+
     const auto dateKey = hmacSha256Binary("AWS4" + secretKey, getDate(t));
     const auto dateRegionKey = hmacSha256Binary(dateKey, credentialScopeToks[2].toString());
     const auto dateRegionServiceKey = hmacSha256Binary(dateRegionKey, credentialScopeToks[3].toString());
     const auto signingKey = hmacSha256Binary(dateRegionServiceKey, "aws4_request");
 
-    const auto calculatedSignature = folly::hexlify(hmacSha256Binary(signingKey, stringToSign));
+    if(signingKeyOutput)
+    {
+        *signingKeyOutput = signingKey;
+    }
+
+    std::string calculatedSignature;
+    if(sha256Output)
+    {
+        *sha256Output = hmacSha256Binary(signingKey, stringToSign);
+        calculatedSignature = folly::hexlify(*sha256Output);
+    }
+    else
+    {
+        calculatedSignature = folly::hexlify(hmacSha256Binary(signingKey, stringToSign));
+    }
 
     if(calculatedSignature != requestSignature)
     {
@@ -1162,6 +1190,51 @@ std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& mes
     if(payload == unsigned_payload)
         return payload;
 
+    if(payload == streaming_unsigned_payload_trailer)
+    {
+        const auto trailer = message.getHeaders().getSingleOrEmpty("x-amz-trailer");
+        
+        if(trailer.starts_with("x-amz-checksum-"))
+        {
+            payloadHash = createPayloadHash(trailer);
+            if(!payloadHash)
+            {
+                XLOGF(INFO, "Unsupported trailer for streaming upload: {}", trailer);
+                ResponseBuilder(downstream_)
+                    .status(400, "Bad request")
+                    .body("Unsupported trailer for streaming upload")
+                    .sendWithEOM();
+                return std::nullopt;
+            }
+        }
+
+        return payload;
+    }
+    else if(payload == streaming_sha256_payload)
+    {
+        if(!awsChunkedEncoding || !awsChunkedEncoding->isSigned)
+        {
+            XLOGF(INFO, "x-amz-content-sha256 set to streaming but aws chunked encoding not enabled");
+            ResponseBuilder(downstream_)
+                .status(400, "Bad request")
+                .body("x-amz-content-sha256 set to streaming but aws chunked encoding not enabled")
+                .sendWithEOM();
+            return std::nullopt;
+        }
+        
+        return payload;
+    }
+
+    if(awsChunkedEncoding && awsChunkedEncoding->isSigned)
+    {
+        XLOGF(INFO, "x-amz-content-sha256 set to non-streaming value {} but aws-chunked encoding enabled", payload);
+        ResponseBuilder(downstream_)
+            .status(400, "Bad request")
+            .body("x-amz-content-sha256 set to non-streaming value but aws-chunked encoding enabled")
+            .sendWithEOM();
+        return std::nullopt;
+    }
+
     std::string payloadBin;
     if(!folly::unhexlify(payload, payloadBin))
     {
@@ -1175,10 +1248,8 @@ std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& mes
 
     if(!payload.empty())
     {
-        payloadHash = std::make_unique<PayloadHash>();
-        payloadHash->method = PayloadHash::Method::Sha256;
-        payloadHash->expectedHash = payloadBin;
-        if(!payloadHash->evpMdCtx.init(EVP_sha256()))
+        payloadHash = createPayloadHash("x-amz-checksum-sha256");
+        if(!payloadHash)
         {
             XLOGF(INFO, "Failed to init sha256 context");
             ResponseBuilder(downstream_)
@@ -1187,6 +1258,7 @@ std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& mes
                 .sendWithEOM();
             return std::nullopt;
         }
+        payloadHash->setExpectedHash(payloadBin);
         if(!payloadHash->checkSize())
         {
             XLOGF(INFO, "Payload hash size mismatch");
@@ -1246,9 +1318,11 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         if(nextSlash==std::string::npos || nextSlash == header_path.size()-1)
         {
             const auto partial = headers->hasQueryParam("uploads");
+            const auto location = headers->hasQueryParam("location");
 
             const auto bucketName = header_path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
-            const auto action = bucketName.empty() ? Action::ListBuckets : (partial ? Action::ListMultipartUploads : Action::ListObjects);
+            const auto action = bucketName.empty() ? Action::ListBuckets : 
+                    (location ? Action::GetBucketLocation : (partial ? Action::ListMultipartUploads : Action::ListObjects));
             const auto resource = bucketName.empty() ? std::string() : fmt::format("arn:aws:s3:::{}", bucketName);
             auto accessKey = checkSig(*headers, "", resource, action, true);
             if(!accessKey)
@@ -1268,13 +1342,17 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             if(bucketName.empty())
                 XLOGF(INFO, "List buckets");
+            else if(location)
+                XLOGF(INFO, "Get bucket location {}", bucketName);
             else if(partial)
-                XLOGF(INFO, "List partial uploads bucket {}", bucketName);
+                XLOGF(INFO, "List partial uploads bucket {}", bucketName);            
             else
                 XLOGF(INFO, "List bucket {}", bucketName);
 
             if(bucketName.empty())
                 listBuckets(*headers, std::move(*accessKey));
+            else if(location)
+                getBucketLocation(*headers, std::string(bucketName));
             else
                 listObjects(*headers, std::string(bucketName), partial);
             return;
@@ -1316,8 +1394,66 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     }
     else if (headers->getMethod() == HTTPMethod::PUT)
     {
-        std::string cl = headers->getHeaders().getSingleOrEmpty(
+        auto cl = headers->getHeaders().getSingleOrEmpty(
             proxygen::HTTP_HEADER_CONTENT_LENGTH);
+
+        bool hasAwsChunkedEncoding = false;
+        const auto contentEncoding = headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_CONTENT_ENCODING);
+        if(!contentEncoding.empty())
+        {
+            std::vector<std::string_view> encodings;
+            folly::split(',', contentEncoding, encodings);
+            for(auto& encoding: encodings)
+            {
+                if(folly::trimWhitespace(encoding) == "aws-chunked")
+                {
+                    hasAwsChunkedEncoding = true;
+                    break;
+                }
+            }
+        }
+        const auto payloadHash = headers->getHeaders().getSingleOrEmpty("x-amz-content-sha256");
+        if(payloadHash == streaming_sha256_payload)
+        {
+            // Minio SDK does not set aws-chunked content encoding as it should
+            hasAwsChunkedEncoding = true;
+        }
+        else if(payloadHash == streaming_unsigned_payload_trailer)
+        {
+            // boto3 sets aws-chunked, even though it just uses a normal chunked encoding
+            hasAwsChunkedEncoding = false;
+        }
+
+        if(cl.empty() || hasAwsChunkedEncoding)
+        {
+            if(!hasAwsChunkedEncoding)
+            {
+                const auto transferEncoding = headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_TRANSFER_ENCODING);
+                if(transferEncoding != "chunked")
+                {
+                    XLOGF(INFO, "Content-Length header not set and transfer encoding is not chunked");
+                    ResponseBuilder(downstream_)
+                        .status(400, "Bad request")
+                        .body("Content-Length header not set and transfer encoding is not chunked")
+                        .sendWithEOM();
+                    return;
+                }
+            }
+
+            awsChunkedEncoding = std::make_unique<AwsChunkedEncoding>();
+            const auto decodedContentLength = headers->getHeaders().getSingleOrEmpty("x-amz-decoded-content-length");
+            if(!decodedContentLength.empty())
+            {
+                cl = decodedContentLength;
+            }
+
+            if(hasAwsChunkedEncoding)
+            {
+                awsChunkedEncoding->isSigned = true;
+                awsChunkedEncoding->evpMdCtx.init(EVP_sha256());
+            }
+        }
+        
         if (cl.empty())
         {
             ResponseBuilder(downstream_)
@@ -1326,8 +1462,10 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 .sendWithEOM();
             return;
         }
-        auto remaining = std::atoll(cl.c_str());
+
+        const auto remaining = std::atoll(cl.c_str());
         put_remaining = remaining;
+        
         std::string path_str;
         if(!folly::tryUriUnescape(headers->getPathAsStringPiece(), path_str))
         {
@@ -1362,6 +1500,10 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         if(!payloadOpt)
             return;
         const auto payload = *payloadOpt;
+
+        const auto currSigPtr = hasAwsChunkedEncoding ? &awsChunkedEncoding->currSig : nullptr;
+        const auto stringToSignHeaderPtr = hasAwsChunkedEncoding ? &awsChunkedEncoding->stringToSignHeader : nullptr;
+        const auto signingKeyOutput = hasAwsChunkedEncoding ? &awsChunkedEncoding->signingKey : nullptr;
 
         if(!createBucket && headers->hasQueryParam("uploadId") && (xid.empty() || xid == "UploadPart"))
         {
@@ -1409,7 +1551,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             const auto action = Action::PutObjectPart;
 
-            if(!checkSig(*headers, payload, resource, action, true))
+            if(!checkSig(*headers, payload, resource, action, true, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
+                || ( currSigPtr != nullptr && currSigPtr->empty()))
             {
                 XLOGF(INFO, "Unauthorized putObjectPart: {}", path);
                 ResponseBuilder(downstream_)
@@ -1425,7 +1568,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         const auto action = createBucket ? Action::CreateBucket : Action::PutObject;
 
-        if(!checkSig(*headers, payload, resource, action, true))
+        if(!checkSig(*headers, payload, resource, action, true, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
+            || ( currSigPtr != nullptr && currSigPtr->empty()))
         {
             XLOGF(INFO, "Unauthorized putObject: {}", path);
             ResponseBuilder(downstream_)
@@ -1890,6 +2034,19 @@ void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string&
     {
         self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, startAfter, delimiter, bucketId, true, bucket, partial, std::string());
     });
+}
+
+void S3Handler::getBucketLocation(proxygen::HTTPMessage& headers, const std::string& bucket)
+{
+    ResponseBuilder(self->downstream_)
+                            .status(200, "OK")
+                            .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
+                            .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                                "<LocationConstraint xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
+                                "{}"
+                                "</LocationConstraint>", FLAGS_aws_region))
+                            .sendWithEOM();
+
 }
 
 void S3Handler::listBuckets(proxygen::HTTPMessage& headers, std::string accessKey)
@@ -4130,6 +4287,359 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
     if(request_action == Action::Unknown)
         return;
 
+    if(!awsChunkedEncoding)
+    {
+        onBodyChunked(std::move(body));
+        return;
+    }
+
+    while(body->length() > 0)
+    {
+        switch(awsChunkedEncoding->state)
+        {
+            case AwsChunkedEncoding::State::SizeCr:
+                {
+                    const auto ch = *body->data();
+                    body->trimStart(1);
+
+                    if(ch=='\r')
+                    {
+                        awsChunkedEncoding->state = AwsChunkedEncoding::State::SizeLf;
+                    }
+                    else
+                    {
+                        awsChunkedEncoding->header += ch;                       
+                    }
+                } break;
+            case AwsChunkedEncoding::State::SizeLf:
+            {
+                const auto ch = *body->data();
+                body->trimStart(1);
+                if(ch!='\n')
+                {
+                    awsChunkedEncoding->state = AwsChunkedEncoding::State::SizeCr;
+                    awsChunkedEncoding->header += ch;
+                    continue;
+                }
+
+                const auto sizeDataEnd = awsChunkedEncoding->header.find(";");
+
+                if(awsChunkedEncoding->header.empty())
+                {
+                    XLOGF(WARN, "Invalid chunked encoding body received");
+                    ResponseBuilder(self->downstream_)
+                        .status(500, "Internal error")
+                        .body("Invalid chunked encoding body received")
+                        .sendWithEOM();
+                    finished_ = true; 
+                    return;
+                }
+
+                std::string_view sizeData, paramsData;
+
+                if(sizeDataEnd!=std::string::npos)
+                {
+                    sizeData = std::string_view(awsChunkedEncoding->header.data(), sizeDataEnd);
+                    paramsData = std::string_view(awsChunkedEncoding->header.data() + sizeDataEnd + 1, awsChunkedEncoding->header.size() - sizeDataEnd - 1);
+                }
+                else
+                {
+                    sizeData = std::string_view(awsChunkedEncoding->header.data(), awsChunkedEncoding->header.size());
+                }
+
+                try
+                {
+                    awsChunkedEncoding->chunkSize = std::stoul(std::string(sizeData), nullptr, 16);
+                }
+                catch(const std::exception& ex)
+                {
+                    XLOGF(WARN, "Invalid chunk size in chunked encoding body received: {}. Exception: {}", sizeData, ex.what());
+                    ResponseBuilder(self->downstream_)
+                        .status(500, "Internal error")
+                        .body("Invalid chunk size in chunked encoding body received")
+                        .sendWithEOM();
+                    finished_ = true; 
+                    return;
+                }
+
+                if(awsChunkedEncoding->isSigned )
+                {
+                    if(paramsData.empty())
+                    {
+                        XLOGF(WARN, "Chunked encoding body is signed but no chunk signature found in parameters: {}", paramsData);
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body("Chunked encoding body is signed but no chunk signature found in parameters")
+                            .sendWithEOM();
+                        finished_ = true; 
+                        return;
+                    }
+
+                    std::vector<std::string_view> params;
+                    folly::split(';', paramsData, params);
+
+                    bool notFound = true;
+
+                    for(const auto& param: params)
+                    {
+                        const auto eqPos = param.find('=');
+                        if(eqPos==std::string::npos)
+                            continue;
+
+                        const auto paramName = param.substr(0, eqPos);
+                        const auto paramValue = param.substr(eqPos + 1);
+
+                        if(paramName == "chunk-signature")
+                        {
+                            try
+                            {
+                                awsChunkedEncoding->expectedSig = folly::unhexlify(paramValue);
+                            }
+                            catch(const std::exception& ex)
+                            {
+                                XLOGF(WARN, "Chunked encoding body chunk signature is not valid hex: {}. Exception: {}", paramValue, ex.what());
+                                ResponseBuilder(self->downstream_)
+                                    .status(500, "Internal error")
+                                    .body("Chunked encoding body chunk signature is not valid hex")
+                                    .sendWithEOM();
+                                finished_ = true; 
+                                return;
+                            }
+
+                            notFound = false;
+                        }
+                    }
+
+                    if(notFound)
+                    {
+                        XLOGF(WARN, "Chunked encoding body is signed but no chunk signature found in parameters: {}", paramsData);
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body("Chunked encoding body is signed but no chunk signature found in parameters")
+                            .sendWithEOM();
+                        finished_ = true; 
+                        return;
+                    }
+                }
+
+                XLOGF(DBG0, "Chunked encoding chunk size parsed: {} bytes", awsChunkedEncoding->chunkSize);
+
+                awsChunkedEncoding->header.clear();
+                if(awsChunkedEncoding->chunkSize>0)
+                    awsChunkedEncoding->state = AwsChunkedEncoding::State::Data;
+                else
+                    awsChunkedEncoding->state = AwsChunkedEncoding::State::TrailerCr;
+            } break;
+            case AwsChunkedEncoding::State::Data:
+                {
+                    if(body->length() < awsChunkedEncoding->chunkSize)
+                    {
+                        awsChunkedEncoding->chunkSize -= body->length();
+                        if(awsChunkedEncoding->isSigned)
+                        {
+                            EVP_DigestUpdate(awsChunkedEncoding->evpMdCtx.ctx, body->data(), body->length());                            
+                        }
+                        onBodyChunked(std::move(body));
+                        return;
+                    }
+                    else if(body->length() == awsChunkedEncoding->chunkSize)
+                    {
+                        awsChunkedEncoding->state = AwsChunkedEncoding::State::DataEnd;
+                        awsChunkedEncoding->chunkSize = 2;
+                        if(awsChunkedEncoding->isSigned)
+                        {
+                            EVP_DigestUpdate(awsChunkedEncoding->evpMdCtx.ctx, body->data(), body->length());                            
+                        }
+                        onBodyChunked(std::move(body));          
+                        return;
+                    }
+                    else
+                    {
+                        assert(!body->isChained());
+                        auto bodyForData = body->clone();
+                        bodyForData->trimEnd(body->length() - awsChunkedEncoding->chunkSize);
+                        if(awsChunkedEncoding->isSigned)
+                        {
+                            EVP_DigestUpdate(awsChunkedEncoding->evpMdCtx.ctx, bodyForData->data(), bodyForData->length());                            
+                        }
+                        onBodyChunked(std::move(bodyForData));
+
+                        body->trimStart(awsChunkedEncoding->chunkSize);
+                        awsChunkedEncoding->chunkSize = 2;
+                        awsChunkedEncoding->state = AwsChunkedEncoding::State::DataEnd;
+                        continue;
+                    }
+                }break;
+            case AwsChunkedEncoding::State::DataEnd:
+            {
+                    if(body->length() <awsChunkedEncoding->chunkSize)
+                    {
+                        awsChunkedEncoding->chunkSize -= body->length();
+                        return;
+                    }
+                    else
+                    {
+                        body->trimStart(awsChunkedEncoding->chunkSize);
+                        awsChunkedEncoding->state = AwsChunkedEncoding::State::SizeCr;
+
+                        if(awsChunkedEncoding->isSigned)
+                        {
+                            std::string binHash;
+                            binHash.resize(SHA256_DIGEST_LENGTH);
+                            EVP_DigestFinal_ex(awsChunkedEncoding->evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&binHash[0]), nullptr);
+
+                            const auto stringToSign = fmt::format("AWS4-HMAC-SHA256-PAYLOAD\n{}{}\n{}\n{}",
+                                awsChunkedEncoding->stringToSignHeader, folly::hexlify(awsChunkedEncoding->currSig),
+                                emptyPayloadHash, folly::hexlify(binHash));
+
+                            const auto expectedSig = hmacSha256Binary(awsChunkedEncoding->signingKey, stringToSign);
+
+                            if(awsChunkedEncoding->expectedSig != expectedSig)
+                            {
+                                XLOGF(WARN, "Chunk signature mismatch in chunked encoding body. Expected {}, got {}", folly::hexlify(expectedSig), folly::hexlify(awsChunkedEncoding->expectedSig));
+                                ResponseBuilder(self->downstream_)
+                                    .status(500, "Internal error")
+                                    .body("Chunk signature mismatch in chunked encoding body")
+                                    .sendWithEOM();
+                                finished_ = true; 
+                                awsChunkedEncoding->state = AwsChunkedEncoding::State::Failed;
+                                return;
+                            }
+
+                            if(EVP_DigestInit(awsChunkedEncoding->evpMdCtx.ctx, EVP_sha256())!=1)
+                            {
+                                XLOGF(WARN, "Error initializing EVP digest context for chunked encoding body");
+                                ResponseBuilder(self->downstream_)
+                                    .status(500, "Internal error")
+                                    .body("Error initializing EVP digest context for chunked encoding body")
+                                    .sendWithEOM();
+                                finished_ = true; 
+                                awsChunkedEncoding->state = AwsChunkedEncoding::State::Failed;
+                                return;
+                            }
+                            awsChunkedEncoding->currSig = expectedSig;
+                        }
+
+                        continue;
+                    }
+            }break;
+            case AwsChunkedEncoding::State::TrailerCr:
+            {
+                const auto ch = *body->data();
+                body->trimStart(1);
+
+                if(ch=='\r')
+                {
+                    awsChunkedEncoding->state = AwsChunkedEncoding::State::TrailerLf;                    
+                }
+                else
+                {
+                    awsChunkedEncoding->header += ch;                       
+                }
+            } break;
+            case AwsChunkedEncoding::State::TrailerLf:
+            {
+                const auto ch = *body->data();
+                body->trimStart(1);
+                if(ch!='\n')
+                {
+                    awsChunkedEncoding->state = AwsChunkedEncoding::State::TrailerCr;
+                    awsChunkedEncoding->header += ch;
+                    continue;
+                }
+
+                if(awsChunkedEncoding->header.empty())
+                {
+                    awsChunkedEncoding->state = AwsChunkedEncoding::State::Finished;
+                    continue;
+                }
+
+                const auto headerNameEnd = awsChunkedEncoding->header.find(":");
+                if(headerNameEnd!=std::string::npos)
+                {
+                    const auto headerName = awsChunkedEncoding->header.substr(0, headerNameEnd);
+                    const auto headerValue = awsChunkedEncoding->header.substr(headerNameEnd + 1);
+                    XLOGF(DBG0, "Received trailer header in chunked encoding body: {}: {}", headerName, headerValue);
+
+                    if(!payloadHash)
+                    {
+                        XLOGF(WARN, "Received trailer header in chunked encoding body but no payload hash expected: {}: {}", headerName, headerValue);
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body("Received trailer header in chunked encoding body but no payload hash expected")
+                            .sendWithEOM();
+                        finished_ = true; 
+                        return;
+                    }
+
+                    try
+                    {
+                        payloadHash->setExpectedHash(folly::base64Decode(headerValue));
+                    }
+                    catch(const folly::base64_decode_error&)
+                    {
+                        XLOGF(WARN, "Received invalid base64 in payload hash in trailer: {}", headerValue);
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body("Received invalid base64 in payload hash in trailer")
+                            .sendWithEOM();
+                        finished_ = true; 
+                        return;
+                    }
+
+                    if(!payloadHash->checkSize())
+                    {
+                        XLOGF(WARN, "Received payload hash in trailer with invalid size");
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body("Received payload hash in trailer with invalid size")
+                            .sendWithEOM();
+                        finished_ = true; 
+                        return;
+                    }
+                }
+                else
+                {
+                    XLOGF(WARN, "Invalid trailer header in chunked encoding body received: {}", awsChunkedEncoding->header);
+                    ResponseBuilder(self->downstream_)
+                        .status(500, "Internal error")
+                        .body("Invalid trailer header in chunked encoding body received")
+                        .sendWithEOM();
+                    finished_ = true; 
+                    return;
+                }
+
+
+                awsChunkedEncoding->state = AwsChunkedEncoding::State::TrailerCr;
+                awsChunkedEncoding->header.clear();
+            } break;
+            case AwsChunkedEncoding::State::Finished:
+            {
+                XLOGF(WARN, "Received body after finished chunked encoding body");
+                ResponseBuilder(self->downstream_)
+                    .status(500, "Internal error")
+                    .body("Invalid chunked encoding body received")
+                    .sendWithEOM();
+                finished_ = true; 
+                return;
+            } break;
+            case AwsChunkedEncoding::State::Failed:
+            {
+                finished_ = true; 
+                return;
+            } break;
+            default:
+                assert(false);
+                return;
+        }
+    }
+}
+
+void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
+{
+    if(request_action == Action::Unknown)
+        return;
+
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     size_t body_bytes = body->length();
@@ -4140,7 +4650,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
         request_action == Action::DeleteObjects)
     {
         if(payloadHash)
-            EVP_DigestUpdate(payloadHash->evpMdCtx.ctx, body->data(), body->length());
+            payloadHash->update(body->data(), body->length());
 
         done_bytes += body_bytes;
         const auto isFinal = put_remaining.fetch_sub(body->length(), std::memory_order_release) == body->length();
@@ -4172,7 +4682,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
     else if(request_action == Action::CreateBucket)
     {
         if(payloadHash)
-            EVP_DigestUpdate(payloadHash->evpMdCtx.ctx, body->data(), body->length());
+            payloadHash->update(body->data(), body->length());
 
         done_bytes += body_bytes;
         const auto isFinal = put_remaining.fetch_sub(body->length(), std::memory_order_release) == body->length();
@@ -4292,6 +4802,25 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
             return;
         }
 
+        if(awsChunkedEncoding && awsChunkedEncoding->state != AwsChunkedEncoding::State::Finished)
+        {
+            sfs.free_extents(extents);
+            extents.clear();
+
+            XLOGF(WARN, "Invalid chunked encoding body state at end of body: {}", static_cast<int>(awsChunkedEncoding->state));
+
+            evb->runInEventBaseThread([self = this]()
+                                {           
+                if(!self || self->finished_)
+                    return;
+                ResponseBuilder(self->downstream_)
+                    .status(400, "Bad request")
+                    .body("Invalid chunked encoding body")
+                    .sendWithEOM();
+                self->finished_ = true; });
+            return;
+        }
+
         if(!extents.empty())
             XLOGF(INFO, "Finalize object {} ext off {} len {} extents {}", keyInfo.key, extents[0].data_file_offset, extents[0].len, extents.size());
         else 
@@ -4396,9 +4925,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
     EVP_DigestUpdate(evpMdCtx.ctx, data, data_size);
 
     if(payloadHash)
-    {
-        EVP_DigestUpdate(payloadHash->evpMdCtx.ctx, data, data_size);
-    }
+        payloadHash->update(data, data_size);
 
     while(data_size > 0)
     {

@@ -1,4 +1,5 @@
 boto3
+awscrt
 pytest
 pytest-sugar
 boto3-stubs[s3]
@@ -6,3 +7,4 @@ requests
 pytest-benchmark
 pytest-timeout
 pytest-asyncio
+sh
