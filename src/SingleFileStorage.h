@@ -183,6 +183,7 @@ public:
 		float alloc_use_free_space_percent = 0.1;
 		std::string runtime_id;
 		bool manual_commit = false;
+		bool manual_commit_list_consistent = true;
 		bool stop_on_error = false;
 		bool punch_holes = true;
 		int64_t data_file_chunk_size = 10LL * 1024 * 1024 * 1024 * 1024;
@@ -660,6 +661,7 @@ private:
 
 	std::string runtime_id;
 	bool manual_commit;
+	bool manual_commit_list_consistent;
 	bool stop_on_error;
 	bool punch_holes;
 

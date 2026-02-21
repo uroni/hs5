@@ -110,6 +110,7 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     list_resp = s3_client.list_objects(Bucket=hs5.testbucketname())
 
     assert not list_resp["IsTruncated"]
+    assert "Contents" in list_resp
     objs = list_resp["Contents"]
     assert len(objs) == 1
     assert "LastModified" in objs[0]
@@ -569,7 +570,7 @@ def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
     tmpfile = tmp_path / "ulfile.dat"
     with open(tmpfile, "wb") as f:
         fsize = 0
-        while fsize<1*1024*1024:
+        while fsize<1*1024*1024*1024:
             f.write(os.urandom(512*1024))
             fsize += 512*1024
 
@@ -780,7 +781,9 @@ def test_datafile_space_reused(hs5_large_small_alloc_chunksize: Hs5Runner):
         mb_data = os.urandom(1024*1024)
 
         add_objects(hs5._workdir, hs5, 100, mb_data)
+        hs5_large_small_alloc_chunksize.commit_storage(hs5.get_s3_client(), force=True)
         delete_all_objects(hs5, hs5.testbucketname())
+        hs5_large_small_alloc_chunksize.commit_storage(hs5.get_s3_client(), force=True)
 
     for _ in range(0, 2):
         add_remove()

@@ -150,6 +150,15 @@ ConfigResult readConfigFile(const std::string& fn)
             }
             continue;
         }
+        if(key=="MANUAL_COMMIT_LIST_CONSISTENT")
+        {
+            if(!parseConfigBool(val))
+            {
+                res.args.push_back("--nomanual_commit_list_consistent");
+                res.setArgs.insert("--nomanual_commit_list_consistent");
+            }
+            continue;
+        }
         if(key=="LOGLEVEL")
         {
             res.setArgs.insert("--logging");

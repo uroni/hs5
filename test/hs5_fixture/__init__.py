@@ -30,7 +30,8 @@ class Hs5Stats:
 
 
 class Hs5Runner:
-    manual_commit = False
+    manual_commit = True
+    manual_commit_list_consistent = True
     with_heaptrack = False
 
     def __init__(self, workdir : Path, data_file_size_limit_mb: int, perf: bool = False, data_file_alloc_chunk_size: Optional[int] = None) -> None:
@@ -124,6 +125,8 @@ class Hs5Runner:
 
         self.get_s3_client().create_bucket(Bucket=self.testbucketname())
 
+        self.get_s3_client().create_bucket(Bucket="manualcommit")
+
     def start(self) -> None:
         self._process = subprocess.Popen(
             self.args,
@@ -185,16 +188,18 @@ class Hs5Runner:
         config = botocore.config.Config(signature_version='s3v4', request_checksum_calculation="when_supported") if not sig_v2 else None
         return boto3.client('s3', endpoint_url=self.get_url(), aws_access_key_id="root", aws_secret_access_key=self._root_key, config=config)
     
-    def commit_storage(self, s3: S3Client):
+    def commit_storage(self, s3: S3Client, force: bool = False) -> None:
         if not self.manual_commit:
             return
+        if self.manual_commit_list_consistent and not force:
+            return
 
-        s3.put_object(Bucket="foo", Key="a711e93e-93b4-4a9e-8a0b-688797470002", Body="")
+        s3.put_object(Bucket="manualcommit", Key="a711e93e-93b4-4a9e-8a0b-688797470002", Body="")
 
     def stop_server(self):
         s3 = self.get_s3_client()
         try:
-            s3.put_object(Bucket="foo", Key="3db7da22-8ce2-4420-a8ca-f09f0b8e0e61", Body="")
+            s3.put_object(Bucket="manualcommit", Key="3db7da22-8ce2-4420-a8ca-f09f0b8e0e61", Body="")
         except:
             pass
 

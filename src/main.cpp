@@ -57,6 +57,7 @@ DEFINE_int32(http_worker_threads,
              "Number of HTTP worker threads to use. Numbers <= 0 "
              "will use the number of cores on this machine.");
 DEFINE_bool(manual_commit, false, "Manually commit by putting to a711e93e-93b4-4a9e-8a0b-688797470002");
+DEFINE_bool(manual_commit_list_consistent, true, "Make list results consistent when running in manual commit mode (at the cost of list latency)");
 DEFINE_string(index_path, ".", "Path where to put the index file");
 DEFINE_string(data_path, ".", "Path where to put the data file");
 DEFINE_bool(stop_on_error, false, "Stop on write/read errors");
@@ -232,6 +233,7 @@ int realMain(int argc, char* argv[])
     folly::Random::secureRandom(runtime_id.data(), runtime_id.size());
     sfsoptions.runtime_id = folly::hexlify<std::string>(folly::ByteRange(runtime_id.data(), runtime_id.size()));
     sfsoptions.manual_commit = FLAGS_manual_commit;
+    sfsoptions.manual_commit_list_consistent = FLAGS_manual_commit_list_consistent;
     sfsoptions.stop_on_error = FLAGS_stop_on_error;
     sfsoptions.punch_holes = FLAGS_punch_holes;
     sfsoptions.key_compare_func = mdb_cmp_s3key;

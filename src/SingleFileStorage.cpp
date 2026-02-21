@@ -428,7 +428,8 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	stop_data_file_copy(false), references(0), 	db_env(nullptr), freespace_cache_path(options.freespace_cache_path), cache_db_env(nullptr), regen_freespace_cache(false),
 	sync_freespace_cache(true), mdb_curr_sync(false), data_file_size_limit(options.data_file_size_limit_mb*1024*1024), alloc_chunk_size(options.alloc_chunk_size),
 	alloc_use_free_space_percent(options.alloc_use_free_space_percent),
-	runtime_id(options.runtime_id), manual_commit(options.manual_commit), stop_on_error(options.stop_on_error), punch_holes(options.punch_holes),
+	runtime_id(options.runtime_id), manual_commit(options.manual_commit), manual_commit_list_consistent(options.manual_commit_list_consistent),
+	stop_on_error(options.stop_on_error), punch_holes(options.punch_holes),
 	data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func),
 	common_prefix_hash_func(options.common_prefix_hash_func), on_delete_callback(options.on_delete_callback), modify_data_callback(options.modify_data_callback), 
 	wal_write_meta(options.wal_write_meta), wal_write_data(options.wal_write_data)
@@ -2767,11 +2768,18 @@ bool SingleFileStorage::list_commit()
 		return false;
 	}
 
-	// Only necessary if using wal file
-	if(!wal_file)
-		return true;
+	// Only necessary if using wal file or manual commit settings
+	const bool manual_commit_flush = manual_commit && manual_commit_list_consistent;
 
-	XLOGF(INFO, "Listing commit requested for SFS {} because of WAL presence", db_path);
+	if(!wal_file && !manual_commit_flush)
+	{
+		return true;
+	}
+
+	if(wal_file)
+		XLOGF(INFO, "Listing commit requested for SFS {} because of WAL presence", db_path);
+	else
+		XLOGF(INFO, "Listing commit requested for SFS {} because of manual commit settings", db_path);
 
 	SCommitInfo commit_info;
 	std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
@@ -2779,9 +2787,16 @@ bool SingleFileStorage::list_commit()
 	{
 		std::scoped_lock lock(mutex);
 
-		if(!needs_wal_file_reset)
+		if(wal_file && !needs_wal_file_reset
+			&& !manual_commit_flush)
 		{
 			XLOGF(INFO, "WAL file for SFS {} does not need reset, skipping listing commit", db_path);
+			return true;
+		}
+
+		if(!wal_file && commit_items.empty())
+		{
+			XLOGF(INFO, "No commit items in SFS {}, skipping listing commit", db_path);
 			return true;
 		}
 
