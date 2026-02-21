@@ -1378,7 +1378,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        if(header_path.find(c_commit_uuid)!=std::string::npos)
+        if(sfs.get_manual_commit() && header_path.find(c_commit_uuid)!=std::string::npos)
         {
             XLOGF(INFO, "Getting commit object");
             getCommitObject(*headers);
@@ -1605,7 +1605,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        if(path.find(c_commit_uuid)!=std::string::npos)
+        if(sfs.get_manual_commit() && path.find(c_commit_uuid)!=std::string::npos)
         {
             XLOGF(DBG0, "PutObject {} COMMIT", path);
 
@@ -2095,7 +2095,7 @@ void S3Handler::listBuckets(folly::EventBase* evb, std::shared_ptr<S3Handler> se
 
 void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
 {
-    const auto runtime_id = sfs.get_manual_commit() ? sfs.get_runtime_id() : "DISABLED";
+    const auto runtime_id = sfs.get_runtime_id();
     if(request_action==Action::HeadObject)
     {
         XLOGF(DBG0, "Head commit object, runtime id size {}", runtime_id.size());
@@ -2264,14 +2264,6 @@ void S3Handler::manualCommit(proxygen::HTTPMessage& headers)
             ResponseBuilder(self->downstream_)
                     .status(500, "Internal error")
                     .body(s3errorXml(S3ErrorCode::InternalError, "put_remaining > 0", fullKeyPath(), ""))
-                    .sendWithEOM();
-        return;
-    }
-    else if(!sfs.get_manual_commit())
-    {
-        XLOGF(DBG0, "Manual commit disabled, returning OK", keyInfo.key);
-        ResponseBuilder(self->downstream_)
-                    .status(200, "OK")
                     .sendWithEOM();
         return;
     }

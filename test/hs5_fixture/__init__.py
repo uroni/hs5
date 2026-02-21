@@ -30,7 +30,7 @@ class Hs5Stats:
 
 
 class Hs5Runner:
-    manual_commit = True
+    manual_commit = False
     manual_commit_list_consistent = True
     with_heaptrack = False
 

@@ -1,4 +1,6 @@
 
+from botocore.exceptions import ClientError
+
 class Hs5RestartError(Exception):
     def __str__(self) -> str:
         return "HS5 was restarted before commit. Objects might not be properly committed."
@@ -10,10 +12,17 @@ class Hs5Commit:
         self._commit = False
 
     def __enter__(self):
-        self._runtime_uuid = self._get_runtime_uuid()
-        if self._runtime_uuid != "DISABLED":
+        try:
+            self._runtime_uuid = self._get_runtime_uuid()
+        except ClientError as e:
+            if ("Error" not in e.response or
+               "Code" not in e.response["Error"] or
+               e.response["Error"]["Code"] != "NoSuchKey"):
+                raise
             # We can skip commit if manual commit is disabled
-            self._commit = True
+            # (Detected by missing commit object)
+            return self
+        self._commit = True
         return self
     
     def _get_runtime_uuid(self) -> str:
