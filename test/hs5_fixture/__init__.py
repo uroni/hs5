@@ -204,7 +204,8 @@ class Hs5Runner:
         def stop_thread():
             s3 = self.get_s3_client()
             try:
-                s3.put_object(Bucket="manualcommit", Key=f"3db7da22-8ce2-4420-a8ca-f09f0b8e0e61{"-fast" if fast else ""}", Body="")
+                pkey = "3db7da22-8ce2-4420-a8ca-f09f0b8e0e61" + ("-fast" if fast else "")
+                s3.put_object(Bucket="manualcommit", Key=pkey, Body="")
             except:
                 pass
         t = threading.Thread(target=stop_thread, daemon=True)
