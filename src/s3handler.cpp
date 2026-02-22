@@ -3972,7 +3972,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             const size_t delimPos = keyInfo.key.find_first_of(delimiter[0], prefixSize);
             if(delimPos != std::string::npos)
             {
-                const auto commonKey = std::string(keyInfo.key.substr(prefixSize, delimPos - prefixSize + 1));
+                const auto commonKey = std::string(keyInfo.key.substr(0, delimPos + 1));
                 if(commonKey!=lastOutputKeyStr)                
                     commonPrefixes.push_back(commonKey);
                 outputKey = false;

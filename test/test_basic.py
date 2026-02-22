@@ -343,6 +343,7 @@ def test_list_prefix(tmp_path: Path, hs5: Hs5Runner):
 
     res = s3_client.list_objects(Bucket=hs5.testbucketname(), Prefix="a/")
 
+    assert "Contents" in res
     objs = res["Contents"]
     assert objs is not None
     assert len(objs) == 1
@@ -359,17 +360,20 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
     s3_client.upload_file(upload_file.name, hs5.testbucketname(), "1.txt")
     s3_client.upload_file(upload_file.name, hs5.testbucketname(), "a/2.txt")
     s3_client.upload_file(upload_file.name, hs5.testbucketname(), "b/3.txt")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "b/c/3.txt")
 
     hs5.commit_storage(s3_client)
 
     res = s3_client.list_objects(Bucket=hs5.testbucketname(), Delimiter="/")
 
+    assert "Contents" in res
     objs = res["Contents"]
     assert objs is not None
     assert len(objs) == 1
     assert "Key" in objs[0]
     assert objs[0]["Key"] == "1.txt"
 
+    assert "CommonPrefixes" in res
     common_prefixes = res["CommonPrefixes"]
     prefixes = list[str]()
     for pre in common_prefixes:
@@ -379,6 +383,26 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
     assert len(prefixes) == 2
     assert "a/" in prefixes
     assert "b/" in prefixes
+
+    res = s3_client.list_objects(Bucket=hs5.testbucketname(), Prefix="b/", Delimiter="/")
+    assert "Contents" in res
+    objs = res["Contents"]
+    assert objs is not None
+    assert len(objs) == 1
+    assert "Key" in objs[0]
+    assert objs[0]["Key"] == "b/3.txt"
+
+    assert "CommonPrefixes" in res
+    common_prefixes = res["CommonPrefixes"]
+    prefixes = list[str]()
+    for pre in common_prefixes:
+        assert "Prefix" in pre
+        prefixes.append(pre["Prefix"])
+
+    assert len(prefixes) == 1
+    assert "b/c/" in prefixes
+
+    
 
 def test_list_one(tmp_path: Path, hs5: Hs5Runner):
     with open(tmp_path / "upload.txt", "w") as upload_file:
