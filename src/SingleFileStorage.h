@@ -81,7 +81,8 @@ public:
 		Unqueue = 4,
 		AssertQueueEmpty = 5,
 		DelNoCheck = 6,
-		DelNoCallbackNoCheck = 7
+		DelNoCallbackNoCheck = 7,
+		DelWithQueuedNoCheck = 8
 	};
 
 	enum class FragAction
@@ -409,6 +410,8 @@ public:
 	void free_extents(const std::vector<Ext>& extents);
 
 	void wait_for_wal_startup_finished();
+
+	void assert_reading_items_empty();
 
 private:
 

@@ -454,19 +454,24 @@ def test_list_start_after(tmp_path: Path, hs5: Hs5Runner):
     assert objs["Contents"][0]["Key"] == "c"
     
 
-
-def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):
+@pytest.mark.parametrize("restart_during_download", [True, False])
+def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: bool):
 
     assert hs5.get_stats().used == 0
 
     ul_size = 50*1024*1024
 
+    fhash = hashlib.md5()
+
     with open(tmp_path / "upload_multipart.dat", "wb") as upload_file:
         size = ul_size
         while size > 0:
             buf = os.urandom(512*1024)
+            fhash.update(buf)
             upload_file.write(buf)
             size -= len(buf)
+
+    md5sum_full_file = fhash.hexdigest()
 
     s3_client = hs5.get_s3_client()
 
@@ -545,10 +550,43 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner):
     assert "Size" in objs["Contents"][0]
     assert objs["Contents"][0]["Size"] == ul_size
 
+    dl_md5sum : str = ""
+    download_started = threading.Event()
+    object_deleted = threading.Event()
+
+    def dl_thread():
+        fhash = hashlib.md5()
+        obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+        while True:
+            download_started.set()
+            data = obj["Body"].read(128*1024)
+            if data:
+                fhash.update(data)
+
+                if restart_during_download and object_deleted.is_set():
+                    hs5.restart()
+                    return
+            else:
+                break
+
+        nonlocal dl_md5sum
+        dl_md5sum = fhash.hexdigest()
+
+    t = threading.Thread(target=dl_thread)
+    t.start()
+
+    download_started.wait()
 
     s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt")
 
-    hs5.commit_storage(s3_client)
+    object_deleted.set()
+
+    hs5.commit_storage(s3_client)    
+
+    t.join()
+
+    if not restart_during_download:
+        assert dl_md5sum == md5sum_full_file
 
     assert hs5.get_stats().used == 0
 
@@ -614,6 +652,8 @@ def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
     s3_client.download_file(hs5_large.testbucketname(), "upload.dat", str(dl_path))
 
     assert filecmp.cmp(tmpfile, dl_path)
+
+    
 
 @pytest.mark.parametrize("size", [512*1024, 5*1024*1024+12, 101, 51*1024*1024])
 @pytest.mark.parametrize("checksum_algorithm", ["CRC32", "CRC32C", "SHA1", "SHA256", "CRC64NVME"])

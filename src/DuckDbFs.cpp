@@ -37,15 +37,11 @@ void DuckDbFileHandle::Close()
     if(!open)
         return;
     
-    const auto parsedUrl = DuckDbFs::Hs5UrlParse(path);
-
-    const auto s3key = make_key(parsedUrl.key, bucketId, std::numeric_limits<int64_t>::max());
-
     if(flags.OpenForReading())
     {
         if(multiPartDownloadData)
         {
-            const auto rc = S3Handler::finalizeMultiPart(sfs(), bucketId, *multiPartDownloadData, extents);
+            const auto rc = S3Handler::finalizeMultiPart(sfs(), s3key, bucketId, *multiPartDownloadData, extents);
             if(rc)
                 XLOGF(WARN, "Error finalizing multipart download: {}", rc);
         }
@@ -70,10 +66,10 @@ void DuckDbFileHandle::Initialize()
 
     bucketId = *bucketIdOpt;
 
-    std::string s3key;
     unsigned int readPrepFlags = 0;
 
-    if(static_cast<DuckDbFs&>(file_system).isWithBucketVersioning())
+    const auto withVersioning = static_cast<DuckDbFs&>(file_system).isWithBucketVersioning();
+    if(withVersioning)
     {
         s3key = make_key(parsedUrl.key, bucketId, std::numeric_limits<int64_t>::max());
         readPrepFlags |= SingleFileStorage::ReadNewest;
@@ -95,6 +91,9 @@ void DuckDbFileHandle::Initialize()
             }
             throw duckdb::IOException("Failed to prepare read: " + std::to_string(res.err));
         }
+
+        if(withVersioning)
+            s3key = res.key;
 
         if(!S3Handler::parseMultipartInfo(res.md5sum, res.total_len, multiPartDownloadData, nullptr))
         {

@@ -47,6 +47,7 @@ using namespace proxygen;
 
 const char c_commit_uuid[] = "a711e93e-93b4-4a9e-8a0b-688797470002";
 const char c_stop_uuid[] = "3db7da22-8ce2-4420-a8ca-f09f0b8e0e61";
+const char c_stop_uuid_fast[] = "3db7da22-8ce2-4420-a8ca-f09f0b8e0e61-fast";
 const char unsigned_payload[] = "UNSIGNED-PAYLOAD";
 const char streaming_unsigned_payload_trailer[] = "STREAMING-UNSIGNED-PAYLOAD-TRAILER";
 const char streaming_sha256_payload[] = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD";
@@ -1183,6 +1184,9 @@ std::string serializePartExts(const ParsePartRes& partRes)
     return std::string(wdata.getDataPtr(), wdata.getDataSize());
 }
 
+std::mutex S3Handler::readingMultipartObjectsMutex;
+std::unordered_map<std::string, S3Handler::ReadingMultipartObject> S3Handler::readingMultipartObjects;
+
 std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& message)
 {
     const auto payload = message.getHeaders().getSingleOrEmpty("x-amz-content-sha256");
@@ -1619,15 +1623,26 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             path.find(c_stop_uuid)!=std::string::npos)
         {
             XLOGF(DBG0, "PutObject {} STOP", path);
-            folly::getGlobalCPUExecutor()->add([]{
-                stopServer();
-            });
+#ifndef NDEBUG
+            stopChecks();
+#endif
             ResponseBuilder(downstream_)
                     .status(200, "OK")
                     .body("Server is stopping")
                     .sendWithEOM();
             // Don't handle EOM
             request_action = Action::HeadObject;
+
+            if(path.find(c_stop_uuid_fast)!=std::string::npos)
+            {
+                _exit(0);
+            }
+            else
+            {
+                folly::getGlobalCPUExecutor()->add([]{
+                    stopServer();
+                });
+            }
             return;
         }
 
@@ -2367,11 +2382,12 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
             { 
                 unsigned int flags = 0;
                 if(self->request_action == Action::HeadObject)
-                    flags |= SingleFileStorage::ReadMetaOnly;
+                    flags |= SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading;
                 
                 std::string findPath;
 
-                if(self->withBucketVersioning && self->keyInfo.version==0)
+                const auto withVersioning = self->withBucketVersioning && self->keyInfo.version==0;
+                if(withVersioning)
                 {
                     flags |= SingleFileStorage::ReadNewest;
                     findPath = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
@@ -2424,6 +2440,23 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                                               });
                     return;
                 }
+                else if(withVersioning)
+                {
+                    findPath = res.key;
+                    self->keyInfo.version = extractKeyInfoView(findPath).version;
+                }
+
+                bool runReadCleanup = true;
+                SCOPE_EXIT {
+                    if(!runReadCleanup || self->request_action == Action::HeadObject)
+                        return;
+                    int rc;
+                    if(self->multiPartDownloadData)
+                        rc = finalizeMultiPart(self->sfs, findPath, self->keyInfo.bucketId, *self->multiPartDownloadData, res.extents);
+                    else
+                        rc = self->sfs.read_finalize(findPath, res.extents, 0);
+                    assert(rc==0);
+                };
 
                 if(!self->parseMultipartInfo(res.md5sum, res.total_len, self->multiPartDownloadData, &self->contentType))
                 {
@@ -2435,7 +2468,11 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                                 .sendWithEOM();
                                               });
                                             return;
-                } 
+                }
+                else if(self->multiPartDownloadData && self->request_action != Action::HeadObject)
+                {
+                    addReadingMultipartObject(findPath);
+                }
 
                 if(res.md5sum.size()==1 && res.md5sum[0] == metadata_tombstone)
                 {
@@ -2485,6 +2522,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
                 std::optional<std::string> partNumberEtag;
                 std::optional<int64_t> partNumberSize;
+                bool setMultiPartExtents = false;
                 if(partNumberStr)
                 {
                     if(!range.empty())
@@ -2531,11 +2569,11 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
                     if(self->multiPartDownloadData)
                     {
-                        std::vector<SingleFileStorage::Ext> exts;
                         std::string partNumberEtagOut;
                         int64_t partNumberOffset;
                         int64_t partNumberSizeOut;
-                        const auto rc = seekMultipart(self->sfs, partNumber, self->keyInfo.bucketId, *self->multiPartDownloadData, exts, partNumberEtagOut, partNumberOffset, partNumberSizeOut);
+                        const auto rc = seekMultipart(self->sfs, partNumber, self->keyInfo.bucketId, self->request_action != Action::HeadObject,
+                            *self->multiPartDownloadData, self->extents, partNumberEtagOut, partNumberOffset, partNumberSizeOut);
                         if(rc!=0)
                         {
                             XLOGF(WARN, "Error seeking to part number {} of key {}: {}",
@@ -2553,6 +2591,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         rangeStart = partNumberOffset;
                         rangeEnd = partNumberOffset + partNumberSizeOut;
                         partNumberEtag = partNumberEtagOut;
+                        setMultiPartExtents = true;
                     }
                 }
 
@@ -2582,7 +2621,9 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                 if (self->request_action == Action::HeadObject)
                     return;
 
-                self->extents = std::move(res.extents);
+                runReadCleanup = false;
+                if(!setMultiPartExtents)
+                    self->extents = std::move(res.extents);
                 self->done_bytes = rangeStart;
                 self->put_remaining.store(rangeEnd, std::memory_order_relaxed);
 
@@ -2698,7 +2739,7 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                 const auto partsBucketId = buckets::getPartsBucket(self->keyInfo.bucketId);
 
                 auto readRes = self->sfs.read_prepare(make_key({.key = self->keyInfo.key, .version = uploadId, 
-                    .bucketId = partialUploadsBucketId}), 0);
+                    .bucketId = partialUploadsBucketId}), SingleFileStorage::ReadSkipAddReading);
                 if(readRes.err!=0)
                 {
                     XLOGF(WARN, "Could not read upload data for uploadId {} err {}", uploadId, readRes.err);
@@ -2854,7 +2895,7 @@ void S3Handler::finalizeMultipartUpload()
                 const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
                 auto readRes = self->sfs.read_prepare(
                     make_key({.key = self->keyInfo.key, .version = multiPartData->uploadId.id, 
-                    .bucketId = partialUploadsBucketId}), 0);
+                    .bucketId = partialUploadsBucketId}), SingleFileStorage::ReadSkipAddReading);
                 CRData uploadData(readRes.md5sum.data(), readRes.md5sum.size());
                 ContentType uploadContentType;
                 std::string uploadFPath = make_key(self->keyInfo);
@@ -3490,6 +3531,11 @@ int S3Handler::seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
         XLOG(WARN, "No multi-part parts found in seek");
         return ENOENT;
     }
+    else if(multiPartDownloadData.extIdx!=std::string::npos)
+    {
+        XLOG(DBG0, "Multi-part ext already seeked");
+        return 0;
+    }
 
     XLOGF(DBG0, "Seeking multi-part to offset {}", offset);
 
@@ -3526,10 +3572,11 @@ int S3Handler::seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
     }
 
     std::string etag;
-    return readMultipartExt(sfs, seekOffset, bucketId, multiPartDownloadData, extents, etag);
+    return readMultipartExt(sfs, seekOffset, bucketId, true, multiPartDownloadData, extents, etag);
 }
 
-int S3Handler::seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen)
+int S3Handler::seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData, 
+    std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen)
 {
 
     if(multiPartDownloadData.exts.empty())
@@ -3575,16 +3622,17 @@ int S3Handler::seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t buc
     }
 
     partLen = multiPartDownloadData.currExt.size;
-    return readMultipartExt(sfs, offset, bucketId, multiPartDownloadData, extents, etag);
+    return readMultipartExt(sfs, offset, bucketId, addReading, multiPartDownloadData, extents, etag);
 }
 
-int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string& etag)
+int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, const bool addReading, 
+    MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string& etag)
 {
     auto partNum = multiPartDownloadData.currExt.start;
     const auto partsBucketId = buckets::getPartsBucket(bucketId);
     auto res = sfs.read_prepare(
         make_key({.key = uploadIdToStr(multiPartDownloadData.uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
-                    .bucketId = partsBucketId}), 0);
+                    .bucketId = partsBucketId}), addReading ? 0 : SingleFileStorage::ReadSkipAddReading);
     if (res.err != 0)
     {
         XLOGF(WARN, "Error reading next multipart object meta-information uploadid {} partnum {}", multiPartDownloadData.uploadId, partNum);
@@ -3614,6 +3662,7 @@ int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
 
 int S3Handler::readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents)
 {
+    XLOGF(DBG0, "Reading next multi-part ext for offset {}", offset);
     int lastPartNum = -1;
     if(multiPartDownloadData.extIdx == std::string::npos)
     {
@@ -3662,7 +3711,7 @@ int S3Handler::readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int6
     }
 
     std::string etag;
-    const auto rc = readMultipartExt(sfs, offset, bucketId, multiPartDownloadData, extents, etag);
+    const auto rc = readMultipartExt(sfs, offset, bucketId, true, multiPartDownloadData, extents, etag);
     if(rc)
     {
         XLOGF(WARN, "Error reading next multipart extents code {}", rc);
@@ -3672,10 +3721,13 @@ int S3Handler::readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int6
     return 0;
 }
 
-int S3Handler::finalizeMultiPart(SingleFileStorage& sfs, const int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents)
+int S3Handler::finalizeMultiPart(SingleFileStorage& sfs, const std::string& fn, const int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents)
 {
+    removeReadingMultipartObject(fn, sfs);
+
+    // Not started yet
     if(multiPartDownloadData.extIdx == std::string::npos)
-        return ENOENT;
+        return 0;
 
     if(!multiPartDownloadData.needsFinalize)
         return 0;
@@ -3703,6 +3755,18 @@ int S3Handler::finalizeMultiPart(SingleFileStorage& sfs, const int64_t bucketId,
 
 void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> self, int64_t offset)
 {
+    bool runReadCleanup = true;
+    SCOPE_EXIT {
+        if(!runReadCleanup)
+            return;
+        int rc;
+        if(multiPartDownloadData)
+            rc = finalizeMultiPart(self->sfs, make_key(self->keyInfo), self->keyInfo.bucketId, *self->multiPartDownloadData, self->extents);
+        else
+            rc = sfs.read_finalize(make_key(self->keyInfo), self->extents, 0);
+        assert(rc==0);
+    };
+
     const size_t bufsize = 32768;
     folly::IOBufQueue buf;
 
@@ -3818,14 +3882,14 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
 
     if(!has_error && offset < put_remaining.load(std::memory_order_relaxed))
     {
+        runReadCleanup=false;
         evb->runInEventBaseThread([self = self, did_pause]
                                 {
             if(self->finished_)
             {
-                // TODO: Add some checks if the ref counting is correct
                 int rc;
                 if(self->multiPartDownloadData)
-                    rc = finalizeMultiPart(self->sfs, self->keyInfo.bucketId, *self->multiPartDownloadData, self->extents);
+                    rc = finalizeMultiPart(self->sfs, make_key(self->keyInfo), self->keyInfo.bucketId, *self->multiPartDownloadData, self->extents);
                 else
                     rc = self->sfs.read_finalize(make_key(self->keyInfo), self->extents, 0);
                 assert(rc==0);
@@ -3846,15 +3910,6 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
             }
 
                                 });
-    }
-    else
-    {
-        int rc;
-        if(multiPartDownloadData)
-            rc = finalizeMultiPart(self->sfs, self->keyInfo.bucketId, *self->multiPartDownloadData, self->extents);
-        else
-            rc = sfs.read_finalize(make_key(self->keyInfo), self->extents, 0);
-        assert(rc==0);
     }
 }
 
@@ -5158,8 +5213,14 @@ std::vector<SingleFileStorage::SFragInfo> S3Handler::onDeleteCallback(const std:
             parts+= ext.len;
         }
 
-        XLOGF(INFO, "Multi-part upload found for object {} with total length {}. Deleting {} parts", keyInfo.key, totalLen, parts);
         const auto partsBucketId = buckets::getPartsBucket(keyInfo.bucketId);
+        const auto isReading = isReadingMultipartObjectAndMarkDel(fn, multiPartDownloadData->uploadId, partsBucketId, multiPartDownloadData->exts);
+
+        if(isReading)
+            XLOGF(INFO, "Multipart object {} is currently being read. Marked for deletion after reading completed", fn);
+        else
+             XLOGF(INFO, "Multi-part upload found for object {} with total length {}. Deleting {} parts", keyInfo.key, totalLen, parts);
+
         ret.reserve(parts);
 
         for(const auto& ext: multiPartDownloadData->exts)
@@ -5167,7 +5228,7 @@ std::vector<SingleFileStorage::SFragInfo> S3Handler::onDeleteCallback(const std:
             for(auto partNum=ext.start; partNum<ext.start+ext.len; ++partNum)
             {
                 SingleFileStorage::SFragInfo fragInfo;
-                fragInfo.action = SingleFileStorage::FragAction::Del;
+                fragInfo.action = isReading ? SingleFileStorage::FragAction::QueueDel : SingleFileStorage::FragAction::Del;
                 fragInfo.fn = make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
                             .bucketId = partsBucketId});
                 ret.push_back(fragInfo);
@@ -5195,4 +5256,74 @@ std::optional<std::string> S3Handler::onModifyCallback(const std::string& fn, st
 std::string S3Handler::fullKeyPath() const
 {
     return buckets::getBucketName(keyInfo.bucketId) + "/" + keyInfo.key;
+}
+
+void S3Handler::addReadingMultipartObject(const std::string& key)
+{
+    std::scoped_lock lock{readingMultipartObjectsMutex};
+    auto& obj = readingMultipartObjects[key];
+    obj.refs++;
+}
+
+void S3Handler::removeReadingMultipartObject(const std::string& key, SingleFileStorage& sfs)
+{
+    std::scoped_lock lock{readingMultipartObjectsMutex};
+    auto it = readingMultipartObjects.find(key);
+    assert(it!=readingMultipartObjects.end());
+    if(it==readingMultipartObjects.end())
+        return;
+
+    assert(it->second.refs>0);
+    if(--it->second.refs==0)
+    {
+        if(it->second.delUploadId != -1)
+        {
+            XLOGF(INFO, "Deleting multi-part upload object {} after reading completed delUploadId={} delParts.size()={}", key, it->second.delUploadId, it->second.delParts.size());
+            for(const auto& ext: it->second.delParts)
+            {
+                for(auto partNum=ext.start; partNum<ext.start+ext.len; ++partNum)
+                {
+                    const auto rc = sfs.del(make_key({.key = uploadIdToStr(it->second.delUploadId)+"."+uploadIdToStr(partNum), .version = 0, 
+                                .bucketId = it->second.delBucketId}), SingleFileStorage::DelAction::DelWithQueuedNoCheck, false);
+                    assert(rc==0);
+                }
+            }
+        }
+        readingMultipartObjects.erase(it);
+    }
+}
+
+bool S3Handler::isReadingMultipartObjectAndMarkDel(const std::string& key, const int64_t delUploadId, const int64_t delBucketId, const std::vector<MultiPartDownloadData::PartExt>& delParts)
+{
+    std::scoped_lock lock{readingMultipartObjectsMutex};
+    auto it = readingMultipartObjects.find(key);
+    if(it==readingMultipartObjects.end())
+        return false;
+
+    it->second.delUploadId = delUploadId;
+    it->second.delParts = delParts;
+    it->second.delBucketId = delBucketId;
+    return true;
+}
+
+void S3Handler::stopChecks()
+{
+    {
+        std::scoped_lock lock{readingMultipartObjectsMutex};
+        if(!readingMultipartObjects.empty())
+        {
+            XLOGF(ERR, "There are still {} multipart objects being read at shutdown", readingMultipartObjects.size());
+            for(const auto& [key, obj]: readingMultipartObjects)
+            {
+                XLOGF(ERR, "Multipart object {} with {} refs is still being read "
+                    "at shutdown delUploadId={} refs={} delParts.size()={}", key, obj.refs, 
+                    obj.delUploadId, obj.refs, obj.delParts.size());
+            }
+        }
+        assert(readingMultipartObjects.empty());
+    }
+
+    sfs.assert_reading_items_empty();
+    sfs.del("", SingleFileStorage::DelAction::AssertQueueEmpty, false);
+    sfs.empty_queue(false);
 }

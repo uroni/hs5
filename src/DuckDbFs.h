@@ -49,6 +49,7 @@ private:
     std::vector<SingleFileStorage::Ext> extents;
 
     bool open = false;
+    std::string s3key;
 
     
 };

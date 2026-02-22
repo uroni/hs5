@@ -6,6 +6,7 @@ from pathlib import Path
 from shutil import rmtree
 import subprocess
 import sys
+import threading
 import time
 from typing import Optional
 import uuid
@@ -159,24 +160,27 @@ class Hs5Runner:
         self._admin_ses = resp["ses"]
         assert self._admin_ses
 
-    def stop(self, cleanup: bool) -> None:
+    def stop(self, cleanup: bool, kill: bool) -> None:
 
         with pytest.raises(subprocess.TimeoutExpired):
             self._process.wait(0.001)
 
-        if self.with_heaptrack:
-            self.stop_server()
-        else:
+        if kill:
             self._process.kill()
+        else:
+            self.stop_server(not self.with_heaptrack)
 
-        self._process.wait()
+        rc = self._process.wait()
+        if not kill and rc != 0:
+            raise Exception(f"Hs5 process exited with code {rc}")
 
         if not self.with_heaptrack and cleanup:
             rmtree(self._workdir)
 
     def restart(self) -> None:
-        self.stop(cleanup=False)
+        self.stop(cleanup=False, kill=True)
         self.start()
+        self._login_admin()
 
     def get_url(self) -> str:
         return f"http://127.0.0.1:{self._port}"
@@ -196,12 +200,15 @@ class Hs5Runner:
 
         s3.put_object(Bucket="manualcommit", Key="a711e93e-93b4-4a9e-8a0b-688797470002", Body="")
 
-    def stop_server(self):
-        s3 = self.get_s3_client()
-        try:
-            s3.put_object(Bucket="manualcommit", Key="3db7da22-8ce2-4420-a8ca-f09f0b8e0e61", Body="")
-        except:
-            pass
+    def stop_server(self, fast: bool):
+        def stop_thread():
+            s3 = self.get_s3_client()
+            try:
+                s3.put_object(Bucket="manualcommit", Key=f"3db7da22-8ce2-4420-a8ca-f09f0b8e0e61{"-fast" if fast else ""}", Body="")
+            except:
+                pass
+        t = threading.Thread(target=stop_thread, daemon=True)
+        t.start()
 
     def get_root_key(self):
         return self._root_key
@@ -230,7 +237,7 @@ def hs5(tmpdir: Path):
     loc.mkdir()
     runner = Hs5Runner(loc, data_file_size_limit_mb=100)
     yield runner
-    runner.stop(cleanup=True)
+    runner.stop(cleanup=True, kill=False)
     try:
         rmtree(loc)
     except:
@@ -242,7 +249,7 @@ def hs5_perf(tmpdir: Path):
     loc.mkdir()
     runner = Hs5Runner(loc, data_file_size_limit_mb=100, perf=True)
     yield runner
-    runner.stop(cleanup=True)
+    runner.stop(cleanup=True, kill=False)
     try:
         rmtree(loc)
     except:
@@ -254,7 +261,7 @@ def hs5_large(tmpdir: Path):
     loc.mkdir()
     runner = Hs5Runner(loc, data_file_size_limit_mb=5000)
     yield runner
-    runner.stop(cleanup=True)
+    runner.stop(cleanup=True, kill=False)
     try:
         rmtree(loc)
     except:
@@ -266,7 +273,7 @@ def hs5_large_small_alloc_chunksize(tmpdir: Path):
     loc.mkdir()
     runner = Hs5Runner(loc, data_file_size_limit_mb=5000, data_file_alloc_chunk_size=10*1024*1024)
     yield runner
-    runner.stop(cleanup=True)
+    runner.stop(cleanup=True, kill=False)
     try:
         rmtree(loc)
     except:

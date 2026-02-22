@@ -192,10 +192,12 @@ public:
     static std::string getEtag(const std::string& md5sum);
     
     static int seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
-    static int seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen);
-    static int readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string& etag);
+    static int seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData, 
+            std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen);
+    static int readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, const bool addReading,
+         MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string& etag);
     static int readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
-    static int finalizeMultiPart(SingleFileStorage& sfs, const int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
+    static int finalizeMultiPart(SingleFileStorage& sfs, const std::string& fn, const int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
 
     static std::vector<SingleFileStorage::SFragInfo> onDeleteCallback(const std::string& fn, const std::string& md5sum);
     static std::optional<std::string> onModifyCallback(const std::string& fn, std::string md5sum, std::string md5sumParam);
@@ -237,6 +239,11 @@ private:
     UploadIdDec decryptUploadId(const std::string& encdata);
 
     std::string fullKeyPath() const;
+
+    static void addReadingMultipartObject(const std::string& key);
+    static void removeReadingMultipartObject(const std::string& key, SingleFileStorage& sfs);
+    static bool isReadingMultipartObjectAndMarkDel(const std::string& key, const int64_t delUploadId, const int64_t delBucketId, const std::vector<MultiPartDownloadData::PartExt>& delParts);
+    void stopChecks();
 
 	std::shared_ptr<S3Handler> self;
 	Action request_action = Action::Unknown;
@@ -302,4 +309,15 @@ private:
     };
 
     std::unique_ptr<AwsChunkedEncoding> awsChunkedEncoding;
+
+    struct ReadingMultipartObject
+    {
+        size_t refs = 0;
+        int64_t delUploadId = -1;
+        int64_t delBucketId = -1;
+        std::vector<MultiPartDownloadData::PartExt> delParts;
+    };
+
+    static std::mutex readingMultipartObjectsMutex;
+    static std::unordered_map<std::string, ReadingMultipartObject> readingMultipartObjects;
 };

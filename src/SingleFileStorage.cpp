@@ -2265,8 +2265,12 @@ void SingleFileStorage::add_reading_item(const SingleFileStorage::SFragInfo& fi)
 void SingleFileStorage::remove_reading_item(const std::vector<Ext>& extents)
 {
 	assert(!extents.empty());
+	if(extents.begin()->data_file_offset==0 && extents.begin()->len==0)
+		return;
 	auto ri = reading_items.find(extents.begin()->data_file_offset);
 	assert(ri!=reading_items.end());
+	if(ri==reading_items.end())
+		return;
 	--ri->second.refs;
 	assert(ri->second.refs>=0);
 	if(ri->second.refs<=0)
@@ -2316,7 +2320,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 			return ReadPrepareResult{ENOENT};
 		}
 
-		if(!(flags & ReadSkipAddReading))
+		if(!(flags & ReadSkipAddReading) && (frag_info.offset != 0 || frag_info.len>0))
 		{
 			std::lock_guard lock(mutex);
 			add_reading_item(frag_info);
@@ -2349,7 +2353,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 			return ReadPrepareResult{ENOENT};
 		}
 
-		if(!(flags & ReadSkipAddReading))
+		if(!(flags & ReadSkipAddReading) && (frag_info.offset != 0 || frag_info.len>0))
 		{
 			std::lock_guard lock(mutex);
 			add_reading_item(frag_info);
@@ -2595,7 +2599,9 @@ int SingleFileStorage::del(const std::string_view fn, DelAction da,
 		return ENOTRECOVERABLE;
 	}
 
-	if(da != DelAction::DelNoCheck && da != DelAction::DelNoCallbackNoCheck)
+	if(da != DelAction::DelNoCheck && da != DelAction::DelNoCallbackNoCheck 
+		&& da != DelAction::DelWithQueuedNoCheck
+		&& da != DelAction::AssertQueueEmpty)
 	{
 		const auto rc = check_existence(fn, 0);
 		if(rc)
@@ -2612,6 +2618,7 @@ int SingleFileStorage::del(const std::string_view fn, DelAction da,
 	case DelAction::DelOld:
 		curr_frag.action = FragAction::DelOld;
 		break;
+	case DelAction::DelWithQueuedNoCheck:
 	case DelAction::DelWithQueued:
 		curr_frag.action = FragAction::DelWithQueued;
 		break;
@@ -2637,7 +2644,9 @@ int SingleFileStorage::del(const std::string_view fn, DelAction da,
 	std::unique_lock lock(mutex);
 	wait_queue(lock, background_queue, false);
 	wait_defrag(fn, lock);
-	++commit_items[common_prefix_hash_func(fn)];
+
+	if(da != DelAction::AssertQueueEmpty)
+		++commit_items[common_prefix_hash_func(fn)];
 	
 	if (is_defragging)
 	{
@@ -3136,7 +3145,7 @@ int64_t SingleFileStorage::remove_fn(const std::string & fn, MDB_txn * txn, MDB_
 				}
 			}
 
-			if(startup_finished)
+			if(startup_finished && (offset!=0 || length>0))
 			{
 				std::lock_guard lock(mutex);
 				auto it_reading = reading_items.find(offset);
@@ -4144,7 +4153,7 @@ int64_t SingleFileStorage::reset_del_queue(MDB_txn * txn, MDB_txn* freespace_txn
 
 		if (rc != MDB_NOTFOUND)
 		{
-			std::string fn = std::string(reinterpret_cast<char*>(tkey.mv_data), tkey.mv_size);
+			const auto fn = std::string(reinterpret_cast<char*>(tkey.mv_data), tkey.mv_size);
 
 			int64_t curr_disk_id = get_fn_disk_id(fn);
 
@@ -4156,19 +4165,19 @@ int64_t SingleFileStorage::reset_del_queue(MDB_txn * txn, MDB_txn* freespace_txn
 			int64_t fn_transid = 0;
 			rdata.getVarInt(&fn_transid);
 
-			if (fn_transid == transid)
+			if (fn_transid!=0 && fn_transid == transid)
 			{
-				XLOG(INFO) << "Not deleting queued " << decompress_filename(fn) << " transid " << std::to_string(fn_transid) << " sfs " << db_path << " curr transid " << std::to_string(transid);
+				XLOG(INFO) << "Not deleting queued " << folly::hexlify(fn) << " transid " << std::to_string(fn_transid) << " sfs " << db_path << " curr transid " << std::to_string(transid);
 			}
-			else if(fn_transid>0)
+			else if(fn_transid>=0)
 			{
-				XLOG(INFO) << "Deleting queued " << decompress_filename(fn) << " from main transid " << std::to_string(fn_transid) << " sfs " << db_path << " curr transid " << std::to_string(transid);
+				XLOG(INFO) << "Deleting queued " << folly::hexlify(fn) << " from main transid " << std::to_string(fn_transid) << " sfs " << db_path << " curr transid " << std::to_string(transid);
 
 				commit_errors += remove_fn(fn, txn, freespace_txn, true, false, tid, false);
 			}
 			else
 			{
-				XLOG(INFO) << "Not deleting queued (transid<=0) " << decompress_filename(fn) << " from main transid " << std::to_string(fn_transid) << " sfs " << db_path << " curr transid " << std::to_string(transid);
+				XLOG(INFO) << "Not deleting queued (transid<=0) " << folly::hexlify(fn) << " from main transid " << std::to_string(fn_transid) << " sfs " << db_path << " curr transid " << std::to_string(transid);
 			}
 
 			rc = mdb_cursor_del(it_cursor, 0);
@@ -7418,8 +7427,6 @@ void SingleFileStorage::operator()()
 				{
 					++commit_errors;
 				}
-
-				commit_errors += reset_del_queue(txn, freespace_txn, tid, 0, curr_transid);
 			}
 
 			if (curr_new_free_extents.size() < 1000 ||
@@ -7984,7 +7991,7 @@ void SingleFileStorage::operator()()
 		}
 		else if (frag_info.action == FragAction::QueueDel)
 		{
-			int64_t log_transid = curr_transid;
+			int64_t log_transid = 0;
 
 			int64_t disk_id = get_fn_disk_id(frag_info.fn);
 
@@ -9653,4 +9660,18 @@ void SingleFileStorage::wait_for_wal_startup_finished()
 		wal_startup_finished_cond.wait(lock);
 	}
 	XLOGF(INFO, "WAL startup finished for sfs {}", db_path);
+}
+
+void SingleFileStorage::assert_reading_items_empty()
+{
+	std::scoped_lock lock(mutex);
+	if (!reading_items.empty())
+	{
+		XLOGF(ERR, "Reading items not empty: {} items. sfs {}", reading_items.size(), db_path);
+		for (const auto& [offset, item] : reading_items)
+		{
+			XLOGF(ERR, "Reading item offset {} refs {} free_skip {}", offset, item.refs, item.free_skip);
+		}
+	}
+	assert(reading_items.empty());
 }
