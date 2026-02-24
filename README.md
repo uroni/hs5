@@ -163,7 +163,7 @@ There is a rudimentary [performance test suite](https://github.com/uroni/hs5/blo
 
 **Legend:**
 - **Min/Max/Mean/Median/StdDev:** Time in seconds
-- **sqlite_full:** Garage was recompiled with `synchronous = FULL`, without it is slightly faster, but still last
+- **sqlite_full:** Garage was recompiled with `synchronous = FULL`, without it is slightly faster, but still last. Garage has a small object optimization where it writes small objects into its database. With e.g. 10KB objects it becomes a lot worse with the same synchronization mode, then it is 7.78x slower than HS5.
 
 ## DuckDB UI #
 
