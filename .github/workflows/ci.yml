@@ -96,13 +96,13 @@ jobs:
           GOLANG_TEST: "1"
         with:
           emoji: false
-          custom-arguments: -p no:sugar --benchmark-skip test --timeout=300
+          custom-arguments: -p no:sugar -p no:threadexception --benchmark-skip test --timeout=300
 
       - uses: pavelzw/pytest-action@v2
         if: matrix.benchmark == 1
         with:
           emoji: false
-          custom-arguments: -p no:sugar --benchmark-only --benchmark-json output.json test
+          custom-arguments: -p no:sugar -p no:threadexception --benchmark-only --benchmark-json output.json test
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1

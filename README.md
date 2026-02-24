@@ -23,6 +23,7 @@ Table of Contents
  * [When to use HS5?](#when-to-use-hs5)
  * [How to use HS5?](#how-to-use-hs5)
  * [How the storage works](#how-the-storage-works)
+ * [Omissions/state](#omissions)
  * [Durability guarantees](#durability-guarantees)
  * [Manual commit mode](#manual-commit-mode)
  * [Performance](#performance)
@@ -40,7 +41,8 @@ For a discussion about data durability, see the "Durability guarantees" section.
 
  * [Minio](https://min.io/) (No longer actively maintained as of 2026.) Started off with similar goals as HS5 but became a system that wants to be "Hyperscale" and "AI scale" with questionable interpretations of the AGPLv3 ([[1]](https://github.com/minio/minio/discussions/13571#discussioncomment-1583482) [[2]](https://blog.min.io/weka-violates-minios-open-source-licenses/)). I also had my [issues](https://github.com/minio/minio/issues/3536) with its data durability guarantees in the past, but it might be good (on Linux) at this point. It stores each object as (multiple) files on the file system, which limits the performance of small objects to the performance of the file system. It is not compatible with S3 (S3 has arbitrary delimiters, not just `/`).
  * [RustFS](https://rustfs.com/) Similar goals to MinIO, but written in a different programming language. Currently less stable (alpha) and less performant with a single node and the tests I did, than MinIO. See [performace](#performance) section.
- * [seaweedfs](https://github.com/seaweedfs/seaweedfs) Compared to HS5, it can be used with multiple nodes. To ensure data durability, you must [enable fsync per bucket](https://github.com/seaweedfs/seaweedfs/wiki/Path-Specific-Configuration). The main differentiating factor is that seaweedfs keeps the [object -> disk] location index completely in memory. This is a trade-off with fewer disk accesses for reading and writing objects while incurring a scan at startup time and causing memory usage proportional to the number of objects. Because of the long startup time and memory usage, it might be unsuited for testing purposes or in scenarios where fast node restarts are necessary or where memory is shared with other applications.
+ * [seaweedfs](https://github.com/seaweedfs/seaweedfs) Compared to HS5, it can be used with multiple nodes. To ensure data durability, one must [enable fsync per bucket](https://github.com/seaweedfs/seaweedfs/wiki/Path-Specific-Configuration). The main differentiating factor is that seaweedfs keeps the [object -> disk] location index completely in memory. This is a trade-off with fewer disk accesses for reading and writing objects while incurring a scan at startup time and causing memory usage proportional to the number of objects. Because of the long startup time and memory usage, it might be unsuited for testing purposes or in scenarios where fast node restarts are necessary or where memory is shared with other applications.
+ * [Garage](https://garagehq.deuxfleurs.fr/) Compared to HS5, it can be used with multiple nodes. Does not have extreme performance as goal. Compared to HS5, does not have an integrated management web interface (there is a separate one available, though). To ensure data durability, one must enable [metadata](https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/#metadata_fsync) and [data fsync](https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/#data_fsync) when running on a single node (this is disabled by default). Specifically in default configuration with LMDB, it actually runs in a mode where data gets corrupted on hard shutdown (They only recommend using LMDB with `replication_factor >= 2`), that is it looses potentially all data instead of the last few written data. Even with `metadata_fsync` enbled the durability settings seem to not be enough. SQLite requires `synchronous = FULL` instead of `NORMAL` for durability. In conculsion it might not be designed for a single node system.
  * [Ceph](https://ceph.io) (radosgw) Widely used distributed storage system that is well-designed, tested, and in production at several (large) cloud service providers. If you want to store a large amount of data on multiple nodes, you should go with this one. There might still be scalability limits with the number of objects per bucket, but HS5 should not be better in that area.
 
  ## How to use HS5? #
@@ -96,6 +98,16 @@ chmod +x hs5
 ```
 Data and metadata will be stored in the current directory by default. It'll print the randomly generated root password to stdout on the first run. Access the S3 API and the web interface at port 80 per default.
 
+## Omissions #
+
+At this point HS5 implements most major S3 operations. Major operations that do not yet work:
+
+ - `CopyObject` and `UploadPartCopy`
+ - `If-Match`, `If-None-Match`
+ - Versioning is implemented but there is currently no UI to enable it
+
+Long term the goal is to pass most of the [Ceph S3 tests](https://github.com/ceph/s3-tests), but that is still a lot of work.
+
 ## How the storage works #
 
 The main object storage consists of (mostly) two files. One is an `index.lmdb` LMDB database file mapping object names to on-disk offsets and tracking free space in the data file. The other is a data file `data0` where the object contents reside.
@@ -139,17 +151,19 @@ When logging data in WAL mode `data-only` or `full` it logs only objects with si
 There is a rudimentary [performance test suite](https://github.com/uroni/hs5/blob/main/test/test_perf.py) (contributions welcome). Currently it has one test that uploads 10000 small files with default application settings, HS5 runs with `--wal-mode full` (see source code):
 
 
+
 **Performance Benchmark Results:**
 
-
-| Test Name                        |    Min (s) |    Max (s) |   Mean (s) | StdDev (s) | Median (s) |
-|-----------------------------------|-----------:|-----------:|-----------:|-----------:|-----------:|
-| test_perf_upload_many_files_hs5   |   11.1064  |   13.4288  |   11.9456  |   0.9238   |  11.7138   |
-| test_perf_upload_many_files_rustfs|   13.4040  |   17.9559  |   15.4104  |   1.7089   |  15.1843   |
-| test_perf_upload_many_files_minio |   17.7951  |   20.6695  |   18.6946  |   1.1828   |  18.1048   |
+| Test Name                                    |    Min (s) |    Max (s) |   Mean (s) | StdDev (s) | Median (s) |
+|----------------------------------------------|-----------:|-----------:|-----------:|-----------:|-----------:|
+| test_perf_upload_many_files_hs5              |   10.3200  |   11.3521  |   10.9745  |   0.3935   |  11.0304   |
+| test_perf_upload_many_files_rustfs           |   12.2516  |   13.9233  |   13.1401  |   0.6710   |  13.0640   |
+| test_perf_upload_many_files_minio            |   13.5257  |   15.0934  |   14.3815  |   0.7122   |  14.6222   |
+| test_perf_upload_many_files_garage_sqlite_full | 15.7583  |   17.1925  |   16.5412  |   0.5519   |  16.6630   |
 
 **Legend:**
 - **Min/Max/Mean/Median/StdDev:** Time in seconds
+- **sqlite_full:** Garage was recompiled with `synchronous = FULL`, without it is slightly faster, but still last
 
 ## DuckDB UI #
 

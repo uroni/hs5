@@ -16,6 +16,7 @@ import pytest
 from minio_fixture import minio, MinioRunner
 from hs5_fixture import hs5_perf, Hs5Runner
 from rustfs_fixture import rustfs, RustfsRunner
+from garage_fixture import garage, GarageRunner, garage_sqlite, garage_sqlite_full
 from pytest_benchmark.fixture import BenchmarkFixture
 from multiprocessing import Pool
 
@@ -61,6 +62,28 @@ def test_put_get_rustfs(tmp_path: Path, rustfs: RustfsRunner):
     assert obj_info["ContentLength"] == len(fdata)
 
     obj_range = s3_client.get_object(Bucket=rustfs.testbucketname(), Key="upload.txt", Range="bytes=0-9")
+    bdata = obj_range["Body"].read()
+    assert len(bdata) == 10
+    assert bdata == fdata[:10]
+
+@pytest.mark.skip(reason="Garage is slow to start up")
+def test_put_get_garage(tmp_path: Path, garage: GarageRunner):
+    """
+    Make sure the garage fixture is working
+    """
+
+    fdata = os.urandom(29*1024*1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+    
+    s3_client = garage.get_s3_client()
+    with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
+        s3_client.put_object(Bucket=garage.testbucketname(), Key="upload.txt", Body=upload_file)
+
+    obj_info = s3_client.head_object(Bucket=garage.testbucketname(), Key="upload.txt")
+    assert obj_info["ContentLength"] == len(fdata)
+
+    obj_range = s3_client.get_object(Bucket=garage.testbucketname(), Key="upload.txt", Range="bytes=0-9")
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
     assert bdata == fdata[:10]
@@ -152,3 +175,17 @@ def test_perf_upload_many_files_rustfs(benchmark: BenchmarkFixture, rustfs: Rust
     Test the performance of uploading 10,000 files to RustFS.
     """
     benchmark(upload_many_files, lambda: rustfs.get_s3_client(), tmp_path)
+
+
+def test_perf_upload_many_files_garage_sqlite(benchmark: BenchmarkFixture, garage_sqlite: GarageRunner, tmp_path: Path):
+    """
+    Test the performance of uploading 10,000 files to Garage with SQLite.
+    """
+    benchmark(upload_many_files, lambda: garage_sqlite.get_s3_client(), tmp_path)
+
+@pytest.mark.skip(reason="Garage needs to be re-compiled with sqlite synchronous set to FULL for this test")
+def test_perf_upload_many_files_garage_sqlite_full(benchmark: BenchmarkFixture, garage_sqlite_full: GarageRunner, tmp_path: Path):
+    """
+    Test the performance of uploading 10,000 files to Garage with SQLite Full.
+    """
+    benchmark(upload_many_files, lambda: garage_sqlite_full.get_s3_client(), tmp_path)
