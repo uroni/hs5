@@ -5080,10 +5080,9 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
         auto rc = sfs.write_finalize(make_key(keyInfo), extents, lastModified, md5sum, false, true, std::move(addPart), matchInfo.get());
 
-        extents.clear();
-
         if (rc != 0)
         {
+            extents.clear();
             XLOGF(WARN, "Error obj {} finalizing write code {}", keyInfo.key, rc);
             evb->runInEventBaseThread([self = this]()
                                 {           
@@ -5099,6 +5098,9 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
         if(matchInfo && !matchInfo->match)
         {
+            sfs.free_extents(extents);
+            extents.clear();
+
             XLOGF(WARN, "Object {} match condition not met. Returning 409 ", keyInfo.key);
             evb->runInEventBaseThread([ this]()
                                 {           
@@ -5111,6 +5113,10 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
                         .sendWithEOM();
                      });
             return;
+        }
+        else
+        {
+            extents.clear();
         }
 
 

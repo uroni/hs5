@@ -249,6 +249,8 @@ def test_put_if_match2(tmp_path: Path, hs5: Hs5Runner):
     put_if_match_test(tmp_path, hs5, expected_error="PreconditionFailed", expected_http_error=412)
 
 def put_if_match_test(tmp_path: Path, hs5: Hs5Runner, expected_error: str, expected_http_error: int):
+    assert hs5.get_stats().used == 0
+
     fdata = os.urandom(1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
@@ -288,6 +290,11 @@ def put_if_match_test(tmp_path: Path, hs5: Hs5Runner, expected_error: str, expec
         s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=b"new data3", IfNoneMatch="*")
 
     s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload3.txt", Body=b"new data3", IfNoneMatch="*")
+
+    s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload3.txt")
+
+    assert hs5.get_stats().used == 0
 
 def test_get_if_match(tmp_path: Path, hs5: Hs5Runner):
     fdata = os.urandom(1024)
