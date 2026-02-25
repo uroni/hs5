@@ -1912,6 +1912,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             XML_SetElementHandler(xmlBody.parser, multiPartUploadXmlElementStart, multiPartUploadXmlElementEnd);
             XML_SetCharacterDataHandler(xmlBody.parser, multiPartUploadXmlCharData);
 
+            parseMatchInfo(*headers, false, false);
+
             XLOGF(INFO, "Complete multi-part upload of {} uploadId {}", keyInfo.key, uploadId.id);
         }
     }
@@ -3005,6 +3007,34 @@ void S3Handler::finalizeMultipartUpload()
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb, multiPartData = this->multiPartUploadData.get()]()
             {
+                if(FLAGS_check_conditional_headers_before_upload && self->matchInfo)
+                {
+                    const auto rc = self->checkMatchInfo();
+                    if(rc!=0 && rc != ENOENT)
+                    {
+                        evb->runInEventBaseThread([self = self, rc]()
+                                    {
+                            ResponseBuilder(self->downstream_)
+                                .status(500, "Internal error")
+                                .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error preparing finalize multipart upload. Errno {}", rc), self->fullKeyPath(), ""))
+                                .sendWithEOM();
+                            self->finished_ = true; });
+                        return;
+                    }
+
+                    if(!self->matchInfo->match)
+                    {
+                        evb->runInEventBaseThread([self = self]()
+                                                {
+                            ResponseBuilder(self->downstream_)
+                                .status(412, "Precondition Failed")
+                                .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", self->fullKeyPath(), ""))
+                                .sendWithEOM();
+                            self->finished_ = true; });
+                        return;
+                    }
+                }
+
                 const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
                 auto readRes = self->sfs.read_prepare(
                     make_key({.key = self->keyInfo.key, .version = multiPartData->uploadId.id, 
@@ -3141,7 +3171,20 @@ void S3Handler::finalizeMultipartUpload()
                 const auto partFn = make_key({.key = self->keyInfo.key, .version = multiPartData->uploadId.id, 
                         .bucketId = partialUploadsBucketId});
 
-                auto delRes = self->sfs.del(partFn, SingleFileStorage::DelAction::DelNoCallback, false, std::move(fragInfoFinalize));
+                if(self->matchInfo)
+                {
+                    if(self->withBucketVersioning && self->keyInfo.version != 0)
+                    {
+                        self->matchInfo->readFn = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
+                        self->matchInfo->readNewest = true;
+                    }
+                    else
+                    {
+                        self->matchInfo->readFn = uploadFPath;
+                    }
+                }
+
+                auto delRes = self->sfs.del(partFn, SingleFileStorage::DelAction::DelNoCallback, false, std::move(fragInfoFinalize), self->matchInfo.get());
 
                 if(delRes)
                 {
@@ -3154,6 +3197,18 @@ void S3Handler::finalizeMultipartUpload()
                             .sendWithEOM();
                         self->finished_ = true; });
                         return;
+                }
+
+                if(self->matchInfo && !self->matchInfo->match)
+                {
+                    evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(409, "Conflict")
+                            .body(s3errorXml(S3ErrorCode::ConditionalRequestConflict, "", self->fullKeyPath(), ""))
+                            .sendWithEOM();
+                        self->finished_ = true; });
+                    return;
                 }
 
                 if(!self->commit())
@@ -3345,7 +3400,10 @@ void S3Handler::deleteObjects()
                         if(objRes.err==0)
                         {
                             if(self->matchInfo)
-                                self->matchInfo->readNewestFn = currPath;
+                            {
+                                self->matchInfo->readFn = currPath;
+                                self->matchInfo->readNewest = true;
+                            }
 
                             version = self->sfs.get_next_version();
                             const auto writePath = make_key(obj.key, self->keyInfo.bucketId, version);
@@ -3551,7 +3609,10 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                 if(objRes.err==0)
                 {
                     if(self->matchInfo)
-                        self->matchInfo->readNewestFn = currPath;
+                    {
+                        self->matchInfo->readFn = currPath;
+                        self->matchInfo->readNewest = true;
+                    }
 
                     self->keyInfo.version = self->sfs.get_next_version();
                     const auto writePath = make_key(self->keyInfo);
@@ -5075,7 +5136,8 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
         if(keyInfo.version != 0)
         {
-            matchInfo->readNewestFn = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
+            matchInfo->readFn = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
+            matchInfo->readNewest = true;
         }
 
         auto rc = sfs.write_finalize(make_key(keyInfo), extents, lastModified, md5sum, false, true, std::move(addPart), matchInfo.get());

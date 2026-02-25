@@ -296,6 +296,60 @@ def put_if_match_test(tmp_path: Path, hs5: Hs5Runner, expected_error: str, expec
 
     assert hs5.get_stats().used == 0
 
+def test_put_if_match_multipart_no_precheck(tmp_path: Path, hs5_no_precheck: Hs5Runner):
+    put_if_match_multipart(tmp_path, hs5_no_precheck, expected_error="ConditionalRequestConflict", expected_http_error=409)
+
+def test_put_if_match_multipart2(tmp_path: Path, hs5: Hs5Runner):
+    put_if_match_multipart(tmp_path, hs5, expected_error="PreconditionFailed", expected_http_error=412)
+
+def put_if_match_multipart(tmp_path: Path, hs5: Hs5Runner, expected_error: str, expected_http_error: int):    
+    fdata = os.urandom(10*1024*1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+
+    s3_client = hs5.get_s3_client()
+    config = TransferConfig(multipart_chunksize=5*1024*1024)
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "upload.txt", Config=config)
+
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert obj_info["ContentLength"] == len(fdata)
+
+     # Test if-match with correct ETag
+    def upload_multipart(ifmatch: str):
+        upl = s3_client.create_multipart_upload(Bucket=hs5.testbucketname(), Key="upload.txt")
+        with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
+            part1 = s3_client.upload_part(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=1, UploadId=upl["UploadId"], Body=upload_file.read(5*1024*1024))
+            part2 = s3_client.upload_part(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=2, UploadId=upl["UploadId"], Body=upload_file.read(5*1024*1024))
+
+        try:
+            s3_client.complete_multipart_upload(Bucket=hs5.testbucketname(), 
+                                            Key="upload.txt", UploadId=upl["UploadId"], MultipartUpload={"Parts": [{"ETag": part1["ETag"], "PartNumber": 1}, {"ETag": part2["ETag"], "PartNumber": 2}]},
+                                            IfMatch=ifmatch)
+        except:
+            s3_client.abort_multipart_upload(Bucket=hs5.testbucketname(), Key="upload.txt", UploadId=upl["UploadId"])
+            raise
+
+    upload_multipart(obj_info["ETag"])
+
+    # Test if-match with incorrect ETag
+    with pytest.raises(ClientError) as exc_info:
+        upload_multipart("invalid-etag")
+
+    assert "Error" in exc_info.value.response
+    assert "Code" in exc_info.value.response["Error"]
+    assert "ResponseMetadata" in exc_info.value.response
+    assert "HTTPStatusCode" in exc_info.value.response["ResponseMetadata"]
+    assert exc_info.value.response["ResponseMetadata"]["HTTPStatusCode"] == expected_http_error
+    assert exc_info.value.response["Error"]["Code"] == expected_error
+
+    s3_client.download_file(hs5.testbucketname(), "upload.txt", str(tmp_path / "download.txt"))
+    assert filecmp.cmp(tmp_path / "upload.txt", tmp_path / "download.txt")
+
+    s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+
+    assert hs5.get_stats().used == 0
+
+
 def test_get_if_match(tmp_path: Path, hs5: Hs5Runner):
     fdata = os.urandom(1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:

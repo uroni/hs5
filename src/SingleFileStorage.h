@@ -113,7 +113,8 @@ public:
 
 	struct MatchInfo
 	{
-		std::optional<std::string> readNewestFn;
+		std::optional<std::string> readFn;
+		bool readNewest = false;
 		std::vector<std::string> ifMatch;
 		std::vector<std::string> ifNoneMatch;
 		folly::Optional<int64_t> ifModifiedSince;
@@ -125,7 +126,7 @@ public:
 	{
 		SCommitInfo()
 			: commit_errors(0),
-			frag_info(nullptr)
+			frag_info(nullptr), match_info(nullptr)
 		{}
 		int64_t commit_errors;
 		std::mutex commit_done_mutex;
