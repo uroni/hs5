@@ -35,6 +35,7 @@
 #include <optional>
 #include <proxygen/lib/http/HTTPCommonHeaders.h>
 #include <proxygen/lib/http/HTTPMethod.h>
+#include <proxygen/lib/utils/HTTPTime.h>
 #include "data.h"
 #include "utils.h"
 #include <limits.h>
@@ -58,6 +59,7 @@ DEFINE_bool(allow_sig_v2, true, "Allow aws sig v2");
 DEFINE_string(host_override, "", "Override host for s3 requests");
 DEFINE_bool(pre_sync_commit, false, "Pre-sync data and index files before commit for potential performance gain");
 DEFINE_int64(commit_after_ms, 30000, "If manual commit is enabled, wait this amount of milliseconds before automatically committing. 0 means not commiting automatically at all.");
+DEFINE_bool(check_conditional_headers_before_upload, true, "Check conditional HTTP headers like If-Match before upload on PUT (for testing)");
 
 std::string hashSha256Hex(const std::string_view payload)
 {
@@ -1041,7 +1043,9 @@ enum class S3ErrorCode
     BucketAlreadyExists,
     InvalidPartOrder,
     InvalidArgument,
-    InvalidBucketName
+    InvalidBucketName,
+    PreconditionFailed,
+    ConditionalRequestConflict
 };
 
 std::string_view s3errorCodeToStr(const S3ErrorCode code)
@@ -1066,6 +1070,10 @@ std::string_view s3errorCodeToStr(const S3ErrorCode code)
             return "InvalidArgument";
         case S3ErrorCode::InvalidBucketName:
             return "InvalidBucketName";
+        case S3ErrorCode::PreconditionFailed:
+            return "PreconditionFailed";
+        case S3ErrorCode::ConditionalRequestConflict:
+            return "ConditionalRequestConflict";
         default:
             return "InternalError";
     }
@@ -1089,6 +1097,10 @@ std::string_view s3errorMsg(const S3ErrorCode code)
             return "The specified bucket already exists.";
         case S3ErrorCode::InvalidPartOrder:
             return "The list of parts was not in ascending order. The parts list must be specified in order by part number.";
+        case S3ErrorCode::PreconditionFailed:
+            return "At least one of the preconditions you specified did not hold.";
+        case S3ErrorCode::ConditionalRequestConflict:
+            return "The condition specified in the conditional header(s) was not met.";
         default:
             return "We encountered an internal error. Please try again.";
     }
@@ -1391,6 +1403,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         if(!setKeyInfoFromPath(header_path))
             return;
+
+        parseMatchInfo(*headers, true, true);
         
         XLOGF(INFO, "Get object {} range {}", header_path, headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_RANGE));
         getObject(*headers, *accessKey);
@@ -1645,6 +1659,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
             return;
         }
+        
+        parseMatchInfo(*headers, false, false);
 
         const auto contentTypeStr = headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_CONTENT_TYPE);
         if(!contentTypeStr.empty())
@@ -1699,6 +1715,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 .sendWithEOM();
             return;
         }
+
+        parseMatchInfo(*headers, true, true);
 
         XLOGF(INFO, "Delete {}", path);
 
@@ -2377,8 +2395,9 @@ std::string format_last_modified_rfc1123(const int64_t lastModified)
 void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& accessKey)
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
+    const auto partNumberStrPtr = headers.getQueryParamPtr("partNumber");
     folly::getGlobalCPUExecutor()->add(
-            [self = self, evb, accessKey, range=headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_RANGE), partNumberStr = headers.getQueryParamPtr("partNumber")]()
+            [self = self, evb, accessKey, range=headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_RANGE), partNumberStr = partNumberStrPtr ? std::optional<std::string>(*partNumberStrPtr) : std::nullopt]()
             { 
                 unsigned int flags = 0;
                 if(self->request_action == Action::HeadObject)
@@ -2595,8 +2614,27 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     }
                 }
 
+                if(self->matchInfo)
+                {
+                    SingleFileStorage::SFragInfo frag_info;
+                    frag_info.last_modified = res.last_modified;
+                    onMatchCallback(*self->matchInfo, frag_info, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum));
+                }
+
                 evb->runInEventBaseThread([self = self, hasRange=!range.empty() || partNumberSize, rangeStart, rangeEnd, md5sum, partNumberEtag, last_modified = res.last_modified]()
                                               {
+                    if(self->matchInfo && !self->matchInfo->match)
+                    {
+                        ResponseBuilder(self->downstream_)
+                            .status(412, "Precondition Failed")
+                            .header(proxygen::HTTP_HEADER_ETAG, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum))
+                            .header(proxygen::HTTP_HEADER_CONTENT_TYPE, contentTypeToStr(self->contentType))
+                            .header("Last-Modified", format_last_modified_rfc1123(last_modified))
+                            .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", self->fullKeyPath(), ""))
+                            .sendWithEOM();
+                        return;
+                    }
+                    
                     auto resp = std::move(ResponseBuilder(self->downstream_).status(hasRange ? 206 : 200, hasRange ? "Partial Content" : "OK")
                         .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(rangeEnd-rangeStart))
                         .header(proxygen::HTTP_HEADER_ETAG, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum))
@@ -2618,7 +2656,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     }
                                               });
 
-                if (self->request_action == Action::HeadObject)
+                if (self->request_action == Action::HeadObject || (self->matchInfo && !self->matchInfo->match))
                     return;
 
                 runReadCleanup = false;
@@ -2629,6 +2667,49 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
                 self->readObject(evb, std::move(self), rangeStart);
             });
+}
+
+int S3Handler::checkMatchInfo()
+{
+    std::string findPath;
+    unsigned int flags = SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading;
+
+    const auto withVersioning = self->withBucketVersioning && self->keyInfo.version==0;
+    if(withVersioning)
+    {
+        flags |= SingleFileStorage::ReadNewest;
+        findPath = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
+    }
+    else
+    {
+        findPath = make_key(self->keyInfo);
+    }
+
+    auto res = self->sfs.read_prepare(findPath, flags);
+    
+    if(res.err!=0)
+    {
+        if(res.err == ENOENT)
+        {
+            if(matchInfo->ifMatch.empty())
+            {
+                matchInfo->match=true;
+            }
+        }
+        else
+        {
+            XLOGF(WARN, "Reading object metadata of {} failed for match check: {}", self->keyInfo.key, res.err);        
+            return res.err;
+        }
+    }
+    else
+    {
+        SingleFileStorage::SFragInfo frag_info;
+        frag_info.last_modified = res.last_modified;
+        frag_info.md5sum = res.md5sum;
+        onMatchCallback(*matchInfo, frag_info, {});
+    }
+    return 0;
 }
 
 void S3Handler::putObject(proxygen::HTTPMessage& headers)
@@ -2669,6 +2750,38 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                         self->finished_ = true;
                         self->extents_cond.notify_all(); });
                     return;
+                }
+
+                if(FLAGS_check_conditional_headers_before_upload && self->matchInfo)
+                {
+                    const auto rc = self->checkMatchInfo();
+                    if(rc!=0 && rc != ENOENT)
+                    {
+                        evb->runInEventBaseThread([self = self, rc]()
+                                    {
+                            ResponseBuilder(self->downstream_)
+                                .status(500, "Internal error")
+                                .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error preparing reading. Errno {}", rc), self->fullKeyPath(), ""))
+                                .sendWithEOM();
+                            std::lock_guard lock(self->extents_mutex);
+                            self->finished_ = true;
+                            self->extents_cond.notify_all(); });
+                        return;
+                    }
+
+                    if(!self->matchInfo->match)
+                    {
+                        evb->runInEventBaseThread([self = self]()
+                                                {
+                            ResponseBuilder(self->downstream_)
+                                .status(412, "Precondition Failed")
+                                .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", self->fullKeyPath(), ""))
+                                .sendWithEOM();
+                            std::lock_guard lock(self->extents_mutex);
+                            self->finished_ = true;
+                            self->extents_cond.notify_all(); });
+                        return;
+                    }
                 }
 
                 const auto fpath = make_key(self->keyInfo);
@@ -3028,7 +3141,7 @@ void S3Handler::finalizeMultipartUpload()
                 const auto partFn = make_key({.key = self->keyInfo.key, .version = multiPartData->uploadId.id, 
                         .bucketId = partialUploadsBucketId});
 
-                auto delRes = self->sfs.del(partFn, SingleFileStorage::DelAction::DelNoCallbackNoCheck, false, std::move(fragInfoFinalize));
+                auto delRes = self->sfs.del(partFn, SingleFileStorage::DelAction::DelNoCallback, false, std::move(fragInfoFinalize));
 
                 if(delRes)
                 {
@@ -3189,6 +3302,8 @@ void S3Handler::deleteObjects()
             {
                 const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
 
+                size_t deletedObjects = 0;
+
                 std::string resp = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                                     "<DeleteResult>\n";
 
@@ -3218,35 +3333,56 @@ void S3Handler::deleteObjects()
 
                     const auto currPath = make_key(obj.key, self->keyInfo.bucketId, version);
 
+                    if(self->matchInfo)
+                        self->matchInfo->match = false;
+
                     int res;
 
                     if(delNewest)
                     {
-                        res = self->sfs.check_existence(currPath, SingleFileStorage::ReadNewest);
+                        const auto objRes = self->sfs.check_existence(currPath, SingleFileStorage::ReadNewest);
 
-                        if(res==0)
+                        if(objRes.err==0)
                         {
+                            if(self->matchInfo)
+                                self->matchInfo->readNewestFn = currPath;
+
                             version = self->sfs.get_next_version();
                             const auto writePath = make_key(obj.key, self->keyInfo.bucketId, version);
                             std::string md5sum(1, metadata_tombstone);
-                            res = self->sfs.write(writePath, nullptr, 0, 0, 0, md5sum, false, false);
+                            res = self->sfs.write(writePath, nullptr, 0, 0, 0, md5sum, false, false, self->matchInfo.get());
+                        }
+                        else
+                        {
+                            res = objRes.err;
                         }
                     }
                     else
                     {
-                        res = self->sfs.del(currPath, SingleFileStorage::DelAction::Del, false);
+                        res = self->sfs.del(currPath, SingleFileStorage::DelAction::Del, false, nullptr, self->matchInfo.get());
                     }
 
-                    if(res==0)
+                    if(res==0 && (!self->matchInfo || self->matchInfo->match))
                     {
-                        res = self->commit() ? 0 : 1;
+                        ++deletedObjects;
                     }
 
                     if(res==0 || res==ENOENT)
                     {
-                        resp += fmt::format("\t<Deleted>\n"
-                            "\t\t<Key>{}</Key>\n"
-                            "\t</Deleted>\n", obj.key);
+                        if(self->matchInfo && !self->matchInfo->match)
+                        {
+                            resp += fmt::format("\t<Error>\n"
+                                "\t\t<Code>PreconditionFailed</Code>\n"
+                                "\t\t<Message>At least one of the preconditions you specified did not hold</Message>\n"
+                                "\t\t<Key>{}</Key>\n"
+                                "\t</Error>\n",  obj.key);
+                        }
+                        else
+                        {
+                            resp += fmt::format("\t<Deleted>\n"
+                                "\t\t<Key>{}</Key>\n"
+                                "\t</Deleted>\n", obj.key);
+                        }
                     }
                     else
                     {
@@ -3260,14 +3396,29 @@ void S3Handler::deleteObjects()
 
                 resp += "</DeleteResult>";
 
-                 evb->runInEventBaseThread([self = self, resp = std::move(resp)] ()
-                 {
-                    ResponseBuilder(self->downstream_)
-                            .status(200, "OK")
-                            .body(resp)
-                            .sendWithEOM();
-                    self->finished_ = true;
-                 });
+                if(deletedObjects>0 && !self->commit())
+                {
+                    XLOGF(ERR, "Storage commit failed");
+                    evb->runInEventBaseThread([self = self]()
+                                        {           
+                            ResponseBuilder(self->downstream_)
+                                .status(500, "Internal error")
+                                .body(s3errorXml(S3ErrorCode::InternalError, "Commit error", "", ""))
+                                .sendWithEOM();
+                            self->finished_ = true; });
+                    return;
+                }
+                else
+                {
+                    evb->runInEventBaseThread([self = self, resp = std::move(resp)] ()
+                    {
+                        ResponseBuilder(self->downstream_)
+                                .status(200, "OK")
+                                .body(resp)
+                                .sendWithEOM();
+                        self->finished_ = true;
+                    });
+                }
             }
         );
 }
@@ -3395,19 +3546,38 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
 
             if(delNewest)
             {
-                res = self->sfs.check_existence(currPath, SingleFileStorage::ReadNewest);
+                const auto objRes = self->sfs.check_existence(currPath, SingleFileStorage::ReadNewest);
 
-                if(res==0)
+                if(objRes.err==0)
                 {
+                    if(self->matchInfo)
+                        self->matchInfo->readNewestFn = currPath;
+
                     self->keyInfo.version = self->sfs.get_next_version();
                     const auto writePath = make_key(self->keyInfo);
                     std::string md5sum(1, metadata_tombstone);
-                    res = self->sfs.write(writePath, nullptr, 0, 0, 0, md5sum, false, false);
+                    res = self->sfs.write(writePath, nullptr, 0, 0, 0, md5sum, false, false, self->matchInfo.get());
+                }
+                else
+                {
+                    res = objRes.err;
                 }
             }
             else
             {
-                res = self->sfs.del(currPath, SingleFileStorage::DelAction::Del, false);
+                res = self->sfs.del(currPath, SingleFileStorage::DelAction::Del, false, nullptr, self->matchInfo.get());
+            }
+
+            if(res==0 && self->matchInfo && !self->matchInfo->match)
+            {
+                 evb->runInEventBaseThread([self = self, res]()                                            {
+                        ResponseBuilder(self->downstream_)
+                            .status(412, "Precondition Failed")
+                            .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", self->fullKeyPath(), ""))
+                            .sendWithEOM();
+                        self->finished_ = true;
+                                            });
+                return;
             }
 
             if(res==0)
@@ -3419,6 +3589,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                                             {
                     if(res==ENOENT)
                     {
+                        // Does not happen since we use DelNoCheck, instead of Del
                         XLOGF(INFO, "Removing object '{}' not found", self->keyInfo.key);
                         ResponseBuilder(self->downstream_)
                             .status(204, "No Content")
@@ -4899,7 +5070,15 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
                     .bucketId = keyInfo.bucketId - 1});
         }
 
-        auto rc = sfs.write_finalize(make_key(keyInfo), extents, lastModified, md5sum, false, true, std::move(addPart));
+        // TODO perf: With match info set it has to wait for the queue anyway, so we might as well link the commit if we want one.
+        // Commit needs to happen after the parts update
+
+        if(keyInfo.version != 0)
+        {
+            matchInfo->readNewestFn = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
+        }
+
+        auto rc = sfs.write_finalize(make_key(keyInfo), extents, lastModified, md5sum, false, true, std::move(addPart), matchInfo.get());
 
         extents.clear();
 
@@ -4917,6 +5096,23 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
                     self->finished_ = true; });
             return;
         }
+
+        if(matchInfo && !matchInfo->match)
+        {
+            XLOGF(WARN, "Object {} match condition not met. Returning 409 ", keyInfo.key);
+            evb->runInEventBaseThread([ this]()
+                                {           
+                    if(finished_)
+                        return;
+                    finished_ = true;
+                    ResponseBuilder(downstream_)
+                        .status(409 , "ConditionalRequestConflict")
+                        .body(s3errorXml(S3ErrorCode::ConditionalRequestConflict, "", fullKeyPath(), ""))
+                        .sendWithEOM();
+                     });
+            return;
+        }
+
 
         if(!commit())
         {
@@ -5284,7 +5480,7 @@ void S3Handler::removeReadingMultipartObject(const std::string& key, SingleFileS
                 for(auto partNum=ext.start; partNum<ext.start+ext.len; ++partNum)
                 {
                     const auto rc = sfs.del(make_key({.key = uploadIdToStr(it->second.delUploadId)+"."+uploadIdToStr(partNum), .version = 0, 
-                                .bucketId = it->second.delBucketId}), SingleFileStorage::DelAction::DelWithQueuedNoCheck, false);
+                                .bucketId = it->second.delBucketId}), SingleFileStorage::DelAction::DelWithQueued, false);
                     assert(rc==0);
                 }
             }
@@ -5326,4 +5522,109 @@ void S3Handler::stopChecks()
     sfs.assert_reading_items_empty();
     sfs.del("", SingleFileStorage::DelAction::AssertQueueEmpty, false);
     sfs.empty_queue(false);
+}
+
+void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride)
+{
+    const auto etag = etagOverride ? *etagOverride : getEtag(fragInfo.md5sum);
+
+    if(!matchInfo.ifMatch.empty())
+    {
+        for(const auto ifMatch: matchInfo.ifMatch)
+        {
+            if(etag == ifMatch || folly::trimWhitespace(ifMatch) == "*")
+            {
+                matchInfo.match = true;
+                break;
+            }
+        }
+    }
+    else
+    {
+        matchInfo.match = true;
+    }
+
+    if(matchInfo.ifModifiedSince)
+    {
+        std::chrono::seconds lastModifiedSec(*matchInfo.ifModifiedSince);
+        matchInfo.match = fragInfo.last_modified > std::chrono::nanoseconds(lastModifiedSec).count();
+    }
+    else if(!matchInfo.ifNoneMatch.empty())
+    {
+        for(const auto ifNoneMatch: matchInfo.ifNoneMatch)
+        {
+            if(etag == ifNoneMatch || folly::trimWhitespace(ifNoneMatch) == "*")
+            {
+                matchInfo.match = false;
+                break;
+            }
+        }
+    }
+
+    if(matchInfo.ifUnmodifiedSince)
+    {
+        std::chrono::seconds lastModifiedSec(*matchInfo.ifUnmodifiedSince);
+        if(fragInfo.last_modified > std::chrono::nanoseconds(lastModifiedSec).count())
+        {
+            matchInfo.match = false;
+        }
+    }
+}
+
+void S3Handler::parseMatchInfo(proxygen::HTTPMessage& headers, const bool ifModifiedSince, const bool ifUnmodifiedSince)
+{
+    auto ifMatchStr =  headers.getHeaders().getSingleOrEmpty("If-Match");
+    if(!ifMatchStr.empty())
+    {
+        matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
+        
+        std::vector<std::string_view> ifMatchVec;
+        folly::split(",", ifMatchStr, ifMatchVec);
+        for(auto& ifMatch: ifMatchVec)
+        {
+            ifMatch = folly::trimWhitespace(ifMatch);
+            matchInfo->ifMatch.push_back(std::string(ifMatch));
+        }
+    }
+
+    auto ifNoneMatchStr =  headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_IF_NONE_MATCH);
+    if(!ifNoneMatchStr.empty())
+    {
+        if(!matchInfo)
+        {
+            matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
+        }
+        std::vector<std::string_view> ifNoneMatchVec;
+        folly::split(",", ifNoneMatchStr, ifNoneMatchVec);
+        for(auto& ifNoneMatch: ifNoneMatchVec)
+        {
+            ifNoneMatch = folly::trimWhitespace(ifNoneMatch);
+            matchInfo->ifNoneMatch.push_back(std::string(ifNoneMatch));
+        }
+    }
+    else if(ifModifiedSince)
+    {
+        auto ifModifiedSinceStr = headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_IF_MODIFIED_SINCE);
+        if(!ifModifiedSinceStr.empty())
+        {
+            if(!matchInfo)
+            {
+                matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
+            }
+            matchInfo->ifModifiedSince = proxygen::parseHTTPDateTime(ifModifiedSinceStr);
+        }
+    }
+
+    if(ifUnmodifiedSince)
+    {
+        auto ifUnmodifiedSinceStr = headers.getHeaders().getSingleOrEmpty("If-Unmodified-Since");
+        if(!ifUnmodifiedSinceStr.empty())
+        {
+            if(!matchInfo)
+            {
+                matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
+            }
+            matchInfo->ifUnmodifiedSince = proxygen::parseHTTPDateTime(ifUnmodifiedSinceStr);
+        }
+    }
 }

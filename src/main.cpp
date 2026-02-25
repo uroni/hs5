@@ -246,6 +246,9 @@ int realMain(int argc, char* argv[])
     sfsoptions.modify_data_callback = [](const std::string& fn, std::string md5sum, std::string md5sumParam) -> std::optional<std::string> {
       return S3Handler::onModifyCallback(fn, md5sum, md5sumParam);
     };
+    sfsoptions.match_callback = [](SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo) {
+      S3Handler::onMatchCallback(matchInfo, fragInfo, {});
+    };
     sfsoptions.wal_write_meta = FLAGS_wal_write_meta;
     sfsoptions.wal_write_data = FLAGS_wal_write_data;    
 

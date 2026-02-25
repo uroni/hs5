@@ -29,6 +29,8 @@ protected:
     std::string expectedHash;
 
 public:
+    virtual ~PayloadHashBase() = default;
+    
     void setExpectedHash(const std::string& hash)
     {
         expectedHash = hash;

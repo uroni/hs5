@@ -432,7 +432,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	stop_on_error(options.stop_on_error), punch_holes(options.punch_holes),
 	data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func),
 	common_prefix_hash_func(options.common_prefix_hash_func), on_delete_callback(options.on_delete_callback), modify_data_callback(options.modify_data_callback), 
-	wal_write_meta(options.wal_write_meta), wal_write_data(options.wal_write_data)
+	match_callback(options.match_callback), wal_write_meta(options.wal_write_meta), wal_write_data(options.wal_write_data)
 {
 	if(common_prefix_func==nullptr)
 		common_prefix_func = common_prefix_passthrough;
@@ -1510,7 +1510,7 @@ void SingleFileStorage::handle_mmap_read_error(void* addr)
 
 int SingleFileStorage::write(const std::string & fn, const char* data, 
 	size_t data_size, const size_t data_alloc_size, int64_t last_modified, const std::string & md5sum,
-	bool no_del_old, bool is_fragment)
+	bool no_del_old, bool is_fragment, MatchInfo* match_info)
 {
 	if (is_dead)
 	{
@@ -1520,7 +1520,7 @@ int SingleFileStorage::write(const std::string & fn, const char* data,
 	if (fn.size() > c_max_path)
 		return EINVAL;
 
-	return write_int(fn, data, data_size, data_alloc_size, last_modified, md5sum, true, no_del_old);
+	return write_int(fn, data, data_size, data_alloc_size, last_modified, md5sum, true, no_del_old, match_info);
 }
 
 int64_t SingleFileStorage::get_transid(int64_t disk_id)
@@ -2024,8 +2024,17 @@ int SingleFileStorage::write_ext(const Ext& ext, const char* data, size_t data_s
 }
 
 int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<Ext>& extents, int64_t last_modified, const std::string& md5sum,
-		bool no_del_old, bool is_fragment, std::unique_ptr<SFragInfo> linked)
+		bool no_del_old, bool is_fragment, std::unique_ptr<SFragInfo> linked, MatchInfo* match_info)
 {
+	SCommitInfo commit_info;
+	std::unique_lock commit_done_lock(commit_info.commit_done_mutex, std::defer_lock);
+
+	if(match_info)
+	{
+		commit_info.match_info = match_info;
+		commit_done_lock.lock();
+	}
+
 	std::unique_lock lock(mutex);
 	wait_queue(lock, false, true);
 	wait_defrag(fn, lock);
@@ -2042,6 +2051,8 @@ int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<E
 	curr_frag.last_modified = last_modified;
 	curr_frag.md5sum = md5sum;
 	curr_frag.linked = linked.release();
+	if(match_info)
+		curr_frag.commit_info = &commit_info;
 
 	++commit_items[common_prefix_hash_func(fn)];
 
@@ -2053,12 +2064,19 @@ int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<E
 	}
 	cond.notify_all();
 
+	if(match_info)
+	{
+		lock.unlock();
+
+		commit_info.commit_done.wait(commit_done_lock);
+	}
+
 	return 0;
 }
 
 int SingleFileStorage::write_int(const std::string & fn, const char* data,
 	size_t data_size, const size_t data_alloc_size, int64_t last_modified, const std::string & md5sum, bool allow_defrag_lock,
-	bool no_del_old)
+	bool no_del_old, MatchInfo* match_info)
 {
 	std::string cfn = fn;
 
@@ -2226,6 +2244,16 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 		extents.push_back(Ext(0, 0, 0));
 	}
 
+	SCommitInfo commit_info;
+	std::unique_lock commit_done_lock(commit_info.commit_done_mutex, std::defer_lock);
+
+	if(match_info)
+	{
+		commit_info.match_info = match_info;
+		commit_done_lock.lock();
+	}
+
+
 	std::unique_lock lock(mutex);
 	wait_queue(lock, false, !allow_defrag_lock);
 	if (allow_defrag_lock)
@@ -2242,6 +2270,8 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 	curr_frag.fn = cfn;
 	curr_frag.last_modified = last_modified;
 	curr_frag.md5sum = md5sum;
+	if(match_info)
+		curr_frag.commit_info = &commit_info;
 
 	++commit_items[common_prefix_hash_func(cfn)];
 
@@ -2252,6 +2282,13 @@ int SingleFileStorage::write_int(const std::string & fn, const char* data,
 		defrag_skip_items.insert(cfn);
 	}
 	cond.notify_all();
+
+	if(match_info)
+	{
+		lock.unlock();
+
+		commit_info.commit_done.wait(commit_done_lock);
+	}
 
 	return 0;
 }
@@ -2380,11 +2417,11 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 	return res;	
 }
 
-int SingleFileStorage::check_existence(const std::string_view fn, unsigned int flags)
+SingleFileStorage::ReadPrepareResult SingleFileStorage::check_existence(const std::string_view fn, unsigned int flags)
 {
 	if (is_dead)
 	{
-		return ENOTRECOVERABLE;
+		return ReadPrepareResult{ENOTRECOVERABLE};
 	}
 
 	if ((flags & ReadUnsynced) == 0)
@@ -2399,6 +2436,8 @@ int SingleFileStorage::check_existence(const std::string_view fn, unsigned int f
 	}
 
 	const bool read_newest = (flags & ReadNewest);
+	
+	ReadPrepareResult res{0};
 
 	if ((flags & ReadUnsynced) == 0)
 	{
@@ -2407,7 +2446,15 @@ int SingleFileStorage::check_existence(const std::string_view fn, unsigned int f
 		if (frag_info.offset == -1)
 		{
 			XLOG(INFO) << "Could not find metadata for fragment " << fn << " in LMDB sfs " << db_path;
-			return ENOENT;
+			return ReadPrepareResult{ENOENT};
+		}
+
+		res.md5sum = frag_info.md5sum;
+		res.last_modified = frag_info.last_modified;
+
+		if(read_newest)
+		{
+			res.key = frag_info.fn;
 		}
 	}
 	else
@@ -2434,11 +2481,18 @@ int SingleFileStorage::check_existence(const std::string_view fn, unsigned int f
 		if (frag_info.offset == -1)
 		{
 			XLOG(INFO) << "Could not find metadata for fragment " << fn << " in LMDB (read unsynced) sfs " << db_path;
-			return ENOENT;
+			return ReadPrepareResult{ENOENT};
+		}
+
+		res.md5sum = frag_info.md5sum;
+		res.last_modified = frag_info.last_modified;
+
+		if(read_newest)
+		{
+			res.key = frag_info.fn;
 		}
 	}
-
-	return 0;
+	return res;
 }
 
 std::string SingleFileStorage::read(const std::string& fn, const unsigned int flags)
@@ -2592,33 +2646,22 @@ int SingleFileStorage::read_finalize(const std::string& fn, const std::vector<Ex
 }
 
 int SingleFileStorage::del(const std::string_view fn, DelAction da,
-	bool background_queue, std::unique_ptr<SFragInfo> linked)
+	bool background_queue, std::unique_ptr<SFragInfo> linked, MatchInfo* match_info)
 {
 	if (is_dead)
 	{
 		return ENOTRECOVERABLE;
 	}
 
-	if(da != DelAction::DelNoCheck && da != DelAction::DelNoCallbackNoCheck 
-		&& da != DelAction::DelWithQueuedNoCheck
-		&& da != DelAction::AssertQueueEmpty)
-	{
-		const auto rc = check_existence(fn, 0);
-		if(rc)
-			return rc;
-	}
-
 	SFragInfo curr_frag;
 	switch (da)
 	{
-	case DelAction::DelNoCheck:
 	case DelAction::Del:
 		curr_frag.action = FragAction::Del;
 		break;
 	case DelAction::DelOld:
 		curr_frag.action = FragAction::DelOld;
 		break;
-	case DelAction::DelWithQueuedNoCheck:
 	case DelAction::DelWithQueued:
 		curr_frag.action = FragAction::DelWithQueued;
 		break;
@@ -2631,7 +2674,7 @@ int SingleFileStorage::del(const std::string_view fn, DelAction da,
 	case DelAction::AssertQueueEmpty:
 		curr_frag.action = FragAction::AssertDelQueueEmpty;
 		break;
-	case DelAction::DelNoCallbackNoCheck:
+	case DelAction::DelNoCallback:
 		curr_frag.action = FragAction::DelNoCallback;
 		break;
 	default:
@@ -2640,6 +2683,16 @@ int SingleFileStorage::del(const std::string_view fn, DelAction da,
 	}
 	curr_frag.fn = fn;
 	curr_frag.linked = linked.release();
+
+	SCommitInfo commit_info;
+	std::unique_lock commit_done_lock(commit_info.commit_done_mutex, std::defer_lock);
+
+	if(match_info)
+	{
+		commit_info.match_info = match_info;
+		commit_done_lock.lock();
+		curr_frag.commit_info = &commit_info;
+	}
 
 	std::unique_lock lock(mutex);
 	wait_queue(lock, background_queue, false);
@@ -2661,6 +2714,13 @@ int SingleFileStorage::del(const std::string_view fn, DelAction da,
 		commit_queue.push_back(curr_frag);
 	}
 	cond.notify_all();
+
+	if(match_info)
+	{
+		lock.unlock();
+
+		commit_info.commit_done.wait(commit_done_lock);
+	}
 
 	return 0;
 }
@@ -7278,13 +7338,10 @@ void SingleFileStorage::operator()()
 		{
 			can_skip_commit = false;
 
-			if(!actionWithCommitInfo(frag_info.action))
+			if (frag_info.linked != nullptr)
 			{
-				if (frag_info.linked != nullptr)
-				{
-					std::unique_ptr<SFragInfo> linked(frag_info.linked);
-					callback_queue.push_back(*linked);
-				}
+				std::unique_ptr<SFragInfo> linked(frag_info.linked);
+				callback_queue.push_back(*linked);
 			}
 		}
 
@@ -7951,13 +8008,23 @@ void SingleFileStorage::operator()()
 			|| frag_info.action == FragAction::DelWithQueued
 			|| frag_info.action == FragAction::DelNoCallback)
 		{
-			const bool del_old = frag_info.action == FragAction::DelOld;
-			const bool call_callback = frag_info.action != FragAction::DelNoCallback;
-			commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, true, del_old, tid, call_callback);
-
-			if (frag_info.action == FragAction::DelWithQueued)
+			if(frag_info_matches(txn, frag_info))
 			{
-				commit_errors += unqueue_del(frag_info.fn, txn, tid);
+				const bool del_old = frag_info.action == FragAction::DelOld;
+				const bool call_callback = frag_info.action != FragAction::DelNoCallback;
+				commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, true, del_old, tid, call_callback);
+
+				if (frag_info.action == FragAction::DelWithQueued)
+				{
+					commit_errors += unqueue_del(frag_info.fn, txn, tid);
+				}
+			}
+
+			if (frag_info.commit_info != nullptr)
+			{
+				std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);				
+				frag_info.commit_info->commit_errors = commit_errors;
+				frag_info.commit_info->commit_done.notify_all();
 			}
 		}
 		else if (frag_info.action == FragAction::AssertDelQueueEmpty)
@@ -8018,102 +8085,111 @@ void SingleFileStorage::operator()()
 		else if (frag_info.action == FragAction::Add
 			|| frag_info.action == FragAction::AddNoDelOld)
 		{
-			if (frag_info.action == FragAction::Add)
+			if(frag_info_matches(txn, frag_info))
 			{
-				commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, false, false, tid, true);
-			}
-			else
-			{
-				int64_t disk_id = get_fn_disk_id(frag_info.fn);
-
-				int64_t log_transid = curr_transid;
-
-				if (disk_id != 0)
+				if (frag_info.action == FragAction::Add)
 				{
-					log_transid = get_disk_trans_id(txn, tid, disk_id);
+					commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, false, false, tid, true);
+				}
+				else
+				{
+					int64_t disk_id = get_fn_disk_id(frag_info.fn);
 
-					if (log_transid==-1)
+					int64_t log_transid = curr_transid;
+
+					if (disk_id != 0)
 					{
-						++commit_errors;
+						log_transid = get_disk_trans_id(txn, tid, disk_id);
+
+						if (log_transid==-1)
+						{
+							++commit_errors;
+						}
 					}
+
+					commit_errors += log_fn(frag_info.fn, txn, tid, log_transid);
 				}
 
-				commit_errors += log_fn(frag_info.fn, txn, tid, log_transid);
-			}
+				CWData wdata;
 
-			CWData wdata;
+				int64_t encoded_first_offset;
+				if(frag_info.extra_exts.size() < max_inline_exts)
+				{
+					encoded_first_offset = encode_num_exts(frag_info.offset, static_cast<int64_t>(frag_info.extra_exts.size()));
+				}
+				else
+				{
+					encoded_first_offset = encode_max_num_exts(frag_info.offset);
+				}
 
-			int64_t encoded_first_offset;
-			if(frag_info.extra_exts.size() < max_inline_exts)
-			{
-				encoded_first_offset = encode_num_exts(frag_info.offset, static_cast<int64_t>(frag_info.extra_exts.size()));
-			}
-			else
-			{
-				encoded_first_offset = encode_max_num_exts(frag_info.offset);
-			}
+				wdata.addVarInt(encoded_first_offset);
+				wdata.addVarInt(frag_info.len);
 
-			wdata.addVarInt(encoded_first_offset);
-			wdata.addVarInt(frag_info.len);
+				if(frag_info.extra_exts.size() >= max_inline_exts)
+				{
+					wdata.addVarInt(frag_info.extra_exts.size());
+					wdata.addVarInt(0);
+				}
 
-			if(frag_info.extra_exts.size() >= max_inline_exts)
-			{
-				wdata.addVarInt(frag_info.extra_exts.size());
-				wdata.addVarInt(0);
-			}
-
-			int64_t size = frag_info.offset + div_up(frag_info.len, block_size)*block_size;
-
-			if (size > curr_write_ext_start
-				&& size <= curr_write_ext_end)
-				curr_write_ext_start = size;
-			if (size > data_file_max_size)
-				data_file_max_size = size;
-
-			for (const SPunchItem& ext : frag_info.extra_exts)
-			{
-				wdata.addVarInt(ext.offset);
-				wdata.addVarInt(ext.len);
-				size = ext.offset + div_up(ext.len, block_size)*block_size;
+				int64_t size = frag_info.offset + div_up(frag_info.len, block_size)*block_size;
 
 				if (size > curr_write_ext_start
 					&& size <= curr_write_ext_end)
 					curr_write_ext_start = size;
 				if (size > data_file_max_size)
 					data_file_max_size = size;
-			}
-
-			{
-				std::scoped_lock lock(reserved_extents_mutex);
-
-				auto it_r = reserved_extents.find(frag_info.offset);
-				if(it_r!=reserved_extents.end())
-					reserved_extents.erase(it_r);
 
 				for (const SPunchItem& ext : frag_info.extra_exts)
 				{
-					it_r = reserved_extents.find(ext.offset);
+					wdata.addVarInt(ext.offset);
+					wdata.addVarInt(ext.len);
+					size = ext.offset + div_up(ext.len, block_size)*block_size;
+
+					if (size > curr_write_ext_start
+						&& size <= curr_write_ext_end)
+						curr_write_ext_start = size;
+					if (size > data_file_max_size)
+						data_file_max_size = size;
+				}
+
+				{
+					std::scoped_lock lock(reserved_extents_mutex);
+
+					auto it_r = reserved_extents.find(frag_info.offset);
 					if(it_r!=reserved_extents.end())
 						reserved_extents.erase(it_r);
+
+					for (const SPunchItem& ext : frag_info.extra_exts)
+					{
+						it_r = reserved_extents.find(ext.offset);
+						if(it_r!=reserved_extents.end())
+							reserved_extents.erase(it_r);
+					}
+				}
+
+				wdata.addVarInt(frag_info.last_modified);
+				wdata.addString2(frag_info.md5sum);
+
+				MDB_val tval;
+				tval.mv_data = wdata.getDataPtr();
+				tval.mv_size = wdata.getDataSize();
+
+				MDB_val tkey;
+				tkey.mv_data = const_cast<char*>(&frag_info.fn[0]);
+				tkey.mv_size = frag_info.fn.size();
+
+				rc = put_with_rewrite(txn, dbi_main, &tkey, &tval, tid, n_rewrite_pages);
+				if (rc)
+				{
+					XLOG(ERR) << "LMDB: Failed to put extent info in commit (" << mdb_strerror(rc) << ") sfs " << db_path;
+					++commit_errors;
 				}
 			}
 
-			wdata.addVarInt(frag_info.last_modified);
-			wdata.addString2(frag_info.md5sum);
-
-			MDB_val tval;
-			tval.mv_data = wdata.getDataPtr();
-			tval.mv_size = wdata.getDataSize();
-
-			MDB_val tkey;
-			tkey.mv_data = const_cast<char*>(&frag_info.fn[0]);
-			tkey.mv_size = frag_info.fn.size();
-
-			rc = put_with_rewrite(txn, dbi_main, &tkey, &tval, tid, n_rewrite_pages);
-			if (rc)
+			if(frag_info.commit_info)
 			{
-				XLOG(ERR) << "LMDB: Failed to put extent info in commit (" << mdb_strerror(rc) << ") sfs " << db_path;
-				++commit_errors;
+				std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
+				frag_info.commit_info->commit_done.notify_all();
 			}
 		}
 		else if (frag_info.action == FragAction::FindFree)
@@ -8442,22 +8518,18 @@ void SingleFileStorage::operator()()
 				commit_queue.pop_front();
 			}
 
-			if(actionWithCommitInfo(frag_info.action))
+
+			if ( frag_info.commit_info != nullptr)
 			{
-				if ( frag_info.commit_info != nullptr)
-				{
-					std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
-					frag_info.commit_info->commit_errors = 1;
-					frag_info.commit_info->commit_done.notify_all();
-				}
+				std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
+				frag_info.commit_info->commit_errors = 1;
+				frag_info.commit_info->commit_done.notify_all();
 			}
-			else 
+
+			if(frag_info.linked != nullptr)
 			{
-				if(frag_info.linked != nullptr)
-				{
-					std::unique_ptr<SFragInfo> linked_info(frag_info.linked);
-					callback_queue.push_back(*linked_info);
-				}
+				std::unique_ptr<SFragInfo> linked_info(frag_info.linked);
+				callback_queue.push_back(*linked_info);
 			}
 		}
 		
@@ -9674,4 +9746,26 @@ void SingleFileStorage::assert_reading_items_empty()
 		}
 	}
 	assert(reading_items.empty());
+}
+
+bool SingleFileStorage::frag_info_matches(MDB_txn* txn, SFragInfo& frag_info)
+{
+	if(!frag_info.commit_info || !frag_info.commit_info->match_info)
+		return true;
+
+
+	auto& match_info = *frag_info.commit_info->match_info;
+	const auto& fn = match_info.readNewestFn ? *match_info.readNewestFn : frag_info.fn;
+	auto curr_info = get_frag_info(txn, fn, true, match_info.readNewestFn.has_value());
+	if(curr_info.offset == -1)
+	{
+		if(match_info.ifMatch.empty())
+			match_info.match = true;
+	}
+	else
+	{
+		match_callback(match_info, curr_info);
+	}
+
+	return match_info.match;
 }

@@ -13,7 +13,7 @@ from uuid import uuid4
 import boto3
 from botocore.exceptions import ClientError
 import os
-from hs5_fixture import Hs5Runner, hs5, hs5_large, hs5_large_small_alloc_chunksize
+from hs5_fixture import Hs5Runner, hs5, hs5_large, hs5_large_small_alloc_chunksize, hs5_no_precheck
 import pytest
 import threading
 import binascii
@@ -240,6 +240,110 @@ def test_put_empty(tmp_path: Path, hs5: Hs5Runner):
     dl_path = tmp_path / "download.txt"
     s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
     assert os.stat(dl_path).st_size == len(fdata)
+
+def test_put_if_match_no_precheck(tmp_path: Path, hs5_no_precheck: Hs5Runner):
+    put_if_match_test(tmp_path, hs5_no_precheck, expected_error="ConditionalRequestConflict", expected_http_error=409)
+
+
+def test_put_if_match2(tmp_path: Path, hs5: Hs5Runner):
+    put_if_match_test(tmp_path, hs5, expected_error="PreconditionFailed", expected_http_error=412)
+
+def put_if_match_test(tmp_path: Path, hs5: Hs5Runner, expected_error: str, expected_http_error: int):
+    fdata = os.urandom(1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+
+    s3_client = hs5.get_s3_client()
+    with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
+        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert obj_info["ContentLength"] == len(fdata)
+
+    # Test if-match with correct ETag
+    #etag = obj_info["ETag"].strip('"')
+    obj_info = s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=b"new data", IfMatch=obj_info["ETag"])
+
+    # Test if-match with incorrect ETag
+    with pytest.raises(ClientError) as exc_info:
+        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=b"new data", IfMatch="invalid-etag")
+    assert "Error" in exc_info.value.response
+    assert "Code" in exc_info.value.response["Error"]
+    assert "ResponseMetadata" in exc_info.value.response
+    assert "HTTPStatusCode" in exc_info.value.response["ResponseMetadata"]
+    assert exc_info.value.response["ResponseMetadata"]["HTTPStatusCode"] == expected_http_error
+    assert exc_info.value.response["Error"]["Code"] == expected_error
+
+    with pytest.raises(ClientError):
+        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=b"new data2", IfNoneMatch=obj_info["ETag"])
+
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=b"new data2", IfNoneMatch="foobar")
+
+    with pytest.raises(ClientError):
+        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload2.txt", Body=b"new data3", IfMatch="*")
+
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=b"new data3", IfMatch="*")
+
+    with pytest.raises(ClientError):
+        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=b"new data3", IfNoneMatch="*")
+
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload3.txt", Body=b"new data3", IfNoneMatch="*")
+
+def test_get_if_match(tmp_path: Path, hs5: Hs5Runner):
+    fdata = os.urandom(1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+
+    s3_client = hs5.get_s3_client()
+    with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
+        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert obj_info["ContentLength"] == len(fdata)
+
+    # Test if-match with correct ETag
+    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9", IfMatch=obj_info["ETag"])
+    bdata = obj_range["Body"].read()
+    assert len(bdata) == 10
+    assert bdata == fdata[:10]
+
+    # Test if-match with incorrect ETag
+    with pytest.raises(ClientError) as exc_info:
+        s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9", IfMatch="invalid-etag")
+    assert "Error" in exc_info.value.response
+    assert "Code" in exc_info.value.response["Error"]
+    assert "ResponseMetadata" in exc_info.value.response
+    assert "HTTPStatusCode" in exc_info.value.response["ResponseMetadata"]
+    assert exc_info.value.response["ResponseMetadata"]["HTTPStatusCode"] == 412
+    assert exc_info.value.response["Error"]["Code"] == "PreconditionFailed"
+
+def test_del_if_match(tmp_path: Path, hs5: Hs5Runner):
+    fdata = os.urandom(1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+
+    s3_client = hs5.get_s3_client()
+    with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
+        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert obj_info["ContentLength"] == len(fdata)
+
+    # Test if-match with correct ETag
+    s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt", IfMatch=obj_info["ETag"])
+
+    with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
+        obj_info = s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+
+    # Test if-match with incorrect ETag
+    with pytest.raises(ClientError) as exc_info:
+        s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt", IfMatch="invalid-etag")
+    assert "Error" in exc_info.value.response
+    assert "Code" in exc_info.value.response["Error"]
+    assert "ResponseMetadata" in exc_info.value.response
+    assert "HTTPStatusCode" in exc_info.value.response["ResponseMetadata"]
+    assert exc_info.value.response["ResponseMetadata"]["HTTPStatusCode"] == 412
+    assert exc_info.value.response["Error"]["Code"] == "PreconditionFailed"
 
 
 def test_list_buckets(hs5: Hs5Runner):
@@ -494,6 +598,15 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
 
+    obj_etag = obj_range["ETag"]
+    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9", IfMatch=obj_etag)
+    assert obj_range["ContentType"] == "text/plain"
+    bdata = obj_range["Body"].read()
+    assert len(bdata) == 10
+
+    with pytest.raises(ClientError):
+        s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9", IfMatch='invalid-etag')
+
     obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=10-19")
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
@@ -588,6 +701,11 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
     if not restart_during_download:
         assert dl_md5sum == md5sum_full_file
 
+    # Delete being async after reading is expected
+    starttime = time.monotonic()
+    while time.monotonic() - starttime < 5 and hs5.get_stats().used > 0:
+        time.sleep(0.1)
+        
     assert hs5.get_stats().used == 0
 
 

@@ -201,6 +201,7 @@ public:
 
     static std::vector<SingleFileStorage::SFragInfo> onDeleteCallback(const std::string& fn, const std::string& md5sum);
     static std::optional<std::string> onModifyCallback(const std::string& fn, std::string md5sum, std::string md5sumParam);
+    static void onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride);
 
 private:
     void readFile(folly::EventBase *evb);
@@ -244,6 +245,8 @@ private:
     static void removeReadingMultipartObject(const std::string& key, SingleFileStorage& sfs);
     static bool isReadingMultipartObjectAndMarkDel(const std::string& key, const int64_t delUploadId, const int64_t delBucketId, const std::vector<MultiPartDownloadData::PartExt>& delParts);
     void stopChecks();
+    void parseMatchInfo(proxygen::HTTPMessage& headers, const bool ifModifiedSince, const bool ifUnmodifiedSince);
+    int checkMatchInfo();
 
 	std::shared_ptr<S3Handler> self;
 	Action request_action = Action::Unknown;
@@ -259,6 +262,7 @@ private:
 
     std::string serverUrl;
 
+    std::unique_ptr<SingleFileStorage::MatchInfo> matchInfo;
     std::unique_ptr<MultiPartUploadData> multiPartUploadData;
     std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
     std::unique_ptr<DeleteObjectsData> deleteObjectsData;

@@ -80,9 +80,7 @@ public:
 		Queue = 3,
 		Unqueue = 4,
 		AssertQueueEmpty = 5,
-		DelNoCheck = 6,
-		DelNoCallbackNoCheck = 7,
-		DelWithQueuedNoCheck = 8
+		DelNoCallback = 6
 	};
 
 	enum class FragAction
@@ -113,6 +111,16 @@ public:
 
 	struct SFragInfo;
 
+	struct MatchInfo
+	{
+		std::optional<std::string> readNewestFn;
+		std::vector<std::string> ifMatch;
+		std::vector<std::string> ifNoneMatch;
+		folly::Optional<int64_t> ifModifiedSince;
+		folly::Optional<int64_t> ifUnmodifiedSince;
+		bool match = false;
+	};
+
 	struct SCommitInfo
 	{
 		SCommitInfo()
@@ -125,28 +133,17 @@ public:
 		int64_t new_datafile_offset;
 		int64_t new_datafile_offset_end;
 		SFragInfo* frag_info;
+		MatchInfo* match_info;
 	};
-
-	bool actionWithCommitInfo(FragAction action)
-	{
-		return action == FragAction::Commit ||
-		action == FragAction::ResetDelLog ||
-		action == FragAction::ResetDelQueue ||
-		action == FragAction::GetDiskId ||
-		action == FragAction::FindFree ||
-		action == FragAction::ReadFragInfo ||
-		action == FragAction::ReadFragInfoWithoutParsing ||
-		action == FragAction::EmptyQueue;
-	}
 
 	struct SFragInfo
 	{
 		SFragInfo() : offset(-1), len(0),
-			last_modified(0), commit_info(nullptr) {
+			last_modified(0), commit_info(nullptr), linked(nullptr) {
 		}
 		SFragInfo(int64_t offset, int64_t len)
 			: offset(offset), len(len),
-			last_modified(0), commit_info(nullptr) {}
+			last_modified(0), commit_info(nullptr), linked(nullptr) {}
 
 		FragAction action;
 		std::string fn;
@@ -154,11 +151,8 @@ public:
 		int64_t len;
 		int64_t last_modified;
 		std::string md5sum;
-		union
-		{
-			SCommitInfo* commit_info;
-			SFragInfo* linked;
-		};
+		SCommitInfo* commit_info;
+		SFragInfo* linked;
 		std::vector<SPunchItem> extra_exts;
 	};
 
@@ -166,6 +160,7 @@ public:
 	typedef size_t(*common_prefix_hash_func_t)(const std::string_view);
 	using on_delete_callback_t = std::function<std::vector<SingleFileStorage::SFragInfo>(const std::string&, const std::string&)>;
 	using modify_data_callback_t = std::function<std::optional<std::string>(const std::string&, std::string, std::string)>;
+	using match_callback_t = std::function<void(MatchInfo&, const SingleFileStorage::SFragInfo&)>;
 	
 	struct SFSOptions
 	{
@@ -193,6 +188,7 @@ public:
 		common_prefix_hash_func_t common_prefix_hash_func = nullptr;
 		on_delete_callback_t on_delete_callback;
 		modify_data_callback_t modify_data_callback;
+		match_callback_t match_callback;
 		bool wal_write_meta = true;
 		int64_t wal_write_data = 0;
 	};
@@ -222,12 +218,12 @@ public:
 	int write_ext(const Ext& ext, const char* data, size_t data_size, const bool complete_obj);
 
 	int write_finalize(const std::string& fn, const std::vector<Ext>& extents, int64_t last_modified, const std::string& md5sum,
-		bool no_del_old, bool is_fragment, std::unique_ptr<SFragInfo> linked = nullptr);
+		bool no_del_old, bool is_fragment, std::unique_ptr<SFragInfo> linked = nullptr, MatchInfo* match_info = nullptr);
 
 	int write(const std::string& fn,
 		const char* data, size_t data_size, const size_t data_alloc_size, 
 		int64_t last_modified, const std::string& md5sum,
-		bool no_del_old, bool is_fragment);
+		bool no_del_old, bool is_fragment, MatchInfo* match_info = nullptr);
 
 	const static unsigned int ReadWithReadahead = 1;
 	const static unsigned int ReadUnsynced = 2;
@@ -247,7 +243,7 @@ public:
 
 	ReadPrepareResult read_prepare(const std::string_view fn, unsigned int flags);
 	std::string read(const std::string& fn, unsigned int flags);
-	int check_existence(const std::string_view fn, unsigned int flags);
+	ReadPrepareResult check_existence(const std::string_view fn, unsigned int flags);
 
 	struct ReadExtResult
 	{
@@ -262,7 +258,7 @@ public:
 	int read_finalize(const std::string& fn, const std::vector<Ext>& extents, unsigned int flags);
 
 	int del(const std::string_view fn, DelAction da,
-		bool background_queue, std::unique_ptr<SFragInfo> linked = nullptr);
+		bool background_queue, std::unique_ptr<SFragInfo> linked = nullptr, MatchInfo* match_info = nullptr);
 
 	bool restore_old(const std::string& fn);
 
@@ -416,7 +412,7 @@ public:
 private:
 
 	int write_int(const std::string& fn, const char* data, size_t data_size, const size_t data_alloc_size,
-		int64_t last_modified, const std::string& md5sum, bool allow_defrag_lock, bool no_del_old);
+		int64_t last_modified, const std::string& md5sum, bool allow_defrag_lock, bool no_del_old, MatchInfo* match_info);
 
 	int64_t remove_fn(const std::string& fn,
 		MDB_txn* txn, MDB_txn* freespace_txn, bool del_from_main, bool del_old, THREAD_ID tid, const bool call_callback);
@@ -567,6 +563,8 @@ private:
 
 	int add_new_object(MDB_txn* txn, const THREAD_ID tid, const std::string& fn);
 
+	bool frag_info_matches(MDB_txn* txn, SFragInfo& frag_info);
+
 	bool with_rewrite;
 
 	std::unordered_set<std::string> defrag_skip_items;
@@ -677,6 +675,7 @@ private:
 	common_prefix_hash_func_t common_prefix_hash_func;
 	on_delete_callback_t on_delete_callback;
 	modify_data_callback_t modify_data_callback;
+	match_callback_t match_callback;
 
 	int64_t curr_version = 0;
 
