@@ -61,6 +61,7 @@ DEFINE_string(host_override, "", "Override host for s3 requests");
 DEFINE_bool(pre_sync_commit, false, "Pre-sync data and index files before commit for potential performance gain");
 DEFINE_int64(commit_after_ms, 30000, "If manual commit is enabled, wait this amount of milliseconds before automatically committing. 0 means not commiting automatically at all.");
 DEFINE_bool(check_conditional_headers_before_upload, true, "Check conditional HTTP headers like If-Match before upload on PUT (for testing)");
+DEFINE_int32(get_buffer_size, 1*1024*1024, "Buffer size to use for reading objects for GET requests");
 
 std::string hashSha256Hex(const std::string_view payload)
 {
@@ -4068,7 +4069,7 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
         assert(rc==0);
     };
 
-    const size_t bufsize = 32768;
+    const size_t bufsize = FLAGS_get_buffer_size;
     folly::IOBufQueue buf;
 
     if(multiPartDownloadData)

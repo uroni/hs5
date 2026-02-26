@@ -71,7 +71,7 @@ DEFINE_bool(run_duckdb, false, "Run DuckDB UI");
 DEFINE_int32(duckdb_port, 4213, "Port to listen on with DuckDB UI protocol");
 DEFINE_bool(enable_core_dumps, false, "Enable core dumps on crashes");
 DEFINE_bool(wait_for_wal_startup, true, "Wait for WAL startup to finish before accepting requests");
-DEFINE_int32(max_read_buffer_size, 1*1024*1024, "Max read buffer size for HTTP sessions");
+DEFINE_int32(max_put_buffer_size, 1*1024*1024, "Max read buffer size for HTTP sessions (for PUT)");
 
 namespace {
   std::unique_ptr<proxygen::HTTPServer> server;
@@ -259,7 +259,7 @@ int realMain(int argc, char* argv[])
       return 1;
     }
 
-    proxygen::HTTPSessionBase::setMaxReadBufferSize(FLAGS_max_read_buffer_size);
+    proxygen::HTTPSessionBase::setMaxReadBufferSize(FLAGS_max_put_buffer_size);
 
     SingleFileStorage sfs(sfsoptions);
     auto duckDbFs = duckdb::make_uniq<DuckDbFs>(sfs, FLAGS_bucket_versioning);
