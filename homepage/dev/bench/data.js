@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772139430399,
+  "lastUpdate": 1772140309184,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -6492,6 +6492,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.17848487559240575",
             "extra": "mean: 19.913232107600017 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "cf59564f34c5a8b288d2cf003faca97e2af2964e",
+          "message": "Trim large continuous used space from data file\n\nIf there are large extents (default > 1MiB) in the data file that are free, trim them via hole punching, to make the space available to other applications.",
+          "timestamp": "2026-02-26T21:45:03+01:00",
+          "tree_id": "533c1358bfd1f8140b9a3e9b59034bd12d3e9c2d",
+          "url": "https://github.com/uroni/hs5/commit/cf59564f34c5a8b288d2cf003faca97e2af2964e"
+        },
+        "date": 1772140308696,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08672233703430478,
+            "unit": "iter/sec",
+            "range": "stddev: 0.03188685307974031",
+            "extra": "mean: 11.531054561000008 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06937362878361672,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1081015285118494",
+            "extra": "mean: 14.414699324999992 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.06006459939905024,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1200931259657992",
+            "extra": "mean: 16.648741688199994 sec\nrounds: 5"
           }
         ]
       }
