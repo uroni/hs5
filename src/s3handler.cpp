@@ -1598,7 +1598,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             if(!xid.empty())
             {
-                if( (action == Action::PutObjectPart && xid != "PutObjectPart") ||
+                if( (action == Action::PutObjectPart && xid != "UploadPart") ||
                     (action == Action::UploadPartCopy && xid != "UploadPartCopy"))
                 {
                     XLOGF(INFO, "Invalid x-id for {}: {}", action == Action::PutObjectPart ? "put object part" : "upload part copy", xid);
