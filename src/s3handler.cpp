@@ -3183,9 +3183,45 @@ void S3Handler::finalizeMultipartUpload()
                         return;
                     }
 
-                    //TODO: check etag
+                    const auto md5sumBin = S3Handler::md5sumBinFromData(readPartRes.md5sum);
 
-                    EVP_DigestUpdate(md5Ctx, readPartRes.md5sum.data(), readPartRes.md5sum.size());
+                    if(!part.etag.empty())
+                    {
+                        const auto etag = (part.etag.size() > 1 && part.etag[0] == '"' && part.etag[part.etag.size()-1] == '"') ?
+                                            part.etag.substr(1, part.etag.size()-2) : part.etag;
+                        std::string etagBin;
+                        try
+                        {
+                            etagBin = folly::unhexlify(etag);
+                        }
+                        catch(const std::exception&)
+                        {
+                            XLOGF(WARN, "Invalid etag format for uploadId {} partNumber {} etag {}", multiPartData->uploadId.id, part.partNumber, part.etag);
+                            evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
+                                                {
+                            ResponseBuilder(self->downstream_)
+                                .status(500, "Internal error")
+                                .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Invalid etag format for part {}", partNumber), self->fullKeyPath(), ""))
+                                .sendWithEOM();
+                            self->finished_ = true; });
+                            return;
+                        }
+
+                        if(etagBin != md5sumBin)
+                        {
+                            XLOGF(WARN, "Etag does not match md5sum for uploadId {} partNumber {} etag {} md5sum {}", multiPartData->uploadId.id, part.partNumber, part.etag, folly::hexlify(md5sumBin));
+                            evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
+                                                {
+                            ResponseBuilder(self->downstream_)
+                                .status(500, "Internal error")
+                                .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Etag does not match md5sum for part {}", partNumber), self->fullKeyPath(), ""))
+                                .sendWithEOM();
+                            self->finished_ = true; });
+                            return;
+                        }
+                    }
+
+                    EVP_DigestUpdate(md5Ctx, md5sumBin.data(), md5sumBin.size());
 
                     if(lastExt.len==0)
                     {
