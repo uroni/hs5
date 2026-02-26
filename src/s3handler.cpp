@@ -43,6 +43,7 @@
 #include "Auth.h"
 #include "main.h"
 #include "Buckets.h"
+#include "DuckDbFs.h"
 
 using namespace proxygen;
 
@@ -1533,6 +1534,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         else if(!setKeyInfoFromPath(path))
             return;
 
+        const auto copySource = headers->getHeaders().getSingleOrEmpty("x-amz-copy-source");
+        const bool copyObject = !createBucket && !copySource.empty();
+
         const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
         const auto payloadOpt = initPayloadHash(*headers);
         if(!payloadOpt)
@@ -1543,7 +1547,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         const auto stringToSignHeaderPtr = hasAwsChunkedEncoding ? &awsChunkedEncoding->stringToSignHeader : nullptr;
         const auto signingKeyOutput = hasAwsChunkedEncoding ? &awsChunkedEncoding->signingKey : nullptr;
 
-        if(!createBucket && headers->hasQueryParam("uploadId") && (xid.empty() || xid == "UploadPart"))
+        if(!createBucket && headers->hasQueryParam("uploadId") && (xid.empty() || xid == "UploadPart" || xid=="UploadPartCopy"))
         {
             int partNumber = 0;
             const auto& queryParams = headers->getQueryParams();
@@ -1585,9 +1589,25 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            XLOGF(DBG0, "PutObjectPart {} part {} uploadId {} length {}", path, partNumber, uploadId.id, remaining);
+            const auto actionStr = copyObject ? "UploadPartCopy" : "PutObjectPart";
 
-            const auto action = Action::PutObjectPart;
+            XLOGF(DBG0, "{} {} part {} uploadId {} length {}", actionStr, path, partNumber, uploadId.id, remaining);
+
+            const auto action = copyObject ? Action::UploadPartCopy : Action::PutObjectPart;
+
+            if(!xid.empty())
+            {
+                if( (action == Action::PutObjectPart && xid != "PutObjectPart") ||
+                    (action == Action::UploadPartCopy && xid != "UploadPartCopy"))
+                {
+                    XLOGF(INFO, "Invalid x-id for {}: {}", action == Action::PutObjectPart ? "put object part" : "upload part copy", xid);
+                    ResponseBuilder(downstream_)
+                        .status(400, "Bad request")
+                        .body(fmt::format("Invalid x-id for {}", action == Action::PutObjectPart ? "put object part" : "upload part copy"))
+                        .sendWithEOM();
+                    return;
+                }
+            }
 
             if(!checkSig(*headers, payload, resource, action, true, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
                 || ( currSigPtr != nullptr && currSigPtr->empty()))
@@ -1600,11 +1620,13 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
+            request_action = action;
             putObjectPart(*headers, partNumber, uploadId.id, uploadId.nonce);
             return;
         }
 
-        const auto action = createBucket ? Action::CreateBucket : Action::PutObject;
+        const auto action = createBucket ? Action::CreateBucket : 
+                    (copyObject ? Action::CopyObject : Action::PutObject);
 
         if(!checkSig(*headers, payload, resource, action, true, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
             || ( currSigPtr != nullptr && currSigPtr->empty()))
@@ -1633,17 +1655,22 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        if(!xid.empty() && xid != "PutObject")
+        if(!xid.empty())
         {
-            XLOGF(INFO, "Invalid x-id for put object: {}", xid);
-            ResponseBuilder(downstream_)
-                .status(400, "Bad request")
-                .body("Invalid x-id for put object")
-                .sendWithEOM();
-            return;
+            if( (action == Action::PutObject && xid != "PutObject") ||
+                (action == Action::CopyObject && xid != "CopyObject"))
+            {
+                XLOGF(INFO, "Invalid x-id for {}: {}", action == Action::PutObject ? "put object" : "copy object", xid);
+                ResponseBuilder(downstream_)
+                    .status(400, "Bad request")
+                    .body(fmt::format("Invalid x-id for {}", action == Action::PutObject ? "put object" : "copy object"))
+                    .sendWithEOM();
+                return;
+            }
         }
 
-        if(sfs.get_manual_commit() && path.find(c_commit_uuid)!=std::string::npos)
+        if(sfs.get_manual_commit() && action == Action::PutObject &&
+            path.find(c_commit_uuid)!=std::string::npos)
         {
             XLOGF(DBG0, "PutObject {} COMMIT", path);
 
@@ -1654,6 +1681,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         }        
 
         if(FLAGS_with_stop_command &&
+            action == Action::PutObject &&
             path.find(c_stop_uuid)!=std::string::npos)
         {
             XLOGF(DBG0, "PutObject {} STOP", path);
@@ -1689,6 +1717,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         }
         XLOGF(DBG0, "PutObject {} length {}", path, remaining);
 
+        request_action = action;
         putObject(*headers);
         return;
     }
@@ -2527,11 +2556,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     return;
                 }
 
-                #ifdef ALLOW_LEGACY_MD5SUM
-                const auto md5sum = res.md5sum.size() == MD5_DIGEST_LENGTH ? res.md5sum : ((!res.md5sum.empty() && res.md5sum[0] == metadata_object ) ? res.md5sum.substr(1) : "");
-                #else
-                const auto md5sum = (!res.md5sum.empty() && ( (res.md5sum[0] & ~metadata_known_flags) == metadata_object) ) ? res.md5sum.substr(1, MD5_DIGEST_LENGTH) : "";
-                #endif
+                const auto md5sum = S3Handler::md5sumBinFromData(res.md5sum);
 
                 auto [rangeStart, rangeEnd] = parseRange(range, res.total_len);
 
@@ -2677,6 +2702,16 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
             });
 }
 
+std::string S3Handler::md5sumBinFromData(const std::string& md5sumData)
+{
+    #ifdef ALLOW_LEGACY_MD5SUM
+    const auto md5sum = md5sumData.size() == MD5_DIGEST_LENGTH ? md5sumData : ((!md5sumData.empty() && md5sumData[0] == metadata_object ) ? md5sumData.substr(1) : "");
+    #else
+    const auto md5sum = (!md5sumData.empty() && ( (md5sumData[0] & ~metadata_known_flags) == metadata_object) ) ? md5sumData.substr(1, MD5_DIGEST_LENGTH) : "";
+    #endif
+    return md5sum;
+}
+
 int S3Handler::checkMatchInfo()
 {
     std::string findPath;
@@ -2722,10 +2757,17 @@ int S3Handler::checkMatchInfo()
 
 void S3Handler::putObject(proxygen::HTTPMessage& headers)
 {
-    request_action = Action::PutObject;
+    std::unique_ptr<CopyObjectInfo> copyObjectInfo;
+    if(request_action == Action::CopyObject)
+    {
+        copyObjectInfo = std::make_unique<CopyObjectInfo>();
+        copyObjectInfo->source = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source");
+        parseSourceMatchInfo(headers, copyObjectInfo->sourceMatchInfo);
+    }
+
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb]()
+            [self = this->self, evb, copyObjectInfo = std::move(copyObjectInfo)]()
             {
                 if(!self->evpMdCtx.init(EVP_md5()))
                 {
@@ -2794,6 +2836,12 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
 
                 const auto fpath = make_key(self->keyInfo);
 
+                if(copyObjectInfo)
+                {
+                    self->copyObject(evb, fpath, *copyObjectInfo);
+                    return;   
+                }
+
                 auto res = self->sfs.write_prepare(fpath, self->put_remaining);
                 if (res.err != 0)
                 {            
@@ -2836,10 +2884,18 @@ std::pair<std::string, std::string> splitUploadId(const std::string& uploadId)
 
 void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId)
 {
-    request_action = Action::PutObjectPart;
+    std::unique_ptr<CopyObjectInfo> copyObjectInfo;
+    if(request_action == Action::UploadPartCopy)
+    {
+        copyObjectInfo = std::make_unique<CopyObjectInfo>();
+        copyObjectInfo->source = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source");
+        copyObjectInfo->range = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source-range");
+        parseSourceMatchInfo(headers, copyObjectInfo->sourceMatchInfo);
+    }
+
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb, partNumber, uploadId, uploadVerId]()
+            [self = this->self, evb, partNumber, uploadId, uploadVerId, copyObjectInfo=std::move(copyObjectInfo)]()
             {
                 if(!self->evpMdCtx.init(EVP_md5()))
                 {
@@ -2898,6 +2954,13 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                 self->bodyData = self->keyInfo.key;
                 self->keyInfo = {.key = uploadIdToStr(uploadId) +"."+uploadIdToStr(partNumber), .version = 0, 
                     .bucketId = partsBucketId};
+                
+                if(copyObjectInfo)
+                {
+                    self->copyObject(evb, make_key(self->keyInfo), *copyObjectInfo);
+                    return;                  
+                }
+
                 auto res = self->sfs.write_prepare(make_key(self->keyInfo), self->put_remaining);
                 if (res.err != 0)
                 {            
@@ -5054,169 +5117,10 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
             return;
         }
 
-        std::string md5sum;
-        if(contentType.hasContentType())
-        {
-            md5sum.resize(MD5_DIGEST_LENGTH+1 + contentType.serializeSize());
-            md5sum[0] = static_cast<char>(metadata_object | metadata_flag_with_content_type);
-            contentType.serialize(&md5sum[1 + MD5_DIGEST_LENGTH]);
-        }
-        else
-        {
-            md5sum.resize(MD5_DIGEST_LENGTH+1);
-            md5sum[0] = static_cast<char>(metadata_object);
-        }
-        EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&md5sum[1]), nullptr);
-
-        if(payloadHash && !payloadHash->isFinalExpected())
-        {
-            sfs.free_extents(extents);
-            extents.clear();
-
-            XLOGF(WARN, "Payload hash not as expected");
-
-            evb->runInEventBaseThread([self = this]()
-                                {           
-                if(!self || self->finished_)
-                    return;
-                ResponseBuilder(self->downstream_)
-                    .status(400, "Bad request")
-                    .body("Invalid hash")
-                    .sendWithEOM();
-                self->finished_ = true; });
-            return;
-        }
-
-        if(awsChunkedEncoding && awsChunkedEncoding->state != AwsChunkedEncoding::State::Finished)
-        {
-            sfs.free_extents(extents);
-            extents.clear();
-
-            XLOGF(WARN, "Invalid chunked encoding body state at end of body: {}", static_cast<int>(awsChunkedEncoding->state));
-
-            evb->runInEventBaseThread([self = this]()
-                                {           
-                if(!self || self->finished_)
-                    return;
-                ResponseBuilder(self->downstream_)
-                    .status(400, "Bad request")
-                    .body("Invalid chunked encoding body")
-                    .sendWithEOM();
-                self->finished_ = true; });
-            return;
-        }
-
-        if(!extents.empty())
-            XLOGF(INFO, "Finalize object {} ext off {} len {} extents {}", keyInfo.key, extents[0].data_file_offset, extents[0].len, extents.size());
-        else 
-            XLOGF(INFO, "Finalize empty object {}", keyInfo.key);
-
         const auto tnow = std::chrono::system_clock::now();
         const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                tnow.time_since_epoch()).count();
-
-        // TODO: Check if multi-part upload is aborted here and synchronize
-
-        std::unique_ptr<SingleFileStorage::SFragInfo> addPart;
-        if(request_action == Action::PutObjectPart)
-        {
-            int64_t partSize = 0;
-            for(const auto& ext: extents)
-            {
-                partSize += ext.len;
-            }
-
-            const auto uploadId = uploadIdFromStrDot(keyInfo.key);
-            assert(uploadId.second>=0);
-
-            addPart = std::make_unique<SingleFileStorage::SFragInfo>();
-            addPart->action = SingleFileStorage::FragAction::ModifyData;
-            const auto parseParts = ParsePartRes{.parts = {MultiPartDownloadData::PartExt{.size=partSize, .start=static_cast<int>(uploadId.second), .len=1}}};
-            addPart->md5sum = serializePartExts(parseParts);
-            addPart->fn = make_key({.key = bodyData, .version = uploadId.first, 
-                    .bucketId = keyInfo.bucketId - 1});
-        }
-
-        // TODO perf: With match info set it has to wait for the queue anyway, so we might as well link the commit if we want one.
-        // Commit needs to happen after the parts update
-
-        if(keyInfo.version != 0)
-        {
-            matchInfo->readFn = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
-            matchInfo->readNewest = true;
-        }
-
-        auto rc = sfs.write_finalize(make_key(keyInfo), extents, lastModified, md5sum, false, true, std::move(addPart), matchInfo.get());
-
-        if (rc != 0)
-        {
-            extents.clear();
-            XLOGF(WARN, "Error obj {} finalizing write code {}", keyInfo.key, rc);
-            evb->runInEventBaseThread([self = this]()
-                                {           
-                    if(!self || self->finished_)
-                        return;
-                    ResponseBuilder(self->downstream_)
-                        .status(500, "Internal error")
-                        .body("Write finalization error")
-                        .sendWithEOM();
-                    self->finished_ = true; });
-            return;
-        }
-
-        if(matchInfo && !matchInfo->match)
-        {
-            sfs.free_extents(extents);
-            extents.clear();
-
-            XLOGF(WARN, "Object {} match condition not met. Returning 409 ", keyInfo.key);
-            evb->runInEventBaseThread([ this]()
-                                {           
-                    if(finished_)
-                        return;
-                    finished_ = true;
-                    ResponseBuilder(downstream_)
-                        .status(409 , "ConditionalRequestConflict")
-                        .body(s3errorXml(S3ErrorCode::ConditionalRequestConflict, "", fullKeyPath(), ""))
-                        .sendWithEOM();
-                     });
-            return;
-        }
-        else
-        {
-            extents.clear();
-        }
-
-
-        if(!commit())
-        {
-            XLOGF(WARN, "Commit obj {} failed", keyInfo.key);
-            evb->runInEventBaseThread([this]()
-                                {           
-                    if(finished_)
-                        return;
-                    finished_ = true;
-                    ResponseBuilder(downstream_)
-                        .status(500, "Internal error")
-                        .body("Commit error")
-                        .sendWithEOM(); });
-            return;
-        }
-
-        XLOGF(DBG0, "Successfully wrote object {} etag {}", keyInfo.key, folly::hexlify(md5sum.substr(1, MD5_DIGEST_LENGTH)));
-
-        evb->runInEventBaseThread([this, md5sum]()
-                                {      
-                    finished_ = true;
-                    ResponseBuilder resp(downstream_);
-                    resp.status(200, "OK");
-                    resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, fmt::format("\"{}\"", folly::hexlify(md5sum.substr(1, MD5_DIGEST_LENGTH))));
-                    if(keyInfo.version != 0)
-                    {
-                        resp.header("x-amz-version-id", sfs.encrypt_id(keyInfo.version));
-                    }
-                    resp.sendWithEOM();
-                     });
+            tnow.time_since_epoch()).count();
+        finalizePutObject(evb, lastModified);
         return;
     }
 
@@ -5296,6 +5200,190 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
     assert(data_size == 0);
 
     put_remaining.fetch_sub(body->length(), std::memory_order_release);
+}
+
+void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModified)
+{
+    std::string md5sum;
+    if(contentType.hasContentType())
+    {
+        md5sum.resize(MD5_DIGEST_LENGTH+1 + contentType.serializeSize());
+        md5sum[0] = static_cast<char>(metadata_object | metadata_flag_with_content_type);
+        contentType.serialize(&md5sum[1 + MD5_DIGEST_LENGTH]);
+    }
+    else
+    {
+        md5sum.resize(MD5_DIGEST_LENGTH+1);
+        md5sum[0] = static_cast<char>(metadata_object);
+    }
+    EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&md5sum[1]), nullptr);
+
+    if(payloadHash && !payloadHash->isFinalExpected())
+    {
+        sfs.free_extents(extents);
+        extents.clear();
+
+        XLOGF(WARN, "Payload hash not as expected");
+
+        evb->runInEventBaseThread([self = this]()
+                            {           
+            if(!self || self->finished_)
+                return;
+            ResponseBuilder(self->downstream_)
+                .status(400, "Bad request")
+                .body("Invalid hash")
+                .sendWithEOM();
+            self->finished_ = true; });
+        return;
+    }
+
+    if(awsChunkedEncoding && awsChunkedEncoding->state != AwsChunkedEncoding::State::Finished)
+    {
+        sfs.free_extents(extents);
+        extents.clear();
+
+        XLOGF(WARN, "Invalid chunked encoding body state at end of body: {}", static_cast<int>(awsChunkedEncoding->state));
+
+        evb->runInEventBaseThread([self = this]()
+                            {           
+            if(!self || self->finished_)
+                return;
+            ResponseBuilder(self->downstream_)
+                .status(400, "Bad request")
+                .body("Invalid chunked encoding body")
+                .sendWithEOM();
+            self->finished_ = true; });
+        return;
+    }
+
+    if(!extents.empty())
+        XLOGF(INFO, "Finalize object {} ext off {} len {} extents {}", keyInfo.key, extents[0].data_file_offset, extents[0].len, extents.size());
+    else 
+        XLOGF(INFO, "Finalize empty object {}", keyInfo.key);
+
+    // TODO: Check if multi-part upload is aborted here and synchronize
+
+    std::unique_ptr<SingleFileStorage::SFragInfo> addPart;
+    if(request_action == Action::PutObjectPart ||
+        request_action == Action::UploadPartCopy)
+    {
+        int64_t partSize = 0;
+        for(const auto& ext: extents)
+        {
+            partSize += ext.len;
+        }
+
+        const auto uploadId = uploadIdFromStrDot(keyInfo.key);
+        assert(uploadId.second>=0);
+
+        addPart = std::make_unique<SingleFileStorage::SFragInfo>();
+        addPart->action = SingleFileStorage::FragAction::ModifyData;
+        const auto parseParts = ParsePartRes{.parts = {MultiPartDownloadData::PartExt{.size=partSize, .start=static_cast<int>(uploadId.second), .len=1}}};
+        addPart->md5sum = serializePartExts(parseParts);
+        addPart->fn = make_key({.key = bodyData, .version = uploadId.first, 
+                .bucketId = keyInfo.bucketId - 1});
+    }
+
+    // TODO perf: With match info set it has to wait for the queue anyway, so we might as well link the commit if we want one.
+    // Commit needs to happen after the parts update
+
+    if(matchInfo && keyInfo.version != 0)
+    {
+        matchInfo->readFn = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
+        matchInfo->readNewest = true;
+    }
+
+    auto rc = sfs.write_finalize(make_key(keyInfo), extents, lastModified, md5sum, false, true, std::move(addPart), matchInfo.get());
+
+    if (rc != 0)
+    {
+        extents.clear();
+        XLOGF(WARN, "Error obj {} finalizing write code {}", keyInfo.key, rc);
+        evb->runInEventBaseThread([self = this]()
+                            {           
+                if(!self || self->finished_)
+                    return;
+                ResponseBuilder(self->downstream_)
+                    .status(500, "Internal error")
+                    .body("Write finalization error")
+                    .sendWithEOM();
+                self->finished_ = true; });
+        return;
+    }
+
+    if(matchInfo && !matchInfo->match)
+    {
+        sfs.free_extents(extents);
+        extents.clear();
+
+        XLOGF(WARN, "Object {} match condition not met. Returning 409 ", keyInfo.key);
+        evb->runInEventBaseThread([ this]()
+                            {           
+                if(finished_)
+                    return;
+                finished_ = true;
+                ResponseBuilder(downstream_)
+                    .status(409 , "ConditionalRequestConflict")
+                    .body(s3errorXml(S3ErrorCode::ConditionalRequestConflict, "", fullKeyPath(), ""))
+                    .sendWithEOM();
+                    });
+        return;
+    }
+    else
+    {
+        extents.clear();
+    }
+
+
+    if(!commit())
+    {
+        XLOGF(WARN, "Commit obj {} failed", keyInfo.key);
+        evb->runInEventBaseThread([this]()
+                            {           
+                if(finished_)
+                    return;
+                finished_ = true;
+                ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("Commit error")
+                    .sendWithEOM(); });
+        return;
+    }
+
+    XLOGF(DBG0, "Successfully wrote object {} etag {}", keyInfo.key, folly::hexlify(md5sum.substr(1, MD5_DIGEST_LENGTH)));
+
+    evb->runInEventBaseThread([this, md5sum, lastModified]()
+                            {      
+                finished_ = true;
+                ResponseBuilder resp(downstream_);
+                const auto etag = fmt::format("\"{}\"", folly::hexlify(md5sum.substr(1, MD5_DIGEST_LENGTH)));
+                resp.status(200, "OK");
+                resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, etag);
+                if(keyInfo.version != 0)
+                {
+                    resp.header("x-amz-version-id", sfs.encrypt_id(keyInfo.version));
+                }
+                if(request_action==Action::UploadPartCopy)
+                {
+                    auto bodyStr = fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                                    "<CopyPartResult>\n"
+                                    "<ETag>{}</ETag>\n"
+                                    "<LastModified>{}</LastModified>\n"
+                                    "</CopyPartResult>", etag, format_last_modified(lastModified));
+                    resp.body(bodyStr);
+                }
+                else if(request_action==Action::CopyObject)
+                {
+                    auto bodyStr = fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                                    "<CopyObjectResult>\n"
+                                    "<ETag>{}</ETag>\n"
+                                    "<LastModified>{}</LastModified>\n"
+                                    "</CopyObjectResult>", etag, format_last_modified(lastModified));
+                    resp.body(bodyStr);
+                }
+                resp.sendWithEOM();
+                    });
+
 }
 
 void S3Handler::onEOM() noexcept
@@ -5701,4 +5789,272 @@ void S3Handler::parseMatchInfo(proxygen::HTTPMessage& headers, const bool ifModi
             matchInfo->ifUnmodifiedSince = proxygen::parseHTTPDateTime(ifUnmodifiedSinceStr);
         }
     }
+}
+
+void S3Handler::parseSourceMatchInfo(proxygen::HTTPMessage& headers, SingleFileStorage::MatchInfo& matchInfo)
+{
+    auto ifMatchStr =  headers.getHeaders().getSingleOrEmpty("If-Match");
+    if(!ifMatchStr.empty())
+    {       
+        std::vector<std::string_view> ifMatchVec;
+        folly::split(",", ifMatchStr, ifMatchVec);
+        for(auto& ifMatch: ifMatchVec)
+        {
+            ifMatch = folly::trimWhitespace(ifMatch);
+            matchInfo.ifMatch.push_back(std::string(ifMatch));
+        }
+    }
+
+    auto ifNoneMatchStr =  headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_IF_NONE_MATCH);
+    if(!ifNoneMatchStr.empty())
+    {
+        std::vector<std::string_view> ifNoneMatchVec;
+        folly::split(",", ifNoneMatchStr, ifNoneMatchVec);
+        for(auto& ifNoneMatch: ifNoneMatchVec)
+        {
+            ifNoneMatch = folly::trimWhitespace(ifNoneMatch);
+            matchInfo.ifNoneMatch.push_back(std::string(ifNoneMatch));
+        }
+    }
+    else
+    {
+        auto ifModifiedSinceStr = headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_IF_MODIFIED_SINCE);
+        if(!ifModifiedSinceStr.empty())
+        {
+            matchInfo.ifModifiedSince = proxygen::parseHTTPDateTime(ifModifiedSinceStr);
+        }
+    }
+
+    auto ifUnmodifiedSinceStr = headers.getHeaders().getSingleOrEmpty("If-Unmodified-Since");
+    if(!ifUnmodifiedSinceStr.empty())
+    {
+        matchInfo.ifUnmodifiedSince = proxygen::parseHTTPDateTime(ifUnmodifiedSinceStr);
+    }
+}
+
+void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, CopyObjectInfo& copyObjectInfo)
+{
+    duckdb::unique_ptr<duckdb::FileHandle> sourceFile;
+    try
+    {
+        sourceFile = duckDbFs.OpenFile("hs5://"+copyObjectInfo.source, duckdb::FileOpenFlags::FILE_FLAGS_READ | duckdb::FileOpenFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS );
+        if(!sourceFile)
+        {
+            XLOGF(WARN, "Source object {} not found for copy", copyObjectInfo.source);
+            evb->runInEventBaseThread([self = this->self, copyObjectInfo]()
+                                    {           
+                        if(self->finished_)
+                            return;
+                        ResponseBuilder(self->downstream_)
+                            .status(404, "Not found")
+                            .body(s3errorXml(S3ErrorCode::NoSuchKey, "", copyObjectInfo.source, ""))
+                            .sendWithEOM();
+                        self-> finished_ = true; 
+                        
+                                    });
+            return;
+        }
+    }
+    catch(std::exception& e)
+    {
+        XLOGF(WARN, "Error opening source object {} for copy: {}", copyObjectInfo.source, e.what());
+        evb->runInEventBaseThread([self = this->self, copyObjectInfo, e]()
+                                {           
+                    if(self->finished_)
+                        return;
+                    ResponseBuilder(self->downstream_)
+                        .status(500, "Internal error")
+                        .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error opening source object for copy: {}", e.what()), copyObjectInfo.source, ""))
+                        .sendWithEOM();
+                    self-> finished_ = true; 
+                    
+                                });
+        return;
+    }
+
+    auto sourceFileHs5 = static_cast<DuckDbFileHandle*>(sourceFile.get());
+
+    auto sourceFileSize = sourceFile->GetFileSize();
+    int64_t readOffset = 0;
+    int64_t writeStart = 0;
+
+    if(request_action == Action::CopyObject && sourceFileSize>5ULL*1024*1024*1024)
+    {
+        XLOGF(WARN, "Source object {} too large for copy with size {}", copyObjectInfo.source, folly::prettyPrint(sourceFileSize, folly::PRETTY_BYTES));
+        evb->runInEventBaseThread([self = this->self]()
+                                {           
+                    if(self->finished_)
+                        return;
+                    ResponseBuilder(self->downstream_)
+                        .status(400, "Bad request")
+                        .body("Source object too large for copy")
+                        .sendWithEOM();
+                    self-> finished_ = true; 
+                    
+                                });
+        return;
+    }
+    if(request_action == Action::UploadPartCopy)
+    {
+        const auto [rangeStart, rangeEnd] = parseRange(copyObjectInfo.range, sourceFileSize);
+        if(!copyObjectInfo.range.empty() && 
+                    (rangeStart<0 || rangeEnd<0 || rangeStart>=rangeEnd || rangeEnd > sourceFileSize) )
+        {
+            evb->runInEventBaseThread([self = this->self]()
+                {
+                    if(self->finished_)
+                        return;
+                    ResponseBuilder(self->downstream_)
+                            .status(416, "Range Not Satisfiable")
+                            .sendWithEOM();
+                            self-> finished_ = true; 
+                });
+            return;
+        }
+
+        readOffset = rangeStart;
+        sourceFileSize = rangeEnd;
+        writeStart = rangeStart;
+
+        if(sourceFileSize - writeStart >5ULL*1024*1024*1024)
+        {
+            XLOGF(WARN, "Source object {} range too large for copy with size {}", copyObjectInfo.source, folly::prettyPrint(sourceFileSize, folly::PRETTY_BYTES));
+            evb->runInEventBaseThread([self = this->self]()
+                                    {           
+                        if(self->finished_)
+                            return;
+                        ResponseBuilder(self->downstream_)
+                            .status(400, "Bad request")
+                            .body("Source object range too large for copy")
+                            .sendWithEOM();
+                        self-> finished_ = true; 
+                        
+                                    });
+            return;
+        }
+    }
+
+
+    SingleFileStorage::SFragInfo sourceFragInfo;
+    sourceFragInfo.last_modified = sourceFileHs5->LastModifiedTimeNs();
+    onMatchCallback(copyObjectInfo.sourceMatchInfo, sourceFragInfo, sourceFileHs5->ETag());
+
+    if(!copyObjectInfo.sourceMatchInfo.match)
+    {
+        XLOGF(INFO, "Source object {} match condition not met for copy. Returning 412", copyObjectInfo.source);
+        evb->runInEventBaseThread([self = this->self, copyObjectInfo]()
+                                {           
+                    if(self->finished_)
+                        return;
+                    ResponseBuilder(self->downstream_)
+                        .status(412, "Precondition Failed")
+                        .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", copyObjectInfo.source, ""))
+                        .sendWithEOM();
+                    self-> finished_ = true; 
+                    
+                                });
+        return;
+    }
+
+
+    const auto res = self->sfs.write_prepare(targetFn, sourceFileSize - writeStart);
+    if (res.err != 0)
+    {            
+        XLOGF(WARN, "Write object prepare failed for key {} err {}", self->keyInfo.key, res.err);        
+        evb->runInEventBaseThread([self = self, res]()
+                                    {
+            if(self->finished_)
+                return;
+            ResponseBuilder(self->downstream_)
+                .status(500, "Internal error")
+                .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error preparing writing. Errno {}", res.err), self->fullKeyPath(), ""))
+                .sendWithEOM();
+            self->finished_ = true; });
+        return;
+    }
+
+    bool cleanupExtents = true;
+    SCOPE_EXIT {
+        if(cleanupExtents)
+        {
+            sfs.free_extents(extents);
+        }
+    };
+
+    extents = res.extents;
+
+    std::vector<char> buf;
+    buf.resize(128*1024*1024);
+
+    while(readOffset < sourceFileSize)
+    {
+        const auto toRead = std::min<int64_t>(static_cast<int64_t>(buf.size()), sourceFileSize - readOffset);
+
+        try
+        {
+            sourceFile->Read(buf.data(), toRead, readOffset);
+        }
+        catch(const duckdb::IOException& e)
+        {
+            evb->runInEventBaseThread([self = this->self, copyObjectInfo, e]()
+                                    {           
+                        if(self->finished_)
+                            return;
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error reading source object for copy: {}", e.what()), copyObjectInfo.source, ""))
+                            .sendWithEOM();
+                        self-> finished_ = true; 
+                        
+                                    });
+            return;
+        }
+
+        EVP_DigestUpdate(evpMdCtx.ctx, buf.data(), toRead);
+
+        auto writeOffset = readOffset - writeStart;
+        readOffset += toRead;
+        auto bufPtr = buf.data();
+        auto writeRemaining = toRead;
+        while(writeRemaining > 0)
+        {
+            auto it = std::upper_bound(extents.begin(), extents.end(), SingleFileStorage::Ext(writeOffset, 0, 0));
+            if(!extents.empty())
+                --it;
+            assert(it != extents.end());
+            if(it==extents.end())
+                break;
+
+            assert(it->obj_offset <= writeOffset && it->obj_offset + it->len > writeOffset);
+            
+            const auto ext_offset = writeOffset - it->obj_offset;
+            const auto curr_ext = SingleFileStorage::Ext(it->obj_offset + ext_offset, it->data_file_offset + ext_offset, it->len - ext_offset);
+            const int64_t wlen = std::min(static_cast<int64_t>(writeRemaining), curr_ext.len);
+            const bool complete_obj = extents.size()==1 && extents[0].len==wlen;
+
+            const auto rc = sfs.write_ext(curr_ext, bufPtr, wlen, complete_obj);
+            if (rc != 0)
+            {
+                XLOGF(WARN, "Error obj {} code {}. Writing ext {} len {} failed", keyInfo.key, rc, curr_ext.obj_offset, curr_ext.len);
+
+                evb->runInEventBaseThread([self = this->self]()
+                                    {  
+                        if(!self || self->finished_)
+                            return;     
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body("Write ext error")
+                            .sendWithEOM();
+                        self->finished_ = true; });
+                return;
+            }
+
+            writeRemaining-= wlen;
+            writeOffset+= wlen;
+            bufPtr+= wlen;
+        }
+    }
+
+    cleanupExtents = false;
+    finalizePutObject(evb, sourceFileHs5->LastModifiedTimeNs());
 }

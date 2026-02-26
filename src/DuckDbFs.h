@@ -26,6 +26,12 @@ public:
 
     time_t LastModifiedTime();
 
+    int64_t LastModifiedTimeNs() const {
+        return lastModified;
+    }
+
+    std::string ETag() const;
+
 private:
     struct PartExt
     {
@@ -39,6 +45,8 @@ private:
     int64_t fsize = 0;
 
     int64_t lastModified = 0;
+
+    std::string etag;
 
     int64_t pos = 0;
 
@@ -103,7 +111,6 @@ public:
 
     duckdb::unique_ptr<duckdb::FileHandle> OpenFile(const std::string &path, duckdb::FileOpenFlags flags,
         duckdb::optional_ptr<duckdb::FileOpener> opener = nullptr) override;
-
 
     bool isWithBucketVersioning() const {
         return withBucketVersioning;

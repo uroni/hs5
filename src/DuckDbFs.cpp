@@ -108,6 +108,11 @@ void DuckDbFileHandle::Initialize()
         extents = std::move(res.extents);
         fsize = res.total_len;
         lastModified = res.last_modified;
+
+        if(!multiPartDownloadData)
+            etag = S3Handler::md5sumBinFromData(res.md5sum);     
+        else
+            S3Handler::addReadingMultipartObject(s3key);   
     }
 }
 
@@ -195,6 +200,14 @@ time_t DuckDbFileHandle::LastModifiedTime()
     constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
     const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(lastModified));
     return lastModifiedTp;
+}
+
+std::string DuckDbFileHandle::ETag() const
+{
+    if(multiPartDownloadData)
+        return fmt::format("\"{}-{}\"", folly::hexlify(multiPartDownloadData->etag), multiPartDownloadData->numParts);
+    else
+        return fmt::format("\"{}\"", folly::hexlify(etag));
 }
 
 void DuckDbFs::RemoveDirectory(const std::string &path, duckdb::optional_ptr<duckdb::FileOpener> opener)

@@ -77,10 +77,11 @@ namespace {
   std::unique_ptr<proxygen::HTTPServer> server;
 
 class S3HandlerFactory : public proxygen::RequestHandlerFactory {
-   SingleFileStorage sfs;
+   SingleFileStorage& sfs;
+   DuckDbFs& duckDbFs;
  public:
-  S3HandlerFactory(SingleFileStorage::SFSOptions sfsoptions)
-   : sfs(std::move(sfsoptions))
+  S3HandlerFactory(SingleFileStorage& sfs, DuckDbFs& duckDbFs)
+   : sfs(sfs), duckDbFs(duckDbFs)
   {
     sfs.start_thread(sfs.get_transid() + 1);
     if(FLAGS_wait_for_wal_startup)
@@ -145,7 +146,7 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
         isStaticFile(path))
       return new StaticHandler();
 
-    return new S3Handler(sfs, FLAGS_server_url, FLAGS_bucket_versioning);
+    return new S3Handler(sfs, FLAGS_server_url, FLAGS_bucket_versioning, duckDbFs);
   }
 
   SingleFileStorage& getSfs()
@@ -260,14 +261,16 @@ int realMain(int argc, char* argv[])
 
     proxygen::HTTPSessionBase::setMaxReadBufferSize(FLAGS_max_read_buffer_size);
 
+    SingleFileStorage sfs(sfsoptions);
+    auto duckDbFs = duckdb::make_uniq<DuckDbFs>(sfs, FLAGS_bucket_versioning);
+  
     proxygen::HTTPServerOptions options;
     options.threads = static_cast<size_t>(FLAGS_http_worker_threads);
     options.idleTimeout = 60s;
     options.shutdownOn = {SIGINT, SIGTERM};
     options.enableContentCompression = false;
     options.handlerFactories =
-        proxygen::RequestHandlerChain().addThen<S3HandlerFactory>(sfsoptions).build();
-    auto& sfs = dynamic_cast<S3HandlerFactory*>(options.handlerFactories.back().get())->getSfs();
+        proxygen::RequestHandlerChain().addThen<S3HandlerFactory>(sfs, *duckDbFs).build();
 
     server = std::make_unique<proxygen::HTTPServer>(std::move(options));
     server->bind(IPs);

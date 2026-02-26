@@ -100,10 +100,7 @@ Data and metadata will be stored in the current directory by default. It'll prin
 
 ## Omissions #
 
-At this point HS5 implements most major S3 operations. Major operations that do not yet work:
-
- - `CopyObject` and `UploadPartCopy`
- - Versioning is implemented but there is currently no UI to enable it (and it should probably be a per-bucket option instead of a global one)
+At this point HS5 implements most major S3 operations. Versioning is implemented but there is currently no UI to enable it (and it should probably be a per-bucket option instead of a global one).
 
 Long term the goal is to pass most of the [Ceph S3 tests](https://github.com/ceph/s3-tests), but that is still a lot of work.
 

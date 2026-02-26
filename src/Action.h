@@ -42,7 +42,9 @@ enum class Action
     CreateUser=35,
     ChangePassword=36,
     ChangeOwnPassword=37,
-    GetBucketLocation=38
+    GetBucketLocation=38,
+    CopyObject=39,
+    UploadPartCopy=40
 };
 
 Action actionFromStr(const std::string_view action);

@@ -832,7 +832,56 @@ def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
 
     assert filecmp.cmp(tmpfile, dl_path)
 
-    
+@pytest.mark.parametrize("objsize", [10, 20*1024*1024 + 12])
+def test_copy_object(hs5_large: Hs5Runner, tmp_path: Path, objsize: int):
+
+    tmpfile = tmp_path / "ulfile.dat"
+    with open(tmpfile, "wb") as f:
+        fsize = 0
+        while fsize<objsize:
+            towrite = min(512*1024, objsize - fsize)
+            f.write(os.urandom(towrite))
+            fsize += towrite
+
+    s3_client = hs5_large.get_s3_client()
+    s3_client.upload_file(str(tmpfile), hs5_large.testbucketname(), "upload.dat")
+
+    s3_client.copy_object(Bucket=hs5_large.testbucketname(), Key="upload_copy.dat", CopySource={"Bucket": hs5_large.testbucketname(), "Key": "upload.dat"})
+
+    dl_path = tmp_path / "download.dat"
+    s3_client.download_file(hs5_large.testbucketname(), "upload_copy.dat", str(dl_path))
+
+    assert filecmp.cmp(tmpfile, dl_path)
+
+    src_etag = s3_client.head_object(Bucket=hs5_large.testbucketname(), Key="upload.dat")["ETag"]
+    copy_etag = s3_client.head_object(Bucket=hs5_large.testbucketname(), Key="upload_copy.dat")["ETag"]
+    if objsize < 5*1024*1024:
+        assert src_etag == copy_etag
+    else:
+        assert src_etag != copy_etag
+
+    if objsize > 5*1024*1024:
+
+        mup = s3_client.create_multipart_upload(Bucket=hs5_large.testbucketname(), Key="upload_copy2.dat")
+        assert "UploadId" in mup
+        offs = 0
+        partnum = 1
+        uls = []
+        while offs < objsize:
+            tocopy = min(5*1024*1024, objsize-offs)
+            ul = s3_client.upload_part_copy(Bucket=hs5_large.testbucketname(), Key="upload_copy2.dat", PartNumber=partnum, UploadId=mup["UploadId"], CopySourceRange=f"bytes={offs}-{offs+tocopy-1}",
+                CopySource={"Bucket": hs5_large.testbucketname(), "Key": "upload.dat"})
+            uls.append(ul)
+
+            offs += tocopy
+            partnum+=1
+
+        s3_client.complete_multipart_upload(Bucket=hs5_large.testbucketname(), Key="upload_copy2.dat", UploadId=mup["UploadId"], MultipartUpload={"Parts": [{"ETag": ul["CopyPartResult"]["ETag"], "PartNumber": i+1} for i, ul in enumerate(uls)]})
+
+        dl_path = tmp_path / "download2.dat"
+        s3_client.download_file(hs5_large.testbucketname(), "upload_copy2.dat", str(dl_path))
+        assert filecmp.cmp(tmpfile, dl_path)
+
 
 @pytest.mark.parametrize("size", [512*1024, 5*1024*1024+12, 101, 51*1024*1024])
 @pytest.mark.parametrize("checksum_algorithm", ["CRC32", "CRC32C", "SHA1", "SHA256", "CRC64NVME"])

@@ -96,13 +96,16 @@ const unsigned char metadata_tombstone = 2;
 const unsigned char metadata_flag_with_content_type = 4;
 const unsigned char metadata_known_flags = metadata_flag_with_content_type;
 
+class DuckDbFs;
+
 class S3Handler : public proxygen::RequestHandler
 {
 public:
     const bool withBucketVersioning;
     SingleFileStorage &sfs;
 
-    S3Handler(SingleFileStorage &sfs, const std::string& serverUrl, bool withBucketVersioning) : sfs(sfs), self(this), serverUrl(serverUrl), withBucketVersioning(withBucketVersioning) {}
+    S3Handler(SingleFileStorage &sfs, const std::string& serverUrl, bool withBucketVersioning, DuckDbFs& duckDbFs) : 
+        sfs(sfs), self(this), serverUrl(serverUrl), withBucketVersioning(withBucketVersioning), duckDbFs(duckDbFs) {}
 
     void
     onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexcept override;
@@ -203,6 +206,10 @@ public:
     static std::optional<std::string> onModifyCallback(const std::string& fn, std::string md5sum, std::string md5sumParam);
     static void onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride);
 
+    static std::string md5sumBinFromData(const std::string& md5sumData);
+
+    static void addReadingMultipartObject(const std::string& key);
+
 private:
     void readFile(folly::EventBase *evb);
     void readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> self, int64_t offset);
@@ -241,12 +248,22 @@ private:
 
     std::string fullKeyPath() const;
 
-    static void addReadingMultipartObject(const std::string& key);
     static void removeReadingMultipartObject(const std::string& key, SingleFileStorage& sfs);
     static bool isReadingMultipartObjectAndMarkDel(const std::string& key, const int64_t delUploadId, const int64_t delBucketId, const std::vector<MultiPartDownloadData::PartExt>& delParts);
     void stopChecks();
     void parseMatchInfo(proxygen::HTTPMessage& headers, const bool ifModifiedSince, const bool ifUnmodifiedSince);
+    void parseSourceMatchInfo(proxygen::HTTPMessage& headers, SingleFileStorage::MatchInfo& matchInfo);
     int checkMatchInfo();
+    void finalizePutObject(folly::EventBase *evb, const int64_t lastModified);
+
+    struct CopyObjectInfo
+    {
+        std::string source;
+        std::string range;
+        SingleFileStorage::MatchInfo sourceMatchInfo;
+    };
+
+    void copyObject(folly::EventBase* evb, const std::string& targetFn, CopyObjectInfo& copyObjectInfo);
 
 	std::shared_ptr<S3Handler> self;
 	Action request_action = Action::Unknown;
@@ -324,4 +341,6 @@ private:
 
     static std::mutex readingMultipartObjectsMutex;
     static std::unordered_map<std::string, ReadingMultipartObject> readingMultipartObjects;
+
+    DuckDbFs& duckDbFs;
 };
