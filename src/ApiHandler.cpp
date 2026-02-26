@@ -724,7 +724,8 @@ Api::StatsResp ApiHandler::stats(const Api::StatsParams& params, const ApiSessio
 {
     const auto size = sfs.get_data_file_size();
     const auto free = sfs.get_free_space_in_data_file();
-    return Api::StatsResp{.freeSpace=free, .size=size, .used = size - free};
+    const auto sizeFull = sfs.get_data_file_size_full();
+    return Api::StatsResp{.freeSpace=free, .size=size, .sizeFull = sizeFull, .used = size - free};
 }
 
 Api::RemoveUserResp ApiHandler::removeUser(const Api::RemoveUserParams& params, const ApiSessionStorage& sessionStorage)

@@ -10,9 +10,12 @@
       },
       "free_space": {
         "type": "integer"
+      },
+      "size_full": {
+        "type": "integer"
       }
     },
-    "required": ["used", "size", "free_space"]
+    "required": ["used", "size", "free_space", "size_full"]
   }
   
   

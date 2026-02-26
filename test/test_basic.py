@@ -815,11 +815,12 @@ def test_list_partial_uploads(tmp_path: Path, hs5: Hs5Runner):
 
 
 def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
+    testfilesize = 1*1024*1024*1024
 
     tmpfile = tmp_path / "ulfile.dat"
     with open(tmpfile, "wb") as f:
         fsize = 0
-        while fsize<1*1024*1024*1024:
+        while fsize<testfilesize:
             f.write(os.urandom(512*1024))
             fsize += 512*1024
 
@@ -831,6 +832,20 @@ def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
     s3_client.download_file(hs5_large.testbucketname(), "upload.dat", str(dl_path))
 
     assert filecmp.cmp(tmpfile, dl_path)
+
+    s3_client.delete_object(Bucket=hs5_large.testbucketname(), Key="upload.dat")
+
+
+
+    starttime = time.monotonic()
+    while time.monotonic() - starttime < 5:
+        if hs5_large.get_stats().size_full < testfilesize/10:
+            break
+        time.sleep(0.1)
+
+    stats = hs5_large.get_stats()
+    assert stats.used == 0 
+    assert stats.size_full < testfilesize/10
 
 @pytest.mark.parametrize("objsize", [10, 20*1024*1024 + 12])
 def test_copy_object(hs5_large: Hs5Runner, tmp_path: Path, objsize: int):

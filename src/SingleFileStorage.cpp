@@ -51,6 +51,7 @@ DEFINE_int64(max_wal_items, 10000, "Maxmimum amount of items in WAL file before 
 DEFINE_bool(check_freespace_on_startup, false, "Check data file freespace on startup");
 DEFINE_bool(wal_write_thread, true, "Use a separate thread for WAL file data writes");
 DEFINE_bool(preallocate_data, true, "Preallocate data file space to improve performance and fragmentation");
+DEFINE_int64(trim_freespace_size, 1*1024*1024, "If more than this amount of free space is continuouly in the data file, free it up by punching holes (in bytes)");
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -1339,6 +1340,10 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 			(*cb)();
 		});
 	}
+
+	trim_thread = std::jthread([this](){
+			this->run_trim_thread();
+		});
 }
 
 SingleFileStorage::SingleFileStorage()
@@ -1361,6 +1366,13 @@ SingleFileStorage::~SingleFileStorage()
 		wal_write_thread.request_stop();
 		wal_file->wakeupDataWriteThread();
 	}
+
+	{
+		std::scoped_lock lock(trim_queue_mutex);
+		trim_queue.push(SPunchItem());
+		trim_queue_cond.notify_all();
+	}
+
 
 	if(commit_thread_h.joinable())
 	{
@@ -3112,7 +3124,7 @@ bool SingleFileStorage::iter_curr_val(std::string & fn, std::string & data, Iter
 }
 
 int64_t SingleFileStorage::remove_fn(const std::string & fn, MDB_txn * txn, MDB_txn* freespace_txn,
-	bool del_from_main, bool del_old, THREAD_ID tid, const bool call_callback)
+	bool del_from_main, bool del_old, THREAD_ID tid, const bool call_callback, std::set<SPunchItem>* trim_items)
 {
 	int64_t commit_errors = 0;
 
@@ -3223,7 +3235,7 @@ int64_t SingleFileStorage::remove_fn(const std::string & fn, MDB_txn * txn, MDB_
 
 			//Following can invalidate the memory of tval + rdata by spilling
 
-			if (!add_freemap_ext(freespace_txn, offset, length, true, tid))
+			if (!add_freemap_ext(freespace_txn, offset, length, true, tid, trim_items))
 			{
 				XLOG(ERR) << "LMDB: Failed to put free extent in commit sfs " << db_path;
 				++commit_errors;
@@ -3231,7 +3243,7 @@ int64_t SingleFileStorage::remove_fn(const std::string & fn, MDB_txn * txn, MDB_
 
 			for (SPunchItem& eo: extra_exts)
 			{
-				if (!add_freemap_ext(freespace_txn, eo.offset, eo.len, true, tid))
+				if (!add_freemap_ext(freespace_txn, eo.offset, eo.len, true, tid, trim_items))
 				{
 					XLOG(ERR) << "LMDB: Failed to put free extent in commit sfs " << db_path;
 					++commit_errors;
@@ -3521,7 +3533,7 @@ void SingleFileStorage::wait_queue(std::unique_lock<std::mutex>& lock, bool back
 #define FREEMAP_DEBUG(x) x
 
 bool SingleFileStorage::add_freemap_ext(MDB_txn* txn, int64_t offset, int64_t len,
-	bool used_in_curr_trans, THREAD_ID tid)
+	bool used_in_curr_trans, THREAD_ID tid, std::set<SPunchItem>* trim_items)
 {
 	if (is_dead)
 		return false;
@@ -3608,6 +3620,9 @@ bool SingleFileStorage::add_freemap_ext(MDB_txn* txn, int64_t offset, int64_t le
 					return false;
 				}
 
+				if(trim_items)
+					trim_items->erase({next_offset, next_len});
+
 				merged_extent = true;
 			}
 			else
@@ -3667,17 +3682,23 @@ bool SingleFileStorage::add_freemap_ext(MDB_txn* txn, int64_t offset, int64_t le
 					return false;
 				}
 
+				if(trim_items)
+					trim_items->erase({prev_offset, prev_length});
+
 				CWData wdataval;
+				int64_t new_ext_len;
 				if (!merged_extent)
 				{
 					FREEMAP_DEBUG(XLOG(INFO) << "Merging new freemap extent (" << std::to_string(offset) << ", " << std::to_string(len) << ") with prev freemap ext at " << std::to_string(prev_offset)<<" new len "+folly::prettyPrint(prev_length +len, folly::PRETTY_BYTES_IEC); )
-					wdataval.addVarInt(prev_length + len);
+					new_ext_len = prev_length + len;
+					wdataval.addVarInt(new_ext_len);
 				}
 				else
 				{
 					assert(next_len > 0);
 					FREEMAP_DEBUG( XLOG(INFO) << "Merging new freemap extent (" << std::to_string(offset) << ", " << std::to_string(len) << ") with prev and next freemap ext at " << std::to_string(prev_offset) << " new len " << folly::prettyPrint(prev_length + len+ next_len, folly::PRETTY_BYTES_IEC); )
-					wdataval.addVarInt(prev_length + len + next_len);
+					new_ext_len = prev_length + len + next_len;
+					wdataval.addVarInt(new_ext_len);
 
 					//Delete next
 					CWData wdatanextlen;
@@ -3704,6 +3725,9 @@ bool SingleFileStorage::add_freemap_ext(MDB_txn* txn, int64_t offset, int64_t le
 						XLOG(ERR) << "LMDB: Failed to del next for freemap ext len (1) (SIGBUS) sfs " << db_path;
 						return false;
 					}
+
+					if(trim_items)
+						trim_items->erase({next_offset, next_len});
 				}
 
 				val.mv_data = wdataval.getDataPtr();
@@ -3740,6 +3764,9 @@ bool SingleFileStorage::add_freemap_ext(MDB_txn* txn, int64_t offset, int64_t le
 					XLOG(ERR) << "LMDB: Failed to put prev for freemap ext len (2) (SIGBUS) sfs " << db_path;
 					return false;
 				}
+
+				if(trim_items)
+					trim_items->insert({prev_offset, new_ext_len});
 
 				merged_extent = true;
 				next_offset = -1;
@@ -3790,6 +3817,9 @@ bool SingleFileStorage::add_freemap_ext(MDB_txn* txn, int64_t offset, int64_t le
 				XLOG(ERR) << "LMDB: Failed to del next for freemap ext len (1) (SIGBUS) sfs " << db_path;
 				return false;
 			}
+
+			if(trim_items)
+				trim_items->erase({next_offset, next_len});
 		}
 
 		CWData wdata;
@@ -3827,6 +3857,9 @@ bool SingleFileStorage::add_freemap_ext(MDB_txn* txn, int64_t offset, int64_t le
 			XLOG(ERR) << "LMDB: Failed to put freemap extent len (SIGBUS) sfs " << db_path;
 			return false;
 		}
+
+		if(trim_items)
+			trim_items->insert({offset, plen});
 	}
 
 	{
@@ -3957,19 +3990,37 @@ bool SingleFileStorage::find_freemap_ext(MDB_txn* txn,
 
 				if (!skip_ext)
 				{
-					auto it = curr_new_free_extents.lower_bound(start);
-					if (it == curr_new_free_extents.end()
-						|| *it >= start + len)
+					{
+						auto it = curr_new_free_extents.lower_bound(start);
+						if (it != curr_new_free_extents.end()
+							&& *it < start + len)
+						{
+							continue;
+						}
+					}
+
 					{
 						//TODO perf: Seperate RW-Lock?
 						std::scoped_lock lock(mutex);
 						auto it = reading_free_skip_extents.lower_bound(start);
-						if (it == reading_free_skip_extents.end()
-							|| *it >= start + len)
+						if (it != reading_free_skip_extents.end()
+							&& *it < start + len)
 						{
-							break;
+							continue;
 						}
 					}
+
+					{
+						std::scoped_lock lock(trim_queue_mutex);
+						auto it = trimming_free_skip_extents.lower_bound(start);
+						if (it != trimming_free_skip_extents.end()
+							&& *it < start + len)
+						{
+							continue;
+						}
+					}
+
+					break;
 				}
 			}
 		}
@@ -8027,12 +8078,15 @@ void SingleFileStorage::operator()()
 
 			const bool del_old = frag_info.action == FragAction::DelOld;
 			const bool call_callback = frag_info.action != FragAction::DelNoCallback;
-			commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, true, del_old, tid, call_callback);
+			std::set<SPunchItem> trim_items;
+			commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, true, del_old, tid, call_callback, &trim_items);
 
 			if (frag_info.action == FragAction::DelWithQueued)
 			{
 				commit_errors += unqueue_del(frag_info.fn, txn, tid);
 			}
+
+			run_trim_queue(trim_items);
 
 			if (frag_info.commit_info != nullptr)
 			{
@@ -8101,7 +8155,9 @@ void SingleFileStorage::operator()()
 		{
 			if (frag_info.action == FragAction::Add)
 			{
-				commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, false, false, tid, true);
+				std::set<SPunchItem> trim_queue;
+				commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, false, false, tid, true, &trim_queue);
+				run_trim_queue(trim_queue);
 			}
 			else
 			{
@@ -8447,8 +8503,10 @@ void SingleFileStorage::operator()()
 		}
 		else if (frag_info.action == FragAction::AddFreemapWal)
 		{
+			std::set<SPunchItem> trim_queue;
 			add_freemap_ext(freespace_txn, frag_info.offset, 
-						frag_info.len, false, tid);
+						frag_info.len, false, tid, &trim_queue);
+			run_trim_queue(trim_queue);
 		}
 		else if (frag_info.action == FragAction::FreeExtents)
 		{
@@ -8475,7 +8533,9 @@ void SingleFileStorage::operator()()
 				}
 			}
 
-			if (!add_freemap_ext(freespace_txn, frag_info.offset, frag_info.len, true, tid))
+			std::set<SPunchItem> trim_queue;
+
+			if (!add_freemap_ext(freespace_txn, frag_info.offset, frag_info.len, true, tid, &trim_queue))
 			{
 				XLOG(ERR) << "LMDB: Failed to put free extent (0) in FreeExtents sfs " << db_path;
 				++commit_errors;
@@ -8491,12 +8551,14 @@ void SingleFileStorage::operator()()
 				if (size > data_file_max_size)
 					data_file_max_size = size;
 
-				if (!add_freemap_ext(freespace_txn, ext.offset, ext.len, true, tid))
+				if (!add_freemap_ext(freespace_txn, ext.offset, ext.len, true, tid, &trim_queue))
 				{
 					XLOG(ERR) << "LMDB: Failed to put free extent (1) in FreeExtents sfs " << db_path;
 					++commit_errors;
 				}
 			}
+
+			run_trim_queue(trim_queue);
 		}
 		else
 		{
@@ -8651,6 +8713,11 @@ int64_t SingleFileStorage::get_total_space()
 int64_t SingleFileStorage::get_data_file_size()
 {
 	return data_file.size();
+}
+
+int64_t SingleFileStorage::get_data_file_size_full()
+{
+	return data_file.sizeFull();
 }
 
 int64_t SingleFileStorage::max_free_extent(int64_t& len)
@@ -9779,4 +9846,56 @@ bool SingleFileStorage::frag_info_matches(MDB_txn* txn, SFragInfo& frag_info)
 	}
 
 	return match_info.match;
+}
+
+bool SingleFileStorage::run_trim_queue(std::set<SPunchItem>& trim_items)
+{
+	for(auto& item: trim_items)
+	{
+		if(item.len > FLAGS_trim_freespace_size)
+		{
+			std::scoped_lock lock(trim_queue_mutex);
+			trim_queue.push(item);
+			trimming_free_skip_extents.insert(item.offset);
+			trim_queue_cond.notify_all();
+		}
+	}
+	trim_items.clear();
+	return true;
+}
+
+void SingleFileStorage::run_trim_thread()
+{
+	folly::setThreadName("trim data file");
+	bool do_trim = true;
+	std::unique_lock lock(trim_queue_mutex);
+	while(true)
+	{
+		trim_queue_cond.wait(lock, [this](){ return !trim_queue.empty(); });
+
+		SPunchItem item = trim_queue.front();
+		trim_queue.pop();
+
+		if(item.offset==-1)
+			return;
+
+		SCOPE_EXIT {
+			trimming_free_skip_extents.erase(item.offset);
+		};
+
+		if(!do_trim)
+			continue;
+
+		lock.unlock();
+
+		XLOGF(INFO, "Trimming {} free space at offset {} len {} sfs {}", folly::prettyPrint(item.len, folly::PRETTY_BYTES), item.offset, item.len, db_path);
+
+		if(!data_file.punchHole(item.offset, item.len))
+		{
+			XLOGF(WARN, "Error trimming free space at offset {} len {} sfs {} errno {}. Not trying trimming again...", item.offset, item.len, db_path, folly::errnoStr(errno));
+			do_trim = false;
+		}
+
+		lock.lock();
+	}
 }

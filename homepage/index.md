@@ -99,7 +99,7 @@ Data and metadata will be stored in the current directory by default. It'll prin
 The main object storage consists of (mostly) two files. One is an `index.lmdb` LMDB database file mapping object names to on-disk offsets and tracking free space in the data file. The other is a data file `data0` where the object contents reside.
 
  * On adding an object, HS5 will put the object contents to some free area in `data0`. If necessary, it will make the file larger. Then it will put the object offsets into `index.lmdb` with the object name as the key. Then it will sync `data0` to disk followed by syncing `index.lmdb` to disk.
- * On removing an object, HS5 will remove the object offset mapping from `index.lmdb` while keeping track of the free space in a separate table. The `data0` file will not be touched.
+ * On removing an object, HS5 will remove the object offset mapping from `index.lmdb` while keeping track of the free space in a separate table. The `data0` file will be touched only if large amounts of data are cleared.
  * When listing, it will also only use the data in the `index.lmdb` file.
 
  `index.lmdb` and `data0` can be on different disks. E.g., you could put `index.lmdb` on an SSD and `data0` on a spinning disk. When only adding objects to HS5, it will sequentially write to `data0`. Deletion would only involve the metadata disk, but re-using freed space in `data0` will cause random writes.

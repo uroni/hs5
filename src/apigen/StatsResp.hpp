@@ -17,6 +17,7 @@ namespace Api {
     struct StatsResp {
         int64_t freeSpace;
         int64_t size;
+        int64_t sizeFull;
         int64_t used;
     };
 }

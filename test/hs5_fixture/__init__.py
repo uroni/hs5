@@ -25,9 +25,10 @@ class Hs5Stats:
     used: int
     size: int
     free_space: int
+    size_full: int
 
     def __str__(self) -> str:
-        return f"Used: {self.used}, Size: {self.size}, Free space: {self.free_space}"
+        return f"Used: {self.used}, Size: {self.size}, Free space: {self.free_space}, Size full: {self.size_full}"
 
 
 class Hs5Runner:

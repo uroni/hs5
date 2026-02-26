@@ -321,6 +321,8 @@ public:
 
 	int64_t get_data_file_size();
 
+	int64_t get_data_file_size_full();
+
 	int64_t max_free_extent(int64_t& len);
 
 	int64_t get_free_space_slow(bool verbose, int64_t& freespace_extents, std::vector<SPunchItem>* items);
@@ -416,7 +418,7 @@ private:
 		int64_t last_modified, const std::string& md5sum, bool allow_defrag_lock, bool no_del_old, MatchInfo* match_info);
 
 	int64_t remove_fn(const std::string& fn,
-		MDB_txn* txn, MDB_txn* freespace_txn, bool del_from_main, bool del_old, THREAD_ID tid, const bool call_callback);
+		MDB_txn* txn, MDB_txn* freespace_txn, bool del_from_main, bool del_old, THREAD_ID tid, const bool call_callback, std::set<SPunchItem>* trim_items = nullptr);
 
 	int64_t restore_fn(const std::string& fn,
 		MDB_txn* txn, MDB_txn* freespace_txn, THREAD_ID tid);
@@ -430,7 +432,7 @@ private:
 
 	void wait_queue(std::unique_lock<std::mutex>& lock, bool background_queue, bool defrag_check);
 
-	bool add_freemap_ext(MDB_txn* txn, int64_t offset, int64_t len, bool used_in_curr_trans, THREAD_ID tid);
+	bool add_freemap_ext(MDB_txn* txn, int64_t offset, int64_t len, bool used_in_curr_trans, THREAD_ID tid, std::set<SPunchItem>* trim_items = nullptr);
 
 	bool add_freemap_ext_simple(MDB_txn* txn, int64_t offset, int64_t len, THREAD_ID tid);
 
@@ -566,6 +568,10 @@ private:
 
 	bool frag_info_matches(MDB_txn* txn, SFragInfo& frag_info);
 
+	bool run_trim_queue(std::set<SPunchItem>& trim_items);
+
+	void run_trim_thread();
+
 	bool with_rewrite;
 
 	std::unordered_set<std::string> defrag_skip_items;
@@ -689,6 +695,14 @@ private:
 	bool wal_startup_finished = true;
 	std::condition_variable wal_startup_finished_cond;
 	std::jthread wal_write_thread;
+
+	
+	std::condition_variable trim_queue_cond;
+	std::queue<SPunchItem> trim_queue;
+	std::mutex trim_queue_mutex;
+	std::set<int64_t> trimming_free_skip_extents;
+
+	std::jthread trim_thread;
 };
 
 

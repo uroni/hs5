@@ -69,6 +69,14 @@ public:
     {
         return posix_fadvise64(fd(), offset, len, advise);
     }
+
+    int64_t sizeFull() const
+    {
+        struct stat64 st;
+        if(fstat64(fd(), &st) != 0)
+            return -1;
+        return st.st_blocks * 512;
+    }
 };
 
 class MultiFile
@@ -260,6 +268,18 @@ public:
         return lastFile.size() + (chunks.size()-1)*maxSize;
     }
 
+    int64_t sizeFull() const
+    {
+        std::shared_lock readLock(mutex);
+
+        int64_t totalSize = 0;
+        for(const auto& file: chunks)
+        {
+            totalSize+=file.sizeFull();
+        }
+        return totalSize;
+    }
+
     int fsyncNoInt() const
     {
         std::shared_lock readLock(mutex);
@@ -278,7 +298,7 @@ public:
     {
         return mapOp([](const File& file, size_t count, size_t offset) {
             return file.punchHole(offset, count) ? count : -1;
-        }, size, spos, false) == 0;
+        }, size, spos, false) == size;
     }
 
     

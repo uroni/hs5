@@ -137,6 +137,7 @@ ConfigResult readConfigFile(const std::string& fn)
         {"COMMIT_AFTER_MS", "commit_after_ms"},
         {"WORKER_THREADS", "folly_global_cpu_executor_threads"},
         {"HTTP_WORKER_THREADS", "http_worker_threads"},
+        {"TRIM_FREESPACE_SIZE", "trim_freespace_size"}
     };
 
     for(const auto& [key, val]: settings)
