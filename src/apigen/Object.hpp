@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include <optional>
 #include <nlohmann/json.hpp>
 #include "helper.hpp"
 
@@ -16,8 +15,10 @@ namespace Api {
     using nlohmann::json;
 
     struct Object {
+        int64_t created;
+        int64_t lastModified;
         std::string name;
-        std::optional<int64_t> size;
+        int64_t size;
         int64_t type;
     };
 }

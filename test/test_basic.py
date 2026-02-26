@@ -1159,6 +1159,8 @@ async def test_read_commit_info_async(hs5: Hs5Runner):
 def test_awsgosdk_upload(hs5: Hs5Runner, tmp_path: Path, goawssdk_test_fixture: UploadAwsSdkGo, size: int):
     s3_client = hs5.get_s3_client()
 
+    goawssdk_test_fixture.listbuckets(hs5.testbucketname())
+
     fdata = os.urandom(size)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)

@@ -19,8 +19,14 @@ namespace buckets
 
 namespace
 {
-    std::map<std::string, int64_t> buckets;
-    std::map<int64_t, std::map<std::string, int64_t>::iterator> bucketNames;
+    struct BucketInfo
+    {
+        int64_t id;
+        std::chrono::seconds created;
+    };
+
+    std::map<std::string, BucketInfo> buckets;
+    std::map<int64_t, std::map<std::string, BucketInfo>::iterator> bucketNames;
     int64_t currMaxId = 1;
     std::shared_mutex mutex;
 
@@ -52,7 +58,11 @@ void refreshBucketCache()
 
     for(const auto& bucket: dbBuckets)
     {
-        auto ins = buckets.insert(std::make_pair(bucket.name, bucket.id));
+        BucketInfo info{
+            .id = bucket.id,
+            .created = std::chrono::seconds(bucket.created)
+        };
+        auto ins = buckets.insert(std::make_pair(bucket.name, info));
         bucketNames.insert(std::make_pair(bucket.id, ins.first));
     }   
 }
@@ -69,14 +79,19 @@ int64_t addBucket(const std::string_view bucketName, bool failIfAlreadyExists)
         if(failIfAlreadyExists)
             return -1;
 
-        return it->second;
+        return it->second.id;
     }
 
     const auto id = nextId();
 
-    dao.addBucket(id, std::string(bucketName));
+    BucketInfo info{
+        .id = id,
+        .created = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+    };
 
-    auto ins = buckets.insert(std::make_pair(std::string(bucketName), id));
+    dao.addBucket(id, std::string(bucketName), info.created.count());
+
+    auto ins = buckets.insert(std::make_pair(std::string(bucketName), info));
     bucketNames.insert(std::make_pair(id, ins.first));
 
     return id;
@@ -133,7 +148,7 @@ std::optional<int64_t> getBucket(const std::string_view bucketName)
         }
         return {};
     }
-    return it->second;
+    return it->second.id;
 }
 
 bool deleteBucket(int64_t bucketId)
@@ -197,6 +212,7 @@ Api::ListResp getBucketNames()
     {
         Api::Object obj;
         obj.name = bucket.first;
+        obj.created = std::chrono::nanoseconds(bucket.second.created).count();
         obj.type = 0;
         resp.objects.emplace_back(std::move(obj));
     }

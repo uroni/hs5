@@ -16,9 +16,15 @@
                     },
                     "size": {
                         "type": "integer"
+                    },
+                    "lastModified": {
+                        "type": "integer"
+                    },
+                    "created": {
+                        "type": "integer"
                     }
                 },
-                "required": ["name", "type"]
+                "required": ["name", "type", "size", "lastModified", "created"]
             }
         },
         "nextMarker": {

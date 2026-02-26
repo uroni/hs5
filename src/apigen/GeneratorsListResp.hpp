@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include <optional>
 #include <nlohmann/json.hpp>
 #include "helper.hpp"
 
@@ -23,13 +22,17 @@ namespace Api {
     void to_json(json & j, const ListResp & x);
 
     inline void from_json(const json & j, Object& x) {
+        x.created = j.at("created").get<int64_t>();
+        x.lastModified = j.at("lastModified").get<int64_t>();
         x.name = j.at("name").get<std::string>();
-        x.size = get_stack_optional<int64_t>(j, "size");
+        x.size = j.at("size").get<int64_t>();
         x.type = j.at("type").get<int64_t>();
     }
 
     inline void to_json(json & j, const Object & x) {
         j = json::object();
+        j["created"] = x.created;
+        j["lastModified"] = x.lastModified;
         j["name"] = x.name;
         j["size"] = x.size;
         j["type"] = x.type;

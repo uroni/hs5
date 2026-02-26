@@ -13,7 +13,7 @@ class UploadAwsSdkGo:
 
     def action(self, bucket: str, key: str, fn: Path, action: str) -> None:
         gosdktest = sh.Command("test/awsgosdktest/gosdktest")
-        gosdktest(self._hs5.get_url(), "root", self._hs5.get_root_key(), fn, bucket, key, action, _out=sys.stdout, _err=sys.stderr)
+        gosdktest(self._hs5.get_url(), "root", self._hs5.get_root_key(), fn, bucket, key, action, _fg=True)
     
     def upload(self, bucket: str, key: str, fn: Path) -> None:
         self.action(bucket, key, fn, "upload")
@@ -21,15 +21,18 @@ class UploadAwsSdkGo:
     def download(self, bucket: str, key: str, fn: Path) -> None:
         self.action(bucket, key, fn, "download")
 
+    def listbuckets(self, bucket: str) -> None:
+        self.action(bucket, "", Path(""), "listbuckets")
+
 @pytest.fixture
 def goawssdk_test_fixture(hs5: Hs5Runner):
     if not Path("test/awsgosdktest/gosdktest").exists():
         try:
-            go("mod", "init", "test/awsgosdktest")
+            go("mod", "init", "test/awsgosdktest", _fg=True)
         except: # type: ignore
             # Module already initialized, ignore
             pass
-        go("mod", "tidy", _out=sys.stdout, _err=sys.stderr, _cwd="test/awsgosdktest")
-        go("build", "-o", "gosdktest", "main.go", _out=sys.stdout, _err=sys.stderr, _cwd="test/awsgosdktest")
+        go("mod", "tidy", _cwd="test/awsgosdktest",  _fg=True)
+        go("build", "-o", "gosdktest", "main.go", _cwd="test/awsgosdktest", _fg=True)
     yield UploadAwsSdkGo(hs5)
 

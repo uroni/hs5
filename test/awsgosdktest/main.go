@@ -93,6 +93,27 @@ func main() {
 		}
 
 		fmt.Println("File downloaded successfully.")
+	case "listbuckets":
+		listBucketsOutput, err := s3Client.ListBuckets(context.TODO(), &s3.ListBucketsInput{})
+		if err != nil {
+			fmt.Printf("Failed to list buckets: %v\n", err)
+			os.Exit(1)
+		}
+
+		containsBucket := false
+		fmt.Println("Buckets:")
+		for _, bucket := range listBucketsOutput.Buckets {
+			fmt.Printf("- %s - created: %v location: %s\n", aws.ToString(bucket.Name), aws.ToTime(bucket.CreationDate), aws.ToString(bucket.BucketRegion))
+			if aws.ToString(bucket.Name) == bucketName {
+				containsBucket = true
+			}
+		}
+
+		if !containsBucket {
+			fmt.Printf("Bucket '%s' not found in the list.\n", bucketName)
+			os.Exit(1)
+		}
+
 	default:
 		fmt.Println("Unknown action. Use 'upload' or 'download'.")
 		os.Exit(1)

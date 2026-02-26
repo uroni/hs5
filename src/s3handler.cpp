@@ -1196,6 +1196,26 @@ std::string serializePartExts(const ParsePartRes& partRes)
     return std::string(wdata.getDataPtr(), wdata.getDataSize());
 }
 
+std::string format_last_modified(const int64_t lastModified)
+{
+    constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
+    const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(lastModified));
+
+    char datebuf[sizeof("2011-10-08T07:07:09Z")];
+    std::strftime(datebuf, sizeof(datebuf), "%FT%TZ", std::gmtime(&lastModifiedTp));
+    return datebuf;
+}
+
+std::string format_last_modified_rfc1123(const int64_t lastModified)
+{
+    constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
+    const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(lastModified));
+
+    char datebuf[sizeof("Fri, 08 Oct 2011 07:07:09 GMT")];
+    std::strftime(datebuf, sizeof(datebuf), "%a, %d %b %Y %H:%M:%S GMT", std::gmtime(&lastModifiedTp));
+    return datebuf;
+}
+
 std::mutex S3Handler::readingMultipartObjectsMutex;
 std::unordered_map<std::string, S3Handler::ReadingMultipartObject> S3Handler::readingMultipartObjects;
 
@@ -2111,7 +2131,13 @@ void S3Handler::listBuckets(folly::EventBase* evb, std::shared_ptr<S3Handler> se
     {
         if(isAuthorized("arn:aws:s3:::" + bucket.name, Action::ListBuckets, accessKey))
         {
-            resp += fmt::format("\t\t<Bucket><Name>{}</Name><BucketArn>arn:aws:s3:::{}</BucketArn></Bucket>\n", bucket.name, bucket.name);   
+            const auto bucketName = escapeXML(bucket.name);
+            const auto creationDate = format_last_modified(bucket.created);
+            resp += fmt::format("\t\t<Bucket><Name>{}</Name>"
+                "<BucketArn>arn:aws:s3:::{}</BucketArn>"
+                "<CreationDate>{}</CreationDate>"
+                "<BucketRegion>{}</BucketRegion>"
+                "</Bucket>\n", bucketName, bucketName, creationDate, FLAGS_aws_region);   
         }
     }
 
@@ -2372,26 +2398,6 @@ std::pair<int64_t, int64_t> parseRange(const std::string_view range, int64_t fil
     }
     
     return std::make_pair(start, end);
-}
-
-std::string format_last_modified(const int64_t lastModified)
-{
-    constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
-    const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(lastModified));
-
-    char datebuf[sizeof("2011-10-08T07:07:09Z")];
-    std::strftime(datebuf, sizeof(datebuf), "%FT%TZ", std::gmtime(&lastModifiedTp));
-    return datebuf;
-}
-
-std::string format_last_modified_rfc1123(const int64_t lastModified)
-{
-    constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
-    const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(lastModified));
-
-    char datebuf[sizeof("Fri, 08 Oct 2011 07:07:09 GMT")];
-    std::strftime(datebuf, sizeof(datebuf), "%a, %d %b %Y %H:%M:%S GMT", std::gmtime(&lastModifiedTp));
-    return datebuf;
 }
 
 void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& accessKey)

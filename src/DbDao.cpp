@@ -677,15 +677,15 @@ void DbDao::removeAccessKey(int64_t id)
 /**
 * @-SQLGenAccess
 * @func vector<Bucket> DbDao::getBuckets
-* @return int64 id, string name
+* @return int64 id, string name, int64 created
 * @sql
-*      SELECT id, name FROM buckets
+*      SELECT id, name, created FROM buckets
 */
 std::vector<DbDao::Bucket> DbDao::getBuckets()
 {
 	if(!_getBuckets.prepared())
 	{
-		_getBuckets=db.prepare("SELECT id, name FROM buckets");
+		_getBuckets=db.prepare("SELECT id, name, created FROM buckets");
 	}
 	auto& cursor=_getBuckets.cursor();
 	std::vector<DbDao::Bucket> ret;
@@ -695,6 +695,7 @@ std::vector<DbDao::Bucket> DbDao::getBuckets()
 		DbDao::Bucket& obj=ret.back();
 		cursor.get(0, obj.id);
 		cursor.get(1, obj.name);
+		cursor.get(2, obj.created);
 	}
 	cursor.shutdown();
 	return ret;
@@ -704,16 +705,17 @@ std::vector<DbDao::Bucket> DbDao::getBuckets()
 * @-SQLGenAccess
 * @func void DbDao::addBucket
 * @sql
-*      INSERT INTO buckets (id, name) VALUES (:id(int64), :name(string))
+*      INSERT INTO buckets (id, name, created) VALUES (:id(int64), :name(string), :created(int64))
 */
-void DbDao::addBucket(int64_t id, const std::string& name)
+void DbDao::addBucket(int64_t id, const std::string& name, int64_t created)
 {
 	if(!_addBucket.prepared())
 	{
-		_addBucket=db.prepare("INSERT INTO buckets (id, name) VALUES (?, ?)");
+		_addBucket=db.prepare("INSERT INTO buckets (id, name, created) VALUES (?, ?, ?)");
 	}
 	_addBucket.bind(id);
 	_addBucket.bind(name);
+	_addBucket.bind(created);
 	_addBucket.write();
 	_addBucket.reset();
 }

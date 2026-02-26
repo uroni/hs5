@@ -82,6 +82,7 @@ public:
 	{
 		int64_t id;
 		std::string name;
+		int64_t created;
 	};
 	struct Policy
 	{
@@ -164,7 +165,7 @@ public:
 	std::vector<AccessKey> getAccessKeysOfUser(int64_t user_id);
 	void removeAccessKey(int64_t id);
 	std::vector<Bucket> getBuckets();
-	void addBucket(int64_t id, const std::string& name);
+	void addBucket(int64_t id, const std::string& name, int64_t created);
 	int64_t getMaxBucketId();
 	void deleteBucket(int64_t id);
 	std::vector<PolicyStatement> getPolicyStatements(int64_t policy_id);
