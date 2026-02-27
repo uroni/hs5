@@ -189,7 +189,7 @@ public:
 
             const auto currCount = static_cast<size_t>((std::min)(static_cast<int64_t>(count), maxSize - partOffset));
 
-            int rc = op(file, currCount, partOffset);
+            const auto rc = op(file, currCount, partOffset);
 
             if(rc<=0)
                 return ret==0 ? rc : ret;
