@@ -363,7 +363,7 @@ int actionRun(std::vector<std::string> args)
         }
     }
 
-    auto metadataStoragePathVal = std::string();
+    auto metadataStoragePathVal = std::string(".");
 
     if(!alreadySetArgs.contains("--index_path"))
     {
