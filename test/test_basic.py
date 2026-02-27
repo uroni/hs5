@@ -191,7 +191,7 @@ def test_get_commit_obj(tmp_path: Path, hs5: Hs5Runner):
     with open(fpath, "r") as f:
         assert len(f.read())>5
 
-def add_objects(tmp_path: Path, hs5: Hs5Runner, num_objects : int = 210, object_data = b"abc", bucketname = None) -> set[str]:
+def add_objects(tmp_path: Path, hs5: Hs5Runner, num_objects : int = 210, object_data = b"abc", bucketname = None, prefix="") -> set[str]:
     if bucketname is None:
         bucketname = hs5.testbucketname()
 
@@ -201,7 +201,7 @@ def add_objects(tmp_path: Path, hs5: Hs5Runner, num_objects : int = 210, object_
     s3_client = hs5.get_s3_client()
     ul_files = set[str]()
     for i in range(0, num_objects):
-        s3name = f"{i}.txt"
+        s3name = f"{prefix}{i}.txt"
         s3_client.upload_file(upload_file.name, bucketname, s3name)
         ul_files.add(s3name)
 
@@ -447,19 +447,40 @@ def test_multipage_list(tmp_path: Path, hs5: Hs5Runner):
     res = s3_client.list_objects(Bucket=hs5.testbucketname(), MaxKeys=100)
     assert "Contents" not in res
 
-def test_multipage_list_v2(tmp_path: Path, hs5: Hs5Runner):
+@pytest.mark.parametrize("with_prefix", [False, True])
+def test_multipage_list_v2(tmp_path: Path, hs5: Hs5Runner, with_prefix: bool):
 
-    ul_files = add_objects(tmp_path, hs5)
+    prefix = "v2/" if with_prefix else ""
+    ul_files = add_objects(tmp_path, hs5, prefix=prefix)
 
     s3_client = hs5.get_s3_client()
 
+    with open(tmp_path / "upload_extra.txt", "w") as upload_file:
+        upload_file.write("abc")
+
+    if with_prefix:
+        s3_client.upload_file(str(tmp_path / "upload_extra.txt"), hs5.testbucketname(), "v1/upload_extra.txt")
+
+    
+    if with_prefix:
+        res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), Prefix="v1/")
+        assert "Contents" in res
+        assert len(res["Contents"]) == 1
+
     continuation_token : Optional[str]= None
     while True:
-        if continuation_token:
+        if with_prefix:
+            if continuation_token:
+                res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), ContinuationToken=continuation_token, Prefix=prefix, MaxKeys=100)
+            else:
+                res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), Prefix=prefix, MaxKeys=100)
+
+        elif continuation_token:
             res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), ContinuationToken=continuation_token, MaxKeys=100)
         else:
             res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), MaxKeys=100)
 
+        assert "Contents" in res
         objs = res["Contents"]
         assert len(objs)<=100
         for obj in objs:
@@ -475,6 +496,9 @@ def test_multipage_list_v2(tmp_path: Path, hs5: Hs5Runner):
         continuation_token = res["NextContinuationToken"]
 
     assert not ul_files
+
+    if with_prefix:
+        s3_client.delete_object(Bucket=hs5.testbucketname(), Key="v1/upload_extra.txt")
     
     hs5.commit_storage(s3_client)
 
@@ -526,6 +550,7 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
     s3_client.upload_file(upload_file.name, hs5.testbucketname(), "a/2.txt")
     s3_client.upload_file(upload_file.name, hs5.testbucketname(), "b/3.txt")
     s3_client.upload_file(upload_file.name, hs5.testbucketname(), "b/c/3.txt")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "b/d/3.txt")
 
     hs5.commit_storage(s3_client)
 
@@ -549,7 +574,7 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
     assert "a/" in prefixes
     assert "b/" in prefixes
 
-    res = s3_client.list_objects(Bucket=hs5.testbucketname(), Prefix="b/", Delimiter="/")
+    res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), Prefix="b/", Delimiter="/", MaxKeys=2)
     assert "Contents" in res
     objs = res["Contents"]
     assert objs is not None
@@ -566,6 +591,17 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
 
     assert len(prefixes) == 1
     assert "b/c/" in prefixes
+
+    res2 = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), Prefix="b/", Delimiter="/", MaxKeys=2, ContinuationToken=res["NextContinuationToken"])
+    assert "CommonPrefixes" in res2
+    common_prefixes = res2["CommonPrefixes"]
+    prefixes = list[str]()
+    for pre in common_prefixes:
+        assert "Prefix" in pre
+        prefixes.append(pre["Prefix"])
+    assert len(prefixes) == 1
+    assert "b/d/" in prefixes
+
 
     
 
@@ -601,6 +637,43 @@ def test_list_one(tmp_path: Path, hs5: Hs5Runner):
         contToken = res.get("NextContinuationToken")
 
     assert keys == ["one", "three", "two"]
+
+def test_list_one_common(tmp_path: Path, hs5: Hs5Runner):
+    with open(tmp_path / "upload.txt", "w") as upload_file:
+        upload_file.write("abc")
+
+    s3_client = hs5.get_s3_client()
+
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "a/one")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "a/two")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "a/three")
+
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "b/one")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "b/two")
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "b/three")
+
+    hs5.commit_storage(s3_client)
+
+    keys = list[str]()
+
+    cont = True
+    contToken : str | None = None
+    while cont:
+        args = {}
+        if contToken:
+            args["ContinuationToken"] = contToken
+        res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), MaxKeys=1, Delimiter="/", **args)
+
+        assert "CommonPrefixes" in res
+        common_prefixes = res["CommonPrefixes"]
+        assert common_prefixes is not None
+        assert len(common_prefixes) == 1
+        assert "Prefix" in common_prefixes[0]
+        keys.append(common_prefixes[0]["Prefix"])
+        cont = res["IsTruncated"]
+        contToken = res.get("NextContinuationToken")
+
+    assert keys == ["a/", "b/"]
 
 def test_list_start_after(tmp_path: Path, hs5: Hs5Runner):
     with open(tmp_path / "upload.txt", "w") as upload_file:

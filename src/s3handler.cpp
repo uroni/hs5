@@ -4261,6 +4261,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     SingleFileStorage::IterData iter_data = {};
     std::string iterStartVal;
     bool excludeStartAfter = false;
+    std::string lastOutputKeyStr;
     if(!marker.empty())
     {
         if(startAfter && *startAfter>marker)
@@ -4305,9 +4306,8 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     int i;
     bool truncated = true;
     size_t keyCount = 0;
-    std::string lastOutputKeyStr;
     int skippedKeys = 0;
-    for(i=0;i<maxKeys + skippedKeys;++i)
+    for(i=0;;++i)
     {
         std::string keyBin, md5sum;
         int64_t offset, size, last_modified;
@@ -4366,8 +4366,17 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             if(delimPos != std::string::npos)
             {
                 const auto commonKey = std::string(keyInfo.key.substr(0, delimPos + 1));
-                if(commonKey!=lastOutputKeyStr)                
+                if(commonKey!=lastOutputKeyStr)
+                {
+                    if(i >= maxKeys + skippedKeys)
+                        break;
+                        
                     commonPrefixes.push_back(commonKey);
+                }
+                else
+                {
+                    ++skippedKeys;
+                }
                 outputKey = false;
                 lastOutputKeyStr = commonKey;
             }
@@ -4376,6 +4385,9 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         if (outputKey && !partial)
         {
             lastOutputKeyStr = keyInfo.key;
+
+            if(i >= maxKeys + skippedKeys)
+                break;
 
             for(const auto& ext: extra_exts)
             {
@@ -4400,6 +4412,9 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         else if(outputKey && partial)
         {
             lastOutputKeyStr = keyInfo.key;
+
+            if(i >= maxKeys + skippedKeys)
+                break;
 
             CRData rdata(md5sum.data(), md5sum.size());
 
@@ -4455,6 +4470,10 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                     const auto encId = sfs.encrypt_id_separate(keyInfo.version, uploadNonce);
                     nextVersionMarker = folly::hexlify(encId.encryptedId) + "-" + folly::hexlify(encId.nonce);
                 }
+            }
+            else
+            {
+                truncated = false;
             }
         }
         else
