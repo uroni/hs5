@@ -1219,13 +1219,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 		{
 			for (const auto& item : items)
 			{
-				if (item.action == SingleFileStorage::FragAction::Del
-					|| item.action == SingleFileStorage::FragAction::DelNoCallback
-					|| item.action == SingleFileStorage::FragAction::Add
-					|| item.action == SingleFileStorage::FragAction::AddNoDelOld
-					|| item.action == SingleFileStorage::FragAction::DelOld
-					|| item.action == SingleFileStorage::FragAction::QueueDel
-					|| item.action == SingleFileStorage::FragAction::UnqueueDel)
+				if (has_commit_item(item.action))
 				{
 					// This is for if we don't wait for wal before startup
 					++commit_items[common_prefix_hash_func(item.fn)];
@@ -2067,6 +2061,7 @@ int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<E
 		curr_frag.commit_info = &commit_info;
 
 	++commit_items[common_prefix_hash_func(fn)];
+	queue_linked(curr_frag);
 
 	commit_queue.push_back(curr_frag);
 	
@@ -2710,7 +2705,9 @@ int SingleFileStorage::del(const std::string_view fn, DelAction da,
 	wait_queue(lock, background_queue, false);
 	wait_defrag(fn, lock);
 
-	if(da != DelAction::AssertQueueEmpty)
+	queue_linked(curr_frag);
+	
+	if(has_commit_item(curr_frag.action))
 		++commit_items[common_prefix_hash_func(fn)];
 	
 	if (is_defragging)
@@ -3213,6 +3210,11 @@ int64_t SingleFileStorage::remove_fn(const std::string & fn, MDB_txn * txn, MDB_
 				if(call_callback && !md5sum.empty())
 				{
 					const auto other_actions = on_delete_callback(fn, md5sum);
+					for(const auto& action: other_actions)
+					{
+						if(has_commit_item(action.action))
+							commit_items[common_prefix_hash_func(action.fn)]++;
+					}
 					callback_queue.insert(callback_queue.end(), other_actions.begin(), other_actions.end());
 				}
 			}
@@ -7290,13 +7292,7 @@ void SingleFileStorage::operator()()
 			defrag_restart = 0;
 		}
 
-		if (frag_info.action == FragAction::Add
-			|| frag_info.action == FragAction::AddNoDelOld
-			|| frag_info.action == FragAction::Del
-			|| frag_info.action == FragAction::DelNoCallback
-			|| frag_info.action == FragAction::DelOld
-			|| frag_info.action == FragAction::RestoreOld
-			|| frag_info.action==FragAction::DelWithQueued)
+		if (has_commit_item(frag_info.action))
 		{
 			++mod_items;
 			--commit_items[common_prefix_hash_func(frag_info.fn)];
@@ -7398,6 +7394,16 @@ void SingleFileStorage::operator()()
 						std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);				
 						frag_info.commit_info->commit_errors = commit_errors;
 						frag_info.commit_info->commit_done.notify_all();
+					}
+
+					auto linked = frag_info.linked;
+					while(linked)
+					{
+						std::unique_ptr<SFragInfo> curr_linked(linked);
+						if (has_commit_item(linked->action))
+							--commit_items[common_prefix_hash_func(linked->fn)];
+
+						linked = linked->linked;
 					}
 
 					lock.lock();
@@ -9824,6 +9830,23 @@ void SingleFileStorage::assert_reading_items_empty()
 		}
 	}
 	assert(reading_items.empty());
+
+	size_t commit_items_refs = 0;
+
+	if(!commit_items.empty())
+	{
+		XLOGF(INFO, "Commit items not empty: {} items. sfs {}", commit_items.size(), db_path);
+		for (const auto& [item, refs] : commit_items)
+		{			
+			if(refs!=0)
+			{
+				XLOGF(ERR, "Item {} refs {}", item, refs);
+				++commit_items_refs;
+			}
+		}
+	}
+
+	assert(commit_items_refs == 0);
 }
 
 bool SingleFileStorage::frag_info_matches(MDB_txn* txn, SFragInfo& frag_info)
@@ -9897,5 +9920,31 @@ void SingleFileStorage::run_trim_thread()
 		}
 
 		lock.lock();
+	}
+}
+
+bool SingleFileStorage::has_commit_item(const FragAction action)
+{
+	return action == FragAction::Add
+			|| action == FragAction::AddNoDelOld
+			|| action == FragAction::Del
+			|| action == FragAction::DelNoCallback
+			|| action == FragAction::DelOld
+			|| action == FragAction::RestoreOld
+			|| action==FragAction::DelWithQueued;
+}
+
+void SingleFileStorage::queue_linked(const SFragInfo& frag_info)
+{
+	if(!frag_info.linked)
+		return;
+
+	auto curr = frag_info.linked;
+
+	while(curr)
+	{
+		if(has_commit_item(curr->action))
+			++commit_items[common_prefix_hash_func(curr->fn)];
+		curr = curr->linked;
 	}
 }

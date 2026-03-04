@@ -572,6 +572,10 @@ private:
 
 	void run_trim_thread();
 
+	bool has_commit_item(const FragAction action);
+
+	void queue_linked(const SFragInfo& frag_info);
+
 	bool with_rewrite;
 
 	std::unordered_set<std::string> defrag_skip_items;
