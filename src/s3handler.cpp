@@ -3022,7 +3022,7 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
    "\t<Bucket>{}</Bucket>"
    "\t<Key>{}</Key>"
    "\t<UploadId>{}-{}</UploadId>"
-"</InitiateMultipartUploadResult>", buckets::getBucketName(self->keyInfo.bucketId), self->keyInfo.key, folly::hexlify(uploadIdEnc.encryptedId), folly::hexlify(uploadIdEnc.nonce));
+"</InitiateMultipartUploadResult>", escapeXML(buckets::getBucketName(self->keyInfo.bucketId)), escapeXML(self->keyInfo.key), folly::hexlify(uploadIdEnc.encryptedId), folly::hexlify(uploadIdEnc.nonce));
 
                                        ResponseBuilder(self->downstream_)
                         .status(200, "OK")
@@ -3326,7 +3326,7 @@ void S3Handler::finalizeMultipartUpload()
              "\t<Bucket>{}</Bucket>\n"
              "\t<Key>{}</Key>\n"
              "\t<ETag>\"{}-{}\"</ETag>\n"
-            "</CompleteMultipartUploadResult>", self->serverUrl, bucket, self->keyInfo.key, bucket, self->keyInfo.key, folly::hexlify(etagBin), numParts))
+            "</CompleteMultipartUploadResult>", escapeXML(self->serverUrl), escapeXML(bucket), escapeXML(self->keyInfo.key), escapeXML(bucket), escapeXML(self->keyInfo.key), folly::hexlify(etagBin), numParts))
                             .sendWithEOM();
                         self->finished_ = true; });
                         return;
