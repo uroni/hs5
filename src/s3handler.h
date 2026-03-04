@@ -147,6 +147,7 @@ public:
 
         ParseState parseState = ParseState::Init;
         UploadIdDec uploadId;
+        std::string partNumBuf;
         
         struct PartData
         {
@@ -161,9 +162,9 @@ public:
     {
         std::string etag;
         std::string key;
-        std::optional<int64_t> lastModified = std::nullopt;
-        std::optional<int64_t> size = std::nullopt;
-        std::optional<int64_t> versionId = std::nullopt;
+        std::string lastModified;
+        std::string size;
+        std::string versionId;
     };
 
     struct DeleteObjectsData

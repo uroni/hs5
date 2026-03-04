@@ -823,6 +823,32 @@ static void multiPartUploadXmlElementEnd(void *userData,
                 multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::Unknown;
         } break;
     case S3Handler::MultiPartUploadData::ParseState::InPartNumber:
+        {
+            multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InPart;
+            if(!multiPartData->partNumBuf.empty())
+            {
+                int partNum = 0;
+                try
+                {
+                    partNum = std::stoi(multiPartData->partNumBuf);
+                }
+                catch(std::invalid_argument&)
+                {}
+                catch(std::out_of_range&)
+                {}
+
+                multiPartData->partNumBuf.clear();
+
+                if(multiPartData->parts.size()>1)
+                {
+                    auto& prevPart = multiPartData->parts[multiPartData->parts.size()-2];
+                    if(partNum<=prevPart.partNumber)
+                        multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InvalidPartOrder;
+                }
+
+                multiPartData->parts.back().partNumber = partNum;
+            }
+        } break;
     case S3Handler::MultiPartUploadData::ParseState::InEtag:
     case S3Handler::MultiPartUploadData::ParseState::InUnknownPartAttr:
         {
@@ -842,24 +868,7 @@ static void multiPartUploadXmlCharData(void *userData,
         !multiPartData->parts.empty())
     {
         std::string data(s, len);
-        int partNum = 0;
-        try
-        {
-            partNum = std::stoi(data);
-        }
-        catch(std::invalid_argument&)
-        {}
-        catch(std::out_of_range&)
-        {}
-
-        if(multiPartData->parts.size()>1)
-        {
-            auto& prevPart = multiPartData->parts[multiPartData->parts.size()-2];
-            if(partNum<=prevPart.partNumber)
-                multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InvalidPartOrder;
-        }
-
-        multiPartData->parts.back().partNumber = partNum;
+        multiPartData->partNumBuf += data;
     }
     else if(multiPartData->parseState == S3Handler::MultiPartUploadData::ParseState::InEtag &&
         !multiPartData->parts.empty())
@@ -970,51 +979,27 @@ static void deleteObjectsXmlCharData(void *userData,
         case S3Handler::DeleteObjectsData::ParseState::InKey:
         {
             auto& obj = deleteObjectsData->objects.back();
-            obj.key = std::string(data);
+            obj.key += std::string(data);
         } break;
         case S3Handler::DeleteObjectsData::ParseState::InEtag:
         {
             auto& obj = deleteObjectsData->objects.back();
-            obj.etag = std::string(data);
+            obj.etag += std::string(data);
         } break;
         case S3Handler::DeleteObjectsData::ParseState::InLastModified:
         {
             auto& obj = deleteObjectsData->objects.back();
-            try
-            {
-                obj.lastModified = 0; //TODO //folly::parseUnixTimestamp(data);
-            }
-            catch(const std::exception& ex)
-            {
-                XLOGF(ERR, "Invalid last modified time {}: {}", data, folly::exceptionStr(ex));
-                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Invalid;
-            }
+            obj.lastModified += std::string(data);
         } break;
         case S3Handler::DeleteObjectsData::ParseState::InSize:
         {
             auto& obj = deleteObjectsData->objects.back();
-            try
-            {
-                obj.size = std::stoll(data.data(), nullptr, 10);
-            }
-            catch(const std::exception& ex)
-            {
-                XLOGF(ERR, "Invalid size {}: {}", data, folly::exceptionStr(ex));
-                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Invalid;
-            }
+            obj.size += std::string(data);
         } break;
         case S3Handler::DeleteObjectsData::ParseState::InVersionId:
         {
             auto& obj = deleteObjectsData->objects.back();
-            try
-            {
-                obj.versionId = std::stoll(data.data(), nullptr, 10);
-            }
-            catch(const std::exception& ex)
-            {
-                XLOGF(ERR, "Invalid version id {}: {}", data, folly::exceptionStr(ex));
-                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Invalid;
-            }
+            obj.versionId += std::string(data);
         } break;
         case S3Handler::DeleteObjectsData::ParseState::InQuiet:
         {
@@ -3470,7 +3455,6 @@ void S3Handler::deleteObjects()
 
                 for(const auto& obj: deleteObjectsData->objects)
                 {
-                    auto version = obj.versionId.value_or(0);
                     const auto resource = fmt::format("arn:aws:s3:::{}/{}", bucketName, obj.key);
                     const auto action = Action::DeleteObject;
 
@@ -3480,16 +3464,34 @@ void S3Handler::deleteObjects()
                             "\t\t<Code>AccessDenied</Code>\n"
                             "\t\t<Message>Access to object not authorized</Message>\n"
                             "\t\t<Key>{}</Key>\n"
-                            "\t\t</Error>\n", obj.key);
+                            "\t\t</Error>\n", escapeXML(obj.key));
                         continue;
                     }
 
                     bool delNewest = false;
 
-                    if(self->withBucketVersioning && version==0)
+                    int64_t version = 0;
+
+                    if(self->withBucketVersioning && obj.versionId.empty())
                     {
                         version= std::numeric_limits<int64_t>::max();
                         delNewest = true;
+                    }
+                    else if(self->withBucketVersioning && !obj.versionId.empty())
+                    {
+                        try
+                        {
+                            version = std::stoll(obj.versionId);
+                        }
+                        catch(const std::exception&)
+                        {
+                            resp += fmt::format("\t<Error>\n"
+                                "\t\t<Code>InvalidArgument</Code>\n"
+                                "\t\t<Message>Invalid version id specified</Message>\n"
+                                "\t\t<Key>{}</Key>\n"
+                                "\t</Error>\n", escapeXML(obj.key));
+                            continue;
+                        }
                     }
 
                     const auto currPath = make_key(obj.key, self->keyInfo.bucketId, version);
@@ -3539,13 +3541,13 @@ void S3Handler::deleteObjects()
                                 "\t\t<Code>PreconditionFailed</Code>\n"
                                 "\t\t<Message>At least one of the preconditions you specified did not hold</Message>\n"
                                 "\t\t<Key>{}</Key>\n"
-                                "\t</Error>\n",  obj.key);
+                                "\t</Error>\n",  escapeXML(obj.key));
                         }
                         else
                         {
                             resp += fmt::format("\t<Deleted>\n"
                                 "\t\t<Key>{}</Key>\n"
-                                "\t</Deleted>\n", obj.key);
+                                "\t</Deleted>\n", escapeXML(obj.key));
                         }
                     }
                     else
@@ -3554,7 +3556,7 @@ void S3Handler::deleteObjects()
                             "\t\t<Code>InternalError</Code>\n"
                             "\t\t<Message>Internal error {}</Message>\n"
                             "\t\t<Key>{}</Key>\n"
-                            "\t</Error>\n", res, obj.key);
+                            "\t</Error>\n", res, escapeXML(obj.key));
                     }
                 }
 
