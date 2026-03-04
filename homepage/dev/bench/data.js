@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772623736263,
+  "lastUpdate": 1772624123768,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -7032,6 +7032,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.11131557131753207",
             "extra": "mean: 18.2970474426 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "a80bee5d5a94fe4727fa2089e867ed7f23a9f6a6",
+          "message": "Update AWS explorer",
+          "timestamp": "2026-03-04T12:17:31+01:00",
+          "tree_id": "80c8956846af87eaaa47bf92144186e6d07fa12d",
+          "url": "https://github.com/uroni/hs5/commit/a80bee5d5a94fe4727fa2089e867ed7f23a9f6a6"
+        },
+        "date": 1772624122669,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08020481757457122,
+            "unit": "iter/sec",
+            "range": "stddev: 0.07897270110962405",
+            "extra": "mean: 12.468078978799998 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06395339173651035,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1790774870441468",
+            "extra": "mean: 15.636387263399978 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05238825687246485,
+            "unit": "iter/sec",
+            "range": "stddev: 0.2115159525346295",
+            "extra": "mean: 19.088247246599984 sec\nrounds: 5"
           }
         ]
       }
