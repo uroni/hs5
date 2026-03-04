@@ -5605,7 +5605,7 @@ std::vector<SingleFileStorage::SFragInfo> S3Handler::onDeleteCallback(const std:
                 fragInfo.action = SingleFileStorage::FragAction::Del;
                 fragInfo.fn = make_key({.key = uploadIdToStr(keyInfo.version)+"."+uploadIdToStr(partNum), .version = 0, 
                             .bucketId = partsBucketId});
-                ret.push_back(fragInfo);
+                ret.push_back(std::move(fragInfo));
             }
         }
         return ret;
@@ -5647,7 +5647,7 @@ std::vector<SingleFileStorage::SFragInfo> S3Handler::onDeleteCallback(const std:
                 fragInfo.action = isReading ? SingleFileStorage::FragAction::QueueDel : SingleFileStorage::FragAction::Del;
                 fragInfo.fn = make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
                             .bucketId = partsBucketId});
-                ret.push_back(fragInfo);
+                ret.push_back(std::move(fragInfo));
             }
         }
     }

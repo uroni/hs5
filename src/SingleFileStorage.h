@@ -153,7 +153,7 @@ public:
 		int64_t last_modified;
 		std::string md5sum;
 		SCommitInfo* commit_info;
-		SFragInfo* linked;
+		std::unique_ptr<SFragInfo> linked;
 		std::vector<SPunchItem> extra_exts;
 	};
 
