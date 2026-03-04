@@ -3543,7 +3543,7 @@ void S3Handler::deleteObjects()
                                 "\t\t<Key>{}</Key>\n"
                                 "\t</Error>\n",  escapeXML(obj.key));
                         }
-                        else
+                        else if(!deleteObjectsData->quiet)
                         {
                             resp += fmt::format("\t<Deleted>\n"
                                 "\t\t<Key>{}</Key>\n"
