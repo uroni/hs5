@@ -700,6 +700,9 @@ private:
 	std::condition_variable wal_startup_finished_cond;
 	std::jthread wal_write_thread;
 
+	std::vector<std::unique_ptr<SingleFileStorage::SCommitInfo>> wal_startup_commit_infos;
+    std::vector<std::unique_ptr<SingleFileStorage::MatchInfo>> wal_startup_match_infos;
+
 	
 	std::condition_variable trim_queue_cond;
 	std::queue<SPunchItem> trim_queue;

@@ -81,6 +81,188 @@ bool deserializeCommitInfo(CRData& data, WalFile::CommitInfo& commitInfo)
     return b;
 }
 
+bool serializeMatchInfo(const SingleFileStorage::MatchInfo& matchInfo, CWData& data)
+{
+    if(matchInfo.readFn)
+    {
+        data.addChar(1);
+        data.addString2(*matchInfo.readFn);
+    }
+    else
+    {
+        data.addChar(0);
+    }
+    data.addChar(matchInfo.readNewest ? 1 : 0);
+    data.addVarInt(matchInfo.ifMatch.size());
+    for(const auto& s : matchInfo.ifMatch)
+        data.addString2(s);
+    data.addVarInt(matchInfo.ifNoneMatch.size());
+    for(const auto& s : matchInfo.ifNoneMatch)
+        data.addString2(s);
+    if(matchInfo.ifModifiedSince)
+    {
+        data.addChar(1);
+        data.addVarInt(*matchInfo.ifModifiedSince);
+    }
+    else
+    {
+        data.addChar(0);
+    }
+    if(matchInfo.ifUnmodifiedSince)
+    {
+        data.addChar(1);
+        data.addVarInt(*matchInfo.ifUnmodifiedSince);
+    }
+    else
+    {
+        data.addChar(0);
+    }
+    return true;
+}
+
+bool deserializeMatchInfo(CRData& data, SingleFileStorage::MatchInfo& matchInfo)
+{
+    bool b = true;
+    char hasReadFn;
+    b &= data.getChar(&hasReadFn);
+    if(hasReadFn)
+    {
+        std::string readFn;
+        b &= data.getStr2(&readFn);
+        matchInfo.readFn = readFn;
+    }
+    char readNewest;
+    b &= data.getChar(&readNewest);
+    matchInfo.readNewest = readNewest != 0;
+    int64_t ifMatchSize = 0;
+    b &= data.getVarInt(&ifMatchSize);
+    for(size_t i = 0; i < ifMatchSize; ++i)
+    {
+        std::string s;
+        b &= data.getStr2(&s);
+        matchInfo.ifMatch.push_back(s);
+    }
+    int64_t ifNoneMatchSize = 0;
+    b &= data.getVarInt(&ifNoneMatchSize);
+    for(size_t i = 0; i < ifNoneMatchSize; ++i)
+    {
+        std::string s;
+        b &= data.getStr2(&s);
+        matchInfo.ifNoneMatch.push_back(s);
+    }
+    char hasIfModifiedSince;
+    b &= data.getChar(&hasIfModifiedSince);
+    if(hasIfModifiedSince)
+    {
+        int64_t ifModifiedSince;
+        b &= data.getVarInt(&ifModifiedSince);
+        matchInfo.ifModifiedSince = ifModifiedSince;
+    }
+    char hasIfUnmodifiedSince;
+    b &= data.getChar(&hasIfUnmodifiedSince);
+    if(hasIfUnmodifiedSince)
+    {
+        int64_t ifUnmodifiedSince;
+        b &= data.getVarInt(&ifUnmodifiedSince);
+        matchInfo.ifUnmodifiedSince = ifUnmodifiedSince;
+    }
+    
+    return b;
+}
+
+bool serializeFragInfo(const SingleFileStorage::SFragInfo& info, CWData& data)
+{
+    data.addUChar(static_cast<unsigned char>(info.action));
+    data.addString2(info.fn);
+    data.addVarInt(info.offset);
+    data.addVarInt(info.len);
+    data.addVarInt(info.last_modified);
+    data.addString2(info.md5sum);
+    data.addVarInt(info.extra_exts.size());
+    for (const auto& ext : info.extra_exts)
+    {
+        data.addVarInt(ext.offset);
+        data.addVarInt(ext.len);
+    }
+
+    if(info.commit_info &&
+        info.commit_info->match_info)
+    {
+        data.addChar(1);
+        if(!serializeMatchInfo(*info.commit_info->match_info, data))
+            return false;
+    }
+    else
+    {
+        data.addChar(0);
+    }
+
+    if(info.linked)
+    {
+        data.addChar(1);
+        if(!serializeFragInfo(*info.linked, data))
+            return false;
+    }
+    else
+    {
+        data.addChar(0);
+    }
+
+    return true;
+}
+
+bool deserializeFragInfo(CRData& data, SingleFileStorage::SFragInfo& info, std::unique_ptr<SingleFileStorage::SCommitInfo>* commitInfo, std::unique_ptr<SingleFileStorage::MatchInfo>* matchInfo)
+{
+    unsigned char action;
+    bool b = true;
+    b &= data.getUChar(&action);
+    info.action = static_cast<SingleFileStorage::FragAction>(action);
+    b &= data.getStr2(&info.fn);
+    b &= data.getVarInt(&info.offset);
+    b &= data.getVarInt(&info.len);
+    b &= data.getVarInt(&info.last_modified);
+    b &= data.getStr2(&info.md5sum);
+    
+    int64_t extra_exts_size = 0;
+    b &= data.getVarInt(&extra_exts_size);
+    
+    for(size_t i = 0; i < extra_exts_size; ++i)
+    {
+        SingleFileStorage::SPunchItem ext;
+        b &= data.getVarInt(&ext.offset);
+        b &= data.getVarInt(&ext.len);
+        info.extra_exts.push_back(ext);
+    }
+
+    char hasMatchInfo;
+    b &= data.getChar(&hasMatchInfo);
+    if(hasMatchInfo)
+    {
+        if(!commitInfo || !matchInfo)
+        {
+            XLOGF(ERR, "FragInfo has match info but commitInfo or matchInfo is null (matchInfo on linked is not supported)");
+            abort();
+            return false;
+        }
+
+        *commitInfo = std::make_unique<SingleFileStorage::SCommitInfo>();
+        info.commit_info = commitInfo->get();
+        *matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
+        info.commit_info->match_info = matchInfo->get();
+        b &= deserializeMatchInfo(data, *info.commit_info->match_info);
+    }
+
+    char hasLinked;
+    b &= data.getChar(&hasLinked);
+    if(hasLinked)
+    {
+        info.linked = std::make_unique<SingleFileStorage::SFragInfo>();
+        b &= deserializeFragInfo(data, *info.linked, nullptr, nullptr);
+    } 
+
+    return b;
+}
+
 bool forEachDataItem(const int64_t off, const size_t dataSize, auto fn)
 {
     auto startOff = (off / waitBlockSize) * waitBlockSize;
@@ -165,18 +347,9 @@ bool WalFile::write(const int64_t transid, const SingleFileStorage::SFragInfo& i
     CWData data;
     writeDataHeader(data, dataTypeFragInfo, seqNo);
     data.addVarInt(transid);
-    data.addUChar(static_cast<unsigned char>(info.action));
-    data.addString2(info.fn);
-    data.addVarInt(info.offset);
-    data.addVarInt(info.len);
-    data.addVarInt(info.last_modified);
-    data.addString2(info.md5sum);
-    data.addVarInt(info.extra_exts.size());
-    for (const auto& ext : info.extra_exts)
-    {
-        data.addVarInt(ext.offset);
-        data.addVarInt(ext.len);
-    }
+
+    if(!serializeFragInfo(info, data))
+        return false;
 
     return writeData(data);
 }
@@ -376,25 +549,14 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
                 continue;
             }
             SingleFileStorage::SFragInfo info;
-            unsigned char action;
-            b &= data.getUChar(&action);
-            info.action = static_cast<SingleFileStorage::FragAction>(action);
-            b &= data.getStr2(&info.fn);
-            b &= data.getVarInt(&info.offset);
-            b &= data.getVarInt(&info.len);
-            b &= data.getVarInt(&info.last_modified);
-            b &= data.getStr2(&info.md5sum);
-            
-            int64_t extra_exts_size = 0;
-            b &= data.getVarInt(&extra_exts_size);
-            
-            for(size_t i = 0; i < extra_exts_size; ++i)
-            {
-                SingleFileStorage::SPunchItem ext;
-                b &= data.getVarInt(&ext.offset);
-                b &= data.getVarInt(&ext.len);
-                info.extra_exts.push_back(ext);
-            }
+            std::unique_ptr<SingleFileStorage::SCommitInfo> commitInfo;
+            std::unique_ptr<SingleFileStorage::MatchInfo> matchInfo;
+            b &= deserializeFragInfo(data, info, &commitInfo, &matchInfo);
+
+            if(commitInfo)
+                ret.itemCommitInfos.push_back(std::move(commitInfo));
+            if(matchInfo)
+                ret.itemMatchInfos.push_back(std::move(matchInfo));
 
             if(!b)
             {
@@ -403,7 +565,7 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
 
             XLOGF(INFO, "WalFile: recovery: read entry for transid {}, fn {}, action {}, offset {}, len {}", ctransid, info.fn, static_cast<int>(info.action), info.offset, info.len);
 
-            ret.items.push_back(info);
+            ret.items.push_back(std::move(info));
         }
         else if(type==dataTypeDataFileData)
         {

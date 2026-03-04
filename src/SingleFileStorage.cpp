@@ -1215,9 +1215,15 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 			XLOGF(INFO, "WAL file (alt) read {} items", readResAlt.items.size());
 		}
 
-		auto addWalItems = [&](const auto& items)
+		auto addWalItems = [&](auto items, auto itemCommitInfos, auto itemMatchInfos)
 		{
-			for (const auto& item : items)
+			wal_startup_commit_infos.insert(wal_startup_commit_infos.end(),
+			 std::make_move_iterator(itemCommitInfos.begin()), std::make_move_iterator(itemCommitInfos.end()));
+
+			wal_startup_match_infos.insert(wal_startup_match_infos.end(),
+				std::make_move_iterator(itemMatchInfos.begin()), std::make_move_iterator(itemMatchInfos.end()));
+
+			for (auto& item : items)
 			{
 				if (has_commit_item(item.action))
 				{
@@ -1230,16 +1236,16 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 			}
 		};
 
-		addWalItems(readResAlt.items);
+		addWalItems(std::move(readResAlt.items), std::move(readResAlt.itemCommitInfos), std::move(readResAlt.itemMatchInfos));
 
-		const auto readRes = wal_file->read(curr_transid, &data_file, false, false);
+		auto readRes = wal_file->read(curr_transid, &data_file, false, false);
 
 		if(!readRes.items.empty())
 		{
 			XLOGF(INFO, "WAL file read {} items", readRes.items.size());
 		}
 
-		addWalItems(readRes.items);
+		addWalItems(std::move(readRes.items), std::move(readRes.itemCommitInfos), std::move(readRes.itemMatchInfos));
 
 		if(startup_wal_items>0)
 		{
@@ -7958,6 +7964,9 @@ void SingleFileStorage::operator()()
 					assert(false);
 					++commit_errors;
 				}
+
+				wal_startup_commit_infos.clear();
+				wal_startup_match_infos.clear();
 
 				std::scoped_lock llock(mutex);
 				wal_startup_finished = true;

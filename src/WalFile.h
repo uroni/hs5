@@ -155,6 +155,8 @@ public:
     struct ReadResult
     {
         std::vector<SingleFileStorage::SFragInfo> items;
+        std::vector<std::unique_ptr<SingleFileStorage::SCommitInfo>> itemCommitInfos;
+        std::vector<std::unique_ptr<SingleFileStorage::MatchInfo>> itemMatchInfos;
         std::optional<CommitInfo> commit_info;
     };
 
