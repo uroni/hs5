@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772644472925,
+  "lastUpdate": 1772819899387,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -7392,6 +7392,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.15545225478305258",
             "extra": "mean: 19.534958888999995 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "746a7d69df4e97c5458671649e9464f6d443d09f",
+          "message": "Increment version",
+          "timestamp": "2026-03-06T18:47:25+01:00",
+          "tree_id": "e4a8cadb75c07c4fbd207269f7ec6e8ceb4b7fb5",
+          "url": "https://github.com/uroni/hs5/commit/746a7d69df4e97c5458671649e9464f6d443d09f"
+        },
+        "date": 1772819898884,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07547055991691626,
+            "unit": "iter/sec",
+            "range": "stddev: 0.12839512359348118",
+            "extra": "mean: 13.25019982760001 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.059907352536929706,
+            "unit": "iter/sec",
+            "range": "stddev: 0.07634379609296801",
+            "extra": "mean: 16.692441873200003 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05260595998329331,
+            "unit": "iter/sec",
+            "range": "stddev: 0.23417674686454182",
+            "extra": "mean: 19.009252949999997 sec\nrounds: 5"
           }
         ]
       }
