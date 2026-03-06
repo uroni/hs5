@@ -2748,6 +2748,8 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
     {
         copyObjectInfo = std::make_unique<CopyObjectInfo>();
         copyObjectInfo->source = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source");
+        if(copyObjectInfo->source.starts_with("/"))
+            copyObjectInfo->source = copyObjectInfo->source.substr(1);
         parseSourceMatchInfo(headers, copyObjectInfo->sourceMatchInfo);
     }
 
@@ -2876,6 +2878,8 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
         copyObjectInfo = std::make_unique<CopyObjectInfo>();
         copyObjectInfo->source = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source");
         copyObjectInfo->range = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source-range");
+        if(copyObjectInfo->source.starts_with("/"))
+            copyObjectInfo->source = copyObjectInfo->source.substr(1);
         parseSourceMatchInfo(headers, copyObjectInfo->sourceMatchInfo);
     }
 
