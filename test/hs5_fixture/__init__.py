@@ -143,12 +143,16 @@ class Hs5Runner:
         self._wait_for_startup()
 
     def _wait_for_startup(self) -> None:
+        starttime = time.monotonic()
         while True:
             try:
                 resp = requests.get(self.get_url(), timeout=0.5)
                 break
             except:
-                time.sleep(0.01)
+                with pytest.raises(subprocess.TimeoutExpired):
+                    self._process.wait(0.01)
+                if time.monotonic() - starttime > 10:
+                    raise TimeoutError("Hs5 server did not start within 10 seconds")
 
     def _login_admin(self) -> None:
 
@@ -166,8 +170,12 @@ class Hs5Runner:
 
     def stop(self, cleanup: bool, kill: bool) -> None:
 
-        with pytest.raises(subprocess.TimeoutExpired):
-            self._process.wait(0.001)
+        try:
+            with pytest.raises(subprocess.TimeoutExpired):
+                self._process.wait(0.001)
+        except:
+            self._process.wait()
+            raise
 
         if kill:
             self._process.kill()
