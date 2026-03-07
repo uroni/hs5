@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772909061237,
+  "lastUpdate": 1772910904869,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -7572,6 +7572,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.2755910674100024",
             "extra": "mean: 17.725971744200002 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "3dab1ef21afbd86a7b4c876bcdf5d6a0c8de17d4",
+          "message": "Fix sigv2 pre-signed upload",
+          "timestamp": "2026-03-07T20:04:41+01:00",
+          "tree_id": "aa3d7122f3dd72260bff3d76c333b337691e8be0",
+          "url": "https://github.com/uroni/hs5/commit/3dab1ef21afbd86a7b4c876bcdf5d6a0c8de17d4"
+        },
+        "date": 1772910903776,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.09346411063134925,
+            "unit": "iter/sec",
+            "range": "stddev: 0.012016238006966311",
+            "extra": "mean: 10.699294020400009 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.0750130055456152,
+            "unit": "iter/sec",
+            "range": "stddev: 0.07555460339785972",
+            "extra": "mean: 13.331021637200001 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.06682490803285043,
+            "unit": "iter/sec",
+            "range": "stddev: 0.17733161010268855",
+            "extra": "mean: 14.964480003600011 sec\nrounds: 5"
           }
         ]
       }
