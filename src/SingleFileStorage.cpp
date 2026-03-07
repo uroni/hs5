@@ -4024,7 +4024,7 @@ bool SingleFileStorage::find_freemap_ext(MDB_txn* txn,
 						std::scoped_lock lock(trim_queue_mutex);
 						auto it = trimming_free_skip_extents.lower_bound(start);
 						if (it != trimming_free_skip_extents.end()
-							&& *it < start + len)
+							&& it->first < start + len)
 						{
 							continue;
 						}
@@ -7178,6 +7178,7 @@ void SingleFileStorage::operator()()
 
 	lock.lock();
 
+	std::set<SPunchItem> trim_items;
 	std::deque<SFragInfo> pending_commits;
 	std::chrono::steady_clock::time_point last_commit_time = std::chrono::steady_clock::now();
 
@@ -7495,6 +7496,12 @@ void SingleFileStorage::operator()()
 			{
 				XLOG(ERR) << "Failed to sync wal file. " << folly::errnoStr(errno);
 				++commit_errors;
+			}
+			else
+			{
+				curr_new_free_extents.clear();
+
+				run_trim_queue(trim_items);
 			}
 
 			last_commit_time = std::chrono::steady_clock::now();
@@ -7849,6 +7856,16 @@ void SingleFileStorage::operator()()
 			{
 				curr_new_free_extents.clear();
 
+				if(from_startup_wal)
+				{
+					// Might be used already
+					trim_items.clear();
+				}
+				else
+				{
+					run_trim_queue(trim_items);
+				}
+
 				if (new_data_file_copy_done > 0)
 				{
 					std::scoped_lock copy_lock(data_file_copy_mutex);
@@ -8102,15 +8119,13 @@ void SingleFileStorage::operator()()
 
 			const bool del_old = frag_info.action == FragAction::DelOld;
 			const bool call_callback = frag_info.action != FragAction::DelNoCallback;
-			std::set<SPunchItem> trim_items;
+			
 			commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, true, del_old, tid, call_callback, &trim_items);
 
 			if (frag_info.action == FragAction::DelWithQueued)
 			{
 				commit_errors += unqueue_del(frag_info.fn, txn, tid);
 			}
-
-			run_trim_queue(trim_items);
 
 			if (frag_info.commit_info != nullptr)
 			{
@@ -8179,9 +8194,7 @@ void SingleFileStorage::operator()()
 		{
 			if (frag_info.action == FragAction::Add)
 			{
-				std::set<SPunchItem> trim_queue;
-				commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, false, false, tid, true, &trim_queue);
-				run_trim_queue(trim_queue);
+				commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, false, false, tid, true, &trim_items);
 			}
 			else
 			{
@@ -8339,7 +8352,8 @@ void SingleFileStorage::operator()()
 						++commit_errors;
 					}
 					add_freemap_ext(freespace_txn, curr_write_ext_start,
-						curr_write_ext_end - curr_write_ext_start, false, tid);
+						curr_write_ext_end - curr_write_ext_start, false, tid, &trim_items);
+					// We could queue trimming here, but it's likely not worth it (small), dito below
 					add_remaining_ext = false;
 				}
 
@@ -8378,7 +8392,7 @@ void SingleFileStorage::operator()()
 					}
 
 					add_freemap_ext(freespace_txn, curr_write_ext_start, 
-						curr_write_ext_end - curr_write_ext_start, false, tid);
+						curr_write_ext_end - curr_write_ext_start, false, tid, &trim_items);
 				}
 
 				int64_t start, len;
@@ -8527,10 +8541,8 @@ void SingleFileStorage::operator()()
 		}
 		else if (frag_info.action == FragAction::AddFreemapWal)
 		{
-			std::set<SPunchItem> trim_queue;
 			add_freemap_ext(freespace_txn, frag_info.offset, 
-						frag_info.len, false, tid, &trim_queue);
-			run_trim_queue(trim_queue);
+						frag_info.len, false, tid, &trim_items);
 		}
 		else if (frag_info.action == FragAction::FreeExtents)
 		{
@@ -8581,8 +8593,6 @@ void SingleFileStorage::operator()()
 					++commit_errors;
 				}
 			}
-
-			run_trim_queue(trim_queue);
 		}
 		else
 		{
@@ -9837,6 +9847,18 @@ void SingleFileStorage::wait_for_wal_startup_finished()
 
 void SingleFileStorage::assert_reading_items_empty()
 {
+	{
+		std::scoped_lock lock(trim_queue_mutex);
+
+		for(auto& [offset, count]: trimming_free_skip_extents)
+		{
+			XLOGF(ERR, "Trimming free skip extent offset {} refs {} sfs {}", offset, count, db_path);
+		}
+
+		assert(trim_queue.empty());
+		assert(trimming_free_skip_extents.empty());
+	}
+	
 	std::scoped_lock lock(mutex);
 	if (!reading_items.empty())
 	{
@@ -9894,9 +9916,16 @@ bool SingleFileStorage::run_trim_queue(std::set<SPunchItem>& trim_items)
 	{
 		if(item.len > FLAGS_trim_freespace_size)
 		{
+#ifndef NDEBUG	
+			{
+				auto it = curr_new_free_extents.lower_bound(item.offset);
+				assert(it==curr_new_free_extents.end() || *it >= item.offset + item.len);
+			}
+#endif
+
 			std::scoped_lock lock(trim_queue_mutex);
 			trim_queue.push(item);
-			trimming_free_skip_extents.insert(item.offset);
+			++trimming_free_skip_extents[item.offset];
 			trim_queue_cond.notify_all();
 		}
 	}
@@ -9908,10 +9937,29 @@ void SingleFileStorage::run_trim_thread()
 {
 	folly::setThreadName("trim data file");
 	bool do_trim = true;
+	std::vector<SPunchItem> reading_trim_extents;
+	std::chrono::steady_clock::time_point last_reading_trim_time = std::chrono::steady_clock::now();
 	std::unique_lock lock(trim_queue_mutex);
 	while(true)
 	{
-		trim_queue_cond.wait(lock, [this](){ return !trim_queue.empty(); });
+		if(reading_trim_extents.empty())
+		{
+			trim_queue_cond.wait(lock, [this](){ return !trim_queue.empty(); });
+		}
+		else
+		{
+			trim_queue_cond.wait_for(lock, 10s, [this](){ return !trim_queue.empty(); });
+		}
+
+		if(!reading_trim_extents.empty() && (trim_queue.empty() || std::chrono::steady_clock::now() - last_reading_trim_time > 30s))
+		{
+			for(auto& item: reading_trim_extents)
+			{
+				trim_queue.push(item);
+			}
+			reading_trim_extents.clear();
+			last_reading_trim_time = std::chrono::steady_clock::now();
+		}
 
 		SPunchItem item = trim_queue.front();
 		trim_queue.pop();
@@ -9919,8 +9967,32 @@ void SingleFileStorage::run_trim_thread()
 		if(item.offset==-1)
 			return;
 
+		{
+			std::scoped_lock lock(mutex);
+			auto it = reading_free_skip_extents.lower_bound(item.offset);
+			if (it != reading_free_skip_extents.end()
+				&& *it < item.offset + item.len)
+			{
+				if(reading_trim_extents.empty())
+					last_reading_trim_time = std::chrono::steady_clock::now();
+				reading_trim_extents.push_back(item);
+				XLOGF(INFO, "Deferring trimming of free space at offset {} len {} sfs {} because it is currently being read", item.offset, item.len, db_path);
+				continue;
+			}
+		}
+
 		SCOPE_EXIT {
-			trimming_free_skip_extents.erase(item.offset);
+			auto it = trimming_free_skip_extents.find(item.offset);
+			assert(it != trimming_free_skip_extents.end());
+			if(it != trimming_free_skip_extents.end())
+			{
+				--it->second;
+				assert(it->second >= 0);
+				if(it->second==0)
+				{
+					trimming_free_skip_extents.erase(it);
+				}
+			}
 		};
 
 		if(!do_trim)

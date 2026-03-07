@@ -1087,6 +1087,20 @@ def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
 
     assert failures == 0
 
+    # Wait for trimming
+
+    max_test_size = 10*1024*1024
+
+    starttime = time.monotonic()
+    while time.monotonic() - starttime < 20:
+        if hs5.get_stats().size_full < max_test_size:
+            break
+        time.sleep(0.1)
+
+    stats = hs5.get_stats()
+    assert stats.used == 0 
+    assert stats.size_full < max_test_size
+
 @pytest.mark.parametrize("sig_v2", [True, False])
 def test_download_presigned(tmp_path: Path, hs5: Hs5Runner, sig_v2: bool):
 

@@ -707,7 +707,7 @@ private:
 	std::condition_variable trim_queue_cond;
 	std::queue<SPunchItem> trim_queue;
 	std::mutex trim_queue_mutex;
-	std::set<int64_t> trimming_free_skip_extents;
+	std::map<int64_t, int> trimming_free_skip_extents;
 
 	std::jthread trim_thread;
 };
