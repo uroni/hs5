@@ -7160,7 +7160,11 @@ void SingleFileStorage::operator()()
 
 	commit_errors += reset_del_log_fn(txn, freespace_txn, tid, 0, curr_transid);
 
-	commit_errors += reset_del_queue(txn, freespace_txn, tid, 0, curr_transid);
+
+	if(startup_wal_items == 0)
+	{
+		commit_errors += reset_del_queue(txn, freespace_txn, tid, 0, curr_transid);
+	}
 
 	startup_finished = true;
 
@@ -7563,6 +7567,11 @@ void SingleFileStorage::operator()()
 				{
 					++commit_errors;
 				}
+			}
+
+			if(from_startup_wal)
+			{
+				commit_errors += reset_del_queue(txn, freespace_txn, tid, 0, curr_transid);
 			}
 
 			if (curr_new_free_extents.size() < 1000 ||
