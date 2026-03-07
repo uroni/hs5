@@ -70,7 +70,6 @@ DEFINE_int32(wal_write_data, 0, "Write objects smaller than defined to WAL file 
 DEFINE_bool(run_duckdb, false, "Run DuckDB UI");
 DEFINE_int32(duckdb_port, 4213, "Port to listen on with DuckDB UI protocol");
 DEFINE_bool(enable_core_dumps, false, "Enable core dumps on crashes");
-DEFINE_bool(wait_for_wal_startup, true, "Wait for WAL startup to finish before accepting requests");
 DEFINE_int32(max_put_buffer_size, 1*1024*1024, "Max read buffer size for HTTP sessions (for PUT)");
 
 namespace {
@@ -84,8 +83,7 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
    : sfs(sfs), duckDbFs(duckDbFs)
   {
     sfs.start_thread(sfs.get_transid() + 1);
-    if(FLAGS_wait_for_wal_startup)
-      sfs.wait_for_wal_startup_finished();
+    sfs.wait_for_wal_startup_finished();
   }
 
   void onServerStart(folly::EventBase* /*evb*/) noexcept override {

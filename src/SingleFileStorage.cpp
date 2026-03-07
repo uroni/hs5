@@ -5599,7 +5599,8 @@ bool SingleFileStorage::freespace_check(MDB_txn* source_txn, MDB_txn* freespace_
 		int64_t start_bit = data_file_offset/4096;
 		int64_t len_bits = div_up(curr_end - data_file_offset, 4096);
 
-		XLOGF(INFO, "Setting bitmap using data_file_offset+end offset={} len={}", data_file_offset, curr_end - data_file_offset);
+		XLOGF(INFO, "Setting bitmap using data_file_offset+end offset={} len={} data_size={} data_file_offset_end={}",
+			 data_file_offset, curr_end - data_file_offset, data_size, data_file_offset_end);
 
 		if(bmap.get_range(start_bit, start_bit + len_bits))
 		{
@@ -8238,11 +8239,14 @@ void SingleFileStorage::operator()()
 
 			int64_t size = frag_info.offset + div_up(frag_info.len, block_size)*block_size;
 
-			if (size > curr_write_ext_start
-				&& size <= curr_write_ext_end)
-				curr_write_ext_start = size;
-			if (size > data_file_max_size)
-				data_file_max_size = size;
+			if(!from_startup_wal)
+			{
+				if (size > curr_write_ext_start
+					&& size <= curr_write_ext_end)
+					curr_write_ext_start = size;
+				if (size > data_file_max_size)
+					data_file_max_size = size;
+			}
 
 			for (const SPunchItem& ext : frag_info.extra_exts)
 			{
@@ -8250,11 +8254,14 @@ void SingleFileStorage::operator()()
 				wdata.addVarInt(ext.len);
 				size = ext.offset + div_up(ext.len, block_size)*block_size;
 
-				if (size > curr_write_ext_start
-					&& size <= curr_write_ext_end)
-					curr_write_ext_start = size;
-				if (size > data_file_max_size)
-					data_file_max_size = size;
+				if(!from_startup_wal)
+				{
+					if (size > curr_write_ext_start
+						&& size <= curr_write_ext_end)
+						curr_write_ext_start = size;
+					if (size > data_file_max_size)
+						data_file_max_size = size;
+				}
 			}
 
 			{
