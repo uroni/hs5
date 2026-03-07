@@ -1003,10 +1003,21 @@ def test_put_chunked(hs5_large: Hs5Runner, tmp_path: Path, size: int, checksum_a
 def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
 
+    failures = 0
+
     @dataclass
     class DlInfo:
         allow_throttle = True
         running_downloads = 0
+
+    def put_get_del_wrap(n: int, obj_size: int, throttle: bool, dl_info: DlInfo):
+        nonlocal failures
+        try:
+            put_get_del(n, obj_size, throttle, dl_info)
+        except:
+            failures += 1
+            raise
+
 
     def put_get_del(n: int, obj_size: int, throttle: bool, dl_info: DlInfo):
         for i in range(0, n):
@@ -1073,6 +1084,8 @@ def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
     dl_info.allow_throttle = False
 
     t0.join()
+
+    assert failures == 0
 
 @pytest.mark.parametrize("sig_v2", [True, False])
 def test_download_presigned(tmp_path: Path, hs5: Hs5Runner, sig_v2: bool):
