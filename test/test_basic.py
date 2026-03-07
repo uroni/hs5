@@ -1123,6 +1123,72 @@ def test_download_presigned(tmp_path: Path, hs5: Hs5Runner, sig_v2: bool):
     response.raise_for_status()
     assert response.content == fdata
 
+@pytest.mark.parametrize("sig_v2", [True, False])
+def test_upload_presigned(tmp_path: Path, hs5: Hs5Runner, sig_v2: bool):
+    fdata = os.urandom(29*1024*1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+    
+    s3_client = hs5.get_s3_client(sig_v2=sig_v2)
+
+    # get presigned upload URL
+    presigned_url = s3_client.generate_presigned_url(
+        'put_object',
+        Params={'Bucket': hs5.testbucketname(), 'Key': 'upload.txt'},
+        ExpiresIn=3600
+    )
+
+    response = requests.put(presigned_url, data=fdata)
+    response.raise_for_status()
+
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert obj_info["ContentLength"] == len(fdata)
+
+    dl_path = tmp_path / "download.txt"
+    s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
+    assert filecmp.cmp(tmp_path / "upload.txt", dl_path)
+
+@pytest.mark.parametrize("sig_v2", [True, False])
+def test_upload_presigned_multipart(tmp_path: Path, hs5: Hs5Runner, sig_v2: bool):
+
+    fdata = os.urandom(10*1024*1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+    
+    s3_client = hs5.get_s3_client(sig_v2=sig_v2)
+
+    upl = s3_client.create_multipart_upload(Bucket=hs5.testbucketname(), Key="upload.txt")
+    with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
+        part1_url = s3_client.generate_presigned_url(
+            'upload_part',
+            Params={'Bucket': hs5.testbucketname(), 'Key': 'upload.txt', 'UploadId': upl["UploadId"], 'PartNumber': 1},
+            ExpiresIn=3600
+        )
+
+        part2_url = s3_client.generate_presigned_url(
+            'upload_part',
+            Params={'Bucket': hs5.testbucketname(), 'Key': 'upload.txt', 'UploadId': upl["UploadId"], 'PartNumber': 2},
+            ExpiresIn=3600
+        )
+
+        response1 = requests.put(part1_url, data=upload_file.read(5*1024*1024))
+        response1.raise_for_status()
+
+        response2 = requests.put(part2_url, data=upload_file.read(5*1024*1024))
+        response2.raise_for_status()
+
+    try:
+        s3_client.complete_multipart_upload(Bucket=hs5.testbucketname(), 
+                                        Key="upload.txt", UploadId=upl["UploadId"], MultipartUpload={"Parts": [{"ETag": response1.headers["ETag"], "PartNumber": 1}, {"ETag": response2.headers["ETag"], "PartNumber": 2}]})
+    except:
+        s3_client.abort_multipart_upload(Bucket=hs5.testbucketname(), Key="upload.txt", UploadId=upl["UploadId"])
+        raise
+
+    dl_path = tmp_path / "download.txt"
+    s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
+    assert filecmp.cmp(tmp_path / "upload.txt", dl_path)
+
+
 
 def test_create_bucket(hs5: Hs5Runner, tmp_path: Path):
 

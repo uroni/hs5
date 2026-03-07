@@ -344,7 +344,7 @@ std::optional<std::string> checkSigQueryStringV2(HTTPMessage &headers, const std
 
     const auto stringToSign = folly::sformat(
         "{}\n{}\n{}\n{}\n{}{}", httpVerb, headers.getHeaders().getSingleOrEmpty("Content-MD5"),
-        headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_CONTENT_LENGTH), expires, canonicalizedAmzHeaders,
+        headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_CONTENT_TYPE), expires, canonicalizedAmzHeaders,
         canonicalizedResource);
 
     const auto urlSig = folly::base64Encode(hmacSha1Binary(secretKey, stringToSign));
@@ -1595,7 +1595,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 }
             }
 
-            if(!checkSig(*headers, payload, resource, action, true, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
+            const bool allowPresigned = action == Action::PutObjectPart;
+
+            if(!checkSig(*headers, payload, resource, action, allowPresigned, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
                 || ( currSigPtr != nullptr && currSigPtr->empty()))
             {
                 XLOGF(INFO, "Unauthorized putObjectPart: {}", path);
@@ -1614,7 +1616,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         const auto action = createBucket ? Action::CreateBucket : 
                     (copyObject ? Action::CopyObject : Action::PutObject);
 
-        if(!checkSig(*headers, payload, resource, action, true, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
+        const bool allowPresigned = action == Action::PutObject;
+
+        if(!checkSig(*headers, payload, resource, action, allowPresigned, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
             || ( currSigPtr != nullptr && currSigPtr->empty()))
         {
             XLOGF(INFO, "Unauthorized putObject: {}", path);
