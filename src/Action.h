@@ -44,7 +44,10 @@ enum class Action
     ChangeOwnPassword=37,
     GetBucketLocation=38,
     CopyObject=39,
-    UploadPartCopy=40
+    UploadPartCopy=40,
+    ListBucketPermissions=41,
+    AddBucketPermission=42,
+    RemoveBucketPermission=43
 };
 
 Action actionFromStr(const std::string_view action);

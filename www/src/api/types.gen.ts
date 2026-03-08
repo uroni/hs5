@@ -320,3 +320,42 @@ export type LogoutData = {
 export type LogoutResponse = ({
     dummy?: string;
 });
+
+export type AddBucketPermissionData = {
+    requestBody?: {
+        userId: string;
+        bucketId: string;
+        addBucketPermissions: Array<('read' | 'write' | 'delete')>;
+    };
+};
+
+export type AddBucketPermissionResponse = ({
+    id: string;
+});
+
+export type ListBucketPermissionsData = {
+    requestBody?: {
+        bucketId: string;
+    };
+};
+
+export type ListBucketPermissionsResponse = ({
+    bucketPermissions: Array<{
+        id: string;
+        userId: string;
+        userName: string;
+        permissions: Array<('read' | 'write' | 'delete')>;
+    }>;
+    nextMarker: string;
+    isTruncated: boolean;
+});
+
+export type RemoveBucketPermissionData = {
+    requestBody?: {
+        id: string;
+    };
+};
+
+export type RemoveBucketPermissionResponse = ({
+    dummy?: string;
+});

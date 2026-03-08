@@ -1,0 +1,22 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "userId": {
+        "type": "string"
+      },
+      "bucketId": {
+        "type": "string"
+      },
+      "addBucketPermissions": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["read", "write", "delete"]
+        }
+      }
+    },
+    "required": ["userId", "bucketId", "addBucketPermissions"]
+  }
+  
+  

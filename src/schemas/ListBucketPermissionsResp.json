@@ -1,0 +1,38 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "bucketPermissions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "userId": {
+                        "type": "string"
+                    },
+                    "userName": {
+                        "type": "string"
+                    },
+                    "permissions": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["read", "write", "delete"]
+                        }
+                    }
+                },
+                "required": ["id", "userId", "userName", "permissions"]
+            }
+        },
+        "nextMarker": {
+            "type": "string"
+        },
+        "isTruncated": {
+            "type": "boolean"
+        }
+    },
+    "required": ["bucketPermissions", "nextMarker", "isTruncated"]
+}

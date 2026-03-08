@@ -587,3 +587,69 @@ paths:
             application/json:
               schema:
                 $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/addBucketPermission:
+    post:
+      operationId: addBucketPermission
+      description: Add bucket permission
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/AddBucketPermissionParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/AddBucketPermissionResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/listBucketPermissions:
+    post:
+      operationId: listBucketPermissions
+      description: List bucket permissions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/ListBucketPermissionsParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/ListBucketPermissionsResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'
+  /api-v1-b64be512-4b03-4028-a589-13931942e205/removeBucketPermission:
+    post:
+      operationId: removeBucketPermission
+      description: Remove bucket permission
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: 'schemas/RemoveBucketPermissionParams.json'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/RemoveBucketPermissionResp.json'
+        '400':
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: 'schemas/HapiError.json'

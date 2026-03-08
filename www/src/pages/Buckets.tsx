@@ -145,6 +145,19 @@ const Buckets = () => {
             >
               {isDeleting === item.name ? 'Deleting...' : 'Delete'}
             </Button>
+            <Button
+              icon={<KeyRegular />}
+              disabled={isDeleting === item.name}
+              onClick={(e) => {
+                e.stopPropagation();
+                setBucketToDelete(item);
+                setDeleteConfirmText('');
+                setDeleteError('');
+                setDeleteDialogOpen(true);
+              }}
+            >
+              Simple User permissions
+            </Button>
           </TableCellLayout>
         );
       }

@@ -60,6 +60,12 @@ set(APIGEN_SCHEMAS
   AddBucketResp
   LogoutParams
   LogoutResp
+  AddBucketPermissionParams
+  AddBucketPermissionResp
+  ListBucketPermissionsParams
+  ListBucketPermissionsResp
+  RemoveBucketPermissionParams
+  RemoveBucketPermissionResp
   StatsParams
   StatsResp#
   SessionCheckParams

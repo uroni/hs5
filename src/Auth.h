@@ -15,3 +15,7 @@ bool isAuthorized(const std::string_view resource, const Action action, const in
 
 bool isAuthorized(const std::string_view resource, const Action action, const std::string_view accessKey);
 
+const int BUCKET_PERMISSION_READ = 1<<0;
+const int BUCKET_PERMISSION_WRITE = 1<<1;
+const int BUCKET_PERMISSION_DELETE = 1<<2;
+

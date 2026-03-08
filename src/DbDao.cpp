@@ -146,9 +146,23 @@ void upgrade1_2(sqlgen::Database& db)
 	)""");
 }
 
+void upgrade2_3(sqlgen::Database& db)
+{
+	db.write(R"""(
+		CREATE TABLE bucket_permissions (
+			id INTEGER PRIMARY KEY,
+			bucket_id INTEGER NOT NULL REFERENCES buckets(id) ON DELETE CASCADE,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			permissions INTEGER NOT NULL,
+			created INTEGER NOT NULL DEFAULT (unixepoch())
+		) STRICT;
+	)""");
+}
+
 const std::map<int64_t, upgrade_func_t*> upgrade_funcs {
 	{0, upgrade0_1},
-	{1, upgrade1_2}
+	{1, upgrade1_2},
+	{2, upgrade2_3}
 };
 
 sqlgen::Database& DbDao::getStaticDb()
@@ -1269,6 +1283,107 @@ void DbDao::changeUserPassword(const std::string& password, int64_t user_id)
 	_changeUserPassword.reset();
 }
 
+/**
+* @-SQLGenAccess
+* @func vector<BucketPermission> DbDao::getBucketPermissions
+* @return int64 id, int64 bucket_id, int64 user_id, int permissions
+* @sql
+*      SELECT id, bucket_id, user_id, permissions FROM bucket_permissions WHERE bucket_id=:bucket_id(int64)
+*/
+std::vector<DbDao::BucketPermission> DbDao::getBucketPermissions(int64_t bucket_id)
+{
+	if(!_getBucketPermissions.prepared())
+	{
+		_getBucketPermissions=db.prepare("SELECT id, bucket_id, user_id, permissions FROM bucket_permissions WHERE bucket_id=?");
+	}
+	_getBucketPermissions.bind(bucket_id);
+	auto& cursor=_getBucketPermissions.cursor();
+	std::vector<DbDao::BucketPermission> ret;
+	while(cursor.next())
+	{
+		ret.emplace_back();
+		DbDao::BucketPermission& obj=ret.back();
+		cursor.get(0, obj.id);
+		cursor.get(1, obj.bucket_id);
+		cursor.get(2, obj.user_id);
+		cursor.get(3, obj.permissions);
+	}
+	_getBucketPermissions.reset();
+	return ret;
+}
 
+/**
+* @-SQLGenAccess
+* @func optional<int64_t> DbDao::addBucketPermission
+* @return int64_raw id
+* @sql
+*      INSERT INTO bucket_permissions (bucket_id, user_id, permissions) VALUES (:bucket_id(int64), :user_id(int64), :permissions(int)) RETURNING id
+*/
+std::optional<int64_t> DbDao::addBucketPermission(int64_t bucket_id, int64_t user_id, int permissions)
+{
+	if(!_addBucketPermission.prepared())
+	{
+		_addBucketPermission=db.prepare("INSERT INTO bucket_permissions (bucket_id, user_id, permissions) VALUES (?, ?, ?) RETURNING id");
+	}
+	_addBucketPermission.bind(bucket_id);
+	_addBucketPermission.bind(user_id);
+	_addBucketPermission.bind(permissions);
+	auto& cursor=_addBucketPermission.cursor();
+	if(!cursor.next())
+	{
+		_addBucketPermission.reset();
+		return {};
+	}
+	int64_t ret;
+	cursor.get(0, ret);
+	_addBucketPermission.reset();
+	return ret;
+}
+
+/**
+* @-SQLGenAccess
+* @func void DbDao::removeBucketPermission
+* @sql
+*      DELETE FROM bucket_permissions WHERE id=:id(int64)
+*/
+void DbDao::removeBucketPermission(int64_t id)
+{
+	if(!_removeBucketPermission.prepared())
+	{
+		_removeBucketPermission=db.prepare("DELETE FROM bucket_permissions WHERE id=?");
+	}
+	_removeBucketPermission.bind(id);
+	_removeBucketPermission.write();
+	_removeBucketPermission.reset();
+}
+
+/**
+* @-SQLGenAccess
+* @func optional<BucketPermission> DbDao::getBucketPermission
+* @return int64 id, int64 bucket_id, int64 user_id, int permissions
+* @sql
+*      SELECT id, bucket_id, user_id, permissions FROM bucket_permissions WHERE id=:id(int64)
+*/
+std::optional<DbDao::BucketPermission> DbDao::getBucketPermission(int64_t id)
+{
+	if(!_getBucketPermission.prepared())
+	{
+		_getBucketPermission=db.prepare("SELECT id, bucket_id, user_id, permissions FROM bucket_permissions WHERE id=?");
+	}
+	_getBucketPermission.bind(id);
+	auto& cursor=_getBucketPermission.cursor();
+	if(cursor.next())
+	{
+		BucketPermission ret;
+		cursor.get(0, ret.id);
+		cursor.get(1, ret.bucket_id);
+		cursor.get(2, ret.user_id);
+		cursor.get(3, ret.permissions);
+		_getBucketPermission.reset();
+		return ret;
+	}
+	_getBucketPermission.reset();
+	return {};
+}
 
 //eof

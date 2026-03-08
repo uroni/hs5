@@ -64,6 +64,12 @@
 #include "apigen/GeneratorsChangePasswordResp.hpp"
 #include "apigen/GeneratorsLogoutParams.hpp"
 #include "apigen/GeneratorsLogoutResp.hpp"
+#include "apigen/GeneratorsListBucketPermissionsParams.hpp"
+#include "apigen/GeneratorsListBucketPermissionsResp.hpp"
+#include "apigen/GeneratorsAddBucketPermissionParams.hpp"
+#include "apigen/GeneratorsAddBucketPermissionResp.hpp"
+#include "apigen/GeneratorsRemoveBucketPermissionParams.hpp"
+#include "apigen/GeneratorsRemoveBucketPermissionResp.hpp"
 #include <argon2.h>
 #include <folly/Random.h>
 #include <iostream>
@@ -295,7 +301,10 @@ void ApiHandler::onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexc
         && func!="addBucket"
         && func!="stats"
         && func!="deleteBucket"
-        && func!="logout")
+        && func!="logout"
+        && func!="listBucketPermissions"
+        && func!="addBucketPermission"
+        && func!="removeBucketPermission")
     {
         ResponseBuilder(downstream_)
             .status(404, "Not found")
@@ -478,6 +487,12 @@ ApiHandler::ApiResponse ApiHandler::runRequest()
                 resp = changePassword(params, *session);
             else if(func=="logout")
                 resp = logout(params, session);
+            else if(func=="listBucketPermissions")
+                resp = listBucketPermissions(params, *session);
+            else if(func=="addBucketPermission")
+                resp = addBucketPermission(params, *session);
+            else if(func=="removeBucketPermission")
+                resp = removeBucketPermission(params, *session);
         }
         
     }
@@ -1384,6 +1399,117 @@ Api::LogoutResp ApiHandler::logout(const Api::LogoutParams& params, SessionScope
 
     if(!invalidateSession(authHeader, cookieSes))
         throw ApiError(Api::Herror::sessionNotFound);
+
+    return {};
+}
+
+Api::ListBucketPermissionsResp ApiHandler::listBucketPermissions(const Api::ListBucketPermissionsParams& params, const ApiSessionStorage& sessionStorage)
+{
+    const auto bucketId = sfs.decrypt_id(params.bucketId);
+    const auto bucketName = buckets::getBucketName(bucketId);
+    if(bucketName.empty())
+        throw ApiError(Api::Herror::bucketNotFound);
+
+    if(!isAuthorized("arn:aws:s3:::"+bucketName, Action::ListBucketPermissions, sessionStorage.userId))
+        throw ApiError(Api::Herror::accessDenied);
+
+    const auto permissions = dao.getBucketPermissions(bucketId);
+    
+    Api::ListBucketPermissionsResp resp;
+    resp.isTruncated = false;
+    resp.nextMarker = "";
+    for(const auto& perm : permissions)
+    {
+        Api::BucketPermission item;
+        item.id = sfs.encrypt_id(perm.id);
+        item.userId = sfs.encrypt_id(perm.user_id);
+
+        const auto permSet = perm.permissions;
+
+        if(permSet & BUCKET_PERMISSION_READ)
+            item.permissions.push_back(Api::Permission::read);
+        if(permSet & BUCKET_PERMISSION_WRITE)
+            item.permissions.push_back(Api::Permission::write);
+        if(permSet & BUCKET_PERMISSION_DELETE)
+            item.permissions.push_back(Api::Permission::permissionDelete);
+
+        resp.bucketPermissions.push_back(std::move(item));
+    }
+    return resp;
+}
+
+Api::AddBucketPermissionResp ApiHandler::addBucketPermission(const Api::AddBucketPermissionParams& params, const ApiSessionStorage& sessionStorage)
+{
+    const auto bucketId = sfs.decrypt_id(params.bucketId);
+    const auto bucketName = buckets::getBucketName(bucketId);
+    if(bucketName.empty())
+        throw ApiError(Api::Herror::bucketNotFound);
+
+    const auto userId = sfs.decrypt_id(params.userId);
+    const auto user = dao.getUserById(userId);
+
+    if(!user)
+        throw ApiError(Api::Herror::userNotFound);
+
+    if(!isAuthorized("arn:aws:s3:::"+bucketName, Action::AddBucketPermission, sessionStorage.userId))
+        throw ApiError(Api::Herror::accessDenied);
+
+    int perms = 0;
+
+    for(const auto p : params.addBucketPermissions)
+    {
+        switch(p)
+        {
+            case Api::AddBucketPermission::read:
+                perms |= BUCKET_PERMISSION_READ;
+                break;
+            case Api::AddBucketPermission::write:
+                perms |= BUCKET_PERMISSION_WRITE;
+                break;
+            case Api::AddBucketPermission::addBucketPermissionDelete:
+                perms |= BUCKET_PERMISSION_DELETE;
+                break;
+            default:
+                throw ApiError(Api::Herror::invalidParameters, fmt::format("Invalid permission value {}", static_cast<int>(p)));
+        }
+    }
+
+    dao.addBucketPermission(bucketId, userId, perms);
+
+    if(dao.getDb().getLastChanges() != 1)
+        throw ApiError(Api::Herror::internalDbError, fmt::format("Error adding permission for bucket {}", bucketName));
+
+    refreshAuthCache();
+
+    return {};
+}
+
+Api::RemoveBucketPermissionResp ApiHandler::removeBucketPermission(const Api::RemoveBucketPermissionParams& params, const ApiSessionStorage& sessionStorage)
+{
+    const auto permId = sfs.decrypt_id(params.id);
+
+    const auto permOpt = dao.getBucketPermission(permId);
+
+    if(!permOpt)
+        throw ApiError(Api::Herror::accessDenied);
+
+    const auto& perm = permOpt.value();
+
+    const auto bucketId = perm.bucket_id;
+
+    const auto bucketName = buckets::getBucketName(bucketId);
+    if(bucketName.empty())
+        throw ApiError(Api::Herror::bucketNotFound);
+
+    if(!isAuthorized("arn:aws:s3:::"+bucketName, Action::RemoveBucketPermission, sessionStorage.userId))
+        throw ApiError(Api::Herror::accessDenied);
+
+    dao.removeBucketPermission(permId);
+
+    if(dao.getDb().getLastChanges() != 1)
+        throw ApiError(Api::Herror::internalDbError, fmt::format("Error deleting permission with id {} for bucket {}", permId, bucketName));
+
+    refreshAuthCache();
 
     return {};
 }
