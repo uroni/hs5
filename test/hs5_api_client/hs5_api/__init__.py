@@ -31,6 +31,8 @@ __all__ = [
     "AddAccessKeyParams",
     "AddAccessKeyResp",
     "AddBucketParams",
+    "AddBucketPermissionParams",
+    "AddBucketPermissionResp",
     "AddBucketResp",
     "AddPolicyParams",
     "AddPolicyResp",
@@ -52,6 +54,9 @@ __all__ = [
     "ListAccessKeysParams",
     "ListAccessKeysResp",
     "ListAccessKeysRespAccessKeysInner",
+    "ListBucketPermissionsParams",
+    "ListBucketPermissionsResp",
+    "ListBucketPermissionsRespBucketPermissionsInner",
     "ListParams",
     "ListPoliciesParams",
     "ListPoliciesResp",
@@ -76,6 +81,8 @@ __all__ = [
     "LogoutResp",
     "RemoveAccessKeyParams",
     "RemoveAccessKeyResp",
+    "RemoveBucketPermissionParams",
+    "RemoveBucketPermissionResp",
     "RemovePolicyParams",
     "RemovePolicyResp",
     "RemoveRoleParams",
@@ -108,6 +115,8 @@ from hs5_api.exceptions import ApiException as ApiException
 from hs5_api.models.add_access_key_params import AddAccessKeyParams as AddAccessKeyParams
 from hs5_api.models.add_access_key_resp import AddAccessKeyResp as AddAccessKeyResp
 from hs5_api.models.add_bucket_params import AddBucketParams as AddBucketParams
+from hs5_api.models.add_bucket_permission_params import AddBucketPermissionParams as AddBucketPermissionParams
+from hs5_api.models.add_bucket_permission_resp import AddBucketPermissionResp as AddBucketPermissionResp
 from hs5_api.models.add_bucket_resp import AddBucketResp as AddBucketResp
 from hs5_api.models.add_policy_params import AddPolicyParams as AddPolicyParams
 from hs5_api.models.add_policy_resp import AddPolicyResp as AddPolicyResp
@@ -129,6 +138,9 @@ from hs5_api.models.hapi_error import HapiError as HapiError
 from hs5_api.models.list_access_keys_params import ListAccessKeysParams as ListAccessKeysParams
 from hs5_api.models.list_access_keys_resp import ListAccessKeysResp as ListAccessKeysResp
 from hs5_api.models.list_access_keys_resp_access_keys_inner import ListAccessKeysRespAccessKeysInner as ListAccessKeysRespAccessKeysInner
+from hs5_api.models.list_bucket_permissions_params import ListBucketPermissionsParams as ListBucketPermissionsParams
+from hs5_api.models.list_bucket_permissions_resp import ListBucketPermissionsResp as ListBucketPermissionsResp
+from hs5_api.models.list_bucket_permissions_resp_bucket_permissions_inner import ListBucketPermissionsRespBucketPermissionsInner as ListBucketPermissionsRespBucketPermissionsInner
 from hs5_api.models.list_params import ListParams as ListParams
 from hs5_api.models.list_policies_params import ListPoliciesParams as ListPoliciesParams
 from hs5_api.models.list_policies_resp import ListPoliciesResp as ListPoliciesResp
@@ -153,6 +165,8 @@ from hs5_api.models.logout_params import LogoutParams as LogoutParams
 from hs5_api.models.logout_resp import LogoutResp as LogoutResp
 from hs5_api.models.remove_access_key_params import RemoveAccessKeyParams as RemoveAccessKeyParams
 from hs5_api.models.remove_access_key_resp import RemoveAccessKeyResp as RemoveAccessKeyResp
+from hs5_api.models.remove_bucket_permission_params import RemoveBucketPermissionParams as RemoveBucketPermissionParams
+from hs5_api.models.remove_bucket_permission_resp import RemoveBucketPermissionResp as RemoveBucketPermissionResp
 from hs5_api.models.remove_policy_params import RemovePolicyParams as RemovePolicyParams
 from hs5_api.models.remove_policy_resp import RemovePolicyResp as RemovePolicyResp
 from hs5_api.models.remove_role_params import RemoveRoleParams as RemoveRoleParams

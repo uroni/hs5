@@ -6,6 +6,8 @@ README.md
 docs/AddAccessKeyParams.md
 docs/AddAccessKeyResp.md
 docs/AddBucketParams.md
+docs/AddBucketPermissionParams.md
+docs/AddBucketPermissionResp.md
 docs/AddBucketResp.md
 docs/AddPolicyParams.md
 docs/AddPolicyResp.md
@@ -28,6 +30,9 @@ docs/HapiError.md
 docs/ListAccessKeysParams.md
 docs/ListAccessKeysResp.md
 docs/ListAccessKeysRespAccessKeysInner.md
+docs/ListBucketPermissionsParams.md
+docs/ListBucketPermissionsResp.md
+docs/ListBucketPermissionsRespBucketPermissionsInner.md
 docs/ListParams.md
 docs/ListPoliciesParams.md
 docs/ListPoliciesResp.md
@@ -52,6 +57,8 @@ docs/LogoutParams.md
 docs/LogoutResp.md
 docs/RemoveAccessKeyParams.md
 docs/RemoveAccessKeyResp.md
+docs/RemoveBucketPermissionParams.md
+docs/RemoveBucketPermissionResp.md
 docs/RemovePolicyParams.md
 docs/RemovePolicyResp.md
 docs/RemoveRoleParams.md
@@ -76,6 +83,8 @@ hs5_api/models/__init__.py
 hs5_api/models/add_access_key_params.py
 hs5_api/models/add_access_key_resp.py
 hs5_api/models/add_bucket_params.py
+hs5_api/models/add_bucket_permission_params.py
+hs5_api/models/add_bucket_permission_resp.py
 hs5_api/models/add_bucket_resp.py
 hs5_api/models/add_policy_params.py
 hs5_api/models/add_policy_resp.py
@@ -97,6 +106,9 @@ hs5_api/models/hapi_error.py
 hs5_api/models/list_access_keys_params.py
 hs5_api/models/list_access_keys_resp.py
 hs5_api/models/list_access_keys_resp_access_keys_inner.py
+hs5_api/models/list_bucket_permissions_params.py
+hs5_api/models/list_bucket_permissions_resp.py
+hs5_api/models/list_bucket_permissions_resp_bucket_permissions_inner.py
 hs5_api/models/list_params.py
 hs5_api/models/list_policies_params.py
 hs5_api/models/list_policies_resp.py
@@ -121,6 +133,8 @@ hs5_api/models/logout_params.py
 hs5_api/models/logout_resp.py
 hs5_api/models/remove_access_key_params.py
 hs5_api/models/remove_access_key_resp.py
+hs5_api/models/remove_bucket_permission_params.py
+hs5_api/models/remove_bucket_permission_resp.py
 hs5_api/models/remove_policy_params.py
 hs5_api/models/remove_policy_resp.py
 hs5_api/models/remove_role_params.py
@@ -141,4 +155,11 @@ setup.cfg
 setup.py
 test-requirements.txt
 test/__init__.py
+test/test_add_bucket_permission_params.py
+test/test_add_bucket_permission_resp.py
+test/test_list_bucket_permissions_params.py
+test/test_list_bucket_permissions_resp.py
+test/test_list_bucket_permissions_resp_bucket_permissions_inner.py
+test/test_remove_bucket_permission_params.py
+test/test_remove_bucket_permission_resp.py
 tox.ini

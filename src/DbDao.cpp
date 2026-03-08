@@ -1317,6 +1317,36 @@ std::vector<DbDao::BucketPermissionWithUsername> DbDao::getBucketPermissionsWith
 
 /**
 * @-SQLGenAccess
+* @func vector<BucketPermissionWithUsername> DbDao::getBucketPermissionsOfUser
+* @return int64 id, int64 bucket_id, int permissions
+* @sql
+*      SELECT id, bucket_id,  permissions FROM 
+*		bucket_permissions
+*	WHERE user_id=:user_id(int64)
+*/
+std::vector<DbDao::BucketPermissionWithUsername> DbDao::getBucketPermissionsOfUser(int64_t user_id)
+{
+	if(!_getBucketPermissionsOfUser.prepared())
+	{
+		_getBucketPermissionsOfUser=db.prepare("SELECT id, bucket_id,  permissions FROM  bucket_permissions WHERE user_id=?");
+	}
+	_getBucketPermissionsOfUser.bind(user_id);
+	auto& cursor=_getBucketPermissionsOfUser.cursor();
+	std::vector<DbDao::BucketPermissionWithUsername> ret;
+	while(cursor.next())
+	{
+		ret.emplace_back();
+		DbDao::BucketPermissionWithUsername& obj=ret.back();
+		cursor.get(0, obj.id);
+		cursor.get(1, obj.bucket_id);
+		cursor.get(2, obj.permissions);
+	}
+	_getBucketPermissionsOfUser.reset();
+	return ret;
+}
+
+/**
+* @-SQLGenAccess
 * @func optional<int64_t> DbDao::addBucketPermission
 * @return int64_raw id
 * @sql

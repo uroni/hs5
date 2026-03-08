@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+import pytest
 import requests
 from hs5_fixture import Hs5Runner, hs5
 import boto3
@@ -345,4 +346,110 @@ def test_add_user_for_bucket(hs5: Hs5Runner):
     s3.delete_object(Bucket="accessbucket", Key="testkey")
 
 
+@pytest.mark.parametrize("perms", ["r", "w", "d", "rw", "rd", "wd", "rwd"])
+def test_simple_permissions(hs5: Hs5Runner, perms: str):
+    admin_client = hs5.get_api_client_admin()
 
+    admin_client.add_bucket(hs5_models.AddBucketParams(bucketName="perm-bucket"))
+
+    admin_s3 = hs5.get_s3_client()
+    admin_s3.put_object(Bucket="perm-bucket", Key="existingkey", Body=b"testdata")
+
+    user_resp = admin_client.add_user(hs5_models.AddUserParams(username="permuser", password="permuser"))
+
+    user_id = user_resp.id
+ 
+    access_key_resp = admin_client.add_access_key(hs5_models.AddAccessKeyParams(userId=user_id))
+
+    perms_str = list[str]()
+
+    if "r" in perms:
+        perms_str.append("read")
+    if "w" in perms:
+        perms_str.append("write")
+    if "d" in perms:
+        perms_str.append("delete")
+
+    admin_client.add_bucket_permission(hs5_models.AddBucketPermissionParams(
+        bucketName="perm-bucket",
+        addBucketPermissions=perms_str,
+        userId=user_id
+    ))
+
+    permuser_access_key = access_key_resp.access_key
+    permuser_secret_key = access_key_resp.secret_key
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=hs5.get_url(),
+        aws_access_key_id=permuser_access_key,
+        aws_secret_access_key=permuser_secret_key,
+        config=Config(signature_version="s3v4")
+    )
+
+    if "r" in perms:
+        # Try to list buckets (should succeed)
+        resp = s3.list_buckets()
+        assert "Buckets" in resp
+        assert ["perm-bucket"] == [b.get("Name") for b in resp["Buckets"]]
+
+    if "r" in perms:
+        # Try to read an object (should succeed)
+        obj = s3.get_object(Bucket="perm-bucket", Key="existingkey")
+        data = obj["Body"].read()
+        assert data == b"testdata"
+    else:
+        # Try to read an object (should fail)
+        try:
+            s3.get_object(Bucket="perm-bucket", Key="existingkey")
+            assert False, "Should not have permission to read"
+        except ClientError as e:
+            assert "Error" in e.response
+            assert "Message" in e.response["Error"]
+            assert e.response["Error"]["Message"] == "Access Denied"
+            pass
+
+    if "r" in perms:
+        res = s3.list_objects_v2(Bucket="perm-bucket")
+        assert "Contents" in res
+        assert len(res["Contents"]) == 1
+        assert "Key" in res["Contents"][0]
+        assert res["Contents"][0]["Key"] == "existingkey"
+    else:
+        try:
+            s3.list_objects_v2(Bucket="perm-bucket")
+            assert False, "Should not have permission to list objects"
+        except ClientError as e:
+            assert "Error" in e.response
+            assert "Message" in e.response["Error"]
+            assert e.response["Error"]["Message"] == "Access Denied"
+            pass
+    
+
+    if "w" in perms:
+        # Try to upload an object (should succeed)
+        s3.put_object(Bucket="perm-bucket", Key="testkey", Body=b"testdata")
+    else:
+        # Try to upload an object (should fail)
+        try:
+            s3.put_object(Bucket="perm-bucket", Key="testkey", Body=b"testdata")
+            assert False, "Should not have permission to upload"
+        except ClientError as e:
+            assert "Error" in e.response
+            assert "Message" in e.response["Error"]
+            assert e.response["Error"]["Message"] == "Access Denied"
+            pass
+
+    if "d" in perms:
+        # Try to delete an object (should succeed)
+        s3.delete_object(Bucket="perm-bucket", Key="existingkey")
+    else:
+        # Try to delete an object (should fail)
+        try:
+            s3.delete_object(Bucket="perm-bucket", Key="existingkey")
+            assert False, "Should not have permission to delete"
+        except ClientError as e:
+            assert "Error" in e.response
+            assert "Message" in e.response["Error"]
+            assert e.response["Error"]["Message"] == "Access Denied"
+            pass

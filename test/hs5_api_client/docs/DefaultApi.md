@@ -6,6 +6,7 @@ Method | HTTP request | Description
 ------------- | ------------- | -------------
 [**add_access_key**](DefaultApi.md#add_access_key) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/addAccessKey | 
 [**add_bucket**](DefaultApi.md#add_bucket) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/addBucket | 
+[**add_bucket_permission**](DefaultApi.md#add_bucket_permission) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/addBucketPermission | 
 [**add_policy**](DefaultApi.md#add_policy) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/addPolicy | 
 [**add_role**](DefaultApi.md#add_role) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/addRole | 
 [**add_role_policy**](DefaultApi.md#add_role_policy) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/addRolePolicy | 
@@ -16,6 +17,7 @@ Method | HTTP request | Description
 [**delete_bucket**](DefaultApi.md#delete_bucket) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/deleteBucket | 
 [**list**](DefaultApi.md#list) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/list | 
 [**list_access_keys**](DefaultApi.md#list_access_keys) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/listAccessKeys | 
+[**list_bucket_permissions**](DefaultApi.md#list_bucket_permissions) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/listBucketPermissions | 
 [**list_policies**](DefaultApi.md#list_policies) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/listPolicies | 
 [**list_role_policies**](DefaultApi.md#list_role_policies) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/listRolePolicies | 
 [**list_roles**](DefaultApi.md#list_roles) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/listRoles | 
@@ -24,6 +26,7 @@ Method | HTTP request | Description
 [**login**](DefaultApi.md#login) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/login | 
 [**logout**](DefaultApi.md#logout) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/logout | 
 [**remove_access_key**](DefaultApi.md#remove_access_key) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/removeAccessKey | 
+[**remove_bucket_permission**](DefaultApi.md#remove_bucket_permission) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/removeBucketPermission | 
 [**remove_policy**](DefaultApi.md#remove_policy) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/removePolicy | 
 [**remove_role**](DefaultApi.md#remove_role) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/removeRole | 
 [**remove_role_policy**](DefaultApi.md#remove_role_policy) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/removeRolePolicy | 
@@ -181,6 +184,90 @@ Name | Type | Description  | Notes
 ### Return type
 
 [**AddBucketResp**](AddBucketResp.md)
+
+### Authorization
+
+[cookieAuth](../README.md#cookieAuth), [bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | OK |  -  |
+**400** | Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **add_bucket_permission**
+> AddBucketPermissionResp add_bucket_permission(add_bucket_permission_params=add_bucket_permission_params)
+
+Add bucket permission
+
+### Example
+
+* Api Key Authentication (cookieAuth):
+* Bearer Authentication (bearerAuth):
+
+```python
+import hs5_api
+from hs5_api.models.add_bucket_permission_params import AddBucketPermissionParams
+from hs5_api.models.add_bucket_permission_resp import AddBucketPermissionResp
+from hs5_api.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost
+# See configuration.py for a list of all supported configuration parameters.
+configuration = hs5_api.Configuration(
+    host = "http://localhost"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: cookieAuth
+configuration.api_key['cookieAuth'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['cookieAuth'] = 'Bearer'
+
+# Configure Bearer authorization: bearerAuth
+configuration = hs5_api.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with hs5_api.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = hs5_api.DefaultApi(api_client)
+    add_bucket_permission_params = hs5_api.AddBucketPermissionParams() # AddBucketPermissionParams |  (optional)
+
+    try:
+        api_response = api_instance.add_bucket_permission(add_bucket_permission_params=add_bucket_permission_params)
+        print("The response of DefaultApi->add_bucket_permission:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling DefaultApi->add_bucket_permission: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **add_bucket_permission_params** | [**AddBucketPermissionParams**](AddBucketPermissionParams.md)|  | [optional] 
+
+### Return type
+
+[**AddBucketPermissionResp**](AddBucketPermissionResp.md)
 
 ### Authorization
 
@@ -1040,6 +1127,90 @@ Name | Type | Description  | Notes
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
+# **list_bucket_permissions**
+> ListBucketPermissionsResp list_bucket_permissions(list_bucket_permissions_params=list_bucket_permissions_params)
+
+List bucket permissions
+
+### Example
+
+* Api Key Authentication (cookieAuth):
+* Bearer Authentication (bearerAuth):
+
+```python
+import hs5_api
+from hs5_api.models.list_bucket_permissions_params import ListBucketPermissionsParams
+from hs5_api.models.list_bucket_permissions_resp import ListBucketPermissionsResp
+from hs5_api.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost
+# See configuration.py for a list of all supported configuration parameters.
+configuration = hs5_api.Configuration(
+    host = "http://localhost"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: cookieAuth
+configuration.api_key['cookieAuth'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['cookieAuth'] = 'Bearer'
+
+# Configure Bearer authorization: bearerAuth
+configuration = hs5_api.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with hs5_api.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = hs5_api.DefaultApi(api_client)
+    list_bucket_permissions_params = hs5_api.ListBucketPermissionsParams() # ListBucketPermissionsParams |  (optional)
+
+    try:
+        api_response = api_instance.list_bucket_permissions(list_bucket_permissions_params=list_bucket_permissions_params)
+        print("The response of DefaultApi->list_bucket_permissions:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling DefaultApi->list_bucket_permissions: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **list_bucket_permissions_params** | [**ListBucketPermissionsParams**](ListBucketPermissionsParams.md)|  | [optional] 
+
+### Return type
+
+[**ListBucketPermissionsResp**](ListBucketPermissionsResp.md)
+
+### Authorization
+
+[cookieAuth](../README.md#cookieAuth), [bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | OK |  -  |
+**400** | Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
 # **list_policies**
 > ListPoliciesResp list_policies(list_policies_params=list_policies_params)
 
@@ -1693,6 +1864,90 @@ Name | Type | Description  | Notes
 ### Return type
 
 [**RemoveAccessKeyResp**](RemoveAccessKeyResp.md)
+
+### Authorization
+
+[cookieAuth](../README.md#cookieAuth), [bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | OK |  -  |
+**400** | Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **remove_bucket_permission**
+> RemoveBucketPermissionResp remove_bucket_permission(remove_bucket_permission_params=remove_bucket_permission_params)
+
+Remove bucket permission
+
+### Example
+
+* Api Key Authentication (cookieAuth):
+* Bearer Authentication (bearerAuth):
+
+```python
+import hs5_api
+from hs5_api.models.remove_bucket_permission_params import RemoveBucketPermissionParams
+from hs5_api.models.remove_bucket_permission_resp import RemoveBucketPermissionResp
+from hs5_api.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost
+# See configuration.py for a list of all supported configuration parameters.
+configuration = hs5_api.Configuration(
+    host = "http://localhost"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: cookieAuth
+configuration.api_key['cookieAuth'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['cookieAuth'] = 'Bearer'
+
+# Configure Bearer authorization: bearerAuth
+configuration = hs5_api.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with hs5_api.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = hs5_api.DefaultApi(api_client)
+    remove_bucket_permission_params = hs5_api.RemoveBucketPermissionParams() # RemoveBucketPermissionParams |  (optional)
+
+    try:
+        api_response = api_instance.remove_bucket_permission(remove_bucket_permission_params=remove_bucket_permission_params)
+        print("The response of DefaultApi->remove_bucket_permission:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling DefaultApi->remove_bucket_permission: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **remove_bucket_permission_params** | [**RemoveBucketPermissionParams**](RemoveBucketPermissionParams.md)|  | [optional] 
+
+### Return type
+
+[**RemoveBucketPermissionResp**](RemoveBucketPermissionResp.md)
 
 ### Authorization
 

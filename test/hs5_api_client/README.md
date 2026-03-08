@@ -101,6 +101,7 @@ Class | Method | HTTP request | Description
 ------------ | ------------- | ------------- | -------------
 *DefaultApi* | [**add_access_key**](docs/DefaultApi.md#add_access_key) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/addAccessKey | 
 *DefaultApi* | [**add_bucket**](docs/DefaultApi.md#add_bucket) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/addBucket | 
+*DefaultApi* | [**add_bucket_permission**](docs/DefaultApi.md#add_bucket_permission) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/addBucketPermission | 
 *DefaultApi* | [**add_policy**](docs/DefaultApi.md#add_policy) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/addPolicy | 
 *DefaultApi* | [**add_role**](docs/DefaultApi.md#add_role) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/addRole | 
 *DefaultApi* | [**add_role_policy**](docs/DefaultApi.md#add_role_policy) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/addRolePolicy | 
@@ -111,6 +112,7 @@ Class | Method | HTTP request | Description
 *DefaultApi* | [**delete_bucket**](docs/DefaultApi.md#delete_bucket) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/deleteBucket | 
 *DefaultApi* | [**list**](docs/DefaultApi.md#list) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/list | 
 *DefaultApi* | [**list_access_keys**](docs/DefaultApi.md#list_access_keys) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/listAccessKeys | 
+*DefaultApi* | [**list_bucket_permissions**](docs/DefaultApi.md#list_bucket_permissions) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/listBucketPermissions | 
 *DefaultApi* | [**list_policies**](docs/DefaultApi.md#list_policies) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/listPolicies | 
 *DefaultApi* | [**list_role_policies**](docs/DefaultApi.md#list_role_policies) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/listRolePolicies | 
 *DefaultApi* | [**list_roles**](docs/DefaultApi.md#list_roles) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/listRoles | 
@@ -119,6 +121,7 @@ Class | Method | HTTP request | Description
 *DefaultApi* | [**login**](docs/DefaultApi.md#login) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/login | 
 *DefaultApi* | [**logout**](docs/DefaultApi.md#logout) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/logout | 
 *DefaultApi* | [**remove_access_key**](docs/DefaultApi.md#remove_access_key) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/removeAccessKey | 
+*DefaultApi* | [**remove_bucket_permission**](docs/DefaultApi.md#remove_bucket_permission) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/removeBucketPermission | 
 *DefaultApi* | [**remove_policy**](docs/DefaultApi.md#remove_policy) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/removePolicy | 
 *DefaultApi* | [**remove_role**](docs/DefaultApi.md#remove_role) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/removeRole | 
 *DefaultApi* | [**remove_role_policy**](docs/DefaultApi.md#remove_role_policy) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/removeRolePolicy | 
@@ -132,6 +135,8 @@ Class | Method | HTTP request | Description
  - [AddAccessKeyParams](docs/AddAccessKeyParams.md)
  - [AddAccessKeyResp](docs/AddAccessKeyResp.md)
  - [AddBucketParams](docs/AddBucketParams.md)
+ - [AddBucketPermissionParams](docs/AddBucketPermissionParams.md)
+ - [AddBucketPermissionResp](docs/AddBucketPermissionResp.md)
  - [AddBucketResp](docs/AddBucketResp.md)
  - [AddPolicyParams](docs/AddPolicyParams.md)
  - [AddPolicyResp](docs/AddPolicyResp.md)
@@ -153,6 +158,9 @@ Class | Method | HTTP request | Description
  - [ListAccessKeysParams](docs/ListAccessKeysParams.md)
  - [ListAccessKeysResp](docs/ListAccessKeysResp.md)
  - [ListAccessKeysRespAccessKeysInner](docs/ListAccessKeysRespAccessKeysInner.md)
+ - [ListBucketPermissionsParams](docs/ListBucketPermissionsParams.md)
+ - [ListBucketPermissionsResp](docs/ListBucketPermissionsResp.md)
+ - [ListBucketPermissionsRespBucketPermissionsInner](docs/ListBucketPermissionsRespBucketPermissionsInner.md)
  - [ListParams](docs/ListParams.md)
  - [ListPoliciesParams](docs/ListPoliciesParams.md)
  - [ListPoliciesResp](docs/ListPoliciesResp.md)
@@ -177,6 +185,8 @@ Class | Method | HTTP request | Description
  - [LogoutResp](docs/LogoutResp.md)
  - [RemoveAccessKeyParams](docs/RemoveAccessKeyParams.md)
  - [RemoveAccessKeyResp](docs/RemoveAccessKeyResp.md)
+ - [RemoveBucketPermissionParams](docs/RemoveBucketPermissionParams.md)
+ - [RemoveBucketPermissionResp](docs/RemoveBucketPermissionResp.md)
  - [RemovePolicyParams](docs/RemovePolicyParams.md)
  - [RemovePolicyResp](docs/RemovePolicyResp.md)
  - [RemoveRoleParams](docs/RemoveRoleParams.md)
