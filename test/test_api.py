@@ -5,6 +5,8 @@ from hs5_fixture import Hs5Runner, hs5
 import boto3
 from botocore.client import Config
 from botocore.exceptions import ClientError
+import hs5_api.models as hs5_models
+
 
 @dataclass
 class LoginData:
@@ -267,6 +269,87 @@ def test_delete_bucket_via_api(hs5: Hs5Runner, tmp_path: Path):
         assert "Message" in e.response["Error"]
         assert e.response["Error"]["Message"] == "The specified bucket does not exist"
         pass
+
+
+def test_add_user_for_bucket(hs5: Hs5Runner):
+    admin_client = hs5.get_api_client_admin()
+
+    admin_client.add_bucket(hs5_models.AddBucketParams(ses=hs5.get_admin_session(), bucketName="accessbucket"))
+
+    user_resp = admin_client.add_user(hs5_models.AddUserParams(ses=hs5.get_admin_session(), username="bucketuser", password="bucketuser"))
+
+    user_id = user_resp.id
+ 
+    access_key_resp = admin_client.add_access_key(hs5_models.AddAccessKeyParams(ses=hs5.get_admin_session(), userId=user_id))
+
+    bucketuser_access_key = access_key_resp.access_key
+    bucketuser_secret_key = access_key_resp.secret_key
+
+    policy_resp = admin_client.add_policy(hs5_models.AddPolicyParams(
+        ses=hs5.get_admin_session(),
+        policyName="bucketuser-policy",
+        policyDocument="""
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": "*",
+                        "Resource": ["arn:aws:s3:::accessbucket/*", "arn:aws:s3:::accessbucket"]
+                    }
+                ]
+            }
+            """
+    ))
+
+    policy_id = policy_resp.id
+
+    role_resp = admin_client.add_role(hs5_models.AddRoleParams(
+        ses=hs5.get_admin_session(),  roleName="bucketuser-role"))
+
+    role_id = role_resp.id
+
+    admin_client.add_role_policy(hs5_models.AddRolePolicyParams(
+        ses=hs5.get_admin_session(),
+        roleId=role_id,
+        policyId=policy_id
+    ))
+
+    admin_client.add_user_role(hs5_models.AddUserRoleParams(
+        ses=hs5.get_admin_session(),
+        userId=user_id,
+        roleId=role_id
+    ))
+
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=hs5.get_url(),
+        aws_access_key_id=bucketuser_access_key,
+        aws_secret_access_key=bucketuser_secret_key,
+        config=Config(signature_version="s3v4")
+    )
+
+    # Try to list buckets (should succeed)
+    resp = s3.list_buckets()
+    assert "Buckets" in resp
+    assert ["accessbucket"] == [b.get("Name") for b in resp["Buckets"]]
+
+    (user_ses, user_client) = hs5.get_api_client("bucketuser", "bucketuser")
+
+    list_resp = user_client.list(hs5_models.ListParams(ses=user_ses, path="/"))
+
+    names = [o.name for o in list_resp.objects]
+
+    assert names == ["accessbucket"]
+
+    # Can upload, read and delete objects in the bucket
+
+    s3.put_object(Bucket="accessbucket", Key="testkey", Body=b"testdata")
+    obj = s3.get_object(Bucket="accessbucket", Key="testkey")
+    data = obj["Body"].read()
+    assert data == b"testdata"
+    s3.delete_object(Bucket="accessbucket", Key="testkey")
 
 
 
