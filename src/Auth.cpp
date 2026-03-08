@@ -190,7 +190,7 @@ bool isAuthorizedNoLock(const std::string_view resource, const Action action, co
 
     if((perm & BUCKET_PERMISSION_READ) && (action == Action::GetObject || action == Action::ListObjects || action == Action::ListBuckets || action == Action::ListMultipartUploads || action == Action::GetBucketLocation))
         return true;
-    else if((perm & BUCKET_PERMISSION_WRITE) && (action == Action::PutObject || action == Action::PutObjectPart || action == Action::CompleteMultipartUpload || action == Action::CreateBucket || action == Action::CreateMultipartUpload || action == Action::CopyObject || action == Action::UploadPartCopy))
+    else if((perm & BUCKET_PERMISSION_WRITE) && (action == Action::PutObject || action == Action::PutObjectPart || action == Action::CompleteMultipartUpload || action == Action::CreateMultipartUpload || action == Action::CopyObject || action == Action::UploadPartCopy))
         return true;
     else if((perm & BUCKET_PERMISSION_DELETE) && (action == Action::DeleteObject || action == Action::DeleteBucket || action == Action::AbortMultipartUpload || action == Action::DeleteObjects))
         return true;
