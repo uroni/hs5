@@ -16,6 +16,5 @@ namespace Api {
 
     struct AddBucketParams {
         std::string bucketName;
-        std::string ses;
     };
 }

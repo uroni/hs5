@@ -26,10 +26,9 @@ class AddUserRoleParams(BaseModel):
     """
     AddUserRoleParams
     """ # noqa: E501
-    ses: StrictStr
     user_id: StrictStr = Field(alias="userId")
     role_id: StrictStr = Field(alias="roleId")
-    __properties: ClassVar[List[str]] = ["ses", "userId", "roleId"]
+    __properties: ClassVar[List[str]] = ["userId", "roleId"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,7 +81,6 @@ class AddUserRoleParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "userId": obj.get("userId"),
             "roleId": obj.get("roleId")
         })

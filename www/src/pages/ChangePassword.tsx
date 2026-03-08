@@ -2,7 +2,7 @@ import { FormEvent, Suspense, useState } from 'react';
 import { state } from '../App';
 import { Field, Button, Input, Spinner, MessageBar, MessageBarBody, MessageBarTitle } from '@fluentui/react-components';
 import { useSnapshot } from 'valtio';
-import { ApiError, postApiV1B64Be5124B034028A58913931942E205ChangePassword } from '../api';
+import { ApiError, changePassword } from '../api';
 import { HapiError, Herror } from '../errorapi/HapiError';
 import { TableWrapper } from '../components/TableWrapper';
 
@@ -46,9 +46,8 @@ const ChangePassword = () => {
     }
 
     try {
-      await postApiV1B64Be5124B034028A58913931942E205ChangePassword({
+      await changePassword({
         requestBody: {
-          ses: snap.session,
           oldPassword: oldPassword,
           password: newPassword
         }

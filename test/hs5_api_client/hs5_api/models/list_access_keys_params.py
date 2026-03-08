@@ -26,10 +26,9 @@ class ListAccessKeysParams(BaseModel):
     """
     ListAccessKeysParams
     """ # noqa: E501
-    ses: StrictStr
     user_id: StrictStr = Field(alias="userId")
     continuation_token: Optional[StrictStr] = Field(default=None, alias="continuationToken")
-    __properties: ClassVar[List[str]] = ["ses", "userId", "continuationToken"]
+    __properties: ClassVar[List[str]] = ["userId", "continuationToken"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,7 +81,6 @@ class ListAccessKeysParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "userId": obj.get("userId"),
             "continuationToken": obj.get("continuationToken")
         })

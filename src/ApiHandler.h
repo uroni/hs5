@@ -126,6 +126,7 @@ private:
 
     std::string func;
     std::string body;
+    std::string authHeader;
     std::string cookieSes;
 
     SingleFileStorage &sfs;

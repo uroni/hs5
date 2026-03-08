@@ -26,9 +26,8 @@ class RemoveAccessKeyParams(BaseModel):
     """
     RemoveAccessKeyParams
     """ # noqa: E501
-    ses: StrictStr
     id: StrictStr
-    __properties: ClassVar[List[str]] = ["ses", "id"]
+    __properties: ClassVar[List[str]] = ["id"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -81,7 +80,6 @@ class RemoveAccessKeyParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "id": obj.get("id")
         })
         return _obj

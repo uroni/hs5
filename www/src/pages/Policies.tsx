@@ -4,7 +4,7 @@ import { useSuspenseQuery, useQueryClient } from "@tanstack/react-query";
 import { TableWrapper } from '../components/TableWrapper';
 import { Pagination, PaginationItemsPerPageSelector, usePagination } from '../components/Pagination';
 import { filterBySearch, SearchBox, useFilteredBySearch } from '../components/SearchBox';
-import { ApiError, postApiV1B64Be5124B034028A58913931942E205ListPolicies, postApiV1B64Be5124B034028A58913931942E205AddPolicy, postApiV1B64Be5124B034028A58913931942E205RemovePolicy, postApiV1B64Be5124B034028A58913931942E205ChangePolicy } from '../api';
+import { ApiError, listPolicies, addPolicy, removePolicy, changePolicy } from '../api';
 import { state } from '../App';
 import { useSnapshot } from 'valtio';
 import { AddRegular, DeleteRegular, DocumentRegular, EditRegular } from '@fluentui/react-icons';
@@ -68,7 +68,7 @@ const Policies = () => {
 
   const policiesResult = useSuspenseQuery({
     queryKey: ["policies", snap.session],
-    queryFn: async () => { return await postApiV1B64Be5124B034028A58913931942E205ListPolicies({requestBody: {ses: snap.session}}); },
+    queryFn: async () => { return await listPolicies(); },
   });
 
   const data = policiesResult.data!.policies as PolicyType[];
@@ -129,9 +129,8 @@ const Policies = () => {
     setAddError('');
     setAddDocError('');
     try {
-      await postApiV1B64Be5124B034028A58913931942E205AddPolicy({
+      await addPolicy({
         requestBody: { 
-          ses: snap.session, 
           policyName: newPolicyName.trim(),
           policyDocument: newPolicyDocument.trim()
         }
@@ -154,8 +153,8 @@ const Policies = () => {
   const handleDeletePolicy = async (policy: PolicyType) => {
     setIsDeleting(policy.id);
     try {
-      await postApiV1B64Be5124B034028A58913931942E205RemovePolicy({
-        requestBody: { ses: snap.session, id: policy.id }
+      await removePolicy({
+        requestBody: { id: policy.id }
       });
       await queryClient.invalidateQueries({ queryKey: ["policies"] });
     } catch (apiE) {
@@ -176,9 +175,8 @@ const Policies = () => {
     setIsEditing(true);
     setEditError('');
     try {
-      await postApiV1B64Be5124B034028A58913931942E205ChangePolicy({
+      await changePolicy({
         requestBody: { 
-          ses: snap.session, 
           id: policyToEdit.id,
           document: editDocument.trim()
         }

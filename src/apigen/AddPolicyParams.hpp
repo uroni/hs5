@@ -17,6 +17,5 @@ namespace Api {
     struct AddPolicyParams {
         std::string policyDocument;
         std::string policyName;
-        std::string ses;
     };
 }

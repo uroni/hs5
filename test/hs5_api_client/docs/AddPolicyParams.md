@@ -5,7 +5,6 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**ses** | **str** |  | 
 **policy_name** | **str** |  | 
 **policy_document** | **str** |  | 
 

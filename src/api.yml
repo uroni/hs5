@@ -2,6 +2,18 @@ openapi: '3.0.2'
 info:
   title: HS5 API
   version: '1.0'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: ses
+security:
+  - bearerAuth: []
+  - cookieAuth: []
 paths:
   /api-v1-b64be512-4b03-4028-a589-13931942e205/login:
     post:

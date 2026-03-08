@@ -5,7 +5,7 @@ import { useParams } from 'react-router-dom';
 import { TableWrapper } from '../components/TableWrapper';
 import { Pagination, PaginationItemsPerPageSelector, usePagination } from '../components/Pagination';
 import { filterBySearch, SearchBox, useFilteredBySearch } from '../components/SearchBox';
-import { ApiError, postApiV1B64Be5124B034028A58913931942E205ListAccessKeys, postApiV1B64Be5124B034028A58913931942E205AddAccessKey, postApiV1B64Be5124B034028A58913931942E205RemoveAccessKey } from '../api';
+import { ApiError, listAccessKeys, addAccessKey, removeAccessKey } from '../api';
 import { state } from '../App';
 import { useSnapshot } from 'valtio';
 import { AddRegular, DeleteRegular, CopyRegular, DismissRegular } from '@fluentui/react-icons';
@@ -79,7 +79,7 @@ const UserAccessKeys = () => {
 
   const accessKeysResult = useSuspenseQuery({
     queryKey: ["accessKeys", snap.session, userId],
-    queryFn: async () => { return await postApiV1B64Be5124B034028A58913931942E205ListAccessKeys({requestBody: {ses: snap.session, userId: userId!}}); },
+    queryFn: async () => { return await listAccessKeys({ requestBody: { userId: userId! } }); },
   });
 
   const data = accessKeysResult.data!.accessKeys as AccessKeyType[];
@@ -119,8 +119,8 @@ const UserAccessKeys = () => {
     setIsAdding(true);
     setAddError('');
     try {
-      const result = await postApiV1B64Be5124B034028A58913931942E205AddAccessKey({
-        requestBody: { ses: snap.session, userId: userId! }
+      const result = await addAccessKey({
+        requestBody: {  userId: userId! }
       });
       setNewAccessKey({
         id: result.id as string,
@@ -143,8 +143,8 @@ const UserAccessKeys = () => {
   const handleRemoveAccessKey = async (accessKey: AccessKeyType) => {
     setIsRemoving(accessKey.id);
     try {
-      await postApiV1B64Be5124B034028A58913931942E205RemoveAccessKey({
-        requestBody: { ses: snap.session, id: accessKey.id }
+      await removeAccessKey({
+        requestBody: {  id: accessKey.id }
       });
       await queryClient.invalidateQueries({ queryKey: ["accessKeys", snap.session, userId] });
     } catch (apiE) {

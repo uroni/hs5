@@ -5,7 +5,7 @@ import { useParams } from 'react-router-dom';
 import { TableWrapper } from '../components/TableWrapper';
 import { Pagination, PaginationItemsPerPageSelector, usePagination } from '../components/Pagination';
 import { filterBySearch, SearchBox, useFilteredBySearch } from '../components/SearchBox';
-import { ApiError, postApiV1B64Be5124B034028A58913931942E205ListRolePolicies, postApiV1B64Be5124B034028A58913931942E205AddRolePolicy, postApiV1B64Be5124B034028A58913931942E205RemoveRolePolicy, postApiV1B64Be5124B034028A58913931942E205ListPolicies } from '../api';
+import { ApiError, listRolePolicies, addRolePolicy, removeRolePolicy, listPolicies, addRole } from '../api';
 import { state } from '../App';
 import { useSnapshot } from 'valtio';
 import { AddRegular, DeleteRegular } from '@fluentui/react-icons';
@@ -56,12 +56,12 @@ const RolePolicies = () => {
 
   const rolePoliciesResult = useSuspenseQuery({
     queryKey: ["rolePolicies", snap.session, roleId],
-    queryFn: async () => { return await postApiV1B64Be5124B034028A58913931942E205ListRolePolicies({requestBody: {ses: snap.session, roleId: roleId!}}); },
+    queryFn: async () => { return await listRolePolicies({ requestBody: { roleId: roleId! } }); },
   });
 
   const policiesResult = useSuspenseQuery({
     queryKey: ["policies", snap.session],
-    queryFn: async () => { return await postApiV1B64Be5124B034028A58913931942E205ListPolicies({requestBody: {ses: snap.session}}); },
+    queryFn: async () => { return await listPolicies(); },
   });
 
   const data = rolePoliciesResult.data!.rolePolicies as RolePolicyType[];
@@ -105,8 +105,8 @@ const RolePolicies = () => {
     setIsAdding(true);
     setAddError('');
     try {
-      await postApiV1B64Be5124B034028A58913931942E205AddRolePolicy({
-        requestBody: { ses: snap.session, roleId: roleId!, policyId: selectedPolicyId }
+      await addRolePolicy({
+        requestBody: { roleId: roleId!, policyId: selectedPolicyId }
       });
       setSelectedPolicyId('');
       await queryClient.invalidateQueries({ queryKey: ["rolePolicies", snap.session, roleId] });
@@ -125,8 +125,8 @@ const RolePolicies = () => {
   const handleRemovePolicy = async (rolePolicy: RolePolicyType) => {
     setIsRemoving(rolePolicy.id);
     try {
-      await postApiV1B64Be5124B034028A58913931942E205RemoveRolePolicy({
-        requestBody: { ses: snap.session, id: rolePolicy.id }
+      await removeRolePolicy({
+        requestBody: { id: rolePolicy.id }
       });
       await queryClient.invalidateQueries({ queryKey: ["rolePolicies", snap.session, roleId] });
     } catch (apiE) {

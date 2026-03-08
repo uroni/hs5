@@ -4,7 +4,7 @@ import { useSuspenseQuery, useQueryClient } from "@tanstack/react-query";
 import { TableWrapper } from '../components/TableWrapper';
 import { Pagination, PaginationItemsPerPageSelector, usePagination } from '../components/Pagination';
 import { filterBySearch, SearchBox, useFilteredBySearch } from '../components/SearchBox';
-import { ApiError, postApiV1B64Be5124B034028A58913931942E205ListUsers, postApiV1B64Be5124B034028A58913931942E205RemoveUser, postApiV1B64Be5124B034028A58913931942E205AddUser } from '../api';
+import { ApiError, listUsers, removeUser, addUser } from '../api';
 import { Pages, router, state } from '../App';
 import { useSnapshot } from 'valtio';
 import { AddRegular, DeleteRegular, KeyRegular, PeopleRegular } from '@fluentui/react-icons';
@@ -68,8 +68,8 @@ const Users = () => {
     setIsAdding(true);
     setAddError('');
     try {
-      await postApiV1B64Be5124B034028A58913931942E205AddUser({
-        requestBody: { ses: snap.session, username: newUsername, password: newPassword }
+      await addUser({
+        requestBody: {  username: newUsername, password: newPassword }
       });
       await queryClient.invalidateQueries({ queryKey: ["users", snap.session] });
       setAddDialogOpen(false);
@@ -91,8 +91,8 @@ const Users = () => {
     setIsDeleting(user.id);
     setDeleteError('');
     try {
-      await postApiV1B64Be5124B034028A58913931942E205RemoveUser({
-        requestBody: { ses: snap.session, username: user.username }
+      await removeUser({
+        requestBody: {  username: user.username }
       });
       await queryClient.invalidateQueries({ queryKey: ["users", snap.session] });
       setDeleteDialogOpen(false);
@@ -168,7 +168,7 @@ const Users = () => {
 
   const usersResult = useSuspenseQuery({
     queryKey: ["users", snap.session],
-    queryFn: async () => { return await postApiV1B64Be5124B034028A58913931942E205ListUsers({requestBody: {ses: snap.session}}); },
+    queryFn: async () => { return await listUsers(); },
   });
 
   const data = usersResult.data!.users as UserType[];

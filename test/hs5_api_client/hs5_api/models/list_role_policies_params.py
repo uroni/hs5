@@ -26,10 +26,9 @@ class ListRolePoliciesParams(BaseModel):
     """
     ListRolePoliciesParams
     """ # noqa: E501
-    ses: StrictStr
     role_id: StrictStr = Field(alias="roleId")
     continuation_token: Optional[StrictStr] = Field(default=None, alias="continuationToken")
-    __properties: ClassVar[List[str]] = ["ses", "roleId", "continuationToken"]
+    __properties: ClassVar[List[str]] = ["roleId", "continuationToken"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,7 +81,6 @@ class ListRolePoliciesParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "roleId": obj.get("roleId"),
             "continuationToken": obj.get("continuationToken")
         })

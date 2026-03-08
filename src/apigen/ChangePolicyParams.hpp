@@ -17,6 +17,5 @@ namespace Api {
     struct ChangePolicyParams {
         std::string document;
         std::string id;
-        std::string ses;
     };
 }

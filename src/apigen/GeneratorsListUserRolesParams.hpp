@@ -20,14 +20,12 @@ namespace Api {
 
     inline void from_json(const json & j, ListUserRolesParams& x) {
         x.continuationToken = get_stack_optional<std::string>(j, "continuationToken");
-        x.ses = j.at("ses").get<std::string>();
         x.userId = j.at("userId").get<std::string>();
     }
 
     inline void to_json(json & j, const ListUserRolesParams & x) {
         j = json::object();
         j["continuationToken"] = x.continuationToken;
-        j["ses"] = x.ses;
         j["userId"] = x.userId;
     }
 }

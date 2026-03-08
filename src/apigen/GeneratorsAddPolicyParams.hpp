@@ -20,13 +20,11 @@ namespace Api {
     inline void from_json(const json & j, AddPolicyParams& x) {
         x.policyDocument = j.at("policyDocument").get<std::string>();
         x.policyName = j.at("policyName").get<std::string>();
-        x.ses = j.at("ses").get<std::string>();
     }
 
     inline void to_json(json & j, const AddPolicyParams & x) {
         j = json::object();
         j["policyDocument"] = x.policyDocument;
         j["policyName"] = x.policyName;
-        j["ses"] = x.ses;
     }
 }

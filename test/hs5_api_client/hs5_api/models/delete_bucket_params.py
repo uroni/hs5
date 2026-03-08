@@ -26,9 +26,8 @@ class DeleteBucketParams(BaseModel):
     """
     DeleteBucketParams
     """ # noqa: E501
-    ses: StrictStr
     bucket_name: StrictStr = Field(alias="bucketName")
-    __properties: ClassVar[List[str]] = ["ses", "bucketName"]
+    __properties: ClassVar[List[str]] = ["bucketName"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -81,7 +80,6 @@ class DeleteBucketParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "bucketName": obj.get("bucketName")
         })
         return _obj

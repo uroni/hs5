@@ -252,6 +252,11 @@ void ApiHandler::onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexc
 
     func = path.substr(bucketEnd+1);
 
+    authHeader = headers->getHeaders().getSingleOrEmpty(HTTP_HEADER_AUTHORIZATION);
+
+    if(authHeader.starts_with("Bearer "))
+        authHeader = authHeader.substr(7);
+
     std::string cl = headers->getHeaders().getSingleOrEmpty(
                     proxygen::HTTP_HEADER_CONTENT_LENGTH);
     if (cl.empty())
@@ -409,14 +414,17 @@ ApiHandler::ApiResponse ApiHandler::runRequest()
         }
         else
         {
-            auto params = json::parse(body);
-
-            if(!params.contains("ses") || !params["ses"].is_string())
+            if(authHeader.empty())
                 throw ApiError(Api::Herror::sessionRequired);
 
-            auto session = getSession(params["ses"].get<std::string>(), cookieSes);
+            auto session = getSession(authHeader, cookieSes);
             if(!session)
                 throw ApiError(Api::Herror::sessionNotFound);
+
+            if(body.empty())
+                body = "{}";
+
+            auto params = json::parse(body);
             
             if(func=="addUser")
                 resp = addUser(params, *session);
@@ -480,7 +488,8 @@ ApiHandler::ApiResponse ApiHandler::runRequest()
     catch(const ApiError& e)
     {
         json resp = e.response();
-        if( e.response().herror == Api::Herror::sessionNotFound)
+        if( e.response().herror == Api::Herror::sessionNotFound ||
+             e.response().herror == Api::Herror::sessionRequired)
             return ApiResponse{.code=401, .body=resp.dump(), .contentType="application/json"};
 
         return ApiResponse{.code=400, .body=resp.dump(), .contentType="application/json"};
@@ -1373,7 +1382,7 @@ Api::LogoutResp ApiHandler::logout(const Api::LogoutParams& params, SessionScope
 {
     sessionStorage.unlock();
 
-    if(!invalidateSession(params.ses, cookieSes))
+    if(!invalidateSession(authHeader, cookieSes))
         throw ApiError(Api::Herror::sessionNotFound);
 
     return {};

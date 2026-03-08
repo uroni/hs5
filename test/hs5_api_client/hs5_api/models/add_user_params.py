@@ -26,10 +26,9 @@ class AddUserParams(BaseModel):
     """
     AddUserParams
     """ # noqa: E501
-    ses: StrictStr
     username: StrictStr
     password: StrictStr
-    __properties: ClassVar[List[str]] = ["ses", "username", "password"]
+    __properties: ClassVar[List[str]] = ["username", "password"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,7 +81,6 @@ class AddUserParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "username": obj.get("username"),
             "password": obj.get("password")
         })

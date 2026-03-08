@@ -16,6 +16,5 @@ namespace Api {
 
     struct RemoveRolePolicyParams {
         std::string id;
-        std::string ses;
     };
 }

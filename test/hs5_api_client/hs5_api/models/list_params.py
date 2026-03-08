@@ -26,10 +26,9 @@ class ListParams(BaseModel):
     """
     ListParams
     """ # noqa: E501
-    ses: StrictStr
     path: StrictStr
     continuation_token: Optional[StrictStr] = Field(default=None, alias="continuationToken")
-    __properties: ClassVar[List[str]] = ["ses", "path", "continuationToken"]
+    __properties: ClassVar[List[str]] = ["path", "continuationToken"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,7 +81,6 @@ class ListParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "path": obj.get("path"),
             "continuationToken": obj.get("continuationToken")
         })

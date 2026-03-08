@@ -16,6 +16,5 @@ namespace Api {
 
     struct DeleteBucketParams {
         std::string bucketName;
-        std::string ses;
     };
 }

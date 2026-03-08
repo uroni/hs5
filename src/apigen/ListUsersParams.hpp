@@ -17,6 +17,5 @@ namespace Api {
 
     struct ListUsersParams {
         std::optional<std::string> continuationToken;
-        std::string ses;
     };
 }

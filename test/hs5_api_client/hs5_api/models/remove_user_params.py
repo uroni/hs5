@@ -26,9 +26,8 @@ class RemoveUserParams(BaseModel):
     """
     RemoveUserParams
     """ # noqa: E501
-    ses: StrictStr
     username: StrictStr
-    __properties: ClassVar[List[str]] = ["ses", "username"]
+    __properties: ClassVar[List[str]] = ["username"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -81,7 +80,6 @@ class RemoveUserParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "username": obj.get("username")
         })
         return _obj

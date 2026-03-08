@@ -16,7 +16,7 @@ import ChangePassword from './pages/ChangePassword';
 import { FluentProvider, teamsLightTheme, teamsDarkTheme, makeStyles, Spinner, webDarkTheme, webLightTheme, teamsHighContrastTheme, teamsLightV21Theme, teamsDarkV21Theme } from '@fluentui/react-components';
 import { useStackStyles } from './components/StackStyles';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ApiError, postApiV1B64Be5124B034028A58913931942E205SessionCheck } from './api';
+import { ApiError, OpenAPI, sessionCheck } from './api';
 import { HapiError, Herror } from './errorapi/HapiError';
 import "./css/global.css";
 import AddBucket from './pages/AddBucket';
@@ -62,7 +62,7 @@ async function isLoggedIn(): Promise<boolean> {
   try {
     if(!state.session)
       getSessionFromLocalStorage();
-    await postApiV1B64Be5124B034028A58913931942E205SessionCheck({requestBody: {ses: state.session}});
+    await sessionCheck();
   } catch (error) {
     if (error instanceof ApiError)
     {
@@ -103,6 +103,8 @@ export function saveSessionToLocalStorage()
   localStorage.setItem("accessKey", state.accessKey);
   localStorage.setItem("secretAccessKey", state.secretAccessKey);
 }
+
+OpenAPI.TOKEN = async () => state.session;
 
 export const router = createHashRouter([
   {

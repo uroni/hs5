@@ -3,7 +3,7 @@
 import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
-import type { PostApiV1B64Be5124B034028A58913931942E205LoginData, PostApiV1B64Be5124B034028A58913931942E205LoginResponse, PostApiV1B64Be5124B034028A58913931942E205AddUserData, PostApiV1B64Be5124B034028A58913931942E205AddUserResponse, PostApiV1B64Be5124B034028A58913931942E205ListData, PostApiV1B64Be5124B034028A58913931942E205ListResponse, PostApiV1B64Be5124B034028A58913931942E205SessionCheckData, PostApiV1B64Be5124B034028A58913931942E205SessionCheckResponse, PostApiV1B64Be5124B034028A58913931942E205AddBucketData, PostApiV1B64Be5124B034028A58913931942E205AddBucketResponse, PostApiV1B64Be5124B034028A58913931942E205RemoveUserData, PostApiV1B64Be5124B034028A58913931942E205RemoveUserResponse, PostApiV1B64Be5124B034028A58913931942E205ListUsersData, PostApiV1B64Be5124B034028A58913931942E205ListUsersResponse, PostApiV1B64Be5124B034028A58913931942E205AddAccessKeyData, PostApiV1B64Be5124B034028A58913931942E205AddAccessKeyResponse, PostApiV1B64Be5124B034028A58913931942E205ListAccessKeysData, PostApiV1B64Be5124B034028A58913931942E205ListAccessKeysResponse, PostApiV1B64Be5124B034028A58913931942E205RemoveAccessKeyData, PostApiV1B64Be5124B034028A58913931942E205RemoveAccessKeyResponse, PostApiV1B64Be5124B034028A58913931942E205AddPolicyData, PostApiV1B64Be5124B034028A58913931942E205AddPolicyResponse, PostApiV1B64Be5124B034028A58913931942E205RemovePolicyData, PostApiV1B64Be5124B034028A58913931942E205RemovePolicyResponse, PostApiV1B64Be5124B034028A58913931942E205ListPoliciesData, PostApiV1B64Be5124B034028A58913931942E205ListPoliciesResponse, PostApiV1B64Be5124B034028A58913931942E205AddRoleData, PostApiV1B64Be5124B034028A58913931942E205AddRoleResponse, PostApiV1B64Be5124B034028A58913931942E205RemoveRoleData, PostApiV1B64Be5124B034028A58913931942E205RemoveRoleResponse, PostApiV1B64Be5124B034028A58913931942E205ListRolesData, PostApiV1B64Be5124B034028A58913931942E205ListRolesResponse, PostApiV1B64Be5124B034028A58913931942E205AddUserRoleData, PostApiV1B64Be5124B034028A58913931942E205AddUserRoleResponse, PostApiV1B64Be5124B034028A58913931942E205RemoveUserRoleData, PostApiV1B64Be5124B034028A58913931942E205RemoveUserRoleResponse, PostApiV1B64Be5124B034028A58913931942E205ListUserRolesData, PostApiV1B64Be5124B034028A58913931942E205ListUserRolesResponse, PostApiV1B64Be5124B034028A58913931942E205AddRolePolicyData, PostApiV1B64Be5124B034028A58913931942E205AddRolePolicyResponse, PostApiV1B64Be5124B034028A58913931942E205RemoveRolePolicyData, PostApiV1B64Be5124B034028A58913931942E205RemoveRolePolicyResponse, PostApiV1B64Be5124B034028A58913931942E205ListRolePoliciesData, PostApiV1B64Be5124B034028A58913931942E205ListRolePoliciesResponse, PostApiV1B64Be5124B034028A58913931942E205ChangePolicyData, PostApiV1B64Be5124B034028A58913931942E205ChangePolicyResponse, PostApiV1B64Be5124B034028A58913931942E205DeleteBucketData, PostApiV1B64Be5124B034028A58913931942E205DeleteBucketResponse, PostApiV1B64Be5124B034028A58913931942E205ChangePasswordData, PostApiV1B64Be5124B034028A58913931942E205ChangePasswordResponse, PostApiV1B64Be5124B034028A58913931942E205LogoutData, PostApiV1B64Be5124B034028A58913931942E205LogoutResponse } from './types.gen';
+import type { LoginData, LoginResponse, AddUserData, AddUserResponse, ListData, ListResponse, SessionCheckData, SessionCheckResponse, AddBucketData, AddBucketResponse, RemoveUserData, RemoveUserResponse, ListUsersData, ListUsersResponse, AddAccessKeyData, AddAccessKeyResponse, ListAccessKeysData, ListAccessKeysResponse, RemoveAccessKeyData, RemoveAccessKeyResponse, AddPolicyData, AddPolicyResponse, RemovePolicyData, RemovePolicyResponse, ListPoliciesData, ListPoliciesResponse, AddRoleData, AddRoleResponse, RemoveRoleData, RemoveRoleResponse, ListRolesData, ListRolesResponse, AddUserRoleData, AddUserRoleResponse, RemoveUserRoleData, RemoveUserRoleResponse, ListUserRolesData, ListUserRolesResponse, AddRolePolicyData, AddRolePolicyResponse, RemoveRolePolicyData, RemoveRolePolicyResponse, ListRolePoliciesData, ListRolePoliciesResponse, ChangePolicyData, ChangePolicyResponse, DeleteBucketData, DeleteBucketResponse, ChangePasswordData, ChangePasswordResponse, LogoutData, LogoutResponse } from './types.gen';
 
 /**
  * Login with username and password to service
@@ -12,7 +12,7 @@ import type { PostApiV1B64Be5124B034028A58913931942E205LoginData, PostApiV1B64Be
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205Login = (data: PostApiV1B64Be5124B034028A58913931942E205LoginData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205LoginResponse> => {
+export const login = (data: LoginData = {}): CancelablePromise<LoginResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/login',
@@ -31,7 +31,7 @@ export const postApiV1B64Be5124B034028A58913931942E205Login = (data: PostApiV1B6
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205AddUser = (data: PostApiV1B64Be5124B034028A58913931942E205AddUserData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205AddUserResponse> => {
+export const addUser = (data: AddUserData = {}): CancelablePromise<AddUserResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/addUser',
@@ -50,7 +50,7 @@ export const postApiV1B64Be5124B034028A58913931942E205AddUser = (data: PostApiV1
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205List = (data: PostApiV1B64Be5124B034028A58913931942E205ListData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ListResponse> => {
+export const list = (data: ListData = {}): CancelablePromise<ListResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/list',
@@ -69,7 +69,7 @@ export const postApiV1B64Be5124B034028A58913931942E205List = (data: PostApiV1B64
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205SessionCheck = (data: PostApiV1B64Be5124B034028A58913931942E205SessionCheckData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205SessionCheckResponse> => {
+export const sessionCheck = (data: SessionCheckData = {}): CancelablePromise<SessionCheckResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/sessionCheck',
@@ -88,7 +88,7 @@ export const postApiV1B64Be5124B034028A58913931942E205SessionCheck = (data: Post
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205AddBucket = (data: PostApiV1B64Be5124B034028A58913931942E205AddBucketData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205AddBucketResponse> => {
+export const addBucket = (data: AddBucketData = {}): CancelablePromise<AddBucketResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/addBucket',
@@ -107,7 +107,7 @@ export const postApiV1B64Be5124B034028A58913931942E205AddBucket = (data: PostApi
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205RemoveUser = (data: PostApiV1B64Be5124B034028A58913931942E205RemoveUserData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205RemoveUserResponse> => {
+export const removeUser = (data: RemoveUserData = {}): CancelablePromise<RemoveUserResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/removeUser',
@@ -126,7 +126,7 @@ export const postApiV1B64Be5124B034028A58913931942E205RemoveUser = (data: PostAp
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205ListUsers = (data: PostApiV1B64Be5124B034028A58913931942E205ListUsersData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ListUsersResponse> => {
+export const listUsers = (data: ListUsersData = {}): CancelablePromise<ListUsersResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/listUsers',
@@ -145,7 +145,7 @@ export const postApiV1B64Be5124B034028A58913931942E205ListUsers = (data: PostApi
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205AddAccessKey = (data: PostApiV1B64Be5124B034028A58913931942E205AddAccessKeyData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205AddAccessKeyResponse> => {
+export const addAccessKey = (data: AddAccessKeyData = {}): CancelablePromise<AddAccessKeyResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/addAccessKey',
@@ -164,7 +164,7 @@ export const postApiV1B64Be5124B034028A58913931942E205AddAccessKey = (data: Post
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205ListAccessKeys = (data: PostApiV1B64Be5124B034028A58913931942E205ListAccessKeysData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ListAccessKeysResponse> => {
+export const listAccessKeys = (data: ListAccessKeysData = {}): CancelablePromise<ListAccessKeysResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/listAccessKeys',
@@ -183,7 +183,7 @@ export const postApiV1B64Be5124B034028A58913931942E205ListAccessKeys = (data: Po
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205RemoveAccessKey = (data: PostApiV1B64Be5124B034028A58913931942E205RemoveAccessKeyData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205RemoveAccessKeyResponse> => {
+export const removeAccessKey = (data: RemoveAccessKeyData = {}): CancelablePromise<RemoveAccessKeyResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/removeAccessKey',
@@ -202,7 +202,7 @@ export const postApiV1B64Be5124B034028A58913931942E205RemoveAccessKey = (data: P
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205AddPolicy = (data: PostApiV1B64Be5124B034028A58913931942E205AddPolicyData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205AddPolicyResponse> => {
+export const addPolicy = (data: AddPolicyData = {}): CancelablePromise<AddPolicyResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/addPolicy',
@@ -221,7 +221,7 @@ export const postApiV1B64Be5124B034028A58913931942E205AddPolicy = (data: PostApi
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205RemovePolicy = (data: PostApiV1B64Be5124B034028A58913931942E205RemovePolicyData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205RemovePolicyResponse> => {
+export const removePolicy = (data: RemovePolicyData = {}): CancelablePromise<RemovePolicyResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/removePolicy',
@@ -240,7 +240,7 @@ export const postApiV1B64Be5124B034028A58913931942E205RemovePolicy = (data: Post
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205ListPolicies = (data: PostApiV1B64Be5124B034028A58913931942E205ListPoliciesData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ListPoliciesResponse> => {
+export const listPolicies = (data: ListPoliciesData = {}): CancelablePromise<ListPoliciesResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/listPolicies',
@@ -259,7 +259,7 @@ export const postApiV1B64Be5124B034028A58913931942E205ListPolicies = (data: Post
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205AddRole = (data: PostApiV1B64Be5124B034028A58913931942E205AddRoleData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205AddRoleResponse> => {
+export const addRole = (data: AddRoleData = {}): CancelablePromise<AddRoleResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/addRole',
@@ -278,7 +278,7 @@ export const postApiV1B64Be5124B034028A58913931942E205AddRole = (data: PostApiV1
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205RemoveRole = (data: PostApiV1B64Be5124B034028A58913931942E205RemoveRoleData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205RemoveRoleResponse> => {
+export const removeRole = (data: RemoveRoleData = {}): CancelablePromise<RemoveRoleResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/removeRole',
@@ -297,7 +297,7 @@ export const postApiV1B64Be5124B034028A58913931942E205RemoveRole = (data: PostAp
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205ListRoles = (data: PostApiV1B64Be5124B034028A58913931942E205ListRolesData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ListRolesResponse> => {
+export const listRoles = (data: ListRolesData = {}): CancelablePromise<ListRolesResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/listRoles',
@@ -316,7 +316,7 @@ export const postApiV1B64Be5124B034028A58913931942E205ListRoles = (data: PostApi
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205AddUserRole = (data: PostApiV1B64Be5124B034028A58913931942E205AddUserRoleData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205AddUserRoleResponse> => {
+export const addUserRole = (data: AddUserRoleData = {}): CancelablePromise<AddUserRoleResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/addUserRole',
@@ -335,7 +335,7 @@ export const postApiV1B64Be5124B034028A58913931942E205AddUserRole = (data: PostA
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205RemoveUserRole = (data: PostApiV1B64Be5124B034028A58913931942E205RemoveUserRoleData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205RemoveUserRoleResponse> => {
+export const removeUserRole = (data: RemoveUserRoleData = {}): CancelablePromise<RemoveUserRoleResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/removeUserRole',
@@ -354,7 +354,7 @@ export const postApiV1B64Be5124B034028A58913931942E205RemoveUserRole = (data: Po
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205ListUserRoles = (data: PostApiV1B64Be5124B034028A58913931942E205ListUserRolesData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ListUserRolesResponse> => {
+export const listUserRoles = (data: ListUserRolesData = {}): CancelablePromise<ListUserRolesResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/listUserRoles',
@@ -373,7 +373,7 @@ export const postApiV1B64Be5124B034028A58913931942E205ListUserRoles = (data: Pos
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205AddRolePolicy = (data: PostApiV1B64Be5124B034028A58913931942E205AddRolePolicyData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205AddRolePolicyResponse> => {
+export const addRolePolicy = (data: AddRolePolicyData = {}): CancelablePromise<AddRolePolicyResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/addRolePolicy',
@@ -392,7 +392,7 @@ export const postApiV1B64Be5124B034028A58913931942E205AddRolePolicy = (data: Pos
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205RemoveRolePolicy = (data: PostApiV1B64Be5124B034028A58913931942E205RemoveRolePolicyData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205RemoveRolePolicyResponse> => {
+export const removeRolePolicy = (data: RemoveRolePolicyData = {}): CancelablePromise<RemoveRolePolicyResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/removeRolePolicy',
@@ -411,7 +411,7 @@ export const postApiV1B64Be5124B034028A58913931942E205RemoveRolePolicy = (data: 
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205ListRolePolicies = (data: PostApiV1B64Be5124B034028A58913931942E205ListRolePoliciesData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ListRolePoliciesResponse> => {
+export const listRolePolicies = (data: ListRolePoliciesData = {}): CancelablePromise<ListRolePoliciesResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/listRolePolicies',
@@ -430,7 +430,7 @@ export const postApiV1B64Be5124B034028A58913931942E205ListRolePolicies = (data: 
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205ChangePolicy = (data: PostApiV1B64Be5124B034028A58913931942E205ChangePolicyData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ChangePolicyResponse> => {
+export const changePolicy = (data: ChangePolicyData = {}): CancelablePromise<ChangePolicyResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/changePolicy',
@@ -449,7 +449,7 @@ export const postApiV1B64Be5124B034028A58913931942E205ChangePolicy = (data: Post
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205DeleteBucket = (data: PostApiV1B64Be5124B034028A58913931942E205DeleteBucketData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205DeleteBucketResponse> => {
+export const deleteBucket = (data: DeleteBucketData = {}): CancelablePromise<DeleteBucketResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/deleteBucket',
@@ -468,7 +468,7 @@ export const postApiV1B64Be5124B034028A58913931942E205DeleteBucket = (data: Post
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205ChangePassword = (data: PostApiV1B64Be5124B034028A58913931942E205ChangePasswordData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205ChangePasswordResponse> => {
+export const changePassword = (data: ChangePasswordData = {}): CancelablePromise<ChangePasswordResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/changePassword',
@@ -487,7 +487,7 @@ export const postApiV1B64Be5124B034028A58913931942E205ChangePassword = (data: Po
  * @returns unknown OK
  * @throws ApiError
  */
-export const postApiV1B64Be5124B034028A58913931942E205Logout = (data: PostApiV1B64Be5124B034028A58913931942E205LogoutData = {}): CancelablePromise<PostApiV1B64Be5124B034028A58913931942E205LogoutResponse> => {
+export const logout = (data: LogoutData = {}): CancelablePromise<LogoutResponse> => {
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/logout',

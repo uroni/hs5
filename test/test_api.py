@@ -10,7 +10,6 @@ import hs5_api.models as hs5_models
 
 @dataclass
 class LoginData:
-    ses: str
     req: requests.Session
     access_key: str
     secret_access_key: str
@@ -27,8 +26,12 @@ def get_session(hs5: Hs5Runner) -> LoginData:
 
     assert response.status_code == 200
     resp = response.json()
+
+    authSes = resp["ses"]
+
+    ses.headers.update({"Authorization": f"Bearer {authSes}"})
+
     return LoginData(
-        ses=resp["ses"],
         req=ses,
         access_key=resp.get("accessKey", ""),
         secret_access_key=resp.get("secretAccessKey", "")
@@ -43,7 +46,7 @@ class UserData:
 def get_user_data(hs5: Hs5Runner, login_data: LoginData, username: str) -> UserData:
     url = hs5.get_api_url()
 
-    response = login_data.req.post(url+"listUsers", json={"ses": login_data.ses})
+    response = login_data.req.post(url+"listUsers", json={})
     assert response.status_code == 200
     users = response.json()
     user = list(filter(lambda u: u["username"] == username, users["users"]))[0]
@@ -60,7 +63,7 @@ class Role:
 def get_role_data(hs5: Hs5Runner, login_data: LoginData, role_name: str) -> Role:
     url = hs5.get_api_url()
 
-    response = login_data.req.post(url+"listRoles", json={"ses": login_data.ses})
+    response = login_data.req.post(url+"listRoles", json={})
     assert response.status_code == 200
     roles = response.json()
     role = list(filter(lambda r: r["roleName"] == role_name, roles["roles"]))[0]
@@ -78,7 +81,6 @@ def test_adduser(hs5: Hs5Runner):
     ses1 = requests.session()
 
     response = ses1.post(url+"addUser", json={
-        "ses": "foobar",
         "username": "test",
         "password": "test"
     })
@@ -88,7 +90,6 @@ def test_adduser(hs5: Hs5Runner):
     login_data = get_session(hs5)
 
     response = login_data.req.post(url+"addUser", json={
-        "ses": login_data.ses,
         "username": "test",
         "password": "test"
     })
@@ -131,7 +132,6 @@ def test_add_access_key(hs5: Hs5Runner):
     response = login_data.req.post(
         url + "addAccessKey",
         json={
-            "ses": login_data.ses,
             "userId": root_user.id
         }
     )
@@ -170,7 +170,6 @@ def test_add_new_root_user(hs5: Hs5Runner):
     login_data = get_session(hs5)
 
     response = login_data.req.post(url+"addUser", json={
-        "ses": login_data.ses,
         "username": "newroot",
         "password": "newroot"
     })
@@ -182,7 +181,6 @@ def test_add_new_root_user(hs5: Hs5Runner):
     response = login_data.req.post(
         url + "addAccessKey",
         json={
-            "ses": login_data.ses,
             "userId": newroot_user.id
         }
     )
@@ -201,7 +199,6 @@ def test_add_new_root_user(hs5: Hs5Runner):
     response = login_data.req.post(
         url + "addUserRole",
         json={
-            "ses": login_data.ses,
             "userId": newroot_user.id,
             "roleId": rootRole.id
         }
@@ -244,7 +241,6 @@ def test_delete_bucket_via_api(hs5: Hs5Runner, tmp_path: Path):
     response = login_data.req.post(
         url + "deleteBucket",
         json={
-            "ses": login_data.ses,
             "bucketName": bucketname
         }
     )
@@ -274,19 +270,18 @@ def test_delete_bucket_via_api(hs5: Hs5Runner, tmp_path: Path):
 def test_add_user_for_bucket(hs5: Hs5Runner):
     admin_client = hs5.get_api_client_admin()
 
-    admin_client.add_bucket(hs5_models.AddBucketParams(ses=hs5.get_admin_session(), bucketName="accessbucket"))
+    admin_client.add_bucket(hs5_models.AddBucketParams(bucketName="accessbucket"))
 
-    user_resp = admin_client.add_user(hs5_models.AddUserParams(ses=hs5.get_admin_session(), username="bucketuser", password="bucketuser"))
+    user_resp = admin_client.add_user(hs5_models.AddUserParams(username="bucketuser", password="bucketuser"))
 
     user_id = user_resp.id
  
-    access_key_resp = admin_client.add_access_key(hs5_models.AddAccessKeyParams(ses=hs5.get_admin_session(), userId=user_id))
+    access_key_resp = admin_client.add_access_key(hs5_models.AddAccessKeyParams(userId=user_id))
 
     bucketuser_access_key = access_key_resp.access_key
     bucketuser_secret_key = access_key_resp.secret_key
 
     policy_resp = admin_client.add_policy(hs5_models.AddPolicyParams(
-        ses=hs5.get_admin_session(),
         policyName="bucketuser-policy",
         policyDocument="""
             {
@@ -305,18 +300,16 @@ def test_add_user_for_bucket(hs5: Hs5Runner):
     policy_id = policy_resp.id
 
     role_resp = admin_client.add_role(hs5_models.AddRoleParams(
-        ses=hs5.get_admin_session(),  roleName="bucketuser-role"))
+         roleName="bucketuser-role"))
 
     role_id = role_resp.id
 
     admin_client.add_role_policy(hs5_models.AddRolePolicyParams(
-        ses=hs5.get_admin_session(),
         roleId=role_id,
         policyId=policy_id
     ))
 
     admin_client.add_user_role(hs5_models.AddUserRoleParams(
-        ses=hs5.get_admin_session(),
         userId=user_id,
         roleId=role_id
     ))
@@ -335,9 +328,9 @@ def test_add_user_for_bucket(hs5: Hs5Runner):
     assert "Buckets" in resp
     assert ["accessbucket"] == [b.get("Name") for b in resp["Buckets"]]
 
-    (user_ses, user_client) = hs5.get_api_client("bucketuser", "bucketuser")
+    user_client = hs5.get_api_client("bucketuser", "bucketuser")
 
-    list_resp = user_client.list(hs5_models.ListParams(ses=user_ses, path="/"))
+    list_resp = user_client.list(hs5_models.ListParams(path="/"))
 
     names = [o.name for o in list_resp.objects]
 

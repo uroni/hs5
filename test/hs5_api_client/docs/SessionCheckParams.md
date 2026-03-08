@@ -5,7 +5,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**ses** | **str** |  | 
+**dummy** | **str** |  | [optional] 
 
 ## Example
 

@@ -5,7 +5,6 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**ses** | **str** |  | 
 **user_id** | **str** |  | 
 **role_id** | **str** |  | 
 

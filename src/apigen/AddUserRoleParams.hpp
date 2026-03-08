@@ -16,7 +16,6 @@ namespace Api {
 
     struct AddUserRoleParams {
         std::string roleId;
-        std::string ses;
         std::string userId;
     };
 }

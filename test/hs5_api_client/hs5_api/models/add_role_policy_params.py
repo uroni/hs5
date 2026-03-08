@@ -26,10 +26,9 @@ class AddRolePolicyParams(BaseModel):
     """
     AddRolePolicyParams
     """ # noqa: E501
-    ses: StrictStr
     role_id: StrictStr = Field(alias="roleId")
     policy_id: StrictStr = Field(alias="policyId")
-    __properties: ClassVar[List[str]] = ["ses", "roleId", "policyId"]
+    __properties: ClassVar[List[str]] = ["roleId", "policyId"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,7 +81,6 @@ class AddRolePolicyParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "roleId": obj.get("roleId"),
             "policyId": obj.get("policyId")
         })

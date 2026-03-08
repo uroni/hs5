@@ -19,12 +19,10 @@ namespace Api {
 
     inline void from_json(const json & j, AddRoleParams& x) {
         x.roleName = j.at("roleName").get<std::string>();
-        x.ses = j.at("ses").get<std::string>();
     }
 
     inline void to_json(json & j, const AddRoleParams & x) {
         j = json::object();
         j["roleName"] = x.roleName;
-        j["ses"] = x.ses;
     }
 }

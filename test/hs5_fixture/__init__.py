@@ -169,6 +169,7 @@ class Hs5Runner:
         assert response.status_code == 200
         resp = response.json()
         ses = resp["ses"]
+        req.headers.update({"Authorization": f"Bearer {ses}"})
         return (ses, req)
 
     def stop(self, cleanup: bool, kill: bool) -> None:
@@ -207,15 +208,21 @@ class Hs5Runner:
         return self._admin_ses
 
     def get_api_client_admin(self) -> hs5_api.DefaultApi:
-        config = hs5_api.Configuration(host=f"http://127.0.0.1:{self._port}")
-        cookies_str = "; ".join([f"{c.name}={c.value}" for c in self._ses.cookies])
-        return hs5_api.DefaultApi(hs5_api.ApiClient(config, cookie=cookies_str))
+        ses = self._ses.cookies.get("ses", "")
+        assert isinstance(ses, str)
+        config = hs5_api.Configuration(host=f"http://127.0.0.1:{self._port}",
+                                    api_key={"cookieAuth": f"ses={ses}"},
+                                    access_token=self.get_admin_session())
+        return hs5_api.DefaultApi(hs5_api.ApiClient(config))
     
-    def get_api_client(self, username: str, password: str) -> tuple[str, hs5_api.DefaultApi]:
+    def get_api_client(self, username: str, password: str) -> hs5_api.DefaultApi:
         (ses, req) = self.login_user(username, password)
-        config = hs5_api.Configuration(host=f"http://127.0.0.1:{self._port}")
-        cookies_str = "; ".join([f"{c.name}={c.value}" for c in req.cookies])
-        return (ses, hs5_api.DefaultApi(hs5_api.ApiClient(config, cookie=cookies_str)))
+        cookieSes = req.cookies.get("ses", "")
+        assert isinstance(cookieSes, str)
+        config = hs5_api.Configuration(host=f"http://127.0.0.1:{self._port}",
+                                    api_key={"cookieAuth": f"ses={cookieSes}"},
+                                    access_token=ses)
+        return hs5_api.DefaultApi(hs5_api.ApiClient(config))
 
     def get_s3_client(self, sig_v2: bool = False) -> S3Client:
         config = botocore.config.Config(signature_version='s3v4', request_checksum_calculation="when_supported") if not sig_v2 else None
@@ -254,7 +261,7 @@ class Hs5Runner:
     
     def get_stats(self) -> Hs5Stats:
         url = self.get_api_url() + "stats"
-        response = self._ses.post(url, json={"ses": self._admin_ses})
+        response = self._ses.post(url, json={})
         
         assert response.status_code == 200
         resp = response.json()

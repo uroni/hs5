@@ -26,9 +26,8 @@ class AddAccessKeyParams(BaseModel):
     """
     AddAccessKeyParams
     """ # noqa: E501
-    ses: StrictStr
     user_id: StrictStr = Field(alias="userId")
-    __properties: ClassVar[List[str]] = ["ses", "userId"]
+    __properties: ClassVar[List[str]] = ["userId"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -81,7 +80,6 @@ class AddAccessKeyParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "userId": obj.get("userId")
         })
         return _obj

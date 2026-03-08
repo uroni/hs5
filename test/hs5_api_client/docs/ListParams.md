@@ -5,7 +5,6 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**ses** | **str** |  | 
 **path** | **str** |  | 
 **continuation_token** | **str** |  | [optional] 
 

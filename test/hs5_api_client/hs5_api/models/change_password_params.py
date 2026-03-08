@@ -26,10 +26,9 @@ class ChangePasswordParams(BaseModel):
     """
     ChangePasswordParams
     """ # noqa: E501
-    ses: StrictStr
     old_password: StrictStr = Field(alias="oldPassword")
     password: StrictStr
-    __properties: ClassVar[List[str]] = ["ses", "oldPassword", "password"]
+    __properties: ClassVar[List[str]] = ["oldPassword", "password"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,7 +81,6 @@ class ChangePasswordParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "oldPassword": obj.get("oldPassword"),
             "password": obj.get("password")
         })

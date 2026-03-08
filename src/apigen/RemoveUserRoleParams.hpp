@@ -16,6 +16,5 @@ namespace Api {
 
     struct RemoveUserRoleParams {
         std::string id;
-        std::string ses;
     };
 }

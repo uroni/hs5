@@ -16,7 +16,6 @@ namespace Api {
 
     struct AddUserParams {
         std::string password;
-        std::string ses;
         std::string username;
     };
 }

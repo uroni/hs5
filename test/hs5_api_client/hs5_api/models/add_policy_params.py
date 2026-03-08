@@ -26,10 +26,9 @@ class AddPolicyParams(BaseModel):
     """
     AddPolicyParams
     """ # noqa: E501
-    ses: StrictStr
     policy_name: StrictStr = Field(alias="policyName")
     policy_document: StrictStr = Field(alias="policyDocument")
-    __properties: ClassVar[List[str]] = ["ses", "policyName", "policyDocument"]
+    __properties: ClassVar[List[str]] = ["policyName", "policyDocument"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,7 +81,6 @@ class AddPolicyParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "policyName": obj.get("policyName"),
             "policyDocument": obj.get("policyDocument")
         })

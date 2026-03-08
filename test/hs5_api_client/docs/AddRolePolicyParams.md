@@ -5,7 +5,6 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**ses** | **str** |  | 
 **role_id** | **str** |  | 
 **policy_id** | **str** |  | 
 

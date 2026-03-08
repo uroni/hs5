@@ -26,10 +26,9 @@ class ChangePolicyParams(BaseModel):
     """
     ChangePolicyParams
     """ # noqa: E501
-    ses: StrictStr
     id: StrictStr
     document: StrictStr
-    __properties: ClassVar[List[str]] = ["ses", "id", "document"]
+    __properties: ClassVar[List[str]] = ["id", "document"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,7 +81,6 @@ class ChangePolicyParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "id": obj.get("id"),
             "document": obj.get("document")
         })

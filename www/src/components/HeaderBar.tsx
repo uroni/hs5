@@ -3,7 +3,7 @@ import { useSnapshot } from 'valtio';
 import { Pages, router, state } from '../App';
 import { useStackStyles } from './StackStyles';
 import { Avatar, Image, Menu, MenuList, MenuItem, MenuTrigger, MenuPopover, MenuButton } from '@fluentui/react-components';
-import { postApiV1B64Be5124B034028A58913931942E205Logout } from '../api';
+import { logout } from '../api';
 import { startTransition } from 'react';
 import { KeyRegular, PowerRegular } from '@fluentui/react-icons';
 
@@ -19,7 +19,7 @@ export const HeaderBar = () => {
   const styles = useStackStyles();
 
   const handleLogout = async () => {
-    await postApiV1B64Be5124B034028A58913931942E205Logout({requestBody: {ses: snap.session}});
+    await logout();
     state.loggedIn = false;
     state.session = "";
     state.accessKey = "";

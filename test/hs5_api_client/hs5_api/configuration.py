@@ -111,6 +111,8 @@ HTTPSignatureAuthSetting = TypedDict(
 AuthSettings = TypedDict(
     "AuthSettings",
     {
+        "bearerAuth": BearerAuthSetting,
+        "cookieAuth": APIKeyAuthSetting,
     },
     total=False,
 )
@@ -163,6 +165,26 @@ class Configuration:
     :param cert_file: the path to a client certificate file, for mTLS.
     :param key_file: the path to a client key file, for mTLS.
 
+    :Example:
+
+    API Key Authentication Example.
+    Given the following security scheme in the OpenAPI specification:
+      components:
+        securitySchemes:
+          cookieAuth:         # name for the security scheme
+            type: apiKey
+            in: cookie
+            name: JSESSIONID  # cookie name
+
+    You can programmatically set the cookie:
+
+conf = hs5_api.Configuration(
+    api_key={'cookieAuth': 'abc123'}
+    api_key_prefix={'cookieAuth': 'JSESSIONID'}
+)
+
+    The following cookie will be added to the HTTP request:
+       Cookie: JSESSIONID abc123
     """
 
     _default: ClassVar[Optional[Self]] = None
@@ -493,6 +515,22 @@ class Configuration:
         :return: The Auth Settings information dict.
         """
         auth: AuthSettings = {}
+        if self.access_token is not None:
+            auth['bearerAuth'] = {
+                'type': 'bearer',
+                'in': 'header',
+                'key': 'Authorization',
+                'value': 'Bearer ' + self.access_token
+            }
+        if 'cookieAuth' in self.api_key:
+            auth['cookieAuth'] = {
+                'type': 'api_key',
+                'in': 'cookie',
+                'key': 'ses',
+                'value': self.get_api_key_with_prefix(
+                    'cookieAuth',
+                ),
+            }
         return auth
 
     def to_debug_report(self) -> str:

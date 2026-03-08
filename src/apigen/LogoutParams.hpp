@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <optional>
 #include <nlohmann/json.hpp>
 #include "helper.hpp"
 
@@ -15,6 +16,6 @@ namespace Api {
     using nlohmann::json;
 
     struct LogoutParams {
-        std::string ses;
+        std::optional<std::string> dummy;
     };
 }

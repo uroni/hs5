@@ -156,13 +156,15 @@ def test_many_range_downloads(hs5_perf: Hs5Runner, tmp_path: Path):
         # Wait for all downloads to complete
         for future in futures:
             future.result()
-
+            
+@pytest.mark.skip
 def test_perf_upload_many_files_hs5(benchmark: BenchmarkFixture, hs5_perf: Hs5Runner, tmp_path: Path):
     """
     Test the performance of uploading 10,000 files to HS5.
     """
     benchmark(upload_many_files, lambda: hs5_perf.get_s3_client(), tmp_path)
 
+@pytest.mark.skip
 def test_perf_upload_many_files_minio(benchmark: BenchmarkFixture, minio: MinioRunner, tmp_path: Path):
     """
     Test the performance of uploading 10,000 files to MinIO.

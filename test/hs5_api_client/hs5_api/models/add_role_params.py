@@ -26,9 +26,8 @@ class AddRoleParams(BaseModel):
     """
     AddRoleParams
     """ # noqa: E501
-    ses: StrictStr
     role_name: StrictStr = Field(alias="roleName")
-    __properties: ClassVar[List[str]] = ["ses", "roleName"]
+    __properties: ClassVar[List[str]] = ["roleName"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -81,7 +80,6 @@ class AddRoleParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "roleName": obj.get("roleName")
         })
         return _obj

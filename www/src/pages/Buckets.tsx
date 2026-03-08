@@ -4,7 +4,7 @@ import { useQuery, useSuspenseQuery, useQueryClient } from "@tanstack/react-quer
 import { TableWrapper } from '../components/TableWrapper';
 import { Pagination, PaginationItemsPerPageSelector, usePagination } from '../components/Pagination';
 import { filterBySearch, SearchBox, useFilteredBySearch } from '../components/SearchBox';
-import { ApiError, postApiV1B64Be5124B034028A58913931942E205List, PostApiV1B64Be5124B034028A58913931942E205ListResponse, postApiV1B64Be5124B034028A58913931942E205DeleteBucket } from '../api';
+import { ApiError, list, ListResponse, deleteBucket } from '../api';
 import { Pages, router, state } from '../App';
 import { useSnapshot } from 'valtio';
 import { AddRegular, DeleteRegular, FolderOpenRegular } from '@fluentui/react-icons';
@@ -48,7 +48,7 @@ const Buckets = () => {
 
   const bucketsResult = useSuspenseQuery({
     queryKey: ["buckets", snap.session],
-    queryFn: async () => { return await postApiV1B64Be5124B034028A58913931942E205List({requestBody: {ses: snap.session, path: "/"}}); },
+    queryFn: async () => { return await list({requestBody: {path: "/"}}); },
   });
 
   const data = bucketsResult.data!.objects as BucketType[];
@@ -85,9 +85,7 @@ const Buckets = () => {
     setIsDeleting(bucket.name);
     setDeleteError('');
     try {
-      await postApiV1B64Be5124B034028A58913931942E205DeleteBucket({
-        requestBody: { ses: snap.session, bucketName: bucket.name }
-      });
+      await deleteBucket({requestBody: {bucketName: bucket.name}});
       await queryClient.invalidateQueries({ queryKey: ["buckets", snap.session] });
       setDeleteDialogOpen(false);
       setBucketToDelete(null);

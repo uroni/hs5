@@ -4,7 +4,7 @@ import { useSuspenseQuery, useQueryClient } from "@tanstack/react-query";
 import { TableWrapper } from '../components/TableWrapper';
 import { Pagination, PaginationItemsPerPageSelector, usePagination } from '../components/Pagination';
 import { filterBySearch, SearchBox, useFilteredBySearch } from '../components/SearchBox';
-import { ApiError, postApiV1B64Be5124B034028A58913931942E205ListRoles, postApiV1B64Be5124B034028A58913931942E205AddRole, postApiV1B64Be5124B034028A58913931942E205RemoveRole } from '../api';
+import { ApiError, listRoles, addRole, removeRole } from '../api';
 import { Pages, router, state } from '../App';
 import { useSnapshot } from 'valtio';
 import { AddRegular, DeleteRegular, DocumentRegular } from '@fluentui/react-icons';
@@ -53,7 +53,7 @@ const Roles = () => {
 
   const rolesResult = useSuspenseQuery({
     queryKey: ["roles", snap.session],
-    queryFn: async () => { return await postApiV1B64Be5124B034028A58913931942E205ListRoles({requestBody: {ses: snap.session}}); },
+    queryFn: async () => { return await listRoles(); },
   });
 
   const data = rolesResult.data!.roles as RoleType[];
@@ -96,8 +96,8 @@ const Roles = () => {
     setIsAdding(true);
     setAddError('');
     try {
-      await postApiV1B64Be5124B034028A58913931942E205AddRole({
-        requestBody: { ses: snap.session, roleName: newRoleName.trim() }
+      await addRole({
+        requestBody: { roleName: newRoleName.trim() }
       });
       setNewRoleName('');
       await queryClient.invalidateQueries({ queryKey: ["roles"] });
@@ -116,8 +116,8 @@ const Roles = () => {
   const handleDeleteRole = async (role: RoleType) => {
     setIsDeleting(role.id);
     try {
-      await postApiV1B64Be5124B034028A58913931942E205RemoveRole({
-        requestBody: { ses: snap.session, id: role.id }
+      await removeRole({
+        requestBody: { id: role.id }
       });
       await queryClient.invalidateQueries({ queryKey: ["roles"] });
     } catch (apiE) {

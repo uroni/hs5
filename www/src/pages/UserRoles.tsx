@@ -5,7 +5,7 @@ import { useParams } from 'react-router-dom';
 import { TableWrapper } from '../components/TableWrapper';
 import { Pagination, PaginationItemsPerPageSelector, usePagination } from '../components/Pagination';
 import { filterBySearch, SearchBox, useFilteredBySearch } from '../components/SearchBox';
-import { ApiError, postApiV1B64Be5124B034028A58913931942E205ListUserRoles, postApiV1B64Be5124B034028A58913931942E205AddUserRole, postApiV1B64Be5124B034028A58913931942E205RemoveUserRole, postApiV1B64Be5124B034028A58913931942E205ListRoles } from '../api';
+import { ApiError, listUserRoles, addUserRole, removeUserRole, listRoles } from '../api';
 import { state } from '../App';
 import { useSnapshot } from 'valtio';
 import { AddRegular, DeleteRegular } from '@fluentui/react-icons';
@@ -54,12 +54,12 @@ const UserRoles = () => {
 
   const userRolesResult = useSuspenseQuery({
     queryKey: ["userRoles", snap.session, userId],
-    queryFn: async () => { return await postApiV1B64Be5124B034028A58913931942E205ListUserRoles({requestBody: {ses: snap.session, userId: userId!}}); },
+    queryFn: async () => { return await listUserRoles({ requestBody: { userId: userId! } }); },
   });
 
   const rolesResult = useSuspenseQuery({
     queryKey: ["roles", snap.session],
-    queryFn: async () => { return await postApiV1B64Be5124B034028A58913931942E205ListRoles({requestBody: {ses: snap.session}}); },
+    queryFn: async () => { return await listRoles(); },
   });
 
   const data = (userRolesResult.data!.userRoles as { id: string; roleName: string; system?: boolean }[]).map(r => ({ roleId: r.id, roleName: r.roleName, system: r.system }));
@@ -103,8 +103,8 @@ const UserRoles = () => {
     setIsAdding(true);
     setAddError('');
     try {
-      await postApiV1B64Be5124B034028A58913931942E205AddUserRole({
-        requestBody: { ses: snap.session, userId: userId!, roleId: selectedRoleId }
+      await addUserRole({
+        requestBody: {  userId: userId!, roleId: selectedRoleId }
       });
       setSelectedRoleId('');
       await queryClient.invalidateQueries({ queryKey: ["userRoles", snap.session, userId] });
@@ -123,8 +123,8 @@ const UserRoles = () => {
   const handleRemoveRole = async (userRole: UserRoleType) => {
     setIsRemoving(userRole.roleId);
     try {
-      await postApiV1B64Be5124B034028A58913931942E205RemoveUserRole({
-        requestBody: { ses: snap.session, id: userRole.roleId }
+      await removeUserRole({
+        requestBody: {  id: userRole.roleId }
       });
       await queryClient.invalidateQueries({ queryKey: ["userRoles", snap.session, userId] });
     } catch (apiE) {

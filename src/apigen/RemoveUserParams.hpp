@@ -15,7 +15,6 @@ namespace Api {
     using nlohmann::json;
 
     struct RemoveUserParams {
-        std::string ses;
         std::string username;
     };
 }

@@ -16,6 +16,5 @@ namespace Api {
 
     struct RemoveAccessKeyParams {
         std::string id;
-        std::string ses;
     };
 }

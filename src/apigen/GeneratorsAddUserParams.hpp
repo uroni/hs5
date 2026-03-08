@@ -19,14 +19,12 @@ namespace Api {
 
     inline void from_json(const json & j, AddUserParams& x) {
         x.password = j.at("password").get<std::string>();
-        x.ses = j.at("ses").get<std::string>();
         x.username = j.at("username").get<std::string>();
     }
 
     inline void to_json(json & j, const AddUserParams & x) {
         j = json::object();
         j["password"] = x.password;
-        j["ses"] = x.ses;
         j["username"] = x.username;
     }
 }

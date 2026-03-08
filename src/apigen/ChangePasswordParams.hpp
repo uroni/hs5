@@ -17,6 +17,5 @@ namespace Api {
     struct ChangePasswordParams {
         std::string oldPassword;
         std::string password;
-        std::string ses;
     };
 }

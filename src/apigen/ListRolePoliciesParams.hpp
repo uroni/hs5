@@ -18,6 +18,5 @@ namespace Api {
     struct ListRolePoliciesParams {
         std::optional<std::string> continuationToken;
         std::string roleId;
-        std::string ses;
     };
 }

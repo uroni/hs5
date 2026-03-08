@@ -19,12 +19,10 @@ namespace Api {
 
     inline void from_json(const json & j, AddBucketParams& x) {
         x.bucketName = j.at("bucketName").get<std::string>();
-        x.ses = j.at("ses").get<std::string>();
     }
 
     inline void to_json(json & j, const AddBucketParams & x) {
         j = json::object();
         j["bucketName"] = x.bucketName;
-        j["ses"] = x.ses;
     }
 }

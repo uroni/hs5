@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <optional>
 #include <nlohmann/json.hpp>
 #include "helper.hpp"
 
@@ -18,11 +19,11 @@ namespace Api {
     void to_json(json & j, const SessionCheckParams & x);
 
     inline void from_json(const json & j, SessionCheckParams& x) {
-        x.ses = j.at("ses").get<std::string>();
+        x.dummy = get_stack_optional<std::string>(j, "dummy");
     }
 
     inline void to_json(json & j, const SessionCheckParams & x) {
         j = json::object();
-        j["ses"] = x.ses;
+        j["dummy"] = x.dummy;
     }
 }

@@ -3,7 +3,7 @@ import { TableWrapper } from "../components/TableWrapper";
 import { Button, Field, Input, Spinner } from "@fluentui/react-components";
 import { AddRegular } from "@fluentui/react-icons";
 import { Pages, router, state } from "../App";
-import { ApiError, postApiV1B64Be5124B034028A58913931942E205AddBucket } from "../api";
+import { ApiError, addBucket } from "../api";
 import { HapiError, Herror } from "../errorapi/HapiError";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -17,7 +17,7 @@ const AddBucket = () => {
     const handleSubmitInt = async (e : FormEvent<HTMLFormElement>) => {
         try
         {
-            const addRes = await postApiV1B64Be5124B034028A58913931942E205AddBucket({requestBody: {ses: state.session, bucketName: bucketName}});
+            const addRes = await addBucket({requestBody: {bucketName: bucketName}});
             state.pageAfterLogin = Pages.Buckets;
             
             await queryClient.invalidateQueries({ queryKey: ["buckets"] });

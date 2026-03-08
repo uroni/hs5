@@ -26,9 +26,8 @@ class ListPoliciesParams(BaseModel):
     """
     ListPoliciesParams
     """ # noqa: E501
-    ses: StrictStr
     continuation_token: Optional[StrictStr] = Field(default=None, alias="continuationToken")
-    __properties: ClassVar[List[str]] = ["ses", "continuationToken"]
+    __properties: ClassVar[List[str]] = ["continuationToken"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -81,7 +80,6 @@ class ListPoliciesParams(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "ses": obj.get("ses"),
             "continuationToken": obj.get("continuationToken")
         })
         return _obj
