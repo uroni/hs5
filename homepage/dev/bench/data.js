@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773000287540,
+  "lastUpdate": 1773004797445,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -7842,6 +7842,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.14944767244218454",
             "extra": "mean: 17.94669243459998 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "627a6e2b15547dac510bd25bd37985c27e71baf2",
+          "message": "Check signature when completing multi-part upload\n\nCompleting the multi-part upload needs the upload-id (including the nonce),\nbut the signature should still be checked.\n\nAlso add runtime checks to make sure that the signature is always checked\nwhen the data store is accessed.",
+          "timestamp": "2026-03-08T22:07:50+01:00",
+          "tree_id": "3562dcd3302c677e459ec42b45a1f08fe8455393",
+          "url": "https://github.com/uroni/hs5/commit/627a6e2b15547dac510bd25bd37985c27e71baf2"
+        },
+        "date": 1773004796229,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07624399534496225,
+            "unit": "iter/sec",
+            "range": "stddev: 0.07626275788885581",
+            "extra": "mean: 13.115786960999992 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06097419012897751,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1865582441346589",
+            "extra": "mean: 16.400381831799972 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.053279599351918464,
+            "unit": "iter/sec",
+            "range": "stddev: 0.21159141157918093",
+            "extra": "mean: 18.768909904800033 sec\nrounds: 5"
           }
         ]
       }
