@@ -17,6 +17,7 @@ import os
 import boto3
 from mypy_boto3_s3.client import S3Client
 import requests
+import hs5_api
 
 curr_port = 11000
 
@@ -155,18 +156,20 @@ class Hs5Runner:
                     raise TimeoutError("Hs5 server did not start within 10 seconds")
 
     def _login_admin(self) -> None:
+        (self._admin_ses, self._ses) = self.login_user("root", self._root_key)
 
-        self._ses = requests.session()
+    def login_user(self, username: str, password: str) -> tuple[str, requests.Session]:
+        req = requests.session()
 
-        response = self._ses.post(self.get_api_url()+"login", json={
-            "username": "root",
-            "password": self._root_key
+        response = req.post(self.get_api_url()+"login", json={
+            "username": username,
+            "password": password
         })
 
         assert response.status_code == 200
         resp = response.json()
-        self._admin_ses = resp["ses"]
-        assert self._admin_ses
+        ses = resp["ses"]
+        return (ses, req)
 
     def stop(self, cleanup: bool, kill: bool) -> None:
 
@@ -199,6 +202,20 @@ class Hs5Runner:
     
     def get_api_url(self) -> str:
         return f"http://127.0.0.1:{self._port}/api-v1-b64be512-4b03-4028-a589-13931942e205/"
+    
+    def get_admin_session(self) -> str:
+        return self._admin_ses
+
+    def get_api_client_admin(self) -> hs5_api.DefaultApi:
+        config = hs5_api.Configuration(host=f"http://127.0.0.1:{self._port}")
+        cookies_str = "; ".join([f"{c.name}={c.value}" for c in self._ses.cookies])
+        return hs5_api.DefaultApi(hs5_api.ApiClient(config, cookie=cookies_str))
+    
+    def get_api_client(self, username: str, password: str) -> tuple[str, hs5_api.DefaultApi]:
+        (ses, req) = self.login_user(username, password)
+        config = hs5_api.Configuration(host=f"http://127.0.0.1:{self._port}")
+        cookies_str = "; ".join([f"{c.name}={c.value}" for c in req.cookies])
+        return (ses, hs5_api.DefaultApi(hs5_api.ApiClient(config, cookie=cookies_str)))
 
     def get_s3_client(self, sig_v2: bool = False) -> S3Client:
         config = botocore.config.Config(signature_version='s3v4', request_checksum_calculation="when_supported") if not sig_v2 else None
