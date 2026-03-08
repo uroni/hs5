@@ -696,10 +696,16 @@ Api::ListResp ApiHandler::listBuckets(const Api::ListParams& params, const ApiSe
     if(params.continuationToken)
         throw ApiError(Api::Herror::unexpectedContinuationToken);
 
-    if(!isAuthorized("arn:aws:s3:::buckets", Action::ListBuckets, sessionStorage.userId))
-        throw ApiError(Api::Herror::accessDenied);
+    Api::ListResp resp;
 
-    return buckets::getBucketNames();
+    auto bucketNames = buckets::getBucketNames();
+    for(auto& obj : bucketNames.objects)
+    {
+        if(!isAuthorized("arn:aws:s3:::"+obj.name, Action::ListBuckets, sessionStorage.userId))
+            continue;
+        resp.objects.emplace_back(std::move(obj));
+    }
+    return resp;
 }
 
 Api::AddBucketResp ApiHandler::addBucket(const Api::AddBucketParams& params, const ApiSessionStorage& sessionStorage)
