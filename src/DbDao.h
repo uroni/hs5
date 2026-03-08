@@ -147,13 +147,13 @@ public:
 	std::vector<User> getUsers();
 	std::optional<User> getUserById(int64_t id);
 	User getUserByName(const std::string& name);
-	int64_t addUser(const std::string& name, int password_state, const std::string& password, int system);
+	std::optional<int64_t> addUser(const std::string& name, int password_state, const std::string& password, int system);
 	void removeUser(int64_t id);
 	std::optional<int64_t> hasUser();
 	int64_t addAccessKey(int64_t user_id, const std::string& description, const std::string& key, const std::string& secret_key, int system);
-	int64_t addRole(const std::string& name, int system);
+	std::optional<int64_t> addRole(const std::string& name, int system);
 	void removeRole(int64_t id);
-	int64_t addPolicy(const std::string& name, const std::string& description, int ver, const std::string& data, int system);
+	std::optional<int64_t> addPolicy(const std::string& name, const std::string& description, int ver, const std::string& data, int system);
 	void removePolicy(int64_t id);
 	int64_t addUserRole(int64_t user_id, int64_t role_id, int system);
 	void removeUserRole(int64_t id);

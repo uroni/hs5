@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include <optional>
 #include <nlohmann/json.hpp>
 #include "helper.hpp"
 
@@ -16,6 +15,6 @@ namespace Api {
     using nlohmann::json;
 
     struct AddUserResp {
-        std::optional<std::string> dummy;
+        std::string id;
     };
 }

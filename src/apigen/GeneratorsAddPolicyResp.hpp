@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include <optional>
 #include <nlohmann/json.hpp>
 #include "helper.hpp"
 
@@ -19,11 +18,11 @@ namespace Api {
     void to_json(json & j, const AddPolicyResp & x);
 
     inline void from_json(const json & j, AddPolicyResp& x) {
-        x.dummy = get_stack_optional<std::string>(j, "dummy");
+        x.id = j.at("id").get<std::string>();
     }
 
     inline void to_json(json & j, const AddPolicyResp & x) {
         j = json::object();
-        j["dummy"] = x.dummy;
+        j["id"] = x.id;
     }
 }

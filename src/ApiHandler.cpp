@@ -180,15 +180,15 @@ void ApiHandler::init()
             }
         )""", 1);
 
-        const auto statementId = dao.addPolicyStatement(rootPolicyId, "AllowAll", static_cast<int>(Statement::Effect::Allow));
+        const auto statementId = dao.addPolicyStatement(rootPolicyId.value(), "AllowAll", static_cast<int>(Statement::Effect::Allow));
 
         dao.addPolicyStatementAction(statementId, static_cast<int>(Action::AllActions));
         dao.addPolicyStatementResource(statementId, "*");
 
-        dao.addRolePolicy(rootRoleId, rootPolicyId, 1);
-        dao.addUserRole(rootUserId, rootRoleId, 1);
+        dao.addRolePolicy(rootRoleId.value(), rootPolicyId.value(), 1);
+        dao.addUserRole(rootUserId.value(), rootRoleId.value(), 1);
         
-        dao.addAccessKey(rootUserId, "Root access key (can access everything)", initRootAccessKey, initSecretAccessKey, 1);
+        dao.addAccessKey(rootUserId.value(), "Root access key (can access everything)", initRootAccessKey, initSecretAccessKey, 1);
 
         auto initialBuckets = FLAGS_init_create_bucket;
         if(const auto initialBucketsEnv = getenv("INIT_CREATE_BUCKET"); initialBucketsEnv!=nullptr)
@@ -504,11 +504,17 @@ Api::AddUserResp ApiHandler::addUser(const Api::AddUserParams& params, const Api
     if(dao.getUserByName(params.username).exists)
         throw ApiError(Api::Herror::userAlreadyExists, fmt::format("User {} already exists", params.username));
 
-    dao.addUser(params.username, 0, getEncodedPassword(params.password), 0);
+    const auto userId = dao.addUser(params.username, 0, getEncodedPassword(params.password), 0);
+
+    if(!userId)
+        throw ApiError(Api::Herror::internalDbError, fmt::format("Error adding user with name {}", params.username));
 
     refreshAuthCache();
 
-    return {};
+    Api::AddUserResp resp;
+    resp.id = sfs.encrypt_id(userId.value());
+
+    return resp;
 }
 
 std::pair<Api::LoginResp, std::string> ApiHandler::login(const Api::LoginParams& params)
@@ -897,21 +903,24 @@ Api::AddPolicyResp ApiHandler::addPolicy(const Api::AddPolicyParams& params, con
 
         const auto policyId = dao.addPolicy(params.policyName, "", 0, params.policyDocument, 0);
 
-        if(dao.getDb().getLastChanges() != 1)
+        if(!policyId)
             throw ApiError(Api::Herror::internalDbError, fmt::format("Error adding policy with name {}", params.policyName));
 
-        addStatementsToDb(dao, newPolicy, policyId);
+        addStatementsToDb(dao, newPolicy, policyId.value());
 
         trans.commit();
+
+        refreshAuthCache();
+
+        Api::AddPolicyResp resp;
+
+        resp.id = sfs.encrypt_id(policyId.value());
+        return resp;
     }
     catch(const PolicyParseError& e)
     {
         throw ApiError(Api::Herror::invalidPolicyDocument, fmt::format("Error parsing policy document: {}", e.what()));
     }   
-
-    refreshAuthCache();
-
-    return {};
 }
 
 Api::RemovePolicyResp ApiHandler::removePolicy(const Api::RemovePolicyParams& params, const ApiSessionStorage& sessionStorage)
@@ -959,14 +968,16 @@ Api::AddRoleResp ApiHandler::addRole(const Api::AddRoleParams& params, const Api
     if(!isAuthorized("arn:hs5:roles", Action::AddRole, sessionStorage.userId))
         throw ApiError(Api::Herror::accessDenied);
 
-    dao.addRole(params.roleName, 0);
+    const auto roleId = dao.addRole(params.roleName, 0);
     
-    if (dao.getDb().getLastChanges() != 1)
+    if (!roleId)
         throw ApiError(Api::Herror::internalDbError, fmt::format("Error adding role with name {}", params.roleName));
 
     refreshAuthCache();
 
-    return {};
+    Api::AddRoleResp resp;
+    resp.id = sfs.encrypt_id(roleId.value());
+    return resp;
 }
 
 Api::RemoveRoleResp ApiHandler::removeRole(const Api::RemoveRoleParams& params, const ApiSessionStorage& sessionStorage)

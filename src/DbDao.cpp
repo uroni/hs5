@@ -281,12 +281,12 @@ DbDao::User DbDao::getUserByName(const std::string& name)
 
 /**
 * @-SQLGenAccess
-* @func int64_t DbDao::addUser
+* @func optional<int64_t> DbDao::addUser
 * @return int64_raw id
 * @sql
 *      INSERT INTO users (name, password_state, password, system) VALUES (:name(string), :password_state(int), :password(string), :system(int)) RETURNING id
 */
-int64_t DbDao::addUser(const std::string& name, int password_state, const std::string& password, int system)
+std::optional<int64_t> DbDao::addUser(const std::string& name, int password_state, const std::string& password, int system)
 {
 	if(!_addUser.prepared())
 	{
@@ -297,8 +297,11 @@ int64_t DbDao::addUser(const std::string& name, int password_state, const std::s
 	_addUser.bind(password);
 	_addUser.bind(system);
 	auto& cursor=_addUser.cursor();
-	const auto hasNext = cursor.next();
-	assert(hasNext);
+	if(!cursor.next())
+	{
+		_addUser.reset();
+		return {};
+	}
 	int64_t ret;
 	cursor.get(0, ret);
 	_addUser.reset();
@@ -377,12 +380,12 @@ int64_t DbDao::addAccessKey(int64_t user_id, const std::string& description, con
 
 /**
 * @-SQLGenAccess
-* @func int64_t DbDao::addRole
+* @func optional<int64_t> DbDao::addRole
 * @return int64_raw id
 * @sql
 *      INSERT INTO roles (name, system) VALUES (:name(string), :system(int)) RETURNING id
 */
-int64_t DbDao::addRole(const std::string& name, int system)
+std::optional<int64_t> DbDao::addRole(const std::string& name, int system)
 {
 	if(!_addRole.prepared())
 	{
@@ -391,8 +394,11 @@ int64_t DbDao::addRole(const std::string& name, int system)
 	_addRole.bind(name);
 	_addRole.bind(system);
 	auto& cursor=_addRole.cursor();
-	const auto hasNext = cursor.next();
-	assert(hasNext);
+	if(!cursor.next())
+	{
+		_addRole.reset();
+		return {};
+	}
 	int64_t ret;
 	cursor.get(0, ret);
 	_addRole.reset();
@@ -418,12 +424,12 @@ void DbDao::removeRole(int64_t id)
 
 /**
 * @-SQLGenAccess
-* @func int64_t DbDao::addPolicy
+* @func optional<int64_t> DbDao::addPolicy
 * @return int64_raw id
 * @sql
 *      INSERT INTO policies (name, description, ver, data, system) VALUES (:name(string), :description(string), :ver(int), :data(string), :system(int)) RETURNING id
 */
-int64_t DbDao::addPolicy(const std::string& name, const std::string& description, int ver, const std::string& data, int system)
+std::optional<int64_t> DbDao::addPolicy(const std::string& name, const std::string& description, int ver, const std::string& data, int system)
 {
 	if(!_addPolicy.prepared())
 	{
@@ -435,8 +441,11 @@ int64_t DbDao::addPolicy(const std::string& name, const std::string& description
 	_addPolicy.bind(data);
 	_addPolicy.bind(system);
 	auto& cursor=_addPolicy.cursor();
-	const auto hasNext = cursor.next();
-	assert(hasNext);
+	if(!cursor.next())
+	{
+		_addPolicy.reset();
+		return {};
+	}
 	int64_t ret;
 	cursor.get(0, ret);
 	_addPolicy.reset();
