@@ -108,6 +108,7 @@
     "python.testing.pytestArgs": [
         "test"
     ],
+    "python.analysis.extraPaths": ["${workspaceFolder}/test/hs5_api_client"],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
     "python.envFile": "${workspaceFolder}/.env",
