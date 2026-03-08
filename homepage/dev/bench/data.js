@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772910904869,
+  "lastUpdate": 1772971986265,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -7617,6 +7617,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.17733161010268855",
             "extra": "mean: 14.964480003600011 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "a5be89a721991b1ffeb454fff5a9bb2f747b7e0e",
+          "message": "Add requirements from API client",
+          "timestamp": "2026-03-08T13:02:18+01:00",
+          "tree_id": "03131743bf08c9361dd40110c282621fd060a954",
+          "url": "https://github.com/uroni/hs5/commit/a5be89a721991b1ffeb454fff5a9bb2f747b7e0e"
+        },
+        "date": 1772971985597,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07724490296838957,
+            "unit": "iter/sec",
+            "range": "stddev: 0.06619431767668794",
+            "extra": "mean: 12.945837997999991 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.061592015482088314,
+            "unit": "iter/sec",
+            "range": "stddev: 0.16105734749818382",
+            "extra": "mean: 16.23587070779997 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05589052834280713,
+            "unit": "iter/sec",
+            "range": "stddev: 0.13206850692936448",
+            "extra": "mean: 17.892119284799993 sec\nrounds: 5"
           }
         ]
       }
