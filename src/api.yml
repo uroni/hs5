@@ -5,6 +5,7 @@ info:
 paths:
   /api-v1-b64be512-4b03-4028-a589-13931942e205/login:
     post:
+      operationId: login
       description: Login with username and password to service
       requestBody:
         content:
@@ -26,6 +27,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/addUser:
     post:
+      operationId: addUser
       description: Adds a user
       requestBody:
         content:
@@ -47,6 +49,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/list:
     post:
+      operationId: list
       description: List objects at location
       requestBody:
         content:
@@ -68,6 +71,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/sessionCheck:
     post:
+      operationId: sessionCheck
       description: Check if session is ok
       requestBody:
         content:
@@ -89,6 +93,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/addBucket:
     post:
+      operationId: addBucket
       description: Add new bucket
       requestBody:
         content:
@@ -110,6 +115,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/removeUser:
     post:
+      operationId: removeUser
       description: Remove a user
       requestBody:
         content:
@@ -131,6 +137,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/listUsers:
     post:
+      operationId: listUsers
       description: List users
       requestBody:
         content:
@@ -152,6 +159,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/addAccessKey:
     post:
+      operationId: addAccessKey
       description: Add access key
       requestBody:
         content:
@@ -173,6 +181,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/listAccessKeys:
     post:
+      operationId: listAccessKeys
       description: List access keys
       requestBody:
         content:
@@ -194,6 +203,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/removeAccessKey:
     post:
+      operationId: removeAccessKey
       description: Remove access key
       requestBody:
         content:
@@ -215,6 +225,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/addPolicy:
     post:
+      operationId: addPolicy
       description: Add policy
       requestBody:
         content:
@@ -236,6 +247,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/removePolicy:
     post:
+      operationId: removePolicy
       description: Remove policy
       requestBody:
         content:
@@ -257,6 +269,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/listPolicies:
     post:
+      operationId: listPolicies
       description: List policies
       requestBody:
         content:
@@ -278,6 +291,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/addRole:
     post:
+      operationId: addRole
       description: Add role
       requestBody:
         content:
@@ -299,6 +313,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/removeRole:
     post:
+      operationId: removeRole
       description: Remove role
       requestBody:
         content:
@@ -320,6 +335,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/listRoles:
     post:
+      operationId: listRoles
       description: List roles
       requestBody:
         content:
@@ -341,6 +357,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/addUserRole:
     post:
+      operationId: addUserRole
       description: Add user role
       requestBody:
         content:
@@ -362,6 +379,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/removeUserRole:
     post:
+      operationId: removeUserRole
       description: Remove user role
       requestBody:
         content:
@@ -383,6 +401,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/listUserRoles:
     post:
+      operationId: listUserRoles
       description: List user roles
       requestBody:
         content:
@@ -404,6 +423,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/addRolePolicy:
     post:
+      operationId: addRolePolicy
       description: Add role policy
       requestBody:
         content:
@@ -425,6 +445,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/removeRolePolicy:
     post:
+      operationId: removeRolePolicy
       description: Remove role policy
       requestBody:
         content:
@@ -446,6 +467,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/listRolePolicies:
     post:
+      operationId: listRolePolicies
       description: List role policies
       requestBody:
         content:
@@ -467,6 +489,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/changePolicy:
     post:
+      operationId: changePolicy
       description: Change policy
       requestBody:
         content:
@@ -488,6 +511,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/deleteBucket:
     post:
+      operationId: deleteBucket
       description: Delete bucket
       requestBody:
         content:
@@ -509,6 +533,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/changePassword:
     post:
+      operationId: changePassword
       description: Change password
       requestBody:
         content:
@@ -530,6 +555,7 @@ paths:
                 $ref: 'schemas/HapiError.json'
   /api-v1-b64be512-4b03-4028-a589-13931942e205/logout:
     post:
+      operationId: logout
       description: Logout
       requestBody:
         content:
