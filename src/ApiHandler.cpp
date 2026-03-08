@@ -1405,15 +1405,15 @@ Api::LogoutResp ApiHandler::logout(const Api::LogoutParams& params, SessionScope
 
 Api::ListBucketPermissionsResp ApiHandler::listBucketPermissions(const Api::ListBucketPermissionsParams& params, const ApiSessionStorage& sessionStorage)
 {
-    const auto bucketId = sfs.decrypt_id(params.bucketId);
-    const auto bucketName = buckets::getBucketName(bucketId);
-    if(bucketName.empty())
+    const auto bucketIdOpt = buckets::getBucket(params.bucketName);
+    if(!bucketIdOpt)
         throw ApiError(Api::Herror::bucketNotFound);
+    const auto bucketId = bucketIdOpt.value();
 
-    if(!isAuthorized("arn:aws:s3:::"+bucketName, Action::ListBucketPermissions, sessionStorage.userId))
+    if(!isAuthorized("arn:aws:s3:::"+params.bucketName, Action::ListBucketPermissions, sessionStorage.userId))
         throw ApiError(Api::Herror::accessDenied);
 
-    const auto permissions = dao.getBucketPermissions(bucketId);
+    const auto permissions = dao.getBucketPermissionsWithUsername(bucketId);
     
     Api::ListBucketPermissionsResp resp;
     resp.isTruncated = false;
@@ -1423,6 +1423,7 @@ Api::ListBucketPermissionsResp ApiHandler::listBucketPermissions(const Api::List
         Api::BucketPermission item;
         item.id = sfs.encrypt_id(perm.id);
         item.userId = sfs.encrypt_id(perm.user_id);
+        item.userName = perm.username;
 
         const auto permSet = perm.permissions;
 
@@ -1440,10 +1441,10 @@ Api::ListBucketPermissionsResp ApiHandler::listBucketPermissions(const Api::List
 
 Api::AddBucketPermissionResp ApiHandler::addBucketPermission(const Api::AddBucketPermissionParams& params, const ApiSessionStorage& sessionStorage)
 {
-    const auto bucketId = sfs.decrypt_id(params.bucketId);
-    const auto bucketName = buckets::getBucketName(bucketId);
-    if(bucketName.empty())
+    const auto bucketIdOpt = buckets::getBucket(params.bucketName);
+    if(!bucketIdOpt)
         throw ApiError(Api::Herror::bucketNotFound);
+    const auto bucketId = bucketIdOpt.value();
 
     const auto userId = sfs.decrypt_id(params.userId);
     const auto user = dao.getUserById(userId);
@@ -1451,7 +1452,7 @@ Api::AddBucketPermissionResp ApiHandler::addBucketPermission(const Api::AddBucke
     if(!user)
         throw ApiError(Api::Herror::userNotFound);
 
-    if(!isAuthorized("arn:aws:s3:::"+bucketName, Action::AddBucketPermission, sessionStorage.userId))
+    if(!isAuthorized("arn:aws:s3:::"+params.bucketName, Action::AddBucketPermission, sessionStorage.userId))
         throw ApiError(Api::Herror::accessDenied);
 
     int perms = 0;
@@ -1477,7 +1478,7 @@ Api::AddBucketPermissionResp ApiHandler::addBucketPermission(const Api::AddBucke
     dao.addBucketPermission(bucketId, userId, perms);
 
     if(dao.getDb().getLastChanges() != 1)
-        throw ApiError(Api::Herror::internalDbError, fmt::format("Error adding permission for bucket {}", bucketName));
+        throw ApiError(Api::Herror::internalDbError, fmt::format("Error adding permission for bucket {}", params.bucketName));
 
     refreshAuthCache();
 

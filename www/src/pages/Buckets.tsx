@@ -7,7 +7,7 @@ import { filterBySearch, SearchBox, useFilteredBySearch } from '../components/Se
 import { ApiError, list, ListResponse, deleteBucket } from '../api';
 import { Pages, router, state } from '../App';
 import { useSnapshot } from 'valtio';
-import { AddRegular, DeleteRegular, FolderOpenRegular } from '@fluentui/react-icons';
+import { AddRegular, DeleteRegular, FolderOpenRegular, KeyRegular } from '@fluentui/react-icons';
 import { HapiError } from '../errorapi/HapiError';
 
 type BucketType = {
@@ -147,16 +147,14 @@ const Buckets = () => {
             </Button>
             <Button
               icon={<KeyRegular />}
-              disabled={isDeleting === item.name}
               onClick={(e) => {
                 e.stopPropagation();
-                setBucketToDelete(item);
-                setDeleteConfirmText('');
-                setDeleteError('');
-                setDeleteDialogOpen(true);
+                startTransition(() => {
+                  router.navigate(`/${Pages.BucketPermissions}/${encodeURIComponent(item.name)}`);
+                });
               }}
             >
-              Simple User permissions
+              Simple user permissions
             </Button>
           </TableCellLayout>
         );

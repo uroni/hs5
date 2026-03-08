@@ -52,7 +52,7 @@ class DbDao
 	sqlgen::DatabaseQuery _addPolicyStatementAction;
 	sqlgen::DatabaseQuery _addPolicyStatementResource;
 	sqlgen::DatabaseQuery _changeUserPassword;
-	sqlgen::DatabaseQuery _getBucketPermissions;
+	sqlgen::DatabaseQuery _getBucketPermissionsWithUsername;
 	sqlgen::DatabaseQuery _addBucketPermission;
 	sqlgen::DatabaseQuery _removeBucketPermission;
 	sqlgen::DatabaseQuery _getBucketPermission;
@@ -94,6 +94,14 @@ public:
 		int64_t bucket_id;
 		int64_t user_id;
 		int permissions;
+	};
+	struct BucketPermissionWithUsername
+	{
+		int64_t id;
+		int64_t bucket_id;
+		int64_t user_id;
+		int permissions;
+		std::string username;
 	};
 	struct Policy
 	{
@@ -198,7 +206,7 @@ public:
 	int64_t addPolicyStatementAction(int64_t statement_id, int action);
 	int64_t addPolicyStatementResource(int64_t statement_id, const std::string& resource);
 	void changeUserPassword(const std::string& password, int64_t user_id);
-	std::vector<BucketPermission> getBucketPermissions(int64_t bucket_id);
+	std::vector<BucketPermissionWithUsername> getBucketPermissionsWithUsername(int64_t bucket_id);
 	std::optional<int64_t> addBucketPermission(int64_t bucket_id, int64_t user_id, int permissions);
 	void removeBucketPermission(int64_t id);
 	std::optional<BucketPermission> getBucketPermission(int64_t id);

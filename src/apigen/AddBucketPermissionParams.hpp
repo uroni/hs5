@@ -20,7 +20,7 @@ namespace Api {
 
     struct AddBucketPermissionParams {
         std::vector<AddBucketPermission> addBucketPermissions;
-        std::string bucketId;
+        std::string bucketName;
         std::string userId;
     };
 }

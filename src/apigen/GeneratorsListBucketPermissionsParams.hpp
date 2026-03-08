@@ -18,11 +18,11 @@ namespace Api {
     void to_json(json & j, const ListBucketPermissionsParams & x);
 
     inline void from_json(const json & j, ListBucketPermissionsParams& x) {
-        x.bucketId = j.at("bucketId").get<std::string>();
+        x.bucketName = j.at("bucketName").get<std::string>();
     }
 
     inline void to_json(json & j, const ListBucketPermissionsParams & x) {
         j = json::object();
-        j["bucketId"] = x.bucketId;
+        j["bucketName"] = x.bucketName;
     }
 }

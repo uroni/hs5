@@ -1285,30 +1285,33 @@ void DbDao::changeUserPassword(const std::string& password, int64_t user_id)
 
 /**
 * @-SQLGenAccess
-* @func vector<BucketPermission> DbDao::getBucketPermissions
-* @return int64 id, int64 bucket_id, int64 user_id, int permissions
+* @func vector<BucketPermissionWithUsername> DbDao::getBucketPermissionsWithUsername
+* @return int64 id, int64 bucket_id, int64 user_id, int permissions, string username
 * @sql
-*      SELECT id, bucket_id, user_id, permissions FROM bucket_permissions WHERE bucket_id=:bucket_id(int64)
+*      SELECT bucket_permissions.id AS id, bucket_id, user_id, permissions, name AS username FROM 
+*		(bucket_permissions INNER JOIN users ON bucket_permissions.user_id = users.id)
+*	WHERE bucket_id=:bucket_id(int64)
 */
-std::vector<DbDao::BucketPermission> DbDao::getBucketPermissions(int64_t bucket_id)
+std::vector<DbDao::BucketPermissionWithUsername> DbDao::getBucketPermissionsWithUsername(int64_t bucket_id)
 {
-	if(!_getBucketPermissions.prepared())
+	if(!_getBucketPermissionsWithUsername.prepared())
 	{
-		_getBucketPermissions=db.prepare("SELECT id, bucket_id, user_id, permissions FROM bucket_permissions WHERE bucket_id=?");
+		_getBucketPermissionsWithUsername=db.prepare("SELECT bucket_permissions.id AS id, bucket_id, user_id, permissions, name AS username FROM  (bucket_permissions INNER JOIN users ON bucket_permissions.user_id = users.id) WHERE bucket_id=?");
 	}
-	_getBucketPermissions.bind(bucket_id);
-	auto& cursor=_getBucketPermissions.cursor();
-	std::vector<DbDao::BucketPermission> ret;
+	_getBucketPermissionsWithUsername.bind(bucket_id);
+	auto& cursor=_getBucketPermissionsWithUsername.cursor();
+	std::vector<DbDao::BucketPermissionWithUsername> ret;
 	while(cursor.next())
 	{
 		ret.emplace_back();
-		DbDao::BucketPermission& obj=ret.back();
+		DbDao::BucketPermissionWithUsername& obj=ret.back();
 		cursor.get(0, obj.id);
 		cursor.get(1, obj.bucket_id);
 		cursor.get(2, obj.user_id);
 		cursor.get(3, obj.permissions);
+		cursor.get(4, obj.username);
 	}
-	_getBucketPermissions.reset();
+	_getBucketPermissionsWithUsername.reset();
 	return ret;
 }
 

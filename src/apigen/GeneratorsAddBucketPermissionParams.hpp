@@ -23,14 +23,14 @@ namespace Api {
 
     inline void from_json(const json & j, AddBucketPermissionParams& x) {
         x.addBucketPermissions = j.at("addBucketPermissions").get<std::vector<AddBucketPermission>>();
-        x.bucketId = j.at("bucketId").get<std::string>();
+        x.bucketName = j.at("bucketName").get<std::string>();
         x.userId = j.at("userId").get<std::string>();
     }
 
     inline void to_json(json & j, const AddBucketPermissionParams & x) {
         j = json::object();
         j["addBucketPermissions"] = x.addBucketPermissions;
-        j["bucketId"] = x.bucketId;
+        j["bucketName"] = x.bucketName;
         j["userId"] = x.userId;
     }
 

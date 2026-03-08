@@ -15,6 +15,6 @@ namespace Api {
     using nlohmann::json;
 
     struct ListBucketPermissionsParams {
-        std::string bucketId;
+        std::string bucketName;
     };
 }

@@ -20,6 +20,7 @@ import { ApiError, OpenAPI, sessionCheck } from './api';
 import { HapiError, Herror } from './errorapi/HapiError';
 import "./css/global.css";
 import AddBucket from './pages/AddBucket';
+import BucketPermissions from './pages/BucketPermissions';
 
 const initialDark = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
 const initialTheme =
@@ -36,7 +37,8 @@ export enum Pages {
   Roles = "roles",
   Policies = "policies",
   RolePolicies = "rolePolicies",
-  ChangePassword = "changePassword"
+  ChangePassword = "changePassword",
+  BucketPermissions = "bucketPermissions"
 }
 
 export const state = proxy({
@@ -238,6 +240,19 @@ export const router = createHashRouter([
     ),
     loader: async () => {
       state.pageAfterLogin = Pages.ChangePassword;
+      await jumpToLoginPageIfNeccessary();
+      return null;
+    }
+  },
+  {
+    path: `/${Pages.BucketPermissions}/:bucketName`,
+    element: (
+      <Suspense fallback={<Spinner />}>
+        <BucketPermissions />
+      </Suspense>
+    ),
+    loader: async () => {
+      state.pageAfterLogin = Pages.Buckets;
       await jumpToLoginPageIfNeccessary();
       return null;
     }

@@ -5,7 +5,7 @@
       "userId": {
         "type": "string"
       },
-      "bucketId": {
+      "bucketName": {
         "type": "string"
       },
       "addBucketPermissions": {
@@ -16,7 +16,7 @@
         }
       }
     },
-    "required": ["userId", "bucketId", "addBucketPermissions"]
+    "required": ["userId", "bucketName", "addBucketPermissions"]
   }
   
   

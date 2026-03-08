@@ -324,7 +324,7 @@ export type LogoutResponse = ({
 export type AddBucketPermissionData = {
     requestBody?: {
         userId: string;
-        bucketId: string;
+        bucketName: string;
         addBucketPermissions: Array<('read' | 'write' | 'delete')>;
     };
 };
@@ -335,7 +335,7 @@ export type AddBucketPermissionResponse = ({
 
 export type ListBucketPermissionsData = {
     requestBody?: {
-        bucketId: string;
+        bucketName: string;
     };
 };
 
