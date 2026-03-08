@@ -102,10 +102,9 @@ class S3Handler : public proxygen::RequestHandler
 {
 public:
     const bool withBucketVersioning;
-    SingleFileStorage &sfs;
 
     S3Handler(SingleFileStorage &sfs, const std::string& serverUrl, bool withBucketVersioning, DuckDbFs& duckDbFs) : 
-        sfs(sfs), self(this), serverUrl(serverUrl), withBucketVersioning(withBucketVersioning), duckDbFs(duckDbFs) {}
+        _sfs(sfs), self(this), serverUrl(serverUrl), withBucketVersioning(withBucketVersioning), _duckDbFs(duckDbFs) {}
 
     void
     onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexcept override;
@@ -210,6 +209,9 @@ public:
     static std::string md5sumBinFromData(const std::string& md5sumData);
 
     static void addReadingMultipartObject(const std::string& key);
+
+    void sigCheckOk();
+    void sigCheckFailed();
 
 private:
     void readFile(folly::EventBase *evb);
@@ -343,5 +345,33 @@ private:
     static std::mutex readingMultipartObjectsMutex;
     static std::unordered_map<std::string, ReadingMultipartObject> readingMultipartObjects;
 
-    DuckDbFs& duckDbFs;
+    
+
+    DuckDbFs& _duckDbFs;
+    SingleFileStorage &_sfs;
+
+    SingleFileStorage& sfs() {
+#ifndef NDEBUG
+        sfsWasUsed = true;
+#endif
+        return _sfs;
+    }
+    DuckDbFs& duckDbFs() {
+#ifndef NDEBUG
+        sfsWasUsed = true;
+#endif
+        return _duckDbFs;
+    }
+
+#ifndef NDEBUG
+    enum class SigCheckResult
+    {
+        NotChecked,
+        Ok,
+        Failed
+    };
+
+    SigCheckResult sigChecked = SigCheckResult::NotChecked;
+    bool sfsWasUsed = false;
+#endif  
 };
