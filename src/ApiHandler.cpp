@@ -53,6 +53,7 @@
 #include "apigen/GeneratorsHapiError.hpp"
 #include "apigen/GeneratorsListResp.hpp"
 #include "apigen/GeneratorsListParams.hpp"
+#include "apigen/GeneratorsSessionCheckParams.hpp"
 #include "apigen/GeneratorsSessionCheckResp.hpp"
 #include "apigen/GeneratorsAddBucketResp.hpp"
 #include "apigen/GeneratorsAddBucketParams.hpp"
@@ -84,6 +85,9 @@
 #include "utils.h"
 #include "Buckets.h"
 #include "Auth.h"
+#include <map>
+#include <frozen/unordered_map.h>
+#include <frozen/string.h>
 
 using namespace proxygen;
 
@@ -122,6 +126,47 @@ namespace
             throw ApiError(Api::Herror::passwordWrong, fmt::format("Supplied password for user {} wrong", user.name));
     }
 }
+
+class ApiHandler::ApiFunctions
+{
+public:
+using api_func_t = nlohmann::json(*)(ApiHandler& apiHandler, const nlohmann::json&, const ApiSessionStorage&);
+
+#define ADD_API_FUNC(x) {#x, [](ApiHandler& apiHandler, const nlohmann::json& params, const ApiSessionStorage& sessionStorage) -> nlohmann::json { return std::invoke(&ApiHandler::x, apiHandler, params, sessionStorage); }}
+
+    static constexpr frozen::unordered_map<frozen::string, api_func_t, 28> apiFunctions = {
+        ADD_API_FUNC(addUser),
+        ADD_API_FUNC(removeUser),
+        ADD_API_FUNC(listUsers),
+        ADD_API_FUNC(addAccessKey),
+        ADD_API_FUNC(listAccessKeys),
+        ADD_API_FUNC(removeAccessKey),
+        ADD_API_FUNC(addPolicy),
+        ADD_API_FUNC(removePolicy),
+        ADD_API_FUNC(listPolicies),
+        ADD_API_FUNC(addRole),
+        ADD_API_FUNC(removeRole),
+        ADD_API_FUNC(listRoles),
+        ADD_API_FUNC(addUserRole),
+        ADD_API_FUNC(removeUserRole),
+        ADD_API_FUNC(listUserRoles),
+        ADD_API_FUNC(addRolePolicy),
+        ADD_API_FUNC(removeRolePolicy),
+        ADD_API_FUNC(listRolePolicies),
+        ADD_API_FUNC(changePolicy),
+        ADD_API_FUNC(changePassword),
+        ADD_API_FUNC(list),
+        ADD_API_FUNC(sessionCheck),
+        ADD_API_FUNC(addBucket),
+        ADD_API_FUNC(stats),
+        ADD_API_FUNC(deleteBucket),
+        ADD_API_FUNC(listBucketPermissions),
+        ADD_API_FUNC(addBucketPermission),
+        ADD_API_FUNC(removeBucketPermission)    
+    };
+
+#undef ADD_API_FUNC
+};
 
 void ApiHandler::init()
 {
@@ -275,36 +320,9 @@ void ApiHandler::onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexc
         return;
     }
 
-    if(func!="addUser"
-        && func!="removeUser"
-        && func!="listUsers"
-        && func!="addAccessKey"
-        && func!="listAccessKeys"
-        && func!="removeAccessKey"
-        && func!="addPolicy"
-        && func!="removePolicy"
-        && func!="listPolicies"
-        && func!="addRole"
-        && func!="removeRole"
-        && func!="listRoles"
-        && func!="addUserRole"
-        && func!="removeUserRole"
-        && func!="listUserRoles"
-        && func!="addRolePolicy"
-        && func!="removeRolePolicy"
-        && func!="listRolePolicies"
-        && func!="changePolicy"
-        && func!="changePassword"
-        && func!="login"
-        && func!="list"
-        && func!="sessionCheck"
-        && func!="addBucket"
-        && func!="stats"
-        && func!="deleteBucket"
+    if(func!="login"
         && func!="logout"
-        && func!="listBucketPermissions"
-        && func!="addBucketPermission"
-        && func!="removeBucketPermission")
+        && ApiFunctions::apiFunctions.find(frozen::string(func))==ApiFunctions::apiFunctions.end())
     {
         ResponseBuilder(downstream_)
             .status(404, "Not found")
@@ -434,65 +452,20 @@ ApiHandler::ApiResponse ApiHandler::runRequest()
                 body = "{}";
 
             auto params = json::parse(body);
-            
-            if(func=="addUser")
-                resp = addUser(params, *session);
-            else if(func=="removeUser")
-                resp = removeUser(params, *session);
-            else if(func=="listUsers")
-                resp = listUsers(params, *session);
-            else if(func=="addAccessKey")
-                resp = addAccessKey(params, *session);
-            else if(func=="listAccessKeys")
-                resp = listAccessKeys(params, *session);
-            else if(func=="removeAccessKey")
-                resp = removeAccessKey(params, *session);
-            else if(func=="addPolicy")
-                resp = addPolicy(params, *session);
-            else if(func=="removePolicy")
-                resp = removePolicy(params, *session);
-            else if(func=="listPolicies")
-                resp = listPolicies(params, *session);
-            else if(func=="addRole")
-                resp = addRole(params, *session);
-            else if(func=="removeRole")
-                resp = removeRole(params, *session);
-            else if(func=="listRoles")
-                resp = listRoles(params, *session);
-            else if(func=="addUserRole")
-                resp = addUserRole(params, *session);
-            else if(func=="removeUserRole")
-                resp = removeUserRole(params, *session);
-            else if(func=="listUserRoles")
-                resp = listUserRoles(params, *session);
-            else if(func=="addRolePolicy")
-                resp = addRolePolicy(params, *session);
-            else if(func=="removeRolePolicy")
-                resp = removeRolePolicy(params, *session);
-            else if(func=="listRolePolicies")
-                resp = listRolePolicies(params, *session);
-            else if(func=="changePolicy")
-                resp = changePolicy(params, *session);
-            else if(func=="deleteBucket")
-                resp = deleteBucket(params, *session);
-            else if(func=="list")
-                resp = list(params, *session);
-            else if(func=="sessionCheck")
-                resp = Api::SessionCheckResp();
-            else if(func=="addBucket")
-                resp = addBucket(params, *session);
-            else if(func=="stats")
-                resp = stats(params, *session);
-            else if(func=="changePassword")
-                resp = changePassword(params, *session);
-            else if(func=="logout")
+
+            if(func=="logout")
+            {
                 resp = logout(params, session);
-            else if(func=="listBucketPermissions")
-                resp = listBucketPermissions(params, *session);
-            else if(func=="addBucketPermission")
-                resp = addBucketPermission(params, *session);
-            else if(func=="removeBucketPermission")
-                resp = removeBucketPermission(params, *session);
+            }
+            else
+            {
+                auto itFunc = ApiFunctions::apiFunctions.find(frozen::string(func));
+                assert(itFunc!=ApiFunctions::apiFunctions.end());
+                if(itFunc==ApiFunctions::apiFunctions.end())               
+                    throw ApiError(Api::Herror::noSuchFunction);
+                
+                resp = itFunc->second(*this, params, *session);
+            }
         }
         
     }
@@ -1512,5 +1485,10 @@ Api::RemoveBucketPermissionResp ApiHandler::removeBucketPermission(const Api::Re
 
     refreshAuthCache();
 
+    return {};
+}
+
+Api::SessionCheckResp ApiHandler::sessionCheck(const Api::SessionCheckParams& params, const ApiSessionStorage& sessionStorage)
+{
     return {};
 }
