@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773005947696,
+  "lastUpdate": 1773158418160,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -7977,6 +7977,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.31356976361683736",
             "extra": "mean: 19.910018474999994 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "1bca0e56d4e39feaa305ae1e2e4c25c92e4a698f",
+          "message": "Refactor api function routing",
+          "timestamp": "2026-03-10T15:48:46Z",
+          "tree_id": "c38b8ea1f8a7f9401085735bfcaf06faf2a32b26",
+          "url": "https://github.com/uroni/hs5/commit/1bca0e56d4e39feaa305ae1e2e4c25c92e4a698f"
+        },
+        "date": 1773158417470,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07372225853474572,
+            "unit": "iter/sec",
+            "range": "stddev: 0.09277087715964363",
+            "extra": "mean: 13.56442436619999 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.05984275413801821,
+            "unit": "iter/sec",
+            "range": "stddev: 0.32375616768399906",
+            "extra": "mean: 16.71046084699999 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.04869172271029493,
+            "unit": "iter/sec",
+            "range": "stddev: 0.2550881554021415",
+            "extra": "mean: 20.537371535399984 sec\nrounds: 5"
           }
         ]
       }
