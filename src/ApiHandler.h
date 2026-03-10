@@ -64,6 +64,8 @@
 #include "apigen/AddBucketPermissionResp.hpp"
 #include "apigen/RemoveBucketPermissionParams.hpp"
 #include "apigen/RemoveBucketPermissionResp.hpp"
+#include "apigen/SessionCheckParams.hpp"
+#include "apigen/SessionCheckResp.hpp"
 #include "Session.h"
 #include <proxygen/httpserver/RequestHandler.h>
 
@@ -132,6 +134,7 @@ private:
     Api::ListBucketPermissionsResp listBucketPermissions(const Api::ListBucketPermissionsParams& params, const ApiSessionStorage& sessionStorage);
     Api::AddBucketPermissionResp addBucketPermission(const Api::AddBucketPermissionParams& params, const ApiSessionStorage& sessionStorage);
     Api::RemoveBucketPermissionResp removeBucketPermission(const Api::RemoveBucketPermissionParams& params, const ApiSessionStorage& sessionStorage);
+    Api::SessionCheckResp sessionCheck(const Api::SessionCheckParams& params, const ApiSessionStorage& sessionStorage);
 
     std::string func;
     std::string body;
@@ -147,6 +150,8 @@ private:
     bool finished = false;
 
     std::unique_ptr<ApiHandler> self;
+
+    class ApiFunctions;
 };
 
 class ApiError : std::runtime_error
