@@ -5620,15 +5620,15 @@ void S3Handler::requestComplete() noexcept
     self.reset();
 }
 
-void S3Handler::onError(ProxygenError /*err*/) noexcept
+void S3Handler::onError(ProxygenError err) noexcept
 {
-    XLOG(INFO, "onError");
+    XLOGF(INFO, "onError {}", getErrorString(err));
     finished_ = true;
     paused_ = true;
 
     if (request_action == Action::PutObject || request_action == Action::PutObjectPart)
     {
-        XLOGF(WARN, "Error obj {} stopping put", keyInfo.key);
+        XLOGF(WARN, "Error obj {} stopping put: {}", keyInfo.key, getErrorString(err));
 
         std::scoped_lock lock{bodyMutex};
         std::queue<BodyObj> emptyQueue;
