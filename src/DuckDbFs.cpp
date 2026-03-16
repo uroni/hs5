@@ -6,6 +6,7 @@
 #include <duckdb/common/string_util.hpp>
 #include "Buckets.h"
 #include "s3handler.h"
+#include "ContentType.h"
 #include <folly/ScopeGuard.h>
 
 // TODO: Replace with #include <duckdb/function/scalar/string_common.hpp>
@@ -95,7 +96,7 @@ void DuckDbFileHandle::Initialize()
         if(withVersioning)
             s3key = res.key;
 
-        if(!S3Handler::parseMultipartInfo(res.md5sum, res.total_len, multiPartDownloadData, nullptr, nullptr))
+        if(!S3Handler::parseMultipartInfo(res.md5sum, res.total_len, multiPartDownloadData, &contentType, &userMetadata))
         {
             throw duckdb::IOException("Failed to parse multipart info for file: " + path);
         }

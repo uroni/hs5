@@ -271,6 +271,11 @@ private:
     {
         std::string source;
         std::string range;
+        enum class MetadataDirective
+        {
+            Copy,
+            Replace
+        } metadataDirective = MetadataDirective::Copy;
         SingleFileStorage::MatchInfo sourceMatchInfo;
     };
 

@@ -2859,6 +2859,9 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
     if(request_action == Action::CopyObject)
     {
         copyObjectInfo = std::make_unique<CopyObjectInfo>();
+        const auto metadataDirective = headers.getHeaders().getSingleOrEmpty("x-amz-metadata-directive");
+        if(metadataDirective=="REPLACE")
+            copyObjectInfo->metadataDirective = CopyObjectInfo::MetadataDirective::Replace;
         copyObjectInfo->source = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source");
         if(copyObjectInfo->source.starts_with("/"))
             copyObjectInfo->source = copyObjectInfo->source.substr(1);
@@ -6238,6 +6241,12 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
             writeOffset+= wlen;
             bufPtr+= wlen;
         }
+    }
+
+    if(copyObjectInfo.metadataDirective == CopyObjectInfo::MetadataDirective::Copy)
+    {
+        contentType = sourceFileHs5->GetContentType();
+        userMetadata = sourceFileHs5->GetUserMetadata();
     }
 
     cleanupExtents = false;

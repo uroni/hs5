@@ -939,9 +939,18 @@ def test_copy_object(hs5_large: Hs5Runner, tmp_path: Path, objsize: int):
             fsize += towrite
 
     s3_client = hs5_large.get_s3_client()
-    s3_client.upload_file(str(tmpfile), hs5_large.testbucketname(), "upload.dat")
+    s3_client.upload_file(str(tmpfile), hs5_large.testbucketname(), "upload.dat", ExtraArgs={'Metadata': {'foo': 'bar'}})
 
-    s3_client.copy_object(Bucket=hs5_large.testbucketname(), Key="upload_copy.dat", CopySource={"Bucket": hs5_large.testbucketname(), "Key": "upload.dat"})
+    s3_client.copy_object(Bucket=hs5_large.testbucketname(), Key="upload_copy.dat", 
+                        CopySource={"Bucket": hs5_large.testbucketname(), "Key": "upload.dat"})
+
+    if objsize < 100:
+        s3_client.copy_object(Bucket=hs5_large.testbucketname(), Key="upload_copy2.dat",
+                            CopySource={"Bucket": hs5_large.testbucketname(), "Key": "upload.dat"},
+                            MetadataDirective="REPLACE", Metadata={"foo2": "bar2"})
+        
+        obj_info = s3_client.head_object(Bucket=hs5_large.testbucketname(), Key="upload_copy2.dat")
+        assert "Metadata" in obj_info and "foo2" in obj_info["Metadata"] and obj_info["Metadata"]["foo2"] == "bar2"
 
     dl_path = tmp_path / "download.dat"
     s3_client.download_file(hs5_large.testbucketname(), "upload_copy.dat", str(dl_path))
@@ -949,7 +958,9 @@ def test_copy_object(hs5_large: Hs5Runner, tmp_path: Path, objsize: int):
     assert filecmp.cmp(tmpfile, dl_path)
 
     src_etag = s3_client.head_object(Bucket=hs5_large.testbucketname(), Key="upload.dat")["ETag"]
-    copy_etag = s3_client.head_object(Bucket=hs5_large.testbucketname(), Key="upload_copy.dat")["ETag"]
+    obj_info = s3_client.head_object(Bucket=hs5_large.testbucketname(), Key="upload_copy.dat")
+    assert "Metadata" in obj_info and "foo" in obj_info["Metadata"] and obj_info["Metadata"]["foo"] == "bar"
+    copy_etag = obj_info["ETag"]
     if objsize < 5*1024*1024:
         assert src_etag == copy_etag
     else:
