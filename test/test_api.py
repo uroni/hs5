@@ -346,7 +346,7 @@ def test_add_user_for_bucket(hs5: Hs5Runner):
     s3.delete_object(Bucket="accessbucket", Key="testkey")
 
 
-@pytest.mark.parametrize("perms", ["r", "w", "d", "rw", "rd", "wd", "rwd"])
+@pytest.mark.parametrize("perms", ["", "r", "w", "d", "rw", "rd", "wd", "rwd"])
 def test_simple_permissions(hs5: Hs5Runner, perms: str):
     admin_client = hs5.get_api_client_admin()
 
