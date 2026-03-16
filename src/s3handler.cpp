@@ -5471,13 +5471,13 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         return;
     }
 
-    XLOGF(DBG0, "Successfully wrote object {} etag {}", keyInfo.key, folly::hexlify(md5sum.substr(1, MD5_DIGEST_LENGTH)));
+    XLOGF(DBG0, "Successfully wrote object {} etag {}", keyInfo.key, folly::hexlify(md5sumBinFromData(md5sum)));
 
     evb->runInEventBaseThread([this, md5sum, lastModified]()
                             {      
                 finished_ = true;
                 ResponseBuilder resp(downstream_);
-                const auto etag = fmt::format("\"{}\"", folly::hexlify(md5sum.substr(1, MD5_DIGEST_LENGTH)));
+                const auto etag = fmt::format("\"{}\"", folly::hexlify(md5sumBinFromData(md5sum)));
                 resp.status(200, "OK");
                 resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, etag);
                 if(keyInfo.version != 0)
