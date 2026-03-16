@@ -1150,7 +1150,9 @@ ParsePartRes parsePartExtsFromStr(const std::string& rdata)
     crdata.getStr2(&nonce);
     ContentType contentType;
     contentType.deserialize(crdata);
-    return ParsePartRes{nonce, contentType, parsePartExts(crdata)};
+    UserMetadata userMetadata;
+    userMetadata.deserialize(crdata);
+    return ParsePartRes{nonce, contentType, userMetadata, parsePartExts(crdata)};
 }
 
 std::vector<MultiPartDownloadData::PartExt> parsePartExts(CRData& rdata)
@@ -1214,6 +1216,7 @@ std::string serializePartExts(const ParsePartRes& partRes)
     CWData wdata;
     wdata.addString2(partRes.nonce);
     partRes.contentType.serialize(wdata);
+    partRes.userMetadata.serialize(wdata);
     for(const auto& part: partRes.parts)    
     {
         wdata.addVarInt(part.size);
@@ -1739,6 +1742,15 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
             return;
         }
+
+        if(!userMetadata.parseMetadataValues(*headers))
+        {
+            ResponseBuilder(downstream_)
+                .status(400, "Bad request")
+                .body("Invalid metadata values")
+                .sendWithEOM();
+            return;
+        }
         
         parseMatchInfo(*headers, false, false);
 
@@ -1932,6 +1944,15 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 ResponseBuilder(downstream_)
                     .status(403, "Forbidden")
                     .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
+                    .sendWithEOM();
+                return;
+            }
+
+            if(!userMetadata.parseMetadataValues(*headers))
+            {
+                ResponseBuilder(downstream_)
+                    .status(400, "Bad request")
+                    .body("Invalid metadata values")
                     .sendWithEOM();
                 return;
             }
@@ -2250,7 +2271,9 @@ void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
                         .sendWithEOM();
 }
 
-bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, ContentType* contentType)
+bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, 
+    std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, ContentType* contentType,
+    UserMetadata* userMetadata)
 {
 #ifdef ALLOW_LEGACY_MD5SUM
     if(md5sum.size()==MD5_DIGEST_LENGTH || md5sum.empty())
@@ -2267,17 +2290,25 @@ bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen,
     const auto itypeFlags = itype;
     itype = itype & ~metadata_known_flags;
 
-    if(contentType && itype==metadata_object && (itypeFlags & metadata_flag_with_content_type)>0)
+    if(contentType && itype==metadata_object)
     {
-        if(!contentType)
-            return true;
+        assert(userMetadata);
 
         if(!rdata.incrementPtr(MD5_DIGEST_LENGTH))
             return false;
-        
-        if(!contentType->deserialize(rdata))
-            return false;
 
+        if( itypeFlags & metadata_flag_with_content_type)
+        {
+            if(!contentType->deserialize(rdata))
+                return false;
+        }
+
+        if( itypeFlags & metadata_flag_with_meta)
+        {
+            if(!userMetadata->deserialize(rdata))
+                return false;
+        }
+        
         return true;
     }
     else if(itype==metadata_object || itype==metadata_tombstone)
@@ -2325,10 +2356,21 @@ bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen,
     if(numParts!=multiPartDownloadData->numParts)
         return false;
 
-    if(contentType && (itypeFlags & metadata_flag_with_content_type)>0)
+    if(contentType)
     {
-        if(!contentType->deserialize(rdata))
-            return false;
+        assert(userMetadata);
+
+        if(itypeFlags & metadata_flag_with_content_type)
+        {
+            if(!contentType->deserialize(rdata))
+                return false;
+        }
+
+        if(itypeFlags & metadata_flag_with_meta)
+        {
+            if(!userMetadata->deserialize(rdata))
+                return false;
+        }
     }
 
     return true;
@@ -2562,7 +2604,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     assert(rc==0);
                 };
 
-                if(!self->parseMultipartInfo(res.md5sum, res.total_len, self->multiPartDownloadData, &self->contentType))
+                if(!self->parseMultipartInfo(res.md5sum, res.total_len, self->multiPartDownloadData, &self->contentType, &self->userMetadata))
                 {
                     evb->runInEventBaseThread([self = self]()
                                               {
@@ -2702,7 +2744,8 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     onMatchCallback(*self->matchInfo, frag_info, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum));
                 }
 
-                evb->runInEventBaseThread([self = self, hasRange=!range.empty() || partNumberSize, rangeStart, rangeEnd, md5sum, partNumberEtag, last_modified = res.last_modified]()
+                evb->runInEventBaseThread([self = self, hasRange=!range.empty() || partNumberSize, 
+                        rangeStart, rangeEnd, md5sum, partNumberEtag, last_modified = res.last_modified]()
                                               {
                     if(self->matchInfo && !self->matchInfo->match)
                     {
@@ -2721,6 +2764,8 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         .header(proxygen::HTTP_HEADER_ETAG, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum))
                         .header(proxygen::HTTP_HEADER_CONTENT_TYPE, contentTypeToStr(self->contentType))
                         .header("Last-Modified", format_last_modified_rfc1123(last_modified)));
+
+                    self->userMetadata.addRespHeaders(resp);
 
                     if(self->request_action==Action::HeadObject)
                     {
@@ -3061,6 +3106,7 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
                 CWData data;
                 data.addString2(uploadIdEnc.nonce);
                 self->contentType.serialize(data);
+                self->userMetadata.serialize(data);
 
                 std::string md5sum(data.getDataPtr(), data.getDataSize());
                 const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
@@ -3167,12 +3213,14 @@ void S3Handler::finalizeMultipartUpload()
                     .bucketId = partialUploadsBucketId}), SingleFileStorage::ReadSkipAddReading);
                 CRData uploadData(readRes.md5sum.data(), readRes.md5sum.size());
                 ContentType uploadContentType;
+                UserMetadata uploadUserMetadata;
                 std::string uploadFPath = make_key(self->keyInfo);
                 std::string uploadNonce;
                 if(readRes.err != 0 ||
                     !uploadData.getStr2(&uploadNonce) ||
                     uploadNonce!=multiPartData->uploadId.nonce ||
-                    !uploadContentType.deserialize(uploadData))
+                    !uploadContentType.deserialize(uploadData) ||
+                    !uploadUserMetadata.deserialize(uploadData))
                 {
                     XLOGF(WARN, "Could not find upload data for uploadId {} err {}", multiPartData->uploadId.id, readRes.err);
                     evb->runInEventBaseThread([self = self, readRes = readRes]()
@@ -3196,6 +3244,8 @@ void S3Handler::finalizeMultipartUpload()
                 int64_t itype = metadata_multipart_object;
                 if(uploadContentType.hasContentType())
                     itype |= metadata_flag_with_content_type;
+                if(uploadUserMetadata.hasUserMetadata())
+                    itype |= metadata_flag_with_meta;
                 wdata.addVarInt(itype);
                 const size_t md5sumOffset = wdata.getDataSize();
                 wdata.resize(wdata.getDataSize()+MD5_DIGEST_LENGTH);
@@ -3313,6 +3363,8 @@ void S3Handler::finalizeMultipartUpload()
 
                 if(uploadContentType.hasContentType())
                     uploadContentType.serialize(wdata);
+                if(uploadUserMetadata.hasUserMetadata() )
+                    uploadUserMetadata.serialize(wdata);
 
                 EVP_DigestFinal_ex(md5Ctx, reinterpret_cast<unsigned char*>(wdata.getDataPtr()) + md5sumOffset, nullptr);
 
@@ -4468,7 +4520,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             }
 
             std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
-            if(!self->parseMultipartInfo(md5sum, size, multiPartDownloadData, nullptr))
+            if(!self->parseMultipartInfo(md5sum, size, multiPartDownloadData, nullptr, nullptr))
             {
                 XLOGF(WARN, "Error parsing multipart info for key {} with md5sum {}", keyInfo.key, folly::hexlify(md5sum));
             }
@@ -5336,6 +5388,8 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
     int64_t itype = metadata_object;
     if(contentType.hasContentType())
         itype |= metadata_flag_with_content_type;
+    if(userMetadata.hasUserMetadata())
+        itype |= metadata_flag_with_meta;
     CWData wmetadata;
     wmetadata.addVarInt(itype);
     char md5buf[MD5_DIGEST_LENGTH];
@@ -5343,6 +5397,8 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
     wmetadata.addBuffer(md5buf, MD5_DIGEST_LENGTH);
     if(contentType.hasContentType())
         contentType.serialize(wmetadata);
+    if(userMetadata.hasUserMetadata())
+        userMetadata.serialize(wmetadata);
 
     std::string_view md5sum(wmetadata.getDataPtr(), wmetadata.getDataSize());
 
@@ -5684,7 +5740,7 @@ std::vector<SingleFileStorage::SFragInfo> S3Handler::onDeleteCallback(const std:
 
     int64_t totalLen;
     std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
-    if(!parseMultipartInfo(md5sum, totalLen, multiPartDownloadData, nullptr))
+    if(!parseMultipartInfo(md5sum, totalLen, multiPartDownloadData, nullptr, nullptr))
     {
         XLOGF(WARN, "Error parsing multi-part upload for file {}", fn);
         return {};

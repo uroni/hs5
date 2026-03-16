@@ -2299,27 +2299,6 @@ ContentType contentTypeFromStr(const std::string_view contentTypeStr)
     return ContentType{0, std::string(contentTypeStr)};
 }
 
-size_t ContentType::serializeSize() const
-{
-    if(contentType > 0)
-        return CWData::varIntLen(contentType);
-    return CWData::varIntLen(0) + CWData::varIntLen(contentTypeStr.size()) + contentTypeStr.size();
-}
-
-void ContentType::serialize(char* buffer) const
-{
-    if(contentType > 0)
-    {
-        CWData::putVarInt(buffer, contentType);
-    }
-    else
-    {
-        buffer = CWData::putVarInt(buffer, 0);
-        buffer = CWData::putVarInt(buffer, contentTypeStr.size());
-        memcpy(buffer, contentTypeStr.data(), contentTypeStr.size());
-    }
-}
-
 void ContentType::serialize(CWData& wdata) const
 {
     if(contentType>0)

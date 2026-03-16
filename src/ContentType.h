@@ -13,10 +13,6 @@ struct ContentType
         return contentType != 0 || !contentTypeStr.empty();
     }
 
-    size_t serializeSize() const;
-
-    void serialize(char* buffer) const;
-
     bool deserialize(CRData& rdata);
 
     void serialize(CWData& wdata) const;

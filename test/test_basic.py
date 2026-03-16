@@ -64,16 +64,19 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     
     s3_client = hs5.get_s3_client()
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-        res = s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file, ContentType="text/markdown")
+        res = s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file, 
+            ContentType="text/markdown", Metadata={"test": "foo"})
         assert res["ETag"].strip('"').lower() == fdata_md5.lower()
 
     obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj_info["ContentLength"] == len(fdata)
     assert obj_info["LastModified"].year >= 2025
     assert obj_info["ContentType"] == "text/markdown"
+    assert "test" in obj_info["Metadata"] and obj_info["Metadata"]["test"] == "foo"
 
     obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9")
     assert obj_range["ContentType"] == "text/markdown"
+    assert "test" in obj_range["Metadata"] and obj_range["Metadata"]["test"] == "foo" 
     assert obj_range["LastModified"].year >= 2025
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
@@ -91,6 +94,7 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
 
     obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=10-19")
     assert obj_range["ContentType"] == "text/markdown"
+    assert "test" in obj_range["Metadata"] and obj_range["Metadata"]["test"] == "foo" 
     assert obj_range["Body"].read() == fdata[10:20]
 
     with pytest.raises(ClientError, match="Range Not Satisfiable"):
@@ -716,7 +720,8 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
     MB = 1024 * 1024
     config = TransferConfig(multipart_chunksize=8 * MB)
 
-    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "upload.txt", Config=config, ExtraArgs={'ContentType': 'text/plain'})
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "upload.txt", Config=config, 
+                        ExtraArgs={'Metadata': {'foo': 'bar'}, 'ContentType': 'text/plain'})
 
     hs5.commit_storage(s3_client)
 
@@ -729,12 +734,14 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
 
     obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9")
     assert obj_range["ContentType"] == "text/plain"
+    assert "foo" in obj_range["Metadata"] and obj_range["Metadata"]["foo"] == "bar"
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
 
     obj_etag = obj_range["ETag"]
     obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9", IfMatch=obj_etag)
     assert obj_range["ContentType"] == "text/plain"
+    assert "foo" in obj_range["Metadata"] and obj_range["Metadata"]["foo"] == "bar"
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
 

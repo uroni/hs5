@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21...4.0)
-project(hs5 VERSION 0.24.1 LANGUAGES CXX C)
+project(hs5 VERSION 0.25.0 LANGUAGES CXX C)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -149,6 +149,7 @@ add_executable(hs5
     src/Action.cpp
     src/ContentType.cpp
     src/PayloadHash.cpp
+    src/UserMetadata.cpp
     ${SCHEMA_SOURCES}
     )
 

@@ -20,6 +20,7 @@
 #include "ContentType.h"
 #include "PayloadHash.h"
 #include "ApiHandler.h"
+#include "UserMetadata.h"
 
 class ExpatXmlParser
 {
@@ -78,6 +79,7 @@ struct ParsePartRes
 {
     std::string nonce;
     ContentType contentType;
+    UserMetadata userMetadata;
     std::vector<MultiPartDownloadData::PartExt> parts;
 };
 
@@ -93,8 +95,9 @@ KeyInfoView extractKeyInfoView(const std::string_view key);
 const int64_t metadata_object = 0;
 const int64_t metadata_multipart_object = 1;
 const int64_t metadata_tombstone = 2;
-const int64_t metadata_flag_with_content_type = 4;
-const int64_t metadata_known_flags = metadata_flag_with_content_type;
+const int64_t metadata_flag_with_content_type = 1<<2;
+const int64_t metadata_flag_with_meta = 1<<3;
+const int64_t metadata_known_flags = metadata_flag_with_content_type | metadata_flag_with_meta;
 
 class DuckDbFs;
 
@@ -191,7 +194,9 @@ public:
         std::string accessKey;
     };
 
-    static bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, ContentType* contentType);
+    static bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, 
+            std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, ContentType* contentType,
+            UserMetadata* userMetadata);
     static std::string getEtag(const std::string& md5sum);
     
     static int seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
@@ -258,6 +263,9 @@ private:
     void parseSourceMatchInfo(proxygen::HTTPMessage& headers, SingleFileStorage::MatchInfo& matchInfo);
     int checkMatchInfo();
     void finalizePutObject(folly::EventBase *evb, const int64_t lastModified);
+    
+    bool serializeMetadataValues(CWData& wdata);
+    bool unserializeMetadataValues(CRData& rdata);
 
     struct CopyObjectInfo
     {
@@ -287,6 +295,7 @@ private:
     std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
     std::unique_ptr<DeleteObjectsData> deleteObjectsData;
     ContentType contentType;
+    UserMetadata userMetadata;
 
 	std::mutex extents_mutex;
 	std::condition_variable extents_cond;

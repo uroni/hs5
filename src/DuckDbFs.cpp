@@ -95,7 +95,7 @@ void DuckDbFileHandle::Initialize()
         if(withVersioning)
             s3key = res.key;
 
-        if(!S3Handler::parseMultipartInfo(res.md5sum, res.total_len, multiPartDownloadData, nullptr))
+        if(!S3Handler::parseMultipartInfo(res.md5sum, res.total_len, multiPartDownloadData, nullptr, nullptr))
         {
             throw duckdb::IOException("Failed to parse multipart info for file: " + path);
         }
