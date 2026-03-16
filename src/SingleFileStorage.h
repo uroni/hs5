@@ -218,12 +218,12 @@ public:
 
 	int write_ext(const Ext& ext, const char* data, size_t data_size, const bool complete_obj);
 
-	int write_finalize(const std::string& fn, const std::vector<Ext>& extents, int64_t last_modified, const std::string& md5sum,
+	int write_finalize(const std::string& fn, const std::vector<Ext>& extents, int64_t last_modified, const std::string_view md5sum,
 		bool no_del_old, bool is_fragment, std::unique_ptr<SFragInfo> linked = nullptr, MatchInfo* match_info = nullptr);
 
 	int write(const std::string& fn,
 		const char* data, size_t data_size, const size_t data_alloc_size, 
-		int64_t last_modified, const std::string& md5sum,
+		int64_t last_modified, const std::string_view md5sum,
 		bool no_del_old, bool is_fragment, MatchInfo* match_info = nullptr);
 
 	const static unsigned int ReadWithReadahead = 1;
@@ -415,7 +415,7 @@ public:
 private:
 
 	int write_int(const std::string& fn, const char* data, size_t data_size, const size_t data_alloc_size,
-		int64_t last_modified, const std::string& md5sum, bool allow_defrag_lock, bool no_del_old, MatchInfo* match_info);
+		int64_t last_modified, const std::string_view md5sum, bool allow_defrag_lock, bool no_del_old, MatchInfo* match_info);
 
 	int64_t remove_fn(const std::string& fn,
 		MDB_txn* txn, MDB_txn* freespace_txn, bool del_from_main, bool del_old, THREAD_ID tid, const bool call_callback, std::set<SPunchItem>* trim_items = nullptr);

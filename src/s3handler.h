@@ -90,11 +90,11 @@ std::string make_key(const std::string_view key, const int64_t bucketId, const i
 std::string make_key(const KeyInfo& keyInfo);
 KeyInfoView extractKeyInfoView(const std::string_view key);
 
-const unsigned char metadata_object = 0;
-const unsigned char metadata_multipart_object = 1;
-const unsigned char metadata_tombstone = 2;
-const unsigned char metadata_flag_with_content_type = 4;
-const unsigned char metadata_known_flags = metadata_flag_with_content_type;
+const int64_t metadata_object = 0;
+const int64_t metadata_multipart_object = 1;
+const int64_t metadata_tombstone = 2;
+const int64_t metadata_flag_with_content_type = 4;
+const int64_t metadata_known_flags = metadata_flag_with_content_type;
 
 class DuckDbFs;
 
@@ -206,7 +206,7 @@ public:
     static std::optional<std::string> onModifyCallback(const std::string& fn, std::string md5sum, std::string md5sumParam);
     static void onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride);
 
-    static std::string md5sumBinFromData(const std::string& md5sumData);
+    static std::string md5sumBinFromData(const std::string_view md5sumData);
 
     static void addReadingMultipartObject(const std::string& key);
 

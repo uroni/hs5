@@ -2260,8 +2260,8 @@ bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen,
 #endif
 
     CRData rdata(md5sum.data(), md5sum.size());
-    unsigned char itype;
-    if(!rdata.getUChar(&itype))
+    int64_t itype;
+    if(!rdata.getVarInt(&itype))
         return false;
 
     const auto itypeFlags = itype;
@@ -2347,11 +2347,14 @@ std::string S3Handler::getEtag(const std::string& md5sum)
         return std::string();
 
     CRData rdata(md5sum.data(), md5sum.size());
-    char itype;
-    if(!rdata.getChar(&itype) || itype == metadata_tombstone)
+    int64_t itype;
+    if(!rdata.getVarInt(&itype))
         return std::string();
 
     itype = itype & ~metadata_known_flags;
+
+    if(itype == metadata_tombstone)
+        return std::string();
 
     if(itype != metadata_multipart_object && itype != metadata_object)
     {
@@ -2747,14 +2750,19 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
             });
 }
 
-std::string S3Handler::md5sumBinFromData(const std::string& md5sumData)
+std::string S3Handler::md5sumBinFromData(const std::string_view md5sumData)
 {
-    #ifdef ALLOW_LEGACY_MD5SUM
-    const auto md5sum = md5sumData.size() == MD5_DIGEST_LENGTH ? md5sumData : ((!md5sumData.empty() && md5sumData[0] == metadata_object ) ? md5sumData.substr(1) : "");
-    #else
-    const auto md5sum = (!md5sumData.empty() && ( (md5sumData[0] & ~metadata_known_flags) == metadata_object) ) ? md5sumData.substr(1, MD5_DIGEST_LENGTH) : "";
-    #endif
-    return md5sum;
+#ifdef ALLOW_LEGACY_MD5SUM
+    return = md5sumData.size() == MD5_DIGEST_LENGTH ? std::string(md5sumData) : ((!md5sumData.empty() && md5sumData[0] == metadata_object ) ? std::string(md5sumData.substr(1)) : "");
+#else
+    CRData rdata(md5sumData.data(), md5sumData.size());
+    int64_t itype;
+    if(!rdata.getVarInt(&itype))
+        return std::string();
+    if(rdata.getLeft()<MD5_DIGEST_LENGTH)
+        return std::string();
+    return std::string(rdata.getCurrDataPtr(), MD5_DIGEST_LENGTH);
+#endif
 }
 
 int S3Handler::checkMatchInfo()
@@ -3185,10 +3193,10 @@ void S3Handler::finalizeMultipartUpload()
 
                 MultiPartDownloadData::PartExt lastExt = {-1, 0, 0};
                 CWData wdata;
-                auto itype = metadata_multipart_object;
+                int64_t itype = metadata_multipart_object;
                 if(uploadContentType.hasContentType())
                     itype |= metadata_flag_with_content_type;
-                wdata.addUChar(itype);
+                wdata.addVarInt(itype);
                 const size_t md5sumOffset = wdata.getDataSize();
                 wdata.resize(wdata.getDataSize()+MD5_DIGEST_LENGTH);
                 wdata.addVarInt(multiPartData->uploadId.id);
@@ -5325,19 +5333,18 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
 void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModified)
 {
-    std::string md5sum;
+    int64_t itype = metadata_object;
     if(contentType.hasContentType())
-    {
-        md5sum.resize(MD5_DIGEST_LENGTH+1 + contentType.serializeSize());
-        md5sum[0] = static_cast<char>(metadata_object | metadata_flag_with_content_type);
-        contentType.serialize(&md5sum[1 + MD5_DIGEST_LENGTH]);
-    }
-    else
-    {
-        md5sum.resize(MD5_DIGEST_LENGTH+1);
-        md5sum[0] = static_cast<char>(metadata_object);
-    }
-    EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&md5sum[1]), nullptr);
+        itype |= metadata_flag_with_content_type;
+    CWData wmetadata;
+    wmetadata.addVarInt(itype);
+    char md5buf[MD5_DIGEST_LENGTH];
+    EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(md5buf), nullptr);
+    wmetadata.addBuffer(md5buf, MD5_DIGEST_LENGTH);
+    if(contentType.hasContentType())
+        contentType.serialize(wmetadata);
+
+    std::string_view md5sum(wmetadata.getDataPtr(), wmetadata.getDataSize());
 
     if(payloadHash && !payloadHash->isFinalExpected())
     {
@@ -5473,11 +5480,11 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
 
     XLOGF(DBG0, "Successfully wrote object {} etag {}", keyInfo.key, folly::hexlify(md5sumBinFromData(md5sum)));
 
-    evb->runInEventBaseThread([this, md5sum, lastModified]()
+    evb->runInEventBaseThread([this, md5buf, lastModified]()
                             {      
                 finished_ = true;
                 ResponseBuilder resp(downstream_);
-                const auto etag = fmt::format("\"{}\"", folly::hexlify(md5sumBinFromData(md5sum)));
+                const auto etag = fmt::format("\"{}\"", folly::hexlify(std::string_view(md5buf, MD5_DIGEST_LENGTH)));
                 resp.status(200, "OK");
                 resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, etag);
                 if(keyInfo.version != 0)
