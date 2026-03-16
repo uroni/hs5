@@ -499,7 +499,7 @@ int actionRun(std::vector<std::string> args)
         }
         else
         {
-            const auto workerThreads = folly::available_concurrency() * 2;
+            const auto workerThreads = folly::hardware_concurrency() * 2;
             realArgs.push_back("--folly_global_cpu_executor_threads");
             realArgs.push_back(std::to_string(workerThreads));
         }
