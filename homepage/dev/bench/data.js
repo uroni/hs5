@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773158418160,
+  "lastUpdate": 1773699304212,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -8022,6 +8022,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.2550881554021415",
             "extra": "mean: 20.537371535399984 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "f19bc95db2892bbe12a3a1e0c04b20d2f4d62836",
+          "message": "Revert deprecation change",
+          "timestamp": "2026-03-16T22:04:07Z",
+          "tree_id": "88b9b9e947093f6bed513bed36f782f3cbc070c9",
+          "url": "https://github.com/uroni/hs5/commit/f19bc95db2892bbe12a3a1e0c04b20d2f4d62836"
+        },
+        "date": 1773699303388,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07487122996848758,
+            "unit": "iter/sec",
+            "range": "stddev: 0.2034679339339934",
+            "extra": "mean: 13.356265155800008 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.060801975878560885,
+            "unit": "iter/sec",
+            "range": "stddev: 0.23512535424757458",
+            "extra": "mean: 16.446833931799993 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05346293564821632,
+            "unit": "iter/sec",
+            "range": "stddev: 0.38060465067372945",
+            "extra": "mean: 18.70454713859999 sec\nrounds: 5"
           }
         ]
       }
