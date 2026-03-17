@@ -9,12 +9,22 @@ import time
 import uuid
 import boto3
 import botocore
+import portalocker
 import pytest
 import requests
 from mypy_boto3_s3.client import S3Client
 import sh
 
-curr_port = 14000
+def get_next_port(testrun_uid: str) -> int:
+    with portalocker.Lock(f"/tmp/hs5-ports-{testrun_uid}/garage", mode="r+", flags=portalocker.LOCK_EX) as f:
+        cp = f.read()
+        p = int(cp)
+        p += 3
+        f.truncate(0)
+        f.seek(0)
+        f.write(str(p))
+
+        return p
 
 def calculate_sha256(file_path: Path) -> str:
     """
@@ -34,20 +44,29 @@ class GarageRunner:
     A class that provides a fixture for running a Garage server in a test environment.
     """
 
+    def _garage_url(self) -> tuple[str, str]:
+        # if arm64
+        if os.uname().machine == "aarch64":
+            return ("https://garagehq.deuxfleurs.fr/_releases/v2.2.0/aarch64-unknown-linux-musl/garage",
+                    "3922bd3524e5267587a27fec91e4d8447353113ea3a55e2d1786a53d7529d1da")
+        else:
+            return ("https://garagehq.deuxfleurs.fr/_releases/v2.2.0/x86_64-unknown-linux-musl/garage",
+                     "ec761bb996e8453e86fe68ccc1cf222c73bb1ef05ae0b540bd4827e7d1931aab")
+
     def _download_garage(self):
         loc = Path("garage")
         loc_new = Path("garage.new")
         if not loc.exists():  
             print("Downloading Garage server...")          
-            url = "https://garagehq.deuxfleurs.fr/_releases/v2.2.0/x86_64-unknown-linux-musl/garage"
+            url, expected_sha256 = self._garage_url()
             with requests.get(url, stream=True) as r:
                 r.raise_for_status()
                 with open(loc_new, 'wb') as f:
                     for chunk in r.iter_content(chunk_size=8192):
                         f.write(chunk)
 
-            if calculate_sha256(loc_new) != "ec761bb996e8453e86fe68ccc1cf222c73bb1ef05ae0b540bd4827e7d1931aab":
-                raise ValueError("SHA256 checksum does not match expected value.")
+            if calculate_sha256(loc_new) != expected_sha256:
+                raise ValueError(f"SHA256 checksum {calculate_sha256(loc_new)} does not match expected value {expected_sha256}.")
             
             loc_new.rename(loc)
 
@@ -55,15 +74,11 @@ class GarageRunner:
             loc.chmod(0o755)                       
 
 
-    def __init__(self, datapath : Path, dbengine: str):
+    def __init__(self, datapath : Path, dbengine: str, testrun_uid: str):
         """
         Initializes the GarageRunner 
         """
-        global curr_port
-
-        curr_port += 3
-
-        self._port = curr_port
+        self._port = get_next_port(testrun_uid)
         self._root_key = uuid.uuid4().hex
 
         sqlite_full = dbengine == "sqlite_full"
@@ -87,17 +102,17 @@ f"""metadata_dir = "{meta_path}"
 data_dir = "{data_path}"
 db_engine = "{dbengine}"
 replication_factor = 1
-rpc_bind_addr = "[::]:{curr_port+1}"
-rpc_public_addr = "127.0.0.1:{curr_port+1}"
+rpc_bind_addr = "[::]:{self._port+1}"
+rpc_public_addr = "127.0.0.1:{self._port+1}"
 rpc_secret = "{self._secret}"
 data_fsync = true
 metadata_fsync = true
 compression_level = 'none'
 [s3_api]
 s3_region = "garage"
-api_bind_addr = "[::]:{curr_port}"
+api_bind_addr = "[::]:{self._port}"
 [admin]
-api_bind_addr = "[::]:{curr_port+2}"
+api_bind_addr = "[::]:{self._port+2}"
 admin_token = "{self._secret}"
 metrics_token = "{self._secret}"
 """, encoding="utf-8")
@@ -172,19 +187,19 @@ metrics_token = "{self._secret}"
     
 
 @pytest.fixture
-def garage(tmpdir: Path):
-    runner = GarageRunner(tmpdir, "lmdb")
+def garage(tmpdir: Path, testrun_uid: str):
+    runner = GarageRunner(tmpdir, "lmdb", testrun_uid)
     yield runner
     runner.stop()
 
 @pytest.fixture
-def garage_sqlite(tmpdir: Path):
-    runner = GarageRunner(tmpdir, "sqlite")
+def garage_sqlite(tmpdir: Path, testrun_uid: str):
+    runner = GarageRunner(tmpdir, "sqlite", testrun_uid)
     yield runner
     runner.stop()
 
 @pytest.fixture
-def garage_sqlite_full(tmpdir: Path):
-    runner = GarageRunner(tmpdir, "sqlite_full")
+def garage_sqlite_full(tmpdir: Path, testrun_uid: str):
+    runner = GarageRunner(tmpdir, "sqlite_full", testrun_uid)
     yield runner
     runner.stop()

@@ -96,7 +96,7 @@ jobs:
           GOLANG_TEST: "1"
         with:
           emoji: false
-          custom-arguments: -p no:sugar -p no:threadexception --benchmark-skip test --timeout=300
+          custom-arguments: -p no:sugar -p no:threadexception --benchmark-skip test --timeout=300 -n auto
 
       - uses: pavelzw/pytest-action@v2
         if: matrix.benchmark == 1

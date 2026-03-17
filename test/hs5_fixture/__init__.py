@@ -12,6 +12,7 @@ from typing import Optional
 import uuid
 import botocore
 import botocore.config
+import portalocker
 import pytest
 import os
 import boto3
@@ -19,7 +20,17 @@ from mypy_boto3_s3.client import S3Client
 import requests
 import hs5_api
 
-curr_port = 11000
+
+def get_next_port(testrun_uid: str) -> int:
+    with portalocker.Lock(f"/tmp/hs5-ports-{testrun_uid}/hs5", mode="r+", flags=portalocker.LOCK_EX) as f:
+        cp = f.read()
+        p = int(cp)
+        p += 1
+        f.truncate(0)
+        f.seek(0)
+        f.write(str(p))
+
+        return p
 
 @dataclass
 class Hs5Stats:
@@ -37,12 +48,8 @@ class Hs5Runner:
     manual_commit_list_consistent = True
     with_heaptrack = False
 
-    def __init__(self, workdir : Path, data_file_size_limit_mb: int, perf: bool = False, data_file_alloc_chunk_size: Optional[int] = None, precheck_conditional_headers = True) -> None:
-        global curr_port
-
-        curr_port += 1
-
-        self._port = curr_port
+    def __init__(self, workdir : Path, data_file_size_limit_mb: int, testrun_uid: str, perf: bool = False, data_file_alloc_chunk_size: Optional[int] = None, precheck_conditional_headers = True) -> None:
+        self._port = get_next_port(testrun_uid)
         self._workdir = workdir
         self._root_key = uuid.uuid4().hex
 
@@ -74,7 +81,7 @@ class Hs5Runner:
                 "--ip",
                 "127.0.0.1",
                 "--http_port",
-            str(curr_port),
+            str(self._port),
             "--init_root_password", self._root_key,
             "--with_stop_command", "true",
             "--bucket_versioning=false",
@@ -152,8 +159,8 @@ class Hs5Runner:
             except:
                 with pytest.raises(subprocess.TimeoutExpired):
                     self._process.wait(0.01)
-                if time.monotonic() - starttime > 10:
-                    raise TimeoutError("Hs5 server did not start within 10 seconds")
+                if time.monotonic() - starttime > 30:
+                    raise TimeoutError("Hs5 server did not start within 30 seconds")
 
     def _login_admin(self) -> None:
         (self._admin_ses, self._ses) = self.login_user("root", self._root_key)
@@ -269,10 +276,10 @@ class Hs5Runner:
     
 
 @pytest.fixture
-def hs5(tmpdir: Path):
+def hs5(tmpdir: Path, testrun_uid: str):
     loc = tmpdir / uuid.uuid4().hex
     loc.mkdir()
-    runner = Hs5Runner(loc, data_file_size_limit_mb=100)
+    runner = Hs5Runner(loc, data_file_size_limit_mb=100, testrun_uid=testrun_uid)
     yield runner
     runner.stop(cleanup=True, kill=False)
     try:
@@ -281,10 +288,10 @@ def hs5(tmpdir: Path):
         pass
 
 @pytest.fixture
-def hs5_perf(tmpdir: Path):
+def hs5_perf(tmpdir: Path, testrun_uid: str):
     loc = tmpdir / uuid.uuid4().hex
     loc.mkdir()
-    runner = Hs5Runner(loc, data_file_size_limit_mb=100, perf=True)
+    runner = Hs5Runner(loc, data_file_size_limit_mb=100, testrun_uid=testrun_uid, perf=True)
     yield runner
     runner.stop(cleanup=True, kill=False)
     try:
@@ -293,10 +300,10 @@ def hs5_perf(tmpdir: Path):
         pass
 
 @pytest.fixture
-def hs5_large(tmpdir: Path):
+def hs5_large(tmpdir: Path, testrun_uid: str):
     loc = tmpdir / uuid.uuid4().hex
     loc.mkdir()
-    runner = Hs5Runner(loc, data_file_size_limit_mb=5000)
+    runner = Hs5Runner(loc, data_file_size_limit_mb=5000, testrun_uid=testrun_uid)
     yield runner
     runner.stop(cleanup=True, kill=False)
     try:
@@ -305,10 +312,10 @@ def hs5_large(tmpdir: Path):
         pass
 
 @pytest.fixture
-def hs5_large_small_alloc_chunksize(tmpdir: Path):
+def hs5_large_small_alloc_chunksize(tmpdir: Path, testrun_uid: str):
     loc = tmpdir / uuid.uuid4().hex
     loc.mkdir()
-    runner = Hs5Runner(loc, data_file_size_limit_mb=5000, data_file_alloc_chunk_size=10*1024*1024)
+    runner = Hs5Runner(loc, data_file_size_limit_mb=5000, data_file_alloc_chunk_size=10*1024*1024, testrun_uid=testrun_uid)
     yield runner
     runner.stop(cleanup=True, kill=False)
     try:
@@ -317,10 +324,10 @@ def hs5_large_small_alloc_chunksize(tmpdir: Path):
         pass
 
 @pytest.fixture
-def hs5_no_precheck(tmpdir: Path):
+def hs5_no_precheck(tmpdir: Path, testrun_uid: str):
     loc = tmpdir / uuid.uuid4().hex
     loc.mkdir()
-    runner = Hs5Runner(loc, data_file_size_limit_mb=100, precheck_conditional_headers=False)
+    runner = Hs5Runner(loc, data_file_size_limit_mb=100, precheck_conditional_headers=False, testrun_uid=testrun_uid)
     yield runner
     runner.stop(cleanup=True, kill=False)
     try:

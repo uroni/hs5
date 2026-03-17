@@ -9,11 +9,21 @@ import time
 import uuid
 import boto3
 import botocore
+import portalocker
 import pytest
 import requests
 from mypy_boto3_s3.client import S3Client
 
-curr_port = 13000
+def get_next_port(testrun_uid: str) -> int:
+    with portalocker.Lock(f"/tmp/hs5-ports-{testrun_uid}/rustfs", mode="r+", flags=portalocker.LOCK_EX) as f:
+        cp = f.read()        
+        p = int(cp)
+        p += 2
+        f.truncate(0)
+        f.seek(0)
+        f.write(str(p))
+
+        return p
 
 class RustfsRunner:
     """
@@ -46,15 +56,11 @@ class RustfsRunner:
             loc.chmod(0o755)                       
 
 
-    def __init__(self, datapath : Path):
+    def __init__(self, datapath : Path, testrun_uid: str):
         """
         Initializes the RustfsRunner 
         """
-        global curr_port
-
-        curr_port += 2
-
-        self._port = curr_port
+        self._port = get_next_port(testrun_uid)
         self._root_key = uuid.uuid4().hex
 
         self._download_rustfs()
@@ -99,7 +105,7 @@ class RustfsRunner:
     
 
 @pytest.fixture
-def rustfs(tmpdir: Path):
-    runner = RustfsRunner(tmpdir)
+def rustfs(tmpdir: Path, testrun_uid: str):
+    runner = RustfsRunner(tmpdir, testrun_uid)
     yield runner
     runner.stop()
