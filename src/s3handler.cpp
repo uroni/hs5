@@ -207,13 +207,6 @@ std::string encodeUriAws(const std::string_view str)
     return ret;
 }
 
-std::string asciiToLower(std::string str)
-{
-    std::transform(str.begin(), str.end(), str.begin(),
-        [](auto c) { return std::tolower(c); });
-    return str;
-}
-
 std::string getCanonicalizedAmzHeaders(const HTTPHeaders& headers)
 {
     std::map<std::string, std::string> amzHeaders;

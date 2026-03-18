@@ -72,3 +72,5 @@ std::string escapeXML(const std::string_view xml);
 std::string rfc2047EncodeB(std::string_view text, std::string_view charset = "UTF-8");
 
 std::string rfc2047Decode(const std::string_view text);
+
+std::string asciiToLower(std::string str);

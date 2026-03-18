@@ -39,10 +39,10 @@ bool UserMetadata::parseMetadataValues(proxygen::HTTPMessage& headers)
     size_t usedSize = 0;
     std::unordered_map<std::string, size_t> metaKeys;
     headers.getHeaders().forEach([&](const std::string& header, const std::string& value){
-        if(header.starts_with("x-amz-meta-"))
+        const auto headerLower = asciiToLower(header);
+        if(headerLower.starts_with("x-amz-meta-"))
         {
-            std::string metaKey = header.substr(11);
-            folly::toLowerAscii(metaKey);
+            const auto metaKey = headerLower.substr(11);
             usedSize+= metaKey.size();
             std::string metaVal = rfc2047Decode(value);
             usedSize+= metaVal.size();

@@ -60,3 +60,10 @@ std::string rfc2047Decode(const std::string_view text)
 	//TODO: Implement
 	return std::string(text);
 }
+
+std::string asciiToLower(std::string str)
+{
+    std::transform(str.begin(), str.end(), str.begin(),
+        [](auto c) { return std::tolower(c); });
+    return str;
+}
