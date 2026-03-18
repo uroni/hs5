@@ -7,9 +7,9 @@ title: Use cases
 
 ## S3 storage on Hetzner storage box
 
-Using HS5 you can build yourself some cost optimized S3 storage based on Hetzner storage boxes that is cheaper than Hetzner's own S3 offer and many other offers (at the cost of perhaps reduced durability of a single ZFS RAIDz2 system).
+Using HS5 you can build yourself some cost optimized S3 storage based on Hetzner storage boxes that is cheaper than Hetzner's own S3 offer and many other offers (at the cost of perhaps reduced durability of a single ZFS RAIDz2 system). You need from Hetzner
 
- * CAX11 VM at 3,29 €/mo
+ * CAX11 VPS at 3,29 €/mo
  * Storage box BX41 20TB at €40.60 max/mo
 
 So 2,1945€ TB/mo, so 0,0021945 € GB/mo. Compared to 99.80€ for 20TB per month at Hetzner S3 - 0,00499 € GB/mo.
