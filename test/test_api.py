@@ -268,7 +268,8 @@ def test_delete_bucket_via_api(hs5: Hs5Runner, tmp_path: Path):
         pass
 
 
-def test_add_user_for_bucket(hs5: Hs5Runner):
+@pytest.mark.parametrize("action", ['"*"', '"s3:*"', '["s3:ListBuckets", "s3:ListObjects", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]'])
+def test_add_user_for_bucket(hs5: Hs5Runner, action: str):
     admin_client = hs5.get_api_client_admin()
 
     admin_client.add_bucket(hs5_models.AddBucketParams(bucketName="accessbucket"))
@@ -284,17 +285,17 @@ def test_add_user_for_bucket(hs5: Hs5Runner):
 
     policy_resp = admin_client.add_policy(hs5_models.AddPolicyParams(
         policyName="bucketuser-policy",
-        policyDocument="""
-            {
+        policyDocument=f"""
+            {{
                 "Version": "2012-10-17",
                 "Statement": [
-                    {
+                    {{
                         "Effect": "Allow",
-                        "Action": "*",
+                        "Action": {action},
                         "Resource": ["arn:aws:s3:::accessbucket/*", "arn:aws:s3:::accessbucket"]
-                    }
+                    }}
                 ]
-            }
+            }}
             """
     ))
 

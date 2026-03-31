@@ -48,6 +48,8 @@ public:
     std::vector<Statement> statements;
 
 private:
-    bool resourceMatch(const std::string_view policyResource, const std::string_view resource) const;    
+    static bool resourceMatch(const std::string_view policyResource, const std::string_view resource);
+    
+    static std::vector<Action> expandAction(const std::string_view actionStr);
 };
 

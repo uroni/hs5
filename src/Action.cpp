@@ -46,3 +46,41 @@ Action actionFromStr(const std::string_view action)
     if(action == "hs5:ChangeOwnPassword") return Action::ChangeOwnPassword;
     return Action::Unknown;
 }
+
+std::string actionToStr(const Action action)
+{
+    switch(action)
+    {
+        case Action::GetObject: return "s3:GetObject";
+        case Action::HeadObject: return "s3:HeadObject";
+        case Action::PutObject: return "s3:PutObject";
+        case Action::PutObjectPart: return "s3:PutObjectPart";
+        case Action::DeleteObject: return "s3:DeleteObject";
+        case Action::ListObjects: return "s3:ListObjects";
+        case Action::CompleteMultipartUpload: return "s3:CompleteMultipartUpload";
+        case Action::CreateBucket: return "s3:CreateBucket";
+        case Action::DeleteObjects: return "s3:DeleteObjects";
+        case Action::DeleteBucket: return "s3:DeleteBucket";
+        case Action::AddUser: return "hs5:AddUser";
+        case Action::RemoveUser: return "hs5:RemoveUser";
+        case Action::ListUsers: return "hs5:ListUsers";
+        case Action::AddAccessKey: return "hs5:AddAccessKey";
+        case Action::ListAccessKeys: return "hs5:ListAccessKeys";
+        case Action::RemoveAccessKey: return "hs5:RemoveAccessKey";
+        case Action::AddPolicy: return "hs5:AddPolicy";
+        case Action::RemovePolicy: return "hs5:RemovePolicy";
+        case Action::ListPolicies: return "hs5:ListPolicies";
+        case Action::AddRole: return "hs5:AddRole";
+        case Action::RemoveRole: return "hs5:RemoveRole";
+        case Action::ListRoles: return "hs5:ListRoles";
+        case Action::AddUserRole: return "hs5:AddUserRole";
+        case Action::RemoveUserRole: return "hs5:RemoveUserRole";
+        case Action::ListUserRoles: return "hs5:ListUserRoles";
+        case Action::AddRolePolicy:return  "hs5:AddRolePolicy";
+        case Action::RemoveRolePolicy:return  "hs5:RemoveRolePolicy";
+        case Action::ListRolePolicies:return  "hs5:ListRolePolicies";
+        case Action::AllActions:return  "*";
+        case Action::ListBuckets:return  "s3:ListBuckets"; 
+    }
+    return "";
+}

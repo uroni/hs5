@@ -47,7 +47,9 @@ enum class Action
     UploadPartCopy=40,
     ListBucketPermissions=41,
     AddBucketPermission=42,
-    RemoveBucketPermission=43
+    RemoveBucketPermission=43,
+    LastDummyAction=44
 };
 
 Action actionFromStr(const std::string_view action);
+std::string actionToStr(const Action action);

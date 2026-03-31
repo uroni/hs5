@@ -59,11 +59,8 @@ Policy::Policy(const std::string& data)
 
         if(itAction->is_string())
         {
-            const auto actionId = actionFromStr(std::string(*itAction));
-            if(actionId == Action::Unknown)
-                throw PolicyParseError(fmt::format("Unknown action {} in stmt {}", std::string(*itAction), newStmt.sid));
-
-            newStmt.actions.push_back(actionId);
+            const auto addActions = expandAction(std::string(*itAction));
+            newStmt.actions.insert(newStmt.actions.end(), addActions.begin(), addActions.end());
         }
         else if(itAction->is_array())
         {
@@ -72,11 +69,8 @@ Policy::Policy(const std::string& data)
                 if(!val.is_string())
                     throw PolicyParseError(fmt::format("Invalid object in action in stmt {}", newStmt.sid));
 
-                const auto actionId = actionFromStr(std::string(val));
-                if(actionId == Action::Unknown)
-                    throw PolicyParseError(fmt::format("Unknown action {} in stmt {}", std::string(val), newStmt.sid));
-
-                newStmt.actions.push_back(actionId);
+                const auto addActions = expandAction(std::string(val));
+                newStmt.actions.insert(newStmt.actions.end(), addActions.begin(), addActions.end());
             }
         }
         else
@@ -140,7 +134,7 @@ Policy::Policy(int64_t policyId)
     }
 }
 
-bool Policy::resourceMatch(const std::string_view policyResource, const std::string_view resource) const
+bool Policy::resourceMatch(const std::string_view policyResource, const std::string_view resource)
 {
     size_t p = 0, r = 0;
     size_t starIdx = std::string::npos;
@@ -199,4 +193,37 @@ Policy::AccessCheckResult Policy::checkAccess(const Action action, const std::st
     }
 
     return ret;
+}
+
+std::vector<Action> Policy::expandAction(const std::string_view actionStr)
+{
+    if(actionStr.find("*")==std::string_view::npos)
+    {
+        const auto actionId = actionFromStr(std::string(actionStr));
+        if(actionId == Action::Unknown)
+            throw PolicyParseError(fmt::format("Unknown action {} in policy", std::string(actionStr)));
+
+        return {actionId};
+    }
+    else
+    {
+        if(actionStr == "*")
+        {
+            return {Action::AllActions};
+        }
+
+        std::vector<Action> actions;
+        for(int i=1; i<=static_cast<int>(Action::LastDummyAction); ++i)
+        {
+            const auto actionId = static_cast<Action>(i);
+            if (actionId == Action::Unknown || actionId == Action::AllActions)
+                continue;
+            const auto currActionStr = actionToStr(actionId);
+            if(resourceMatch(actionStr, currActionStr))
+            {
+                actions.push_back(actionId);
+            }
+        }
+        return actions;
+    }
 }
