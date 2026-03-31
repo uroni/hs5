@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773872023632,
+  "lastUpdate": 1774957465599,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -8607,6 +8607,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.3086486017802308",
             "extra": "mean: 17.879351934399985 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "3ce3ffa76043c92b872e17453126688d50dcdbe5",
+          "message": "Add session expiration handling and improve logout process",
+          "timestamp": "2026-03-31T11:33:18Z",
+          "tree_id": "17220d3496ac12573b3e968612bf47d11f01080d",
+          "url": "https://github.com/uroni/hs5/commit/3ce3ffa76043c92b872e17453126688d50dcdbe5"
+        },
+        "date": 1774957465085,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.06977310418412468,
+            "unit": "iter/sec",
+            "range": "stddev: 0.4940151669036862",
+            "extra": "mean: 14.332170134799991 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.05954567214691779,
+            "unit": "iter/sec",
+            "range": "stddev: 0.12732889006747813",
+            "extra": "mean: 16.79383175879999 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05202368402583166,
+            "unit": "iter/sec",
+            "range": "stddev: 0.7103917333205",
+            "extra": "mean: 19.222014333000015 sec\nrounds: 5"
           }
         ]
       }
