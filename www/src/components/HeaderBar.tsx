@@ -19,14 +19,21 @@ export const HeaderBar = () => {
   const styles = useStackStyles();
 
   const handleLogout = async () => {
+    state.loggingOut = true;
     await logout();
     state.loggedIn = false;
     state.session = "";
     state.accessKey = "";
     state.secretAccessKey = "";
+    if (window.localStorage) {
+      localStorage.removeItem("ses");
+      localStorage.removeItem("accessKey");
+      localStorage.removeItem("secretAccessKey");
+    }
     startTransition(() => {
         router.navigate(`/`);
       });
+    state.loggingOut = false;
   }
 
 

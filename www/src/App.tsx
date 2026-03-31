@@ -13,7 +13,7 @@ import Roles from './pages/Roles';
 import Policies from './pages/Policies';
 import RolePolicies from './pages/RolePolicies';
 import ChangePassword from './pages/ChangePassword';
-import { FluentProvider, teamsLightTheme, teamsDarkTheme, makeStyles, Spinner, webDarkTheme, webLightTheme, teamsHighContrastTheme, teamsLightV21Theme, teamsDarkV21Theme } from '@fluentui/react-components';
+import { FluentProvider, teamsLightTheme, teamsDarkTheme, makeStyles, Spinner, webDarkTheme, webLightTheme, teamsHighContrastTheme, teamsLightV21Theme, teamsDarkV21Theme, Toaster, useToastController, useId, Toast, ToastTitle, ToastBody } from '@fluentui/react-components';
 import { useStackStyles } from './components/StackStyles';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError, OpenAPI, sessionCheck } from './api';
@@ -48,7 +48,8 @@ export const state = proxy({
   session: "",
   startupComplete: false,
   accessKey: "",
-  secretAccessKey: ""
+  secretAccessKey: "",
+  loggingOut: false
 });
 
 function getSessionFromLocalStorage() : void
@@ -107,6 +108,21 @@ export function saveSessionToLocalStorage()
 }
 
 OpenAPI.TOKEN = async () => state.session;
+
+OpenAPI.interceptors.response.use(async (response) => {
+  if (response.status === 401 && state.session && !state.loggingOut) {
+    const cloned = response.clone();
+    try {
+      const body = await cloned.json();
+      if (body?.herror === 'session_not_found') {
+        window.dispatchEvent(new CustomEvent('session-expired'));
+      }
+    } catch {
+      // not JSON, ignore
+    }
+  }
+  return response;
+});
 
 export const router = createHashRouter([
   {
@@ -267,6 +283,8 @@ const queryClient = new QueryClient();
 
 const App: React.FunctionComponent = () => {
   const [selectedTheme, setTheme] = useState(initialTheme);
+  const toasterId = useId('toaster');
+  const { dispatchToast } = useToastController(toasterId);
 
   const snap = useSnapshot(state);
 
@@ -276,10 +294,32 @@ const App: React.FunctionComponent = () => {
     });
   }, []);
 
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      state.loggedIn = false;
+      state.session = '';
+      state.startupComplete = false;
+      if (window.localStorage) {
+        localStorage.removeItem('ses');
+      }
+      dispatchToast(
+        <Toast>
+          <ToastTitle>Session expired</ToastTitle>
+          <ToastBody>Your session has timed out. Please log in again.</ToastBody>
+        </Toast>,
+        { intent: 'error' }
+      );
+      router.navigate('/');
+    };
+    window.addEventListener('session-expired', handleSessionExpired);
+    return () => window.removeEventListener('session-expired', handleSessionExpired);
+  }, [dispatchToast]);
+
   const styles = useStackStyles();
 
   return (
       <FluentProvider theme={selectedTheme} style={{ height: "100%" }}>
+        <Toaster toasterId={toasterId} position="top-end" />
         <React.StrictMode>
           <QueryClientProvider client={queryClient}>
             <div className={styles.stackVertical}>
