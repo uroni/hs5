@@ -18,6 +18,7 @@
     "aws-checksums",
     "aws-c-common",
     "frozen",
+    "jemalloc",
     {
      "name": "duckdb-custom",
      "features": ["autocomplete", "excel", "httpfs", "json", "tpcds", "tpch","ui","ducklake"]
