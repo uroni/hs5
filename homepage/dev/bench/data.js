@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774984758526,
+  "lastUpdate": 1774994377654,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -8742,6 +8742,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.3132853784389855",
             "extra": "mean: 18.585038685799987 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "dbd25ea7e3543c541ed97e08faed6abd6bc26fba",
+          "message": "Add psutil to dependencies",
+          "timestamp": "2026-03-31T21:48:44Z",
+          "tree_id": "36a54c3a1b620a15fe797242b05dff6fefdc56c7",
+          "url": "https://github.com/uroni/hs5/commit/dbd25ea7e3543c541ed97e08faed6abd6bc26fba"
+        },
+        "date": 1774994377172,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07396921388420868,
+            "unit": "iter/sec",
+            "range": "stddev: 0.06496730713656386",
+            "extra": "mean: 13.519137861399997 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.05985105250580184,
+            "unit": "iter/sec",
+            "range": "stddev: 0.10892542822223958",
+            "extra": "mean: 16.708143936199985 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.04974632197107652,
+            "unit": "iter/sec",
+            "range": "stddev: 0.44385202428499704",
+            "extra": "mean: 20.101988657200014 sec\nrounds: 5"
           }
         ]
       }
