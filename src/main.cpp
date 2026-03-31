@@ -21,6 +21,7 @@
 #include <folly/Random.h>
 #include <folly/logging/xlog.h>
 #include <folly/system/ThreadName.h>
+#include <folly/memory/MallctlHelper.h>
 #include <proxygen/httpserver/HTTPServer.h>
 #include <proxygen/httpserver/RequestHandlerFactory.h>
 #include <proxygen/lib/http/session/HTTPSessionBase.h>
@@ -177,6 +178,13 @@ int realMain(int argc, char* argv[])
     folly::Init init(&argc, &argv, true);
 
     XLOGF(INFO, "HS5 {} rev {}", PACKAGE_VERSION, GIT_REVISION);
+
+    try {
+      bool background_thread = true;
+      folly::mallctlWrite("background_thread", background_thread);
+    } catch (const std::exception& e) {
+      XLOGF(WARN, "Failed to enable jemalloc background thread: {}", e.what());
+    }
 
     XLOGF(DBG0, "Internal command line: {}", internalArgsStr);
 

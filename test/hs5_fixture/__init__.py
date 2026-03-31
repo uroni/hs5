@@ -13,6 +13,7 @@ import uuid
 import botocore
 import botocore.config
 import portalocker
+import psutil
 import pytest
 import os
 import boto3
@@ -273,6 +274,50 @@ class Hs5Runner:
         assert response.status_code == 200
         resp = response.json()
         return Hs5Stats(**resp)
+
+    def get_rss_mb(self) -> float:
+        try:
+            proc = psutil.Process(self._process.pid)
+            return proc.memory_info().rss / (1024 * 1024)
+        except psutil.NoSuchProcess:
+            return 0.0
+
+    def track_rss(self, interval: float = 0.1) -> 'RssTracker':
+        return RssTracker(self._process.pid, interval)
+
+
+class RssTracker:
+    def __init__(self, pid: int, interval: float = 0.1):
+        self._pid = pid
+        self._interval = interval
+        self._peak_mb = 0.0
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def _sample(self):
+        try:
+            proc = psutil.Process(self._pid)
+            while not self._stop.is_set():
+                rss = proc.memory_info().rss / (1024 * 1024)
+                if rss > self._peak_mb:
+                    self._peak_mb = rss
+                self._stop.wait(self._interval)
+        except psutil.NoSuchProcess:
+            pass
+
+    def __enter__(self) -> 'RssTracker':
+        self._thread = threading.Thread(target=self._sample, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *args):
+        self._stop.set()
+        if self._thread:
+            self._thread.join()
+
+    @property
+    def peak_mb(self) -> float:
+        return self._peak_mb
     
 
 @pytest.fixture

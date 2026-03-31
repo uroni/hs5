@@ -161,7 +161,11 @@ def test_perf_upload_many_files_hs5(benchmark: BenchmarkFixture, hs5_perf: Hs5Ru
     """
     Test the performance of uploading 10,000 files to HS5.
     """
-    benchmark(upload_many_files, lambda: hs5_perf.get_s3_client(), tmp_path)
+    rss_before = hs5_perf.get_rss_mb()
+    with hs5_perf.track_rss(interval=0.1) as tracker:
+        benchmark(upload_many_files, lambda: hs5_perf.get_s3_client(), tmp_path)
+    rss_after = hs5_perf.get_rss_mb()
+    print(f"\nHS5 RAM usage: before={rss_before:.1f} MB, peak={tracker.peak_mb:.1f} MB, after={rss_after:.1f} MB, delta={rss_after - rss_before:.1f} MB")
 
 def test_perf_upload_many_files_minio(benchmark: BenchmarkFixture, minio: MinioRunner, tmp_path: Path):
     """
