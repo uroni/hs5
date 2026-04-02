@@ -175,7 +175,7 @@ void ApiHandler::init()
         sqlgen::ScopedManualCommitWriteTransaction trans(&dao.getDb());
 
         std::string password;
-        const auto envPassword = getenv("INIT_ROOT_PASSWORD");
+        const auto envPassword = getenv("HS5_INIT_ROOT_PASSWORD");
         bool printSecretAccessKey = false;
         if(FLAGS_init_root_password.empty() && envPassword==nullptr)
         {
@@ -206,13 +206,13 @@ void ApiHandler::init()
         std::string initRootAccessKey = "root";
         if(!FLAGS_init_root_access_key.empty())
             initRootAccessKey = FLAGS_init_root_access_key;
-        else if(const auto envAccessKey = getenv("INIT_ROOT_ACCESS_KEY"); envAccessKey!=nullptr)
+        else if(const auto envAccessKey = getenv("HS5_INIT_ROOT_ACCESS_KEY"); envAccessKey!=nullptr)
             initRootAccessKey = envAccessKey;
 
         std::string initSecretAccessKey = password;
         if(!FLAGS_init_root_secret_access_key.empty())
             initSecretAccessKey = FLAGS_init_root_secret_access_key;
-        else if(const auto envSecretAccessKey = getenv("INIT_ROOT_SECRET_ACCESS_KEY"); envSecretAccessKey!=nullptr)
+        else if(const auto envSecretAccessKey = getenv("HS5_INIT_ROOT_SECRET_ACCESS_KEY"); envSecretAccessKey!=nullptr)
             initSecretAccessKey = envSecretAccessKey;
 
         const auto rootRoleId = dao.addRole("root", 1);
@@ -242,7 +242,7 @@ void ApiHandler::init()
         dao.addAccessKey(rootUserId.value(), "Root access key (can access everything)", initRootAccessKey, initSecretAccessKey, 1);
 
         auto initialBuckets = FLAGS_init_create_bucket;
-        if(const auto initialBucketsEnv = getenv("INIT_CREATE_BUCKET"); initialBucketsEnv!=nullptr)
+        if(const auto initialBucketsEnv = getenv("HS5_INIT_CREATE_BUCKET"); initialBucketsEnv!=nullptr)
             initialBuckets = initialBucketsEnv;
 
         if(!initialBuckets.empty())
