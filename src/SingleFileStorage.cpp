@@ -52,6 +52,7 @@ DEFINE_bool(check_freespace_on_startup, false, "Check data file freespace on sta
 DEFINE_bool(wal_write_thread, true, "Use a separate thread for WAL file data writes");
 DEFINE_bool(preallocate_data, true, "Preallocate data file space to improve performance and fragmentation");
 DEFINE_int64(trim_freespace_size, 1*1024*1024, "If more than this amount of free space is continuouly in the data file, free it up by punching holes (in bytes)");
+DEFINE_uint32(idl_dirty_max, 50, "Maximum number of dirty entries in the LMDB database before flush to disk in MiB");
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -692,6 +693,13 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	if (rc)
 	{
 		throw std::runtime_error("LMDB: Failed to create LMDB env (" + (std::string)mdb_strerror(rc) + ")");
+	}
+
+	rc = mdb_env_set_idl_dirty_max(db_env, (FLAGS_idl_dirty_max * 1024 * 1024)/4096);
+
+	if (rc)
+	{
+		throw std::runtime_error("LMDB: Failed to set idl dirty max (" + (std::string)mdb_strerror(rc) + ")");
 	}
 
 	rc = mdb_env_set_maxreaders(db_env, 4094);
@@ -4671,6 +4679,13 @@ bool SingleFileStorage::open_cache_db(int64_t current_txn_id, int64_t mapsize, b
 	if (rc)
 	{
 		throw std::runtime_error("LMDB: Failed to create cache LMDB env (" + (std::string)mdb_strerror(rc) + ")");
+	}
+
+	rc = mdb_env_set_idl_dirty_max(cache_db_env, (FLAGS_idl_dirty_max * 1024 * 1024)/4096);
+
+	if (rc)
+	{
+		throw std::runtime_error("LMDB: Failed to set idl dirty max (" + (std::string)mdb_strerror(rc) + ")");
 	}
 
 	rc = mdb_env_set_maxreaders(cache_db_env, 4094);

@@ -1324,6 +1324,7 @@ struct MDB_env {
 #endif
 	void		*me_userctx;	 /**< User-settable context */
 	MDB_assert_func *me_assert_func; /**< Callback for assertion failures */
+	unsigned int idl_dirty_max;
 };
 
 	/** Nested transaction */
@@ -1900,7 +1901,7 @@ mdb_page_loose(MDB_cursor *mc, MDB_page *mp)
 		mp->mp_flags |= P_LOOSE;
 
 		/* When spilling we skip loose pages. So at some point we need to clean them up. */
-		if (txn->mt_loose_count > MDB_IDL_DIRTY_MAX/2) {
+		if (txn->mt_loose_count > txn->mt_env->idl_dirty_max/2) {
 			int rc = mdb_cleanup_loose(txn);
 			if (rc)
 				return rc;
@@ -2067,8 +2068,8 @@ mdb_page_spill(MDB_cursor *m0, MDB_val *key, MDB_val *data, MDB_cursor* mx)
 	 * of the dirty pages. Testing revealed this to be a good tradeoff,
 	 * better than 1/2, 1/4, or 1/10.
 	 */
-	if (need < MDB_IDL_DIRTY_MAX / 8)
-		need = MDB_IDL_DIRTY_MAX / 8;
+	if (need < txn->mt_env->idl_dirty_max / 8)
+		need = txn->mt_env->idl_dirty_max / 8;
 
 	/* Save the page IDs of all the pages we're flushing */
 	/* flush from the tail forward, this saves a lot of shifting later on. */
@@ -2792,7 +2793,7 @@ mdb_txn_renew0(MDB_txn *txn)
 		txn->mt_child = NULL;
 		txn->mt_loose_pgs = NULL;
 		txn->mt_loose_count = 0;
-		txn->mt_dirty_room = MDB_IDL_DIRTY_MAX;
+		txn->mt_dirty_room = env->idl_dirty_max;
 		txn->mt_u.dirty_list = env->me_dirty_list;
 		txn->mt_u.dirty_list[0].mid = 0;
 		txn->mt_free_pgs = env->me_free_pgs;
@@ -3595,7 +3596,7 @@ mdb_txn_commit(MDB_txn *txn)
 				}
 			}
 		} else { /* Simplify the above for single-ancestor case */
-			len = MDB_IDL_DIRTY_MAX - txn->mt_dirty_room;
+			len = env->idl_dirty_max - txn->mt_dirty_room;
 		}
 		/* Merge our dirty list with parent's */
 		y = src[0].mid;
@@ -4002,6 +4003,7 @@ mdb_env_create(MDB_env **env)
 	e->me_pid = getpid();
 	GET_PAGESIZE(e->me_os_psize);
 	VGMEMP_CREATE(e,0,0);
+	e->idl_dirty_max = MDB_IDL_DIRTY_MAX;
 	*env = e;
 	return MDB_SUCCESS;
 }
@@ -4126,6 +4128,14 @@ mdb_env_set_mapsize(MDB_env *env, size_t size)
 	env->me_mapsize = size;
 	if (env->me_psize)
 		env->me_maxpg = env->me_mapsize / env->me_psize;
+	return MDB_SUCCESS;
+}
+
+int ESECT mdb_env_set_idl_dirty_max(MDB_env *env, unsigned int idl_dirty_max)
+{
+	if (idl_dirty_max < MDB_IDL_DIRTY_MAX)
+		return MDB_INVALID;
+	env->idl_dirty_max = idl_dirty_max;
 	return MDB_SUCCESS;
 }
 

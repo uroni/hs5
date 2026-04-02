@@ -852,6 +852,8 @@ int  mdb_env_get_fd(MDB_env *env, mdb_filehandle_t *fd);
 	 */
 int  mdb_env_set_mapsize(MDB_env *env, size_t size);
 
+int mdb_env_set_idl_dirty_max(MDB_env *env, unsigned int idl_dirty_max);
+
 	/** @brief Set the maximum number of threads/reader slots for the environment.
 	 *
 	 * This defines the number of slots in the lock table that is used to track readers in the
