@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775161499603,
+  "lastUpdate": 1775166116523,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -8832,6 +8832,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.7312833482055163",
             "extra": "mean: 18.62700109140003 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "65dad79cdfe659c4a080cf9df21e2e10d2704d8f",
+          "message": "Add env prefix to documentation",
+          "timestamp": "2026-04-02T21:30:31Z",
+          "tree_id": "15c8b317e6c57d385a08c9b59b0515a2dd23d42a",
+          "url": "https://github.com/uroni/hs5/commit/65dad79cdfe659c4a080cf9df21e2e10d2704d8f"
+        },
+        "date": 1775166115749,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.06807373644912654,
+            "unit": "iter/sec",
+            "range": "stddev: 0.5235970326501012",
+            "extra": "mean: 14.689953161999984 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.05726043496942089,
+            "unit": "iter/sec",
+            "range": "stddev: 0.17974154979166057",
+            "extra": "mean: 17.464065729399987 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05063073493271973,
+            "unit": "iter/sec",
+            "range": "stddev: 0.3414532302383329",
+            "extra": "mean: 19.75084899179999 sec\nrounds: 5"
           }
         ]
       }
