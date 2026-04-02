@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774994377654,
+  "lastUpdate": 1775161499603,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -8787,6 +8787,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.44385202428499704",
             "extra": "mean: 20.101988657200014 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "c7b7ef9282f10426442cffcf1cf7ab7af6644b4a",
+          "message": "Add HS5 prefix to env variables and make more configurable via env variables",
+          "timestamp": "2026-04-02T20:13:24Z",
+          "tree_id": "813c73792990c8d5dc552c22736b0f9b85a3c8af",
+          "url": "https://github.com/uroni/hs5/commit/c7b7ef9282f10426442cffcf1cf7ab7af6644b4a"
+        },
+        "date": 1775161498309,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07582431842965447,
+            "unit": "iter/sec",
+            "range": "stddev: 0.21543831045833878",
+            "extra": "mean: 13.188380993200008 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06146482557521633,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1456241654742069",
+            "extra": "mean: 16.269467791399983 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05368550713521426,
+            "unit": "iter/sec",
+            "range": "stddev: 0.7312833482055163",
+            "extra": "mean: 18.62700109140003 sec\nrounds: 5"
           }
         ]
       }
