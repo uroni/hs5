@@ -55,7 +55,7 @@ Either directly via e.g.
 docker run -d \
   --name hs5 \
   --restart unless-stopped \
-  -e INIT_ROOT_PASSWORD=password \
+  -e HS5_INIT_ROOT_PASSWORD=password \
   -v /path/to/metadata:/metadata \
   -v /path/to/data:/data \
   -p 8085:80 \
@@ -75,9 +75,9 @@ services:
     container_name: hs5
     restart: unless-stopped
     environment:
-      - INIT_ROOT_ACCESS_KEY=root
-      - INIT_ROOT_PASSWORD=password
-      - INIT_CREATE_BUCKET=test
+      - HS5_INIT_ROOT_ACCESS_KEY=root
+      - HS5_INIT_ROOT_PASSWORD=password
+      - HS5_INIT_CREATE_BUCKET=test
     volumes:
       - hs5-metadata:/metadata
       - hs5-data:/data
