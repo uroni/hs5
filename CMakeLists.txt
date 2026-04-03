@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21...4.0)
-project(hs5 VERSION 0.28.0 LANGUAGES CXX C)
+project(hs5 VERSION 0.28.1 LANGUAGES CXX C)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -181,4 +181,5 @@ target_link_libraries(hs5 PRIVATE $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zst
   $<IF:$<TARGET_EXISTS:duckdb_static>,duckdb_static,duckdb> AWS::aws-c-common AWS::aws-checksums ${JEMALLOC_LIBRARY})
 
 target_compile_features(hs5 PUBLIC cxx_std_20)
+target_compile_definitions(hs5 PRIVATE USE_JEMALLOC)
 
