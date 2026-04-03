@@ -173,7 +173,7 @@ find_package(nlohmann_json  CONFIG REQUIRED)
 find_package(DuckDB CONFIG REQUIRED)
 find_package(aws-c-common CONFIG REQUIRED)
 find_package(aws-checksums CONFIG REQUIRED)
-find_library(JEMALLOC_LIBRARY NAMES jemalloc)
+find_library(JEMALLOC_LIBRARY NAMES jemalloc REQUIRED)
 find_path(TCLAP_INCLUDE_DIRS "tclap/Arg.h")
 target_include_directories(hs5 PRIVATE ${TCLAP_INCLUDE_DIRS})
 target_link_libraries(hs5 PRIVATE $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static> Folly::folly Folly::folly_deps Folly::follybenchmark Folly::folly_test_util
