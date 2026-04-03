@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775237355076,
+  "lastUpdate": 1775238175552,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -9057,6 +9057,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.31183389903603115",
             "extra": "mean: 18.4747971798 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "57e38c691d434b57adc5ebe83ae4b72c245228b3",
+          "message": "Enable jemalloc in folly",
+          "timestamp": "2026-04-03T17:17:45Z",
+          "tree_id": "8d555ae97b4d5929892a4824443cc1c27bec26d6",
+          "url": "https://github.com/uroni/hs5/commit/57e38c691d434b57adc5ebe83ae4b72c245228b3"
+        },
+        "date": 1775238174722,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07753668443531082,
+            "unit": "iter/sec",
+            "range": "stddev: 0.16945032663645015",
+            "extra": "mean: 12.897120985800006 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06430212147696447,
+            "unit": "iter/sec",
+            "range": "stddev: 0.6370064926840624",
+            "extra": "mean: 15.551586433400008 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05723658808957145,
+            "unit": "iter/sec",
+            "range": "stddev: 0.6108562538614363",
+            "extra": "mean: 17.471341905199985 sec\nrounds: 5"
           }
         ]
       }
