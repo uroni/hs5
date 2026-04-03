@@ -522,10 +522,12 @@ int actionRun(std::vector<std::string> args)
         realArgs.push_back(std::to_string(duckDbUiPort.getValue()));
     }
 
-    if(!alreadySetArgs.contains("--stop_on_error") &&
-            stopOnErrorArg.getValue())
+    if(!alreadySetArgs.contains("--stop_on_error"))
     {
-        realArgs.push_back("--stop_on_error");
+        if(auto stopOnErrorEnv = getenv("HS5_STOP_ON_ERROR"); stopOnErrorEnv && parseConfigBool(stopOnErrorEnv))
+            realArgs.push_back("--stop_on_error");
+        else if(stopOnErrorArg.isSet() && stopOnErrorArg.getValue())
+            realArgs.push_back("--stop_on_error");
     }
 
     std::string walMode;
