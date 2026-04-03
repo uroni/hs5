@@ -9934,6 +9934,12 @@ bool SingleFileStorage::frag_info_matches(MDB_txn* txn, SFragInfo& frag_info)
 
 bool SingleFileStorage::run_trim_queue(std::set<SPunchItem>& trim_items)
 {
+	if (FLAGS_trim_freespace_size<0)
+	{
+		trim_items.clear();
+		return true;
+	}
+
 	for(auto& item: trim_items)
 	{
 		if(item.len > FLAGS_trim_freespace_size)
