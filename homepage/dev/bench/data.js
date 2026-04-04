@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775238175552,
+  "lastUpdate": 1775345445099,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -9102,6 +9102,50 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.6108562538614363",
             "extra": "mean: 17.471341905199985 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "github@users.noreply.github.com",
+            "name": "github-action-benchmark"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "8d2acec5fea8cf6096c52047c35f7d2415dab0b3",
+          "message": "add Benchmark (pytest) benchmark result for 57e38c691d434b57adc5ebe83ae4b72c245228b3\n\n(cherry picked from commit cab402ef11748faf069f169d67f8224f08ad8e71)\n\n# Conflicts:\n#\thomepage/bench/data.js",
+          "timestamp": "2026-04-04T22:50:10+02:00",
+          "tree_id": "9ea0724c13263d1228b137fc4cf65e4645d32ed3",
+          "url": "https://github.com/uroni/hs5/commit/8d2acec5fea8cf6096c52047c35f7d2415dab0b3"
+        },
+        "date": 1775345444235,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07163480141096482,
+            "unit": "iter/sec",
+            "range": "stddev: 0.06281516563806268",
+            "extra": "mean: 13.959695291999992 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.058257672054355565,
+            "unit": "iter/sec",
+            "range": "stddev: 0.22105812787874105",
+            "extra": "mean: 17.165121171800003 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.052359841859377095,
+            "unit": "iter/sec",
+            "range": "stddev: 0.2162893355350847",
+            "extra": "mean: 19.098606193000002 sec\nrounds: 5"
           }
         ]
       }
