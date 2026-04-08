@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775683925505,
+  "lastUpdate": 1775684970300,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -9191,6 +9191,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.1747599707366309",
             "extra": "mean: 18.907978957199976 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "9ed11e80fb3842330960c339630a639d3631d37a",
+          "message": "Increment version",
+          "timestamp": "2026-04-08T21:38:11Z",
+          "tree_id": "17efbae82397b92f5c9e8db2aa4880394cc59ebf",
+          "url": "https://github.com/uroni/hs5/commit/9ed11e80fb3842330960c339630a639d3631d37a"
+        },
+        "date": 1775684969145,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.0739796945412348,
+            "unit": "iter/sec",
+            "range": "stddev: 0.535859964657758",
+            "extra": "mean: 13.517222613600007 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.0613504591092632,
+            "unit": "iter/sec",
+            "range": "stddev: 0.14051234484544584",
+            "extra": "mean: 16.299796521799976 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05526083767993325,
+            "unit": "iter/sec",
+            "range": "stddev: 0.2583431432043122",
+            "extra": "mean: 18.095997852799975 sec\nrounds: 5"
           }
         ]
       }
