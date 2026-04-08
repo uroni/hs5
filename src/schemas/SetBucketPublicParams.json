@@ -1,0 +1,19 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "bucketName": {
+        "type": "string"
+      },
+      "public": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["read", "write", "delete"]
+        }
+      }
+    },
+    "required": ["bucketName", "public"]
+  }
+  
+  

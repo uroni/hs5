@@ -95,6 +95,8 @@ __all__ = [
     "RemoveUserRoleResp",
     "SessionCheckParams",
     "SessionCheckResp",
+    "SetBucketPublicParams",
+    "SetBucketPublicResp",
 ]
 
 # import apis into sdk package
@@ -179,4 +181,6 @@ from hs5_api.models.remove_user_role_params import RemoveUserRoleParams as Remov
 from hs5_api.models.remove_user_role_resp import RemoveUserRoleResp as RemoveUserRoleResp
 from hs5_api.models.session_check_params import SessionCheckParams as SessionCheckParams
 from hs5_api.models.session_check_resp import SessionCheckResp as SessionCheckResp
+from hs5_api.models.set_bucket_public_params import SetBucketPublicParams as SetBucketPublicParams
+from hs5_api.models.set_bucket_public_resp import SetBucketPublicResp as SetBucketPublicResp
 

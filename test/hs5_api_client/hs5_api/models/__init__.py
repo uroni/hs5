@@ -80,4 +80,6 @@ from hs5_api.models.remove_user_role_params import RemoveUserRoleParams
 from hs5_api.models.remove_user_role_resp import RemoveUserRoleResp
 from hs5_api.models.session_check_params import SessionCheckParams
 from hs5_api.models.session_check_resp import SessionCheckResp
+from hs5_api.models.set_bucket_public_params import SetBucketPublicParams
+from hs5_api.models.set_bucket_public_resp import SetBucketPublicResp
 

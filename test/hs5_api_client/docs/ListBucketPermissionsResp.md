@@ -8,6 +8,7 @@ Name | Type | Description | Notes
 **bucket_permissions** | [**List[ListBucketPermissionsRespBucketPermissionsInner]**](ListBucketPermissionsRespBucketPermissionsInner.md) |  | 
 **next_marker** | **str** |  | 
 **is_truncated** | **bool** |  | 
+**public_permissions** | **List[str]** |  | 
 
 ## Example
 

@@ -23,6 +23,7 @@ namespace
     {
         int64_t id;
         std::chrono::seconds created;
+        int publicPerms = 0;
     };
 
     std::map<std::string, BucketInfo> buckets;
@@ -60,7 +61,8 @@ void refreshBucketCache()
     {
         BucketInfo info{
             .id = bucket.id,
-            .created = std::chrono::seconds(bucket.created)
+            .created = std::chrono::seconds(bucket.created),
+            .publicPerms = bucket.publicPerms
         };
         auto ins = buckets.insert(std::make_pair(bucket.name, info));
         bucketNames.insert(std::make_pair(bucket.id, ins.first));
@@ -86,7 +88,8 @@ int64_t addBucket(const std::string_view bucketName, bool failIfAlreadyExists)
 
     BucketInfo info{
         .id = id,
-        .created = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+        .created = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()),
+        .publicPerms = 0
     };
 
     dao.addBucket(id, std::string(bucketName), info.created.count());
@@ -136,6 +139,14 @@ bool isValidBucketName(const std::string_view bucketName)
 
 std::optional<int64_t> getBucket(const std::string_view bucketName)
 {
+    auto ret = getBucketAndPublicPerms(bucketName);
+    if(!ret)
+        return {};
+    return ret->first;
+}
+
+std::optional<std::pair<int64_t, int>> getBucketAndPublicPerms(const std::string_view bucketName)
+{
     std::unique_lock lock{mutex};
 
     auto it = buckets.find(std::string(bucketName));
@@ -144,11 +155,11 @@ std::optional<int64_t> getBucket(const std::string_view bucketName)
         if(FLAGS_autogen_buckets)
         {
             lock.unlock();
-            return addBucket(bucketName, false);
+            return std::make_pair(addBucket(bucketName, false), 0);
         }
         return {};
     }
-    return it->second.id;
+    return std::make_pair(it->second.id, it->second.publicPerms);
 }
 
 bool deleteBucket(int64_t bucketId)

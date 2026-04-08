@@ -57,6 +57,7 @@ class DbDao
 	sqlgen::DatabaseQuery _addBucketPermission;
 	sqlgen::DatabaseQuery _removeBucketPermission;
 	sqlgen::DatabaseQuery _getBucketPermission;
+	sqlgen::DatabaseQuery _setBucketPublicPerms;
 	//@-SQLGenVariablesEnd
 
 public:
@@ -88,6 +89,7 @@ public:
 		int64_t id;
 		std::string name;
 		int64_t created;
+		int publicPerms;
 	};
 	struct BucketPermission
 	{
@@ -212,5 +214,6 @@ public:
 	std::optional<int64_t> addBucketPermission(int64_t bucket_id, int64_t user_id, int permissions);
 	void removeBucketPermission(int64_t id);
 	std::optional<BucketPermission> getBucketPermission(int64_t id);
+	void setBucketPublicPerms(int publicPerms, int64_t id);
 	//@-SQLGenFunctionsEnd
 };

@@ -159,10 +159,18 @@ void upgrade2_3(sqlgen::Database& db)
 	)""");
 }
 
+void upgrade3_4(sqlgen::Database& db)
+{
+	db.write(R"""(
+		ALTER TABLE buckets ADD publicPerms INTEGER DEFAULT 0;
+	)""");
+}
+
 const std::map<int64_t, upgrade_func_t*> upgrade_funcs {
 	{0, upgrade0_1},
 	{1, upgrade1_2},
-	{2, upgrade2_3}
+	{2, upgrade2_3},
+	{3, upgrade3_4}
 };
 
 sqlgen::Database& DbDao::getStaticDb()
@@ -700,15 +708,15 @@ void DbDao::removeAccessKey(int64_t id)
 /**
 * @-SQLGenAccess
 * @func vector<Bucket> DbDao::getBuckets
-* @return int64 id, string name, int64 created
+* @return int64 id, string name, int64 created, int publicPerms
 * @sql
-*      SELECT id, name, created FROM buckets
+*      SELECT id, name, created, publicPerms FROM buckets
 */
 std::vector<DbDao::Bucket> DbDao::getBuckets()
 {
 	if(!_getBuckets.prepared())
 	{
-		_getBuckets=db.prepare("SELECT id, name, created FROM buckets");
+		_getBuckets=db.prepare("SELECT id, name, created, publicPerms FROM buckets");
 	}
 	auto& cursor=_getBuckets.cursor();
 	std::vector<DbDao::Bucket> ret;
@@ -719,6 +727,7 @@ std::vector<DbDao::Bucket> DbDao::getBuckets()
 		cursor.get(0, obj.id);
 		cursor.get(1, obj.name);
 		cursor.get(2, obj.created);
+		cursor.get(3, obj.publicPerms);
 	}
 	cursor.shutdown();
 	return ret;
@@ -1418,5 +1427,24 @@ std::optional<DbDao::BucketPermission> DbDao::getBucketPermission(int64_t id)
 	_getBucketPermission.reset();
 	return {};
 }
+
+/**
+* @-SQLGenAccess
+* @func void DbDao::setBucketPublicPerms
+* @sql
+*      UPDATE buckets SET publicPerms=:publicPerms(int) WHERE id=:id(int64)
+*/
+void DbDao::setBucketPublicPerms(int publicPerms, int64_t id)
+{
+	if(!_setBucketPublicPerms.prepared())
+	{
+		_setBucketPublicPerms=db.prepare("UPDATE buckets SET publicPerms=? WHERE id=?");
+	}
+	_setBucketPublicPerms.bind(publicPerms);
+	_setBucketPublicPerms.bind(id);
+	_setBucketPublicPerms.write();
+	_setBucketPublicPerms.reset();
+}
+
 
 //eof

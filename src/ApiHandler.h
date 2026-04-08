@@ -66,6 +66,8 @@
 #include "apigen/RemoveBucketPermissionResp.hpp"
 #include "apigen/SessionCheckParams.hpp"
 #include "apigen/SessionCheckResp.hpp"
+#include "apigen/SetBucketPublicParams.hpp"
+#include "apigen/SetBucketPublicResp.hpp"
 #include "Session.h"
 #include <proxygen/httpserver/RequestHandler.h>
 
@@ -135,6 +137,7 @@ private:
     Api::AddBucketPermissionResp addBucketPermission(const Api::AddBucketPermissionParams& params, const ApiSessionStorage& sessionStorage);
     Api::RemoveBucketPermissionResp removeBucketPermission(const Api::RemoveBucketPermissionParams& params, const ApiSessionStorage& sessionStorage);
     Api::SessionCheckResp sessionCheck(const Api::SessionCheckParams& params, const ApiSessionStorage& sessionStorage);
+    Api::SetBucketPublicResp setBucketPublic(const Api::SetBucketPublicParams& params, const ApiSessionStorage& sessionStorage);
 
     std::string func;
     std::string body;

@@ -14,11 +14,16 @@
 #include "BucketPermission.hpp"
 
 namespace Api {
+    enum class Permission : int;
+}
+
+namespace Api {
     using nlohmann::json;
 
     struct ListBucketPermissionsResp {
         std::vector<BucketPermission> bucketPermissions;
         bool isTruncated;
         std::string nextMarker;
+        std::vector<Permission> publicPermissions;
     };
 }

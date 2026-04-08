@@ -3,7 +3,7 @@
 import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
-import type { LoginData, LoginResponse, AddUserData, AddUserResponse, ListData, ListResponse, SessionCheckData, SessionCheckResponse, AddBucketData, AddBucketResponse, RemoveUserData, RemoveUserResponse, ListUsersData, ListUsersResponse, AddAccessKeyData, AddAccessKeyResponse, ListAccessKeysData, ListAccessKeysResponse, RemoveAccessKeyData, RemoveAccessKeyResponse, AddPolicyData, AddPolicyResponse, RemovePolicyData, RemovePolicyResponse, ListPoliciesData, ListPoliciesResponse, AddRoleData, AddRoleResponse, RemoveRoleData, RemoveRoleResponse, ListRolesData, ListRolesResponse, AddUserRoleData, AddUserRoleResponse, RemoveUserRoleData, RemoveUserRoleResponse, ListUserRolesData, ListUserRolesResponse, AddRolePolicyData, AddRolePolicyResponse, RemoveRolePolicyData, RemoveRolePolicyResponse, ListRolePoliciesData, ListRolePoliciesResponse, ChangePolicyData, ChangePolicyResponse, DeleteBucketData, DeleteBucketResponse, ChangePasswordData, ChangePasswordResponse, LogoutData, LogoutResponse, AddBucketPermissionData, AddBucketPermissionResponse, ListBucketPermissionsData, ListBucketPermissionsResponse, RemoveBucketPermissionData, RemoveBucketPermissionResponse } from './types.gen';
+import type { LoginData, LoginResponse, AddUserData, AddUserResponse, ListData, ListResponse, SessionCheckData, SessionCheckResponse, AddBucketData, AddBucketResponse, RemoveUserData, RemoveUserResponse, ListUsersData, ListUsersResponse, AddAccessKeyData, AddAccessKeyResponse, ListAccessKeysData, ListAccessKeysResponse, RemoveAccessKeyData, RemoveAccessKeyResponse, AddPolicyData, AddPolicyResponse, RemovePolicyData, RemovePolicyResponse, ListPoliciesData, ListPoliciesResponse, AddRoleData, AddRoleResponse, RemoveRoleData, RemoveRoleResponse, ListRolesData, ListRolesResponse, AddUserRoleData, AddUserRoleResponse, RemoveUserRoleData, RemoveUserRoleResponse, ListUserRolesData, ListUserRolesResponse, AddRolePolicyData, AddRolePolicyResponse, RemoveRolePolicyData, RemoveRolePolicyResponse, ListRolePoliciesData, ListRolePoliciesResponse, ChangePolicyData, ChangePolicyResponse, DeleteBucketData, DeleteBucketResponse, ChangePasswordData, ChangePasswordResponse, LogoutData, LogoutResponse, AddBucketPermissionData, AddBucketPermissionResponse, ListBucketPermissionsData, ListBucketPermissionsResponse, RemoveBucketPermissionData, RemoveBucketPermissionResponse, SetBucketPublicData, SetBucketPublicResponse } from './types.gen';
 
 /**
  * Login with username and password to service
@@ -548,6 +548,25 @@ export const removeBucketPermission = (data: RemoveBucketPermissionData = {}): C
     return __request(OpenAPI, {
         method: 'POST',
         url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/removeBucketPermission',
+        body: data.requestBody,
+        mediaType: 'application/json',
+        errors: {
+            400: 'Error'
+        }
+    });
+};
+
+/**
+ * Set bucket public permissions
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns unknown OK
+ * @throws ApiError
+ */
+export const setBucketPublic = (data: SetBucketPublicData = {}): CancelablePromise<SetBucketPublicResponse> => {
+    return __request(OpenAPI, {
+        method: 'POST',
+        url: '/api-v1-b64be512-4b03-4028-a589-13931942e205/setBucketPublic',
         body: data.requestBody,
         mediaType: 'application/json',
         errors: {

@@ -71,6 +71,8 @@
 #include "apigen/GeneratorsAddBucketPermissionResp.hpp"
 #include "apigen/GeneratorsRemoveBucketPermissionParams.hpp"
 #include "apigen/GeneratorsRemoveBucketPermissionResp.hpp"
+#include "apigen/GeneratorsSetBucketPublicParams.hpp"
+#include "apigen/GeneratorsSetBucketPublicResp.hpp"
 #include <argon2.h>
 #include <folly/Random.h>
 #include <iostream>
@@ -134,7 +136,7 @@ using api_func_t = nlohmann::json(*)(ApiHandler& apiHandler, const nlohmann::jso
 
 #define ADD_API_FUNC(x) {#x, [](ApiHandler& apiHandler, const nlohmann::json& params, const ApiSessionStorage& sessionStorage) -> nlohmann::json { return std::invoke(&ApiHandler::x, apiHandler, params, sessionStorage); }}
 
-    static constexpr frozen::unordered_map<frozen::string, api_func_t, 28> apiFunctions = {
+    static constexpr frozen::unordered_map<frozen::string, api_func_t, 29> apiFunctions = {
         ADD_API_FUNC(addUser),
         ADD_API_FUNC(removeUser),
         ADD_API_FUNC(listUsers),
@@ -162,7 +164,8 @@ using api_func_t = nlohmann::json(*)(ApiHandler& apiHandler, const nlohmann::jso
         ADD_API_FUNC(deleteBucket),
         ADD_API_FUNC(listBucketPermissions),
         ADD_API_FUNC(addBucketPermission),
-        ADD_API_FUNC(removeBucketPermission)    
+        ADD_API_FUNC(removeBucketPermission),
+        ADD_API_FUNC(setBucketPublic)
     };
 
 #undef ADD_API_FUNC
@@ -1378,10 +1381,10 @@ Api::LogoutResp ApiHandler::logout(const Api::LogoutParams& params, SessionScope
 
 Api::ListBucketPermissionsResp ApiHandler::listBucketPermissions(const Api::ListBucketPermissionsParams& params, const ApiSessionStorage& sessionStorage)
 {
-    const auto bucketIdOpt = buckets::getBucket(params.bucketName);
+    const auto bucketIdOpt = buckets::getBucketAndPublicPerms(params.bucketName);
     if(!bucketIdOpt)
         throw ApiError(Api::Herror::bucketNotFound);
-    const auto bucketId = bucketIdOpt.value();
+    const auto [bucketId, publicPerms] = bucketIdOpt.value();
 
     if(!isAuthorized("arn:aws:s3:::"+params.bucketName, Action::ListBucketPermissions, sessionStorage.userId))
         throw ApiError(Api::Herror::accessDenied);
@@ -1409,6 +1412,14 @@ Api::ListBucketPermissionsResp ApiHandler::listBucketPermissions(const Api::List
 
         resp.bucketPermissions.push_back(std::move(item));
     }
+
+    if(publicPerms & BUCKET_PERMISSION_READ)
+        resp.publicPermissions.push_back(Api::Permission::read);
+    if(publicPerms & BUCKET_PERMISSION_WRITE)
+        resp.publicPermissions.push_back(Api::Permission::write);
+    if(publicPerms & BUCKET_PERMISSION_DELETE)
+        resp.publicPermissions.push_back(Api::Permission::permissionDelete);
+
     return resp;
 }
 
@@ -1490,5 +1501,45 @@ Api::RemoveBucketPermissionResp ApiHandler::removeBucketPermission(const Api::Re
 
 Api::SessionCheckResp ApiHandler::sessionCheck(const Api::SessionCheckParams& params, const ApiSessionStorage& sessionStorage)
 {
+    return {};
+}
+
+Api::SetBucketPublicResp ApiHandler::setBucketPublic(const Api::SetBucketPublicParams& params, const ApiSessionStorage& sessionStorage)
+{
+    const auto bucketIdOpt = buckets::getBucket(params.bucketName);
+    if(!bucketIdOpt)
+        throw ApiError(Api::Herror::bucketNotFound);
+    const auto bucketId = bucketIdOpt.value();
+
+    if(!isAuthorized("arn:aws:s3:::"+params.bucketName, Action::SetBucketPublic, sessionStorage.userId))
+        throw ApiError(Api::Herror::accessDenied);
+
+    int perms = 0;
+
+    for(const auto p : params.setBucketPublicParamsPublic)
+    {
+        switch(p)
+        {
+            case Api::Public::read:
+                perms |= BUCKET_PERMISSION_READ;
+                break;
+            case Api::Public::write:
+                perms |= BUCKET_PERMISSION_WRITE;
+                break;
+            case Api::Public::publicDelete:
+                perms |= BUCKET_PERMISSION_DELETE;
+                break;
+            default:
+                throw ApiError(Api::Herror::invalidParameters, fmt::format("Invalid permission value {}", static_cast<int>(p)));
+        }
+    }
+
+    dao.setBucketPublicPerms(perms, bucketId);
+
+    if(dao.getDb().getLastChanges() != 1)
+        throw ApiError(Api::Herror::internalDbError, fmt::format("Error setting bucket {} public value to {}", params.bucketName, perms));
+
+    buckets::refreshBucketCache();
+
     return {};
 }

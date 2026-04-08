@@ -154,7 +154,7 @@ const Buckets = () => {
                 });
               }}
             >
-              Simple user permissions
+              Simple permissions
             </Button>
           </TableCellLayout>
         );

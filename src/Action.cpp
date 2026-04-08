@@ -44,6 +44,7 @@ Action actionFromStr(const std::string_view action)
     if(action == "hs5:CreateUser") return Action::CreateUser;
     if(action == "hs5:ChangePassword") return Action::ChangePassword;
     if(action == "hs5:ChangeOwnPassword") return Action::ChangeOwnPassword;
+    if(action == "hs5:SetBucketPublic") return Action::SetBucketPublic;
     return Action::Unknown;
 }
 
@@ -81,6 +82,7 @@ std::string actionToStr(const Action action)
         case Action::ListRolePolicies:return  "hs5:ListRolePolicies";
         case Action::AllActions:return  "*";
         case Action::ListBuckets:return  "s3:ListBuckets"; 
+        case Action::SetBucketPublic:return  "hs5:SetBucketPublic";
     }
     return "";
 }

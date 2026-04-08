@@ -18,3 +18,6 @@ quicktype-bundled.js
 template.db
 test/awsgosdktest/gosdktest
 test/miniosdktest/miniosdktest
+test/minio.new
+test/garage
+garage

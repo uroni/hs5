@@ -71,6 +71,8 @@ docs/RemoveUserRoleParams.md
 docs/RemoveUserRoleResp.md
 docs/SessionCheckParams.md
 docs/SessionCheckResp.md
+docs/SetBucketPublicParams.md
+docs/SetBucketPublicResp.md
 git_push.sh
 hs5_api/__init__.py
 hs5_api/api/__init__.py
@@ -147,6 +149,8 @@ hs5_api/models/remove_user_role_params.py
 hs5_api/models/remove_user_role_resp.py
 hs5_api/models/session_check_params.py
 hs5_api/models/session_check_resp.py
+hs5_api/models/set_bucket_public_params.py
+hs5_api/models/set_bucket_public_resp.py
 hs5_api/py.typed
 hs5_api/rest.py
 pyproject.toml
@@ -155,11 +159,6 @@ setup.cfg
 setup.py
 test-requirements.txt
 test/__init__.py
-test/test_add_bucket_permission_params.py
-test/test_add_bucket_permission_resp.py
-test/test_list_bucket_permissions_params.py
-test/test_list_bucket_permissions_resp.py
-test/test_list_bucket_permissions_resp_bucket_permissions_inner.py
-test/test_remove_bucket_permission_params.py
-test/test_remove_bucket_permission_resp.py
+test/test_set_bucket_public_params.py
+test/test_set_bucket_public_resp.py
 tox.ini

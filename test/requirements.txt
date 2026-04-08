@@ -15,3 +15,4 @@ typing-extensions >= 4.7.1
 portalocker
 pytest-xdist
 psutil
+openapi-generator-cli

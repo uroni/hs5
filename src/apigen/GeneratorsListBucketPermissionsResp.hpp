@@ -44,6 +44,7 @@ namespace Api {
         x.bucketPermissions = j.at("bucketPermissions").get<std::vector<BucketPermission>>();
         x.isTruncated = j.at("isTruncated").get<bool>();
         x.nextMarker = j.at("nextMarker").get<std::string>();
+        x.publicPermissions = j.at("publicPermissions").get<std::vector<Permission>>();
     }
 
     inline void to_json(json & j, const ListBucketPermissionsResp & x) {
@@ -51,6 +52,7 @@ namespace Api {
         j["bucketPermissions"] = x.bucketPermissions;
         j["isTruncated"] = x.isTruncated;
         j["nextMarker"] = x.nextMarker;
+        j["publicPermissions"] = x.publicPermissions;
     }
 
     inline void from_json(const json & j, Permission & x) {

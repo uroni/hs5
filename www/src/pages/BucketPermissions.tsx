@@ -1,11 +1,11 @@
-import { Button, Checkbox, createTableColumn, DataGrid, DataGridBody, DataGridCell, DataGridHeader, DataGridHeaderCell, DataGridProps, DataGridRow, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, makeStyles, Option, Spinner, TableCellLayout, TableColumnDefinition, tokens } from '@fluentui/react-components';
+import { Button, Checkbox, createTableColumn, DataGrid, DataGridBody, DataGridCell, DataGridHeader, DataGridHeaderCell, DataGridProps, DataGridRow, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger, Dropdown, Field, makeStyles, MessageBar, MessageBarBody, MessageBarTitle, Option, Spinner, TableCellLayout, TableColumnDefinition, tokens } from '@fluentui/react-components';
 import { FormEvent, Suspense, useEffect, useState } from 'react';
 import { useSuspenseQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from 'react-router-dom';
 import { TableWrapper } from '../components/TableWrapper';
 import { Pagination, PaginationItemsPerPageSelector, usePagination } from '../components/Pagination';
 import { filterBySearch, SearchBox, useFilteredBySearch } from '../components/SearchBox';
-import { ApiError, listBucketPermissions, addBucketPermission, removeBucketPermission, listUsers } from '../api';
+import { ApiError, listBucketPermissions, addBucketPermission, removeBucketPermission, listUsers, setBucketPublic } from '../api';
 import { state } from '../App';
 import { useSnapshot } from 'valtio';
 import { AddRegular, DeleteRegular } from '@fluentui/react-icons';
@@ -68,6 +68,7 @@ const BucketPermissions = () => {
 
   const data = permissionsResult.data!.bucketPermissions as BucketPermissionType[];
   const allUsers = usersResult.data!.users as UserType[];
+  const fetchedPublicPermissions = permissionsResult.data!.publicPermissions as Array<'read' | 'write' | 'delete'>;
 
   const [sortState, setSortState] =
     useState<Parameters<NonNullable<DataGridProps["onSortChange"]>>[1]>();
@@ -89,6 +90,44 @@ const BucketPermissions = () => {
 
   const { itemsPerPage, setItemsPerPage, pageData, page, setPage } =
     usePagination(filteredItems);
+
+  // Public permissions state
+  const [publicRead, setPublicRead] = useState(() => fetchedPublicPermissions.includes('read'));
+  const [publicWrite, setPublicWrite] = useState(() => fetchedPublicPermissions.includes('write'));
+  const [publicDelete, setPublicDelete] = useState(() => fetchedPublicPermissions.includes('delete'));
+  const [isUpdatingPublic, setIsUpdatingPublic] = useState(false);
+  const [updatePublicError, setUpdatePublicError] = useState('');
+
+  useEffect(() => {
+    setPublicRead(fetchedPublicPermissions.includes('read'));
+    setPublicWrite(fetchedPublicPermissions.includes('write'));
+    setPublicDelete(fetchedPublicPermissions.includes('delete'));
+  }, [fetchedPublicPermissions]);
+
+  const handleSetPublicPermissions = async () => {
+    const perms: Array<'read' | 'write' | 'delete'> = [];
+    if (publicRead) perms.push('read');
+    if (publicWrite) perms.push('write');
+    if (publicDelete) perms.push('delete');
+
+    setIsUpdatingPublic(true);
+    setUpdatePublicError('');
+    try {
+      await setBucketPublic({
+        requestBody: { bucketName: bucketName!, public: perms }
+      });
+      await queryClient.invalidateQueries({ queryKey: ["bucketPermissions", snap.session, bucketName] });
+    } catch (apiE) {
+      if (apiE instanceof ApiError) {
+        const e = apiE.body as HapiError;
+        setUpdatePublicError(e.msg || 'Failed to update public permissions');
+      } else {
+        setUpdatePublicError('Failed to update public permissions');
+      }
+    } finally {
+      setIsUpdatingPublic(false);
+    }
+  };
 
   // Add permission state
   const [selectedUserId, setSelectedUserId] = useState<string>('');
@@ -197,6 +236,29 @@ const BucketPermissions = () => {
     <Suspense fallback={<Spinner />}>
       <TableWrapper>
         <h3>Simple user permissions for bucket: {bucketName}</h3>
+
+        {fetchedPublicPermissions.length > 0 && (
+          <MessageBar intent="warning" style={{ marginBottom: tokens.spacingVerticalM }}>
+            <MessageBarBody>
+              <MessageBarTitle>Public access enabled</MessageBarTitle>
+              This bucket is accessible by everyone ({fetchedPublicPermissions.join(', ')}).
+            </MessageBarBody>
+          </MessageBar>
+        )}
+
+        {/* Public Permissions */}
+        <div className={classes.formRow}>
+          <Field label="Public permissions" validationMessage={updatePublicError} validationState={updatePublicError ? 'error' : 'none'}>
+            <div className={classes.checkboxGroup}>
+              <Checkbox label="Read" checked={publicRead} onChange={(_, d) => setPublicRead(!!d.checked)} disabled={isUpdatingPublic} />
+              <Checkbox label="Write" checked={publicWrite} onChange={(_, d) => setPublicWrite(!!d.checked)} disabled={isUpdatingPublic} />
+              <Checkbox label="Delete" checked={publicDelete} onChange={(_, d) => setPublicDelete(!!d.checked)} disabled={isUpdatingPublic} />
+            </div>
+          </Field>
+          <Button appearance="primary" onClick={handleSetPublicPermissions} disabled={isUpdatingPublic}>
+            {isUpdatingPublic ? 'Saving...' : 'Save Public Permissions'}
+          </Button>
+        </div>
 
         {/* Add Permission Form */}
         <form onSubmit={handleAddPermission} className={classes.formRow}>

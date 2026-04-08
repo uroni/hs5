@@ -348,6 +348,7 @@ export type ListBucketPermissionsResponse = ({
     }>;
     nextMarker: string;
     isTruncated: boolean;
+    publicPermissions: Array<('read' | 'write' | 'delete')>;
 });
 
 export type RemoveBucketPermissionData = {
@@ -357,5 +358,16 @@ export type RemoveBucketPermissionData = {
 };
 
 export type RemoveBucketPermissionResponse = ({
+    dummy?: string;
+});
+
+export type SetBucketPublicData = {
+    requestBody?: {
+        bucketName: string;
+        public: Array<('read' | 'write' | 'delete')>;
+    };
+};
+
+export type SetBucketPublicResponse = ({
     dummy?: string;
 });

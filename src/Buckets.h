@@ -15,6 +15,8 @@ bool isValidBucketName(const std::string_view bucketName);
 
 std::optional<int64_t> getBucket(const std::string_view bucketName);
 
+std::optional<std::pair<int64_t, int>> getBucketAndPublicPerms(const std::string_view bucketName);
+
 bool deleteBucket(int64_t bucketId);
 
 int64_t getPartialUploadsBucket(int64_t bucketId);

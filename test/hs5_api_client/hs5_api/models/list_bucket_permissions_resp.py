@@ -17,11 +17,12 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List
 from hs5_api.models.list_bucket_permissions_resp_bucket_permissions_inner import ListBucketPermissionsRespBucketPermissionsInner
 from typing import Optional, Set
 from typing_extensions import Self
+from pydantic_core import to_jsonable_python
 
 class ListBucketPermissionsResp(BaseModel):
     """
@@ -30,10 +31,20 @@ class ListBucketPermissionsResp(BaseModel):
     bucket_permissions: List[ListBucketPermissionsRespBucketPermissionsInner] = Field(alias="bucketPermissions")
     next_marker: StrictStr = Field(alias="nextMarker")
     is_truncated: StrictBool = Field(alias="isTruncated")
-    __properties: ClassVar[List[str]] = ["bucketPermissions", "nextMarker", "isTruncated"]
+    public_permissions: List[StrictStr] = Field(alias="publicPermissions")
+    __properties: ClassVar[List[str]] = ["bucketPermissions", "nextMarker", "isTruncated", "publicPermissions"]
+
+    @field_validator('public_permissions')
+    def public_permissions_validate_enum(cls, value):
+        """Validates the enum"""
+        for i in value:
+            if i not in set(['read', 'write', 'delete']):
+                raise ValueError("each list item must be one of ('read', 'write', 'delete')")
+        return value
 
     model_config = ConfigDict(
-        populate_by_name=True,
+        validate_by_name=True,
+        validate_by_alias=True,
         validate_assignment=True,
         protected_namespaces=(),
     )
@@ -45,8 +56,7 @@ class ListBucketPermissionsResp(BaseModel):
 
     def to_json(self) -> str:
         """Returns the JSON representation of the model using alias"""
-        # TODO: pydantic v2: use .model_dump_json(by_alias=True, exclude_unset=True) instead
-        return json.dumps(self.to_dict())
+        return json.dumps(to_jsonable_python(self.to_dict()))
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
@@ -92,7 +102,8 @@ class ListBucketPermissionsResp(BaseModel):
         _obj = cls.model_validate({
             "bucketPermissions": [ListBucketPermissionsRespBucketPermissionsInner.from_dict(_item) for _item in obj["bucketPermissions"]] if obj.get("bucketPermissions") is not None else None,
             "nextMarker": obj.get("nextMarker"),
-            "isTruncated": obj.get("isTruncated")
+            "isTruncated": obj.get("isTruncated"),
+            "publicPermissions": obj.get("publicPermissions")
         })
         return _obj
 

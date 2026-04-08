@@ -401,6 +401,18 @@ std::optional<std::string> checkSig(
 
     const auto& authorization = headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_AUTHORIZATION);
 
+    if(authorization.empty())
+    {
+        if(isAuthorized(ressource, action, ""))
+        {
+            // public access, no signature check needed
+#ifndef NDEBUG
+            sigCheckOk = true;
+#endif
+            return "";
+        }
+    }
+
     std::map<std::string, std::string> unescapedParams;   
     for(auto& param:  headers.getQueryParams())
     {

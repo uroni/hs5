@@ -32,7 +32,14 @@
         },
         "isTruncated": {
             "type": "boolean"
+        },
+        "publicPermissions": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": ["read", "write", "delete"]
+            }
         }
     },
-    "required": ["bucketPermissions", "nextMarker", "isTruncated"]
+    "required": ["bucketPermissions", "nextMarker", "isTruncated", "publicPermissions"]
 }

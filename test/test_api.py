@@ -454,3 +454,60 @@ def test_simple_permissions(hs5: Hs5Runner, perms: str):
             assert "Message" in e.response["Error"]
             assert e.response["Error"]["Message"] == "Access Denied"
             pass
+
+@pytest.mark.parametrize("perms", ["", "r", "w", "d", "rw", "rd", "wd", "rwd"])
+def test_set_bucket_public(hs5: Hs5Runner, perms: str):
+    admin_client = hs5.get_api_client_admin()
+
+    admin_client.add_bucket(hs5_models.AddBucketParams(bucketName="public-bucket"))
+
+    admin_s3 = hs5.get_s3_client()
+    admin_s3.put_object(Bucket="public-bucket", Key="existingkey", Body=b"testdata")
+
+    url = hs5.get_url()
+
+    perms_str = list[str]()
+    if "r" in perms:
+        perms_str.append("read")
+    if "w" in perms:
+        perms_str.append("write")
+    if "d" in perms:
+        perms_str.append("delete")
+
+    admin_client.set_bucket_public(hs5_models.SetBucketPublicParams(
+        bucketName="public-bucket",
+        public=perms_str
+    ))
+
+    if "r" in perms:
+        resp = requests.get(url+"/public-bucket/existingkey")
+        resp.raise_for_status()
+        assert resp.content == b"testdata"
+    else:
+        resp = requests.get(url+"/public-bucket/existingkey")
+        assert resp.status_code == 403
+    
+    if "w" in perms:
+        resp = requests.put(url+"/public-bucket/testkey", data=b"testdata2")
+        assert resp.status_code == 200
+        
+        obj = admin_s3.get_object(Bucket="public-bucket", Key="testkey")
+        data = obj["Body"].read()
+        assert data == b"testdata2"
+    else:
+        resp = requests.put(url+"/public-bucket/testkey", data=b"testdata2")
+        assert resp.status_code == 403
+    
+    if "d" in perms:
+        resp = requests.delete(url+"/public-bucket/existingkey")
+        assert resp.status_code == 204
+
+        with pytest.raises(ClientError):
+            admin_s3.head_object(Bucket="public-bucket", Key="existingkey")
+    else:
+        resp = requests.delete(url+"/public-bucket/existingkey")
+        assert resp.status_code == 403
+
+
+
+

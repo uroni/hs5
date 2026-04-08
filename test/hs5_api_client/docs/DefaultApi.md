@@ -33,6 +33,7 @@ Method | HTTP request | Description
 [**remove_user**](DefaultApi.md#remove_user) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/removeUser | 
 [**remove_user_role**](DefaultApi.md#remove_user_role) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/removeUserRole | 
 [**session_check**](DefaultApi.md#session_check) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/sessionCheck | 
+[**set_bucket_public**](DefaultApi.md#set_bucket_public) | **POST** /api-v1-b64be512-4b03-4028-a589-13931942e205/setBucketPublic | 
 
 
 # **add_access_key**
@@ -2452,6 +2453,90 @@ Name | Type | Description  | Notes
 ### Return type
 
 [**SessionCheckResp**](SessionCheckResp.md)
+
+### Authorization
+
+[cookieAuth](../README.md#cookieAuth), [bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: application/json
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | OK |  -  |
+**400** | Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **set_bucket_public**
+> SetBucketPublicResp set_bucket_public(set_bucket_public_params=set_bucket_public_params)
+
+Set bucket public permissions
+
+### Example
+
+* Api Key Authentication (cookieAuth):
+* Bearer Authentication (bearerAuth):
+
+```python
+import hs5_api
+from hs5_api.models.set_bucket_public_params import SetBucketPublicParams
+from hs5_api.models.set_bucket_public_resp import SetBucketPublicResp
+from hs5_api.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost
+# See configuration.py for a list of all supported configuration parameters.
+configuration = hs5_api.Configuration(
+    host = "http://localhost"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: cookieAuth
+configuration.api_key['cookieAuth'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['cookieAuth'] = 'Bearer'
+
+# Configure Bearer authorization: bearerAuth
+configuration = hs5_api.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with hs5_api.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = hs5_api.DefaultApi(api_client)
+    set_bucket_public_params = hs5_api.SetBucketPublicParams() # SetBucketPublicParams |  (optional)
+
+    try:
+        api_response = api_instance.set_bucket_public(set_bucket_public_params=set_bucket_public_params)
+        print("The response of DefaultApi->set_bucket_public:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling DefaultApi->set_bucket_public: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **set_bucket_public_params** | [**SetBucketPublicParams**](SetBucketPublicParams.md)|  | [optional] 
+
+### Return type
+
+[**SetBucketPublicResp**](SetBucketPublicResp.md)
 
 ### Authorization
 

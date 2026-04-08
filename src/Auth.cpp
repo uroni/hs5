@@ -33,7 +33,6 @@ namespace
     };
 
     std::map<int64_t, User> users;
-
 }
 
 void refreshAuthCache()
@@ -138,8 +137,48 @@ std::string getSecretKey(const std::string_view accessKey)
     return it->second.secret_key;
 }
 
+bool hasSimplePermission(const int perm, const Action action)
+{
+    if((perm & BUCKET_PERMISSION_READ) && (action == Action::GetObject || action == Action::ListObjects || action == Action::ListBuckets || action == Action::ListMultipartUploads || action == Action::GetBucketLocation))
+        return true;
+    else if((perm & BUCKET_PERMISSION_WRITE) && (action == Action::PutObject || action == Action::PutObjectPart || action == Action::CompleteMultipartUpload || action == Action::CreateMultipartUpload || action == Action::CopyObject || action == Action::UploadPartCopy))
+        return true;
+    else if((perm & BUCKET_PERMISSION_DELETE) && (action == Action::DeleteObject || action == Action::DeleteBucket || action == Action::AbortMultipartUpload || action == Action::DeleteObjects))
+        return true;
+    else  
+        return false;
+}
+
 bool isAuthorizedNoLock(const std::string_view resource, const Action action, const int64_t userId)
 {
+    std::string bucketName;
+    std::optional<int64_t> bucketIdOpt;
+    if(resource.starts_with("arn:aws:s3:::"))
+    {
+        const auto bucketNameEnd = resource.find('/', 13);
+        
+        if(bucketNameEnd == std::string_view::npos)
+            bucketName = std::string(resource.substr(13));
+        else
+            bucketName = resource.substr(13, bucketNameEnd-13);
+        
+        if(!bucketName.empty())
+        {
+            const auto bucketAndPerms = buckets::getBucketAndPublicPerms(bucketName);
+
+            if(bucketAndPerms)
+            {
+                bucketIdOpt = bucketAndPerms->first;
+
+                if(hasSimplePermission(bucketAndPerms->second, action))
+                    return true;
+            }
+        }
+    }
+
+    if(userId<0)
+        return false;
+
     auto userIt = users.find(userId);
     if(userIt == users.end())
         return false;
@@ -162,21 +201,6 @@ bool isAuthorizedNoLock(const std::string_view resource, const Action action, co
     if(finalRes == Policy::AccessCheckResult::Allow)
         return true;
 
-    if(!resource.starts_with("arn:aws:s3:::"))
-        return false;
-
-    const auto bucketNameEnd = resource.find('/', 13);
-
-    std::string bucketName;
-    if(bucketNameEnd == std::string_view::npos)
-        bucketName = std::string(resource.substr(13));
-    else
-        bucketName = resource.substr(13, bucketNameEnd-13);
-
-    if(bucketName.empty())
-        return false;
-
-    const auto bucketIdOpt = buckets::getBucket(bucketName);
     if(!bucketIdOpt)
         return false;
 
@@ -186,16 +210,7 @@ bool isAuthorizedNoLock(const std::string_view resource, const Action action, co
     if(it == user->bucketPermissions.end())
         return false;
 
-    const auto perm = it->second;
-
-    if((perm & BUCKET_PERMISSION_READ) && (action == Action::GetObject || action == Action::ListObjects || action == Action::ListBuckets || action == Action::ListMultipartUploads || action == Action::GetBucketLocation))
-        return true;
-    else if((perm & BUCKET_PERMISSION_WRITE) && (action == Action::PutObject || action == Action::PutObjectPart || action == Action::CompleteMultipartUpload || action == Action::CreateMultipartUpload || action == Action::CopyObject || action == Action::UploadPartCopy))
-        return true;
-    else if((perm & BUCKET_PERMISSION_DELETE) && (action == Action::DeleteObject || action == Action::DeleteBucket || action == Action::AbortMultipartUpload || action == Action::DeleteObjects))
-        return true;
-    else  
-        return false;
+    return hasSimplePermission(it->second, action);
 }
 
 bool isAuthorized(const std::string_view resource, const Action action, const int64_t userId)
@@ -207,6 +222,9 @@ bool isAuthorized(const std::string_view resource, const Action action, const in
 bool isAuthorized(const std::string_view resource, const Action action, const std::string_view accessKey)
 {
     std::shared_lock lock{mutex};
+
+    if(accessKey.empty())
+        return isAuthorizedNoLock(resource, action, -1);
 
     const auto it = accessKeys.find(std::string(accessKey));
 
