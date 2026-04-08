@@ -48,8 +48,8 @@ enum class Action
     ListBucketPermissions=41,
     AddBucketPermission=42,
     RemoveBucketPermission=43,
-    LastDummyAction=44,
-    SetBucketPublic=45
+    SetBucketPublic=44,
+    LastDummyAction=45,
 };
 
 Action actionFromStr(const std::string_view action);
