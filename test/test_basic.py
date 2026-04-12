@@ -642,6 +642,15 @@ def test_list_one(tmp_path: Path, hs5: Hs5Runner):
 
     assert keys == ["one", "three", "two"]
 
+    res = s3_client.list_objects(Bucket=hs5.testbucketname(), MaxKeys=2, Marker="three")
+    assert not res["IsTruncated"]
+    assert "Contents" in res
+    objs = res["Contents"]
+    assert objs is not None
+    assert len(objs) == 1
+    assert "Key" in objs[0]
+    assert objs[0]["Key"] == "two"
+
 def test_list_one_common(tmp_path: Path, hs5: Hs5Runner):
     with open(tmp_path / "upload.txt", "w") as upload_file:
         upload_file.write("abc")

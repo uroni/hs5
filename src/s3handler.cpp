@@ -4394,6 +4394,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     SingleFileStorage::IterData iter_data = {};
     std::string iterStartVal;
     bool excludeStartAfter = false;
+    bool excludeMarker = false;
     std::string lastOutputKeyStr;
     if(!marker.empty())
     {
@@ -4403,7 +4404,11 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             excludeStartAfter = true;
         }
         else
+        {
             iterStartVal = make_key({.key = marker, .version=markerVersion, .bucketId = listBucketId});
+            if(!listV2)
+                excludeMarker = true;
+        }
     }
     else
     {
@@ -4490,7 +4495,19 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             {
                 excludeStartAfter = false;
             }
-            
+        }
+
+        if(excludeMarker)
+        {
+            if(keyInfo.key == marker && (markerVersionStr.empty() || keyInfo.version == markerVersion))
+            {
+                outputKey = false;
+                ++skippedKeys;
+            }
+            else
+            {
+                excludeMarker = false;
+            }
         }
 
         if(outputKey && !delimiter.empty())
