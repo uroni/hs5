@@ -2135,6 +2135,17 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
     const auto prefix = headers.hasQueryParam("prefix") ? std::make_optional(headers.getDecodedQueryParam("prefix")) : std::nullopt;
     const auto delimiter = headers.getDecodedQueryParam("delimiter");
     const auto uploadIdMarkerStr = partial ? headers.getDecodedQueryParam("upload-id-marker") : std::string();
+    const auto encodingType = headers.getDecodedQueryParam("encoding-type");
+    const bool urlEncode = encodingType == "url";
+
+    if(encodingType != "" && encodingType != "url")
+    {
+        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Unknown encoding type", bucket, ""))
+                            .sendWithEOM();
+        return;
+    }
 
     if(delimiter.size()>1)
     {
@@ -2148,9 +2159,9 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     folly::getGlobalCPUExecutor()->add(
-    [self = self, evb, marker, maxKeys, prefix, delimiter, bucket, bucketId, partial, uploadIdMarkerStr]()
+    [self = self, evb, marker, maxKeys, prefix, delimiter, bucket, bucketId, partial, uploadIdMarkerStr, urlEncode]()
     {
-        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, std::nullopt, delimiter, *bucketId, false, bucket, partial, uploadIdMarkerStr);
+        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, std::nullopt, delimiter, *bucketId, false, bucket, partial, uploadIdMarkerStr, urlEncode);
     });
 }
 
@@ -2162,6 +2173,17 @@ void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string&
     const auto prefix = headers.hasQueryParam("prefix") ? std::make_optional(headers.getDecodedQueryParam("prefix")) : std::nullopt;
     const auto delimiter = headers.getDecodedQueryParam("delimiter");
     const auto startAfter = headers.hasQueryParam("start-after") ? std::make_optional(headers.getDecodedQueryParam("start-after")) : std::nullopt;
+    const auto encodingType = headers.getDecodedQueryParam("encoding-type");
+    const bool urlEncode = encodingType == "url";
+
+    if(encodingType != "" && encodingType != "url")
+    {
+        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Unknown encoding type", bucket, ""))
+                            .sendWithEOM();
+        return;
+    }
 
     if(delimiter.size()>1)
     {
@@ -2185,9 +2207,9 @@ void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string&
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     folly::getGlobalCPUExecutor()->add(
-    [self = self, evb, marker, maxKeys, prefix, startAfter, delimiter, bucket, bucketId, partial]()
+    [self = self, evb, marker, maxKeys, prefix, startAfter, delimiter, bucket, bucketId, partial, urlEncode]()
     {
-        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, startAfter, delimiter, bucketId, true, bucket, partial, std::string());
+        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, startAfter, delimiter, bucketId, true, bucket, partial, std::string(), urlEncode);
     });
 }
 
@@ -4387,7 +4409,8 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
 void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& marker,
     const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter,
     const std::string& delimiter, const int64_t bucketId,
-    const bool listV2, const std::string& bucketName, const bool partial, const std::string& markerVersionStr)
+    const bool listV2, const std::string& bucketName, const bool partial, const std::string& markerVersionStr,
+    const bool urlEncode)
 {
     const auto markerVersion = !markerVersionStr.empty() ? decryptUploadId(markerVersionStr).id : std::numeric_limits<int64_t>::max();
     const auto listBucketId = partial ? buckets::getPartialUploadsBucket(bucketId) : bucketId;
@@ -4436,6 +4459,11 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                             .sendWithEOM(); });
         return;
     }
+
+    const auto encode = [](const bool urlEncode, const std::string_view str) -> std::string
+    {
+        return urlEncode ? escapeXML(uriEscapeUpper<std::string>(str, folly::UriEscapeMode::PATH)) : escapeXML(str);
+    };
 
     std::string val_data;
     std::vector<std::string> commonPrefixes;
@@ -4557,7 +4585,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 "\t\t<ETag>{}</ETag>\n"
                 "\t\t<Size>{}</Size>\n"
                 "\t\t<StorageClass>STANDARD</StorageClass>\n"
-                "\t</Contents>", escapeXML(keyInfo.key), format_last_modified(last_modified), getEtag(md5sum), size);
+                "\t</Contents>", encode(urlEncode, keyInfo.key), format_last_modified(last_modified), getEtag(md5sum), size);
             ++keyCount;
         }
         else if(outputKey && partial)
@@ -4579,7 +4607,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 "\t\t<Key>{}</Key>\n"
                 "\t\t<UploadId>{}-{}</UploadId>\n"
                 "\t</Upload>", format_last_modified(last_modified), 
-                escapeXML(keyInfo.key), folly::hexlify(encId.encryptedId), folly::hexlify(encId.nonce));
+                encode(urlEncode, keyInfo.key), folly::hexlify(encId.encryptedId), folly::hexlify(encId.nonce));
             ++keyCount;
         }
 
@@ -4687,12 +4715,12 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
     if(prefix)
     {
-        resp+=fmt::format("\t<Prefix>{}</Prefix>\n", escapeXML(*prefix));
+        resp+=fmt::format("\t<Prefix>{}</Prefix>\n", encode(urlEncode, *prefix));
     }
 
     if(!delimiter.empty())
     {
-        resp+=fmt::format("\t<Delimiter>{}</Delimiter>\n", escapeXML(delimiter));
+        resp+=fmt::format("\t<Delimiter>{}</Delimiter>\n", encode(urlEncode, delimiter));
     }
 
     if(listV2)
@@ -4702,7 +4730,12 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
     if(startAfter)
     {
-        resp+=fmt::format("\t<StartAfter>{}</StartAfter>\n", escapeXML(*startAfter));
+        resp+=fmt::format("\t<StartAfter>{}</StartAfter>\n", encode(urlEncode, *startAfter));
+    }
+
+    if(urlEncode)
+    {
+        resp+=fmt::format("\t<EncodingType>url</EncodingType>\n");
     }
 
     if(!commonPrefixes.empty())
@@ -4711,7 +4744,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         {
             resp+=fmt::format("\t<CommonPrefixes>\n"
                 "\t\t<Prefix>{}</Prefix>\n"
-                "\t</CommonPrefixes>\n", escapeXML(commonPrefix));
+                "\t</CommonPrefixes>\n", encode(urlEncode, commonPrefix));
         }
     }
 

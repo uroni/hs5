@@ -1,6 +1,8 @@
+#pragma once
+
 #include <string>
 #include <stdint.h>
-
+#include <folly/String.h>
 
 static bool next(const std::string &pData, const size_t & doff, const std::string &pStr)
 {
@@ -74,3 +76,46 @@ std::string rfc2047EncodeB(std::string_view text, std::string_view charset = "UT
 std::string rfc2047Decode(const std::string_view text);
 
 std::string asciiToLower(std::string str);
+
+// Escape using upper case hex values. Copied & adjusted folly::uriEscape() 
+template <class String>
+void uriEscapeUpper(folly::StringPiece str, String& out, folly::UriEscapeMode mode) {
+  static const char hexValues[] = "0123456789ABCDEF";
+  char esc[3];
+  esc[0] = '%';
+  // Preallocate assuming that 25% of the input string will be escaped
+  folly::grow_capacity_by(out, str.size() + 3 * (str.size() / 4));
+  auto p = str.begin();
+  auto last = p; // last regular character
+  // We advance over runs of passthrough characters and copy them in one go;
+  // this is faster than calling push_back repeatedly.
+  unsigned char minEncode = static_cast<unsigned char>(mode);
+  while (p != str.end()) {
+    char c = *p;
+    unsigned char v = static_cast<unsigned char>(c);
+    unsigned char discriminator = folly::detail::uriEscapeTable[v];
+    if (FOLLY_LIKELY(discriminator <= minEncode)) {
+      ++p;
+    } else if (mode == folly::UriEscapeMode::QUERY && discriminator == 3) {
+      out.append(&*last, size_t(p - last));
+      out.push_back('+');
+      ++p;
+      last = p;
+    } else {
+      out.append(&*last, size_t(p - last));
+      esc[1] = hexValues[v >> 4];
+      esc[2] = hexValues[v & 0x0f];
+      out.append(esc, 3);
+      ++p;
+      last = p;
+    }
+  }
+  out.append(&*last, size_t(p - last));
+}
+
+template <class String>
+String uriEscapeUpper(folly::StringPiece str, folly::UriEscapeMode mode = folly::UriEscapeMode::ALL) {
+  String out;
+  uriEscapeUpper(str, out, mode);
+  return out;
+}

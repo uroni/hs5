@@ -240,7 +240,7 @@ private:
 
     void listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& continuationToken, 
         const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter, const std::string& delimiter, const int64_t bucket,
-        const bool listV2, const std::string& bucketName, const bool partial, const std::string& markerVersionStr);
+        const bool listV2, const std::string& bucketName, const bool partial, const std::string& markerVersionStr, const bool urlEncode);
     void createMultipartUpload(proxygen::HTTPMessage& headers);
     void finalizeMultipartUpload();
     void finalizeCreateBucket();
