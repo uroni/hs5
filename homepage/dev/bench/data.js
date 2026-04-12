@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776001575063,
+  "lastUpdate": 1776003149629,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -9371,6 +9371,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 1.0776060270511523",
             "extra": "mean: 19.677228210399996 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "f7e490c2ccdddf1b224b6039e74f390dd13962db",
+          "message": "Add validation for maximum objects in deleteObjects request",
+          "timestamp": "2026-04-12T13:34:53Z",
+          "tree_id": "4941afa47c5d90b7a48bedbfe65f5196da275f12",
+          "url": "https://github.com/uroni/hs5/commit/f7e490c2ccdddf1b224b6039e74f390dd13962db"
+        },
+        "date": 1776003148713,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07070554375814667,
+            "unit": "iter/sec",
+            "range": "stddev: 0.11831721069345923",
+            "extra": "mean: 14.143162570400012 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.05630963243322474,
+            "unit": "iter/sec",
+            "range": "stddev: 0.2007506158412609",
+            "extra": "mean: 17.758950943000002 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.050253285139358374,
+            "unit": "iter/sec",
+            "range": "stddev: 0.3064759069274642",
+            "extra": "mean: 19.89919658440001 sec\nrounds: 5"
           }
         ]
       }
