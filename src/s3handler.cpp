@@ -3595,6 +3595,17 @@ void S3Handler::finalizeCreateBucket()
 
 void S3Handler::deleteObjects()
 {
+    if(deleteObjectsData->objects.size() > 1000)
+    {
+        XLOGF(WARN, "Too many objects to delete: {}", deleteObjectsData->objects.size());
+        ResponseBuilder(self->downstream_)
+            .status(400, "Bad Request")
+            .body(s3errorXml(S3ErrorCode::InvalidArgument, "Too many objects specified for deletion. Maximum is 1000.", "", ""))
+            .sendWithEOM();
+        self->finished_ = true;
+        return;
+    }
+
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
             [self = this->self, evb, deleteObjectsData = this->deleteObjectsData.get()]()
@@ -5252,6 +5263,17 @@ void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
             finished_ = true; 
             return;
         }
+
+        if(request_action == Action::DeleteObjects && deleteObjectsData && deleteObjectsData->objects.size() > 1000)
+        {
+            XLOGF(WARN, "Too many objects in DeleteObjects request: {}", deleteObjectsData->objects.size());
+            ResponseBuilder(self->downstream_)
+                .status(400, "Bad Request")
+                .body(s3errorXml(S3ErrorCode::InvalidArgument, "Too many objects in DeleteObjects request", "", ""))
+                .sendWithEOM();
+            finished_ = true;
+        }
+
         return;
     }
     else if(request_action == Action::CreateBucket)
