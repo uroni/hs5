@@ -536,12 +536,25 @@ def test_list_prefix(tmp_path: Path, hs5: Hs5Runner):
 
     res = s3_client.list_objects(Bucket=hs5.testbucketname(), Prefix="a/")
 
+    assert not res["IsTruncated"]
     assert "Contents" in res
     objs = res["Contents"]
     assert objs is not None
     assert len(objs) == 1
     assert "Key" in objs[0]
     assert objs[0]["Key"] == "a/2.txt"
+
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "a/b/1.txt")
+
+    res = s3_client.list_objects(Bucket=hs5.testbucketname(), Prefix="a/", Delimiter="/", MaxKeys=1)
+    assert res["IsTruncated"] == True
+    assert "Contents" in res
+    objs = res["Contents"]
+    assert objs is not None
+    assert len(objs) == 1
+    assert "Key" in objs[0]
+    assert objs[0]["Key"] == "a/2.txt"
+
 
 
 def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
@@ -608,6 +621,15 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
         prefixes.append(pre["Prefix"])
     assert len(prefixes) == 1
     assert "b/d/" in prefixes
+
+    res3 = s3_client.list_objects(Bucket=hs5.testbucketname(), Delimiter="/", MaxKeys=1, Marker="a/")
+    assert res3["IsTruncated"] == False
+    assert "CommonPrefixes" in res3
+    common_prefixes = res3["CommonPrefixes"]
+    assert common_prefixes is not None
+    assert len(common_prefixes) == 1
+    assert "Prefix" in common_prefixes[0]
+    assert common_prefixes[0]["Prefix"] == "b/"
 
 
     
@@ -706,6 +728,13 @@ def test_list_start_after(tmp_path: Path, hs5: Hs5Runner):
 
     assert "Key" in objs["Contents"][0]
     assert objs["Contents"][0]["Key"] == "c"
+
+    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "b/1.txt")
+    objs = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), StartAfter="a", Prefix="b/")
+    assert "Contents" in objs
+    assert len(objs["Contents"]) == 1
+    assert "Key" in objs["Contents"][0]
+    assert objs["Contents"][0]["Key"] == "b/1.txt"
     
 
 @pytest.mark.parametrize("restart_during_download", [True, False])

@@ -4416,29 +4416,34 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     const auto listBucketId = partial ? buckets::getPartialUploadsBucket(bucketId) : bucketId;
     SingleFileStorage::IterData iter_data = {};
     std::string iterStartVal;
-    bool excludeStartAfter = false;
-    bool excludeMarker = false;
     std::string lastOutputKeyStr;
+    int64_t lastOutputVersion = std::numeric_limits<int64_t>::max();
+    std::string lastOutputUploadNonce;
+    bool foundPrefix = true;
     if(!marker.empty())
     {
         if(startAfter && *startAfter>marker)
         {
             iterStartVal = make_key({.key = *startAfter, .version=markerVersion, .bucketId = listBucketId});
-            excludeStartAfter = true;
+            lastOutputKeyStr = *startAfter;
+            lastOutputVersion = markerVersion;
         }
         else
         {
             iterStartVal = make_key({.key = marker, .version=markerVersion, .bucketId = listBucketId});
-            if(!listV2)
-                excludeMarker = true;
+            lastOutputKeyStr = marker;
+            lastOutputVersion = markerVersion;
         }
     }
     else
     {
-        if(startAfter)
+        if(startAfter && !startAfter->empty())
         {
             iterStartVal = make_key({.key = *startAfter, .version=markerVersion, .bucketId = listBucketId});
-            excludeStartAfter = true;
+            lastOutputKeyStr = *startAfter;
+            lastOutputVersion = markerVersion;
+            if(prefix)
+                foundPrefix = false;
         }
         else if(prefix)
             iterStartVal = make_key({.key = *prefix, .version=markerVersion, .bucketId = listBucketId});
@@ -4465,6 +4470,18 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         return urlEncode ? escapeXML(uriEscapeUpper<std::string>(str, folly::UriEscapeMode::PATH)) : escapeXML(str);
     };
 
+    const auto commonPrefix = [](const size_t prefixSize, const std::string_view delimiter, const std::string_view key) -> std::optional<std::string_view>
+    {
+        if(delimiter.empty())
+            return {};
+
+        const size_t delimPos = key.find_first_of(delimiter[0], prefixSize);
+        if(delimPos == std::string::npos)
+            return {};
+        
+        return key.substr(0, delimPos + 1);
+    };
+
     std::string val_data;
     std::vector<std::string> commonPrefixes;
     const size_t prefixSize = prefix ? prefix->size() : 0;
@@ -4480,27 +4497,46 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         std::vector<SingleFileStorage::SPunchItem> extra_exts;
         if(!sfs().iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
         {
+            XLOGF(DBG0, "Finished listing with total keys {} truncated {}", i, truncated);
             truncated = false;
             break;
         }
 
         const auto keyInfo = extractKeyInfoView(keyBin);
 
-        if(prefix && !keyInfo.key.starts_with(*prefix))
+        bool outputKey = true;
+
+        if(prefix)
         {
-            truncated = false;
-            break;
+            if(!keyInfo.key.starts_with(*prefix))
+            {
+                if(foundPrefix)
+                {
+                    XLOGF(DBG0, "Key '{}' does not match prefix '{}', stopping listing with total keys {} truncated {}", keyInfo.key, *prefix, i, truncated);
+                    truncated = false;
+                    break;
+                }
+                else
+                {
+                    ++skippedKeys;
+                    outputKey = false;
+                }
+            }
+            else
+            {
+                foundPrefix = true;
+            }
         }
 
         if(keyInfo.bucketId != listBucketId)
         {
+            XLOGF(DBG0, "Key '{}' does not match bucketId {}, stopping listing with total keys {} truncated {}", keyInfo.key, listBucketId, i, truncated);
             truncated = false;
             break;
         }
 
-        bool outputKey = true;
-
-        if(keyInfo.key == lastOutputKeyStr)
+        if(keyInfo.key == lastOutputKeyStr &&
+            (lastOutputVersion == std::numeric_limits<int64_t>::max() || keyInfo.version == lastOutputVersion) )
         {
             ++skippedKeys;
             outputKey = false;
@@ -4512,61 +4548,35 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             outputKey = false;
         }
 
-        if(excludeStartAfter)
+        if(outputKey)
         {
-            if(keyInfo.key == *startAfter)
+            const auto commonKey = commonPrefix(prefixSize, delimiter, keyInfo.key);
+            if(commonKey)
             {
-                outputKey = false;
-                ++skippedKeys;
-            }
-            else
-            {
-                excludeStartAfter = false;
-            }
-        }
-
-        if(excludeMarker)
-        {
-            if(keyInfo.key == marker && (markerVersionStr.empty() || keyInfo.version == markerVersion))
-            {
-                outputKey = false;
-                ++skippedKeys;
-            }
-            else
-            {
-                excludeMarker = false;
-            }
-        }
-
-        if(outputKey && !delimiter.empty())
-        {
-            const size_t delimPos = keyInfo.key.find_first_of(delimiter[0], prefixSize);
-            if(delimPos != std::string::npos)
-            {
-                const auto commonKey = std::string(keyInfo.key.substr(0, delimPos + 1));
-                if(commonKey!=lastOutputKeyStr)
+                if(*commonKey!=lastOutputKeyStr)
                 {
                     if(i >= maxKeys + skippedKeys)
                         break;
                         
-                    commonPrefixes.push_back(commonKey);
+                    commonPrefixes.push_back(std::string(*commonKey));
                     ++keyCount;
                 }
                 else
                 {
                     ++skippedKeys;
                 }
+                
                 outputKey = false;
-                lastOutputKeyStr = commonKey;
+                lastOutputKeyStr = *commonKey;
             }
         }
+
+        if(i >= maxKeys + skippedKeys)
+            break;
 
         if (outputKey && !partial)
         {
             lastOutputKeyStr = keyInfo.key;
-
-            if(i >= maxKeys + skippedKeys)
-                break;
 
             for(const auto& ext: extra_exts)
             {
@@ -4591,16 +4601,13 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         else if(outputKey && partial)
         {
             lastOutputKeyStr = keyInfo.key;
-
-            if(i >= maxKeys + skippedKeys)
-                break;
+            lastOutputVersion = keyInfo.version;
 
             CRData rdata(md5sum.data(), md5sum.size());
 
-            std::string uploadNonce;
-            rdata.getStr2(&uploadNonce);
+            rdata.getStr2(&lastOutputUploadNonce);
 
-            const auto encId =sfs().encrypt_id_separate(keyInfo.version, uploadNonce);
+            const auto encId =sfs().encrypt_id_separate(keyInfo.version, lastOutputUploadNonce);
 
             val_data += fmt::format("\t<Upload>\n"
                 "\t\t<Initiated>{}</Initiated>\n"
@@ -4625,39 +4632,19 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         }
     }
 
+    if(maxKeys==0)
+        truncated = false;
+
     std::string nextMarker;
     std::string nextVersionMarker;
     if(truncated)
     {
-        std::string data;
-        std::string keyBin, md5sum;
-        int64_t offset, size, last_modified;
-        std::vector<SingleFileStorage::SPunchItem> extra_exts;
-        if(sfs().iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
+        nextMarker = lastOutputKeyStr;
+        
+        if(partial)
         {
-            const auto keyInfo = extractKeyInfoView(keyBin);
-            if(keyInfo.bucketId == listBucketId)
-            {
-                nextMarker = keyInfo.key;
-
-                if(partial)
-                {
-                    CRData rdata(md5sum.data(), md5sum.size());
-                    std::string uploadNonce;
-                    rdata.getStr2(&uploadNonce);
-
-                    const auto encId = sfs().encrypt_id_separate(keyInfo.version, uploadNonce);
-                    nextVersionMarker = folly::hexlify(encId.encryptedId) + "-" + folly::hexlify(encId.nonce);
-                }
-            }
-            else
-            {
-                truncated = false;
-            }
-        }
-        else
-        {
-            truncated=false;
+            const auto encId = sfs().encrypt_id_separate(lastOutputVersion, lastOutputUploadNonce);
+            nextVersionMarker = folly::hexlify(encId.encryptedId) + "-" + folly::hexlify(encId.nonce);
         }
     }
 
@@ -4715,12 +4702,12 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
     if(prefix)
     {
-        resp+=fmt::format("\t<Prefix>{}</Prefix>\n", encode(urlEncode, *prefix));
+        resp+=fmt::format("\t<Prefix>{}</Prefix>\n", encode(listV2 && urlEncode, *prefix));
     }
 
     if(!delimiter.empty())
     {
-        resp+=fmt::format("\t<Delimiter>{}</Delimiter>\n", encode(urlEncode, delimiter));
+        resp+=fmt::format("\t<Delimiter>{}</Delimiter>\n", encode(listV2 && urlEncode, delimiter));
     }
 
     if(listV2)
@@ -4730,7 +4717,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
     if(startAfter)
     {
-        resp+=fmt::format("\t<StartAfter>{}</StartAfter>\n", encode(urlEncode, *startAfter));
+        resp+=fmt::format("\t<StartAfter>{}</StartAfter>\n", encode(listV2 && urlEncode, *startAfter));
     }
 
     if(urlEncode)
