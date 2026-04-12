@@ -596,6 +596,9 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
     assert len(prefixes) == 1
     assert "b/c/" in prefixes
 
+    assert "KeyCount" in res
+    assert res["KeyCount"] == len(prefixes) + len(objs)
+
     res2 = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), Prefix="b/", Delimiter="/", MaxKeys=2, ContinuationToken=res["NextContinuationToken"])
     assert "CommonPrefixes" in res2
     common_prefixes = res2["CommonPrefixes"]

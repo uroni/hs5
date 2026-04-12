@@ -4522,6 +4522,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                         break;
                         
                     commonPrefixes.push_back(commonKey);
+                    ++keyCount;
                 }
                 else
                 {
