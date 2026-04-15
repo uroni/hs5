@@ -83,8 +83,12 @@ def run_warp(server_url: str, access_key: str, secret_key: str, bucketname: str,
 
 def warp_cmp(benchmark: str, before_fn: Path, after_fn: Path, out_fn: Path):
     with open(out_fn, "w") as f:
-        f.write(f"Warp comparison benchmark={benchmark} between {before_fn} (before) and {after_fn} (after)\n")
         subprocess.run(["./warp", "cmp", str(before_fn), str(after_fn)], check=True, shell=False, stdout=f)
+    with open(out_fn, "r") as f:
+        out = f.read()
+    with open(out_fn, "w") as f:
+        f.write(f"Warp comparison benchmark={benchmark} between {before_fn} (before) and {after_fn} (after)\n\n")
+        f.write(out)
 
 warp_prev_result_fn : Optional[Path] = None
 warp_prev_target : Optional[str] = None
