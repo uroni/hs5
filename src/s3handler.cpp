@@ -1002,11 +1002,24 @@ static void deleteObjectsXmlElementEnd(void *userData,
         } break;
     case S3Handler::DeleteObjectsData::ParseState::InQuiet:
         {
+            const auto quietStr = folly::trimWhitespace(deleteObjectsData->buf);
+            if(quietStr == "true")
+            {
+                deleteObjectsData->quiet = true;
+            }
+            else if(quietStr != "false")
+            {
+                XLOGF(WARN, "Invalid quiet parameter for delete: {}", deleteObjectsData->buf);
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Invalid;
+            }
+
+            deleteObjectsData->buf.clear();
+
             if(strcmp(name, "Quiet") == 0)
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
             else
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-        }
+        } break;
     default:
         break;
     }
@@ -1048,15 +1061,7 @@ static void deleteObjectsXmlCharData(void *userData,
         } break;
         case S3Handler::DeleteObjectsData::ParseState::InQuiet:
         {
-            if(data == "true")
-            {
-                deleteObjectsData->quiet = true;
-            }
-            else
-            {
-                XLOGF(ERR, "Invalid quiet parameter for delete: ", data);
-                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Invalid;
-            }
+            deleteObjectsData->buf += std::string(data);
         } break;
         default:
             break;

@@ -192,6 +192,7 @@ public:
         std::vector<DeleteObjectData> objects;
         bool quiet = false;
         std::string accessKey;
+        std::string buf;
     };
 
     static bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, 
