@@ -115,3 +115,41 @@ jobs:
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: homepage/dev/bench
           auto-push: true
+
+      - name: Export warp comparison output
+        if: matrix.benchmark == 1
+        id: warp-compare
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=( *_*_vs_*.txt )
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No warp comparison files found."
+            exit 0
+          fi
+
+          {
+            echo "found=true"
+            echo "files<<EOF"
+            printf '%s\n' "${files[@]}"
+            echo "EOF"
+            echo "comparison<<EOF"
+            for f in "${files[@]}"; do
+              echo "===== $f ====="
+              cat "$f"
+              echo
+            done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Warp Comparison Output"
+            for f in "${files[@]}"; do
+              echo
+              echo "### $f"
+              echo
+              cat "$f"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

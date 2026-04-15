@@ -21,3 +21,5 @@ test/miniosdktest/miniosdktest
 test/minio.new
 test/garage
 garage
+warp_config.yaml
+warp

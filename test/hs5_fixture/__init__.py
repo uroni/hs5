@@ -255,6 +255,9 @@ class Hs5Runner:
         t = threading.Thread(target=stop_thread, daemon=True)
         t.start()
 
+    def get_root_user(self):
+        return "root"
+
     def get_root_key(self):
         return self._root_key
     

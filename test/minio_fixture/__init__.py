@@ -120,6 +120,12 @@ class MinioRunner:
 
     def get_s3_client(self, sig_v2: bool = False) -> S3Client:
         return boto3.client('s3', endpoint_url=self.get_url(), aws_access_key_id="root", aws_secret_access_key=self._root_key)
+
+    def get_root_user(self):
+        return "root"
+
+    def get_root_key(self):
+        return self._root_key
     
 
 @pytest.fixture
