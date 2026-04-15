@@ -73,7 +73,7 @@ def run_warp(server_url: str, access_key: str, secret_key: str, bucketname: str,
   analyze:
     dur: 30s
     verbose: true
-    skip-duration: 10s
+    skip-duration: 30s
   benchdata: {out_fn}
 """
     with open("warp_config.yaml", "w") as f:
@@ -101,7 +101,7 @@ def test_perf_warp_mixed(benchmark: BenchmarkFixture, target: str, hs5_perf: Hs5
     """
     prep_warp()
     bench = "mixed"
-    warp_config = WarpConfig(benchmark=bench, duration="30s", concurrent=30, objects=100)
+    warp_config = WarpConfig(benchmark=bench, duration="2m", concurrent=30, objects=100)
 
     if target == "hs5":
         server = hs5_perf
