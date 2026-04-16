@@ -1,3 +1,7 @@
+/**
+ * Copyright Martin Raiber. All Rights Reserved.
+ * SPDX-License-Identifier: LGPL-3.0-or-later
+ */
 #include "ObjMetadata.h"
 #include "s3handler.h"
 
@@ -97,7 +101,7 @@ void ObjMetadata::addRespHeaders(proxygen::ResponseBuilder& resp)
         resp.header(proxygen::HTTP_HEADER_CONTENT_TYPE, contentTypeToStr(contentType));
     else
         resp.header(proxygen::HTTP_HEADER_CONTENT_TYPE, "binary/octet-stream");
-        
+
     userMetadata.addRespHeaders(resp);
     if(disposition.has_value())
         resp.header(proxygen::HTTP_HEADER_CONTENT_DISPOSITION, *disposition);
