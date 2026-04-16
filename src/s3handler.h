@@ -17,10 +17,10 @@
 #include <thread>
 #include <expat.h>
 #include "data.h"
-#include "ContentType.h"
 #include "PayloadHash.h"
+#include "ObjMetadata.h"
 #include "ApiHandler.h"
-#include "UserMetadata.h"
+
 
 class ExpatXmlParser
 {
@@ -78,8 +78,7 @@ struct MultiPartDownloadData
 struct ParsePartRes
 {
     std::string nonce;
-    ContentType contentType;
-    UserMetadata userMetadata;
+    ObjMetadata objMetadata;
     std::vector<MultiPartDownloadData::PartExt> parts;
 };
 
@@ -97,7 +96,18 @@ const int64_t metadata_multipart_object = 1;
 const int64_t metadata_tombstone = 2;
 const int64_t metadata_flag_with_content_type = 1<<2;
 const int64_t metadata_flag_with_meta = 1<<3;
-const int64_t metadata_known_flags = metadata_flag_with_content_type | metadata_flag_with_meta;
+const int64_t metadata_flag_with_disposition = 1<<5;
+const int64_t metadata_flag_with_cache_control = 1<<6;
+const int64_t metadata_flag_with_encoding = 1<<7;
+const int64_t metadata_flag_with_language = 1<<8;
+const int64_t metadata_flag_with_expires = 1<<9;
+const int64_t metadata_flag_has_obj_metadata = metadata_flag_with_content_type | metadata_flag_with_meta | 
+    metadata_flag_with_disposition | metadata_flag_with_cache_control | 
+    metadata_flag_with_encoding | metadata_flag_with_language | metadata_flag_with_expires;
+const int64_t metadata_known_flags = metadata_flag_with_content_type | metadata_flag_with_meta |
+     metadata_flag_with_disposition | metadata_flag_with_cache_control | 
+     metadata_flag_with_encoding | metadata_flag_with_language | 
+     metadata_flag_with_expires;
 
 class DuckDbFs;
 
@@ -196,8 +206,7 @@ public:
     };
 
     static bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, 
-            std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, ContentType* contentType,
-            UserMetadata* userMetadata);
+            std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, std::unique_ptr<ObjMetadata>* objMetadata);
     static std::string getEtag(const std::string& md5sum);
     
     static int seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
@@ -300,8 +309,7 @@ private:
     std::unique_ptr<MultiPartUploadData> multiPartUploadData;
     std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
     std::unique_ptr<DeleteObjectsData> deleteObjectsData;
-    ContentType contentType;
-    UserMetadata userMetadata;
+    std::unique_ptr<ObjMetadata> objMetadata;
 
 	std::mutex extents_mutex;
 	std::condition_variable extents_cond;

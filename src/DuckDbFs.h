@@ -3,8 +3,7 @@
 #include <duckdb/common/file_system.hpp>
 #include <string>
 #include "SingleFileStorage.h"
-#include "ContentType.h"
-#include "UserMetadata.h"
+#include "ObjMetadata.h"
 
 struct MultiPartDownloadData;
 
@@ -34,12 +33,8 @@ public:
 
     std::string ETag() const;
 
-    UserMetadata& GetUserMetadata() {
-        return userMetadata;
-    }
-
-    ContentType& GetContentType() {
-        return contentType;
+    ObjMetadata* GetObjMetadata() {
+        return objMetadata.get();
     }
 
 private:
@@ -69,8 +64,7 @@ private:
     bool open = false;
     std::string s3key;
 
-    UserMetadata userMetadata;
-    ContentType contentType;
+    std::unique_ptr<ObjMetadata> objMetadata;
 };
 
 struct ParsedHs5Url {

@@ -1491,3 +1491,17 @@ def test_miniosdk_upload(hs5: Hs5Runner, tmp_path: Path, miniosdk_test_fixture: 
     assert filecmp.cmp(tmp_path / "upload.txt", dl_path2)
 
 
+def test_object_meta(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    expires_time = datetime.datetime(2025, 10, 21, 7, 28, 0, tzinfo=datetime.timezone.utc)
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="meta.txt", Body=b"abc", CacheControl="no-cache", Expires=expires_time, ContentType="text/plain", Metadata={"foo": "bar"}, ContentEncoding="gzip", ContentDisposition="attachment")
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="meta.txt")
+    assert obj_info["CacheControl"] == "no-cache"
+    assert obj_info["Expires"] == expires_time
+    obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="meta.txt")
+    assert obj["CacheControl"] == "no-cache"
+    assert obj["Expires"] == expires_time
+    assert obj["ContentType"] == "text/plain"
+    assert obj["Metadata"] == {"foo": "bar"}
+    assert obj["ContentEncoding"] == "gzip"
+    assert obj["ContentDisposition"] == "attachment"

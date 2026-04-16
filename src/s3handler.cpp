@@ -1158,11 +1158,11 @@ ParsePartRes parsePartExtsFromStr(const std::string& rdata)
     CRData crdata(rdata.data(), rdata.size());
     std::string nonce;
     crdata.getStr2(&nonce);
-    ContentType contentType;
-    contentType.deserialize(crdata);
-    UserMetadata userMetadata;
-    userMetadata.deserialize(crdata);
-    return ParsePartRes{nonce, contentType, userMetadata, parsePartExts(crdata)};
+    int64_t flags = 0;
+    crdata.getVarInt(&flags);
+    ObjMetadata objMetadata;
+    objMetadata.deserialize(crdata, flags);
+    return ParsePartRes{nonce, objMetadata, parsePartExts(crdata)};
 }
 
 std::vector<MultiPartDownloadData::PartExt> parsePartExts(CRData& rdata)
@@ -1225,8 +1225,8 @@ std::string serializePartExts(const ParsePartRes& partRes)
 {
     CWData wdata;
     wdata.addString2(partRes.nonce);
-    partRes.contentType.serialize(wdata);
-    partRes.userMetadata.serialize(wdata);
+    wdata.addVarInt(partRes.objMetadata.flags());
+    partRes.objMetadata.serialize(wdata);
     for(const auto& part: partRes.parts)    
     {
         wdata.addVarInt(part.size);
@@ -1753,7 +1753,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        if(!userMetadata.parseMetadataValues(*headers))
+        bool invalidMetadataValues = false;
+        objMetadata = ObjMetadata::fromHeaders(*headers, invalidMetadataValues);
+        if(invalidMetadataValues)
         {
             ResponseBuilder(downstream_)
                 .status(400, "Bad request")
@@ -1764,11 +1766,6 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         
         parseMatchInfo(*headers, false, false);
 
-        const auto contentTypeStr = headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_CONTENT_TYPE);
-        if(!contentTypeStr.empty())
-        {
-            contentType = contentTypeFromStr(contentTypeStr);
-        }
         XLOGF(DBG0, "PutObject {} length {}", path, remaining);
 
         request_action = action;
@@ -1958,19 +1955,15 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            if(!userMetadata.parseMetadataValues(*headers))
+            bool invalidMetadataValues = false;
+            objMetadata = ObjMetadata::fromHeaders(*headers, invalidMetadataValues);
+            if(invalidMetadataValues)
             {
                 ResponseBuilder(downstream_)
                     .status(400, "Bad request")
                     .body("Invalid metadata values")
                     .sendWithEOM();
                 return;
-            }
-
-            const auto contentTypeStr = headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_CONTENT_TYPE);
-            if(!contentTypeStr.empty())
-            {
-                contentType = contentTypeFromStr(contentTypeStr);
             }
 
             request_action = Action::CreateMultipartUpload;
@@ -2304,8 +2297,7 @@ void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
 }
 
 bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, 
-    std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, ContentType* contentType,
-    UserMetadata* userMetadata)
+    std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, std::unique_ptr<ObjMetadata>* objMetadata)
 {
 #ifdef ALLOW_LEGACY_MD5SUM
     if(md5sum.size()==MD5_DIGEST_LENGTH || md5sum.empty())
@@ -2322,23 +2314,19 @@ bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen,
     const auto itypeFlags = itype;
     itype = itype & ~metadata_known_flags;
 
-    if(contentType && itype==metadata_object)
+    if(objMetadata && itype==metadata_object)
     {
-        assert(userMetadata);
-
         if(!rdata.incrementPtr(MD5_DIGEST_LENGTH))
             return false;
 
-        if( itypeFlags & metadata_flag_with_content_type)
+        if (itypeFlags & metadata_flag_has_obj_metadata)
         {
-            if(!contentType->deserialize(rdata))
+            *objMetadata = std::make_unique<ObjMetadata>();
+            if(!(*objMetadata)->deserialize(rdata, itypeFlags))
+            {
+                *objMetadata = nullptr;
                 return false;
-        }
-
-        if( itypeFlags & metadata_flag_with_meta)
-        {
-            if(!userMetadata->deserialize(rdata))
-                return false;
+            }
         }
         
         return true;
@@ -2388,20 +2376,14 @@ bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen,
     if(numParts!=multiPartDownloadData->numParts)
         return false;
 
-    if(contentType)
+    if(objMetadata &&
+        (itypeFlags & metadata_flag_has_obj_metadata))
     {
-        assert(userMetadata);
-
-        if(itypeFlags & metadata_flag_with_content_type)
+        *objMetadata = std::make_unique<ObjMetadata>();
+        if(!(*objMetadata)->deserialize(rdata, itypeFlags))
         {
-            if(!contentType->deserialize(rdata))
-                return false;
-        }
-
-        if(itypeFlags & metadata_flag_with_meta)
-        {
-            if(!userMetadata->deserialize(rdata))
-                return false;
+            *objMetadata = nullptr;
+            return false;
         }
     }
 
@@ -2636,7 +2618,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     assert(rc==0);
                 };
 
-                if(!self->parseMultipartInfo(res.md5sum, res.total_len, self->multiPartDownloadData, &self->contentType, &self->userMetadata))
+                if(!self->parseMultipartInfo(res.md5sum, res.total_len, self->multiPartDownloadData, &self->objMetadata))
                 {
                     evb->runInEventBaseThread([self = self]()
                                               {
@@ -2784,7 +2766,6 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         ResponseBuilder(self->downstream_)
                             .status(412, "Precondition Failed")
                             .header(proxygen::HTTP_HEADER_ETAG, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum))
-                            .header(proxygen::HTTP_HEADER_CONTENT_TYPE, contentTypeToStr(self->contentType))
                             .header("Last-Modified", format_last_modified_rfc1123(last_modified))
                             .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", self->fullKeyPath(), ""))
                             .sendWithEOM();
@@ -2794,10 +2775,9 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     auto resp = std::move(ResponseBuilder(self->downstream_).status(hasRange ? 206 : 200, hasRange ? "Partial Content" : "OK")
                         .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(rangeEnd-rangeStart))
                         .header(proxygen::HTTP_HEADER_ETAG, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum))
-                        .header(proxygen::HTTP_HEADER_CONTENT_TYPE, contentTypeToStr(self->contentType))
                         .header("Last-Modified", format_last_modified_rfc1123(last_modified)));
 
-                    self->userMetadata.addRespHeaders(resp);
+                    ObjMetadata::addRespHeaders(self->objMetadata.get(), resp);
 
                     if(self->request_action==Action::HeadObject)
                     {
@@ -3140,8 +3120,15 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
 
                 CWData data;
                 data.addString2(uploadIdEnc.nonce);
-                self->contentType.serialize(data);
-                self->userMetadata.serialize(data);
+                if(self->objMetadata)
+                {
+                    data.addVarInt(self->objMetadata->flags());
+                    self->objMetadata->serialize(data);
+                }
+                else
+                {
+                    data.addVarInt(0);
+                }
 
                 std::string md5sum(data.getDataPtr(), data.getDataSize());
                 const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
@@ -3247,15 +3234,15 @@ void S3Handler::finalizeMultipartUpload()
                     make_key({.key = self->keyInfo.key, .version = multiPartData->uploadId.id, 
                     .bucketId = partialUploadsBucketId}), SingleFileStorage::ReadSkipAddReading);
                 CRData uploadData(readRes.md5sum.data(), readRes.md5sum.size());
-                ContentType uploadContentType;
-                UserMetadata uploadUserMetadata;
+                int64_t uploadObjMetadataFlags;
+                ObjMetadata uploadObjMetadata;
                 std::string uploadFPath = make_key(self->keyInfo);
                 std::string uploadNonce;
                 if(readRes.err != 0 ||
                     !uploadData.getStr2(&uploadNonce) ||
                     uploadNonce!=multiPartData->uploadId.nonce ||
-                    !uploadContentType.deserialize(uploadData) ||
-                    !uploadUserMetadata.deserialize(uploadData))
+                    !uploadData.getVarInt(&uploadObjMetadataFlags) ||
+                    !uploadObjMetadata.deserialize(uploadData, uploadObjMetadataFlags))
                 {
                     XLOGF(WARN, "Could not find upload data for uploadId {} err {}", multiPartData->uploadId.id, readRes.err);
                     evb->runInEventBaseThread([self = self, readRes = readRes]()
@@ -3277,10 +3264,7 @@ void S3Handler::finalizeMultipartUpload()
                 MultiPartDownloadData::PartExt lastExt = {-1, 0, 0};
                 CWData wdata;
                 int64_t itype = metadata_multipart_object;
-                if(uploadContentType.hasContentType())
-                    itype |= metadata_flag_with_content_type;
-                if(uploadUserMetadata.hasUserMetadata())
-                    itype |= metadata_flag_with_meta;
+                itype |= uploadObjMetadataFlags;
                 wdata.addVarInt(itype);
                 const size_t md5sumOffset = wdata.getDataSize();
                 wdata.resize(wdata.getDataSize()+MD5_DIGEST_LENGTH);
@@ -3396,10 +3380,7 @@ void S3Handler::finalizeMultipartUpload()
                     wdata.addVarInt(lastExt.len);
                 }
 
-                if(uploadContentType.hasContentType())
-                    uploadContentType.serialize(wdata);
-                if(uploadUserMetadata.hasUserMetadata() )
-                    uploadUserMetadata.serialize(wdata);
+                uploadObjMetadata.serialize(wdata);
 
                 EVP_DigestFinal_ex(md5Ctx, reinterpret_cast<unsigned char*>(wdata.getDataPtr()) + md5sumOffset, nullptr);
 
@@ -4600,7 +4581,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             }
 
             std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
-            if(!self->parseMultipartInfo(md5sum, size, multiPartDownloadData, nullptr, nullptr))
+            if(!self->parseMultipartInfo(md5sum, size, multiPartDownloadData, nullptr))
             {
                 XLOGF(WARN, "Error parsing multipart info for key {} with md5sum {}", keyInfo.key, folly::hexlify(md5sum));
             }
@@ -5459,19 +5440,15 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModified)
 {
     int64_t itype = metadata_object;
-    if(contentType.hasContentType())
-        itype |= metadata_flag_with_content_type;
-    if(userMetadata.hasUserMetadata())
-        itype |= metadata_flag_with_meta;
+    if(objMetadata)
+        itype |= objMetadata->flags();
     CWData wmetadata;
     wmetadata.addVarInt(itype);
     char md5buf[MD5_DIGEST_LENGTH];
     EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(md5buf), nullptr);
     wmetadata.addBuffer(md5buf, MD5_DIGEST_LENGTH);
-    if(contentType.hasContentType())
-        contentType.serialize(wmetadata);
-    if(userMetadata.hasUserMetadata())
-        userMetadata.serialize(wmetadata);
+    if(objMetadata)
+        objMetadata->serialize(wmetadata);
 
     std::string_view md5sum(wmetadata.getDataPtr(), wmetadata.getDataSize());
 
@@ -5813,7 +5790,7 @@ std::vector<SingleFileStorage::SFragInfo> S3Handler::onDeleteCallback(const std:
 
     int64_t totalLen;
     std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
-    if(!parseMultipartInfo(md5sum, totalLen, multiPartDownloadData, nullptr, nullptr))
+    if(!parseMultipartInfo(md5sum, totalLen, multiPartDownloadData, nullptr))
     {
         XLOGF(WARN, "Error parsing multi-part upload for file {}", fn);
         return {};
@@ -6315,8 +6292,11 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
 
     if(copyObjectInfo.metadataDirective == CopyObjectInfo::MetadataDirective::Copy)
     {
-        contentType = sourceFileHs5->GetContentType();
-        userMetadata = sourceFileHs5->GetUserMetadata();
+        auto sourceObjMetadata = sourceFileHs5->GetObjMetadata();
+        if(sourceObjMetadata)
+        {
+            objMetadata = std::make_unique<ObjMetadata>(*sourceObjMetadata);
+        }
     }
 
     cleanupExtents = false;
