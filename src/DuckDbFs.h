@@ -4,6 +4,7 @@
 #include <string>
 #include "SingleFileStorage.h"
 #include "ObjMetadata.h"
+#include "PayloadHash.h"
 
 struct MultiPartDownloadData;
 
@@ -37,6 +38,10 @@ public:
         return objMetadata.get();
     }
 
+    PayloadHashBase* GetSdkChecksumHash() {
+        return sdkChecksumHash.get();
+    }
+
 private:
     struct PartExt
     {
@@ -65,6 +70,7 @@ private:
     std::string s3key;
 
     std::unique_ptr<ObjMetadata> objMetadata;
+    std::unique_ptr<PayloadHashBase> sdkChecksumHash;
 };
 
 struct ParsedHs5Url {

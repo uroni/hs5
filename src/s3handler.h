@@ -79,6 +79,7 @@ struct ParsePartRes
 {
     std::string nonce;
     ObjMetadata objMetadata;
+    AwsHashType sdkChecksumType;
     std::vector<MultiPartDownloadData::PartExt> parts;
 };
 
@@ -101,13 +102,14 @@ const int64_t metadata_flag_with_cache_control = 1<<6;
 const int64_t metadata_flag_with_encoding = 1<<7;
 const int64_t metadata_flag_with_language = 1<<8;
 const int64_t metadata_flag_with_expires = 1<<9;
+const int64_t metadata_flag_with_checksum = 1<<10;
 const int64_t metadata_flag_has_obj_metadata = metadata_flag_with_content_type | metadata_flag_with_meta | 
     metadata_flag_with_disposition | metadata_flag_with_cache_control | 
     metadata_flag_with_encoding | metadata_flag_with_language | metadata_flag_with_expires;
 const int64_t metadata_known_flags = metadata_flag_with_content_type | metadata_flag_with_meta |
      metadata_flag_with_disposition | metadata_flag_with_cache_control | 
      metadata_flag_with_encoding | metadata_flag_with_language | 
-     metadata_flag_with_expires;
+     metadata_flag_with_expires | metadata_flag_with_checksum;
 
 class DuckDbFs;
 
@@ -206,7 +208,7 @@ public:
     };
 
     static bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, 
-            std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, std::unique_ptr<ObjMetadata>* objMetadata);
+            std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, std::unique_ptr<ObjMetadata>* objMetadata, std::unique_ptr<PayloadHashBase>* sdkChecksumHash);
     static std::string getEtag(const std::string& md5sum);
     
     static int seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
@@ -222,6 +224,8 @@ public:
     static void onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride);
 
     static std::string md5sumBinFromData(const std::string_view md5sumData);
+
+    static std::pair<int64_t, std::string_view> flagsAndMd5sumBinFromData(const std::string_view md5sumData);
 
     static void addReadingMultipartObject(const std::string& key);
 
@@ -260,6 +264,7 @@ private:
     void startReadBodyThread(folly::EventBase *evb);
     bool setKeyInfoFromPath(const std::string_view path);
     std::optional<std::string> initPayloadHash(proxygen::HTTPMessage& message);
+    bool initSdkChecksum(proxygen::HTTPMessage& message, const Action action);
     void deleteObjects();
 
     UploadIdDec decryptUploadId(const std::string& encdata);
@@ -317,7 +322,9 @@ private:
 	std::vector<SingleFileStorage::Ext> extents;
     bool extentsInitialized = false;
     EvpMdCtx evpMdCtx;
+    std::string contentMd5;
     std::unique_ptr<PayloadHashBase> payloadHash;
+    std::unique_ptr<PayloadHashBase> sdkChecksumHash;
 
     struct BodyObj
     {

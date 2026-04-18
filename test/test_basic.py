@@ -1,5 +1,6 @@
 # Copyright Martin Raiber. All Rights Reserved.
 # SPDX-License-Identifier: LGPL-3.0-or-later
+import base64
 from concurrent.futures import thread
 from dataclasses import dataclass
 import datetime
@@ -1505,3 +1506,104 @@ def test_object_meta(hs5: Hs5Runner):
     assert obj["Metadata"] == {"foo": "bar"}
     assert obj["ContentEncoding"] == "gzip"
     assert obj["ContentDisposition"] == "attachment"
+
+def test_put_checksum(hs5: Hs5Runner, tmp_path: Path):
+    s3_client = hs5.get_s3_client()
+
+    fdata = os.urandom(2*1024*1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+
+    md5sum = hashlib.md5(fdata).hexdigest()
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ContentMD5=md5sum)
+
+    dl_path = tmp_path / "download.txt"
+    s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
+    assert filecmp.cmp(tmp_path / "upload.txt", dl_path)
+
+    # test with wrong checksum
+    with pytest.raises(ClientError):
+        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ContentMD5="wrongchecksum")
+
+
+def test_put_sdk_checksum(hs5: Hs5Runner, tmp_path: Path):
+    s3_client = hs5.get_s3_client()
+
+    fdata = os.urandom(1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)   
+
+    # SHA1 checksum
+    sha1_b64 = base64.b64encode(hashlib.sha1(fdata).digest()).decode()
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="SHA1", ChecksumSHA1=sha1_b64)
+
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert "ChecksumSHA1" in obj and obj["ChecksumSHA1"] == sha1_b64
+
+
+    #CRC32C checksum
+    from awscrt.checksums import crc32c
+    crc32c_b64 = base64.b64encode(crc32c(fdata).to_bytes(4, byteorder='big')).decode()
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="CRC32C", ChecksumCRC32C=crc32c_b64)
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert "ChecksumCRC32C" in obj and obj["ChecksumCRC32C"] == crc32c_b64
+
+    #CRC32 checksum
+    from awscrt.checksums import crc32
+    crc32_b64 = base64.b64encode(crc32(fdata).to_bytes(4, byteorder='big')).decode()
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="CRC32", ChecksumCRC32=crc32_b64)
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert "ChecksumCRC32" in obj and obj["ChecksumCRC32"] == crc32_b64
+
+    #CRC64NVME checksum
+    from awscrt.checksums import crc64nvme
+    crc64nvme_b64 = base64.b64encode(crc64nvme(fdata).to_bytes(8, byteorder='big')).decode()
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="CRC64NVME", ChecksumCRC64NVME=crc64nvme_b64)
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert "ChecksumCRC64NVME" in obj and obj["ChecksumCRC64NVME"] == crc64nvme_b64
+
+    # SHA256 checksum
+    sha256_b64 = base64.b64encode(hashlib.sha256(fdata).digest()).decode()
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="SHA256", ChecksumSHA256=sha256_b64)
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert "ChecksumSHA256" in obj and obj["ChecksumSHA256"] == sha256_b64
+
+    dl_path = tmp_path / "download.txt"
+    s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
+    assert filecmp.cmp(tmp_path / "upload.txt", dl_path)
+
+    # test with wrong checksum
+    with pytest.raises(ClientError):
+        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="CRC32C", ChecksumCRC32C="wrongchecksum")
+
+def test_put_sdk_checksum_multipart(hs5: Hs5Runner, tmp_path: Path):
+    s3_client = hs5.get_s3_client()
+
+    fdata = os.urandom(10*1024*1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)   
+
+    from awscrt.checksums import crc32c
+    crc32c_b64 = base64.b64encode(crc32c(fdata).to_bytes(4, byteorder='big')).decode()
+    config = TransferConfig(multipart_threshold=5*1024*1024)
+    s3_client.upload_file(str(tmp_path / "upload.txt"), hs5.testbucketname(), "upload.txt", Config=config, ExtraArgs={'ChecksumCRC32C': crc32c_b64, 'ChecksumType': "FULL_OBJECT"})
+
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert "ChecksumCRC32C" in obj and obj["ChecksumCRC32C"] == crc32c_b64
+    assert "ChecksumType" in obj and obj["ChecksumType"] == "FULL_OBJECT"
+
+    #CRC32 checksum
+    from awscrt.checksums import crc32
+    crc32_b64 = base64.b64encode(crc32(fdata).to_bytes(4, byteorder='big')).decode()
+    s3_client.upload_file(str(tmp_path /"upload.txt"), hs5.testbucketname(), "upload2.txt", Config=config, ExtraArgs={'ChecksumCRC32': crc32_b64, 'ChecksumType': "FULL_OBJECT"})
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload2.txt")
+    assert "ChecksumCRC32" in obj and obj["ChecksumCRC32"] == crc32_b64
+    assert "ChecksumType" in obj and obj["ChecksumType"] == "FULL_OBJECT"
+
+    #CRC64NVME checksum
+    from awscrt.checksums import crc64nvme
+    crc64nvme_b64 = base64.b64encode(crc64nvme(fdata).to_bytes(8, byteorder='big')).decode()
+    s3_client.upload_file(str(tmp_path / "upload.txt"), hs5.testbucketname(), "upload3.txt", Config=config, ExtraArgs={'ChecksumCRC64NVME': crc64nvme_b64, 'ChecksumType': "FULL_OBJECT"})
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload3.txt")
+    assert "ChecksumCRC64NVME" in obj and obj["ChecksumCRC64NVME"] == crc64nvme_b64
+    assert "ChecksumType" in obj and obj["ChecksumType"] == "FULL_OBJECT"
