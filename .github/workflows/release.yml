@@ -36,7 +36,7 @@ jobs:
           VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org,readwrite"
         with:
           vcpkgJsonGlob: 'vcpkg.json'
-          vcpkgGitCommitId: d5ec528843d29e3a52d745a64b469f810b2cedbf
+          vcpkgGitCommitId: d7b75fa8a30478ae5b5eb86ac730f851ef036875
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v4
