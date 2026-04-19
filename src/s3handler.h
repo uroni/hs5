@@ -97,12 +97,12 @@ const int64_t metadata_multipart_object = 1;
 const int64_t metadata_tombstone = 2;
 const int64_t metadata_flag_with_content_type = 1<<2;
 const int64_t metadata_flag_with_meta = 1<<3;
-const int64_t metadata_flag_with_disposition = 1<<5;
+const int64_t metadata_flag_with_checksum = 1<<4;
 const int64_t metadata_flag_with_cache_control = 1<<6;
 const int64_t metadata_flag_with_encoding = 1<<7;
-const int64_t metadata_flag_with_language = 1<<8;
-const int64_t metadata_flag_with_expires = 1<<9;
-const int64_t metadata_flag_with_checksum = 1<<10;
+const int64_t metadata_flag_with_expires = 1<<8;
+const int64_t metadata_flag_with_language = 1<<9;
+const int64_t metadata_flag_with_disposition = 1<<10;
 const int64_t metadata_flag_has_obj_metadata = metadata_flag_with_content_type | metadata_flag_with_meta | 
     metadata_flag_with_disposition | metadata_flag_with_cache_control | 
     metadata_flag_with_encoding | metadata_flag_with_language | metadata_flag_with_expires;
