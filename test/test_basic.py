@@ -1537,7 +1537,7 @@ def test_put_sdk_checksum(hs5: Hs5Runner, tmp_path: Path):
     sha1_b64 = base64.b64encode(hashlib.sha1(fdata).digest()).decode()
     s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="SHA1", ChecksumSHA1=sha1_b64)
 
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED")
     assert "ChecksumSHA1" in obj and obj["ChecksumSHA1"] == sha1_b64
 
 
@@ -1545,27 +1545,27 @@ def test_put_sdk_checksum(hs5: Hs5Runner, tmp_path: Path):
     from awscrt.checksums import crc32c
     crc32c_b64 = base64.b64encode(crc32c(fdata).to_bytes(4, byteorder='big')).decode()
     s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="CRC32C", ChecksumCRC32C=crc32c_b64)
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED")
     assert "ChecksumCRC32C" in obj and obj["ChecksumCRC32C"] == crc32c_b64
 
     #CRC32 checksum
     from awscrt.checksums import crc32
     crc32_b64 = base64.b64encode(crc32(fdata).to_bytes(4, byteorder='big')).decode()
     s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="CRC32", ChecksumCRC32=crc32_b64)
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED")
     assert "ChecksumCRC32" in obj and obj["ChecksumCRC32"] == crc32_b64
 
     #CRC64NVME checksum
     from awscrt.checksums import crc64nvme
     crc64nvme_b64 = base64.b64encode(crc64nvme(fdata).to_bytes(8, byteorder='big')).decode()
     s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="CRC64NVME", ChecksumCRC64NVME=crc64nvme_b64)
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED")
     assert "ChecksumCRC64NVME" in obj and obj["ChecksumCRC64NVME"] == crc64nvme_b64
 
     # SHA256 checksum
     sha256_b64 = base64.b64encode(hashlib.sha256(fdata).digest()).decode()
     s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="SHA256", ChecksumSHA256=sha256_b64)
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED")
     assert "ChecksumSHA256" in obj and obj["ChecksumSHA256"] == sha256_b64
 
     dl_path = tmp_path / "download.txt"
@@ -1588,7 +1588,7 @@ def test_put_sdk_checksum_multipart(hs5: Hs5Runner, tmp_path: Path):
     config = TransferConfig(multipart_threshold=5*1024*1024)
     s3_client.upload_file(str(tmp_path / "upload.txt"), hs5.testbucketname(), "upload.txt", Config=config, ExtraArgs={'ChecksumCRC32C': crc32c_b64, 'ChecksumType': "FULL_OBJECT"})
 
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt" , ChecksumMode="ENABLED")
     assert "ChecksumCRC32C" in obj and obj["ChecksumCRC32C"] == crc32c_b64
     assert "ChecksumType" in obj and obj["ChecksumType"] == "FULL_OBJECT"
 
@@ -1596,7 +1596,7 @@ def test_put_sdk_checksum_multipart(hs5: Hs5Runner, tmp_path: Path):
     from awscrt.checksums import crc32
     crc32_b64 = base64.b64encode(crc32(fdata).to_bytes(4, byteorder='big')).decode()
     s3_client.upload_file(str(tmp_path /"upload.txt"), hs5.testbucketname(), "upload2.txt", Config=config, ExtraArgs={'ChecksumCRC32': crc32_b64, 'ChecksumType': "FULL_OBJECT"})
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload2.txt")
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload2.txt", ChecksumMode="ENABLED")
     assert "ChecksumCRC32" in obj and obj["ChecksumCRC32"] == crc32_b64
     assert "ChecksumType" in obj and obj["ChecksumType"] == "FULL_OBJECT"
 
@@ -1604,6 +1604,6 @@ def test_put_sdk_checksum_multipart(hs5: Hs5Runner, tmp_path: Path):
     from awscrt.checksums import crc64nvme
     crc64nvme_b64 = base64.b64encode(crc64nvme(fdata).to_bytes(8, byteorder='big')).decode()
     s3_client.upload_file(str(tmp_path / "upload.txt"), hs5.testbucketname(), "upload3.txt", Config=config, ExtraArgs={'ChecksumCRC64NVME': crc64nvme_b64, 'ChecksumType': "FULL_OBJECT"})
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload3.txt")
+    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload3.txt", ChecksumMode="ENABLED")
     assert "ChecksumCRC64NVME" in obj and obj["ChecksumCRC64NVME"] == crc64nvme_b64
     assert "ChecksumType" in obj and obj["ChecksumType"] == "FULL_OBJECT"

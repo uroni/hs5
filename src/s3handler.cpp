@@ -1441,7 +1441,7 @@ bool S3Handler::initSdkChecksum(proxygen::HTTPMessage& message, const Action act
     if(checksumHeaderVal.empty())
     {
         const auto trailerHeaderVal = message.getHeaders().getSingleOrEmpty("x-amz-trailer");
-        if(action == Action::CompleteMultipartUpload || trailerHeaderVal.find(checksumHeaderKey) == std::string::npos)
+        if(action == Action::CompleteMultipartUpload || asciiToLower(trailerHeaderVal).find(asciiToLower(checksumHeaderKey)) == std::string::npos)
         {
             XLOGF(INFO, "Missing checksum header {} for SDK checksum algorithm {}", checksumHeaderKey, sdkChecksum);
             ResponseBuilder(downstream_)
@@ -2715,8 +2715,20 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
     const auto partNumberStrPtr = headers.getQueryParamPtr("partNumber");
+    const auto checksumModeStr = headers.getHeaders().getSingleOrEmpty("x-amz-checksum-mode");
+
+    if(!checksumModeStr.empty() && checksumModeStr!="ENABLED")
+    {
+        ResponseBuilder(self->downstream_)
+                    .status(400, "Bad request")
+                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid checksum mode", fullKeyPath(), ""))
+                    .sendWithEOM();
+        return;
+    }
+    const auto checksumModeEnabled = checksumModeStr == "ENABLED";
+
     folly::getGlobalCPUExecutor()->add(
-            [self = self, evb, accessKey, range=headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_RANGE), partNumberStr = partNumberStrPtr ? std::optional<std::string>(*partNumberStrPtr) : std::nullopt]()
+            [self = self, evb, accessKey, range=headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_RANGE), partNumberStr = partNumberStrPtr ? std::optional<std::string>(*partNumberStrPtr) : std::nullopt, checksumModeEnabled]()
             { 
                 unsigned int flags = 0;
                 if(self->request_action == Action::HeadObject)
@@ -2906,8 +2918,9 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         std::string partNumberEtagOut;
                         int64_t partNumberOffset;
                         int64_t partNumberSizeOut;
+                        std::unique_ptr<PayloadHashBase> partNumberChecksumHashOut;
                         const auto rc = seekMultipart(self->sfs(), partNumber, self->keyInfo.bucketId, self->request_action != Action::HeadObject,
-                            *self->multiPartDownloadData, self->extents, partNumberEtagOut, partNumberOffset, partNumberSizeOut);
+                            *self->multiPartDownloadData, self->extents, partNumberEtagOut, partNumberOffset, partNumberSizeOut, partNumberChecksumHashOut);
                         if(rc!=0)
                         {
                             XLOGF(WARN, "Error seeking to part number {} of key {}: {}",
@@ -2926,6 +2939,11 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         rangeEnd = partNumberOffset + partNumberSizeOut;
                         partNumberEtag = partNumberEtagOut;
                         setMultiPartExtents = true;
+
+                        if(partNumberChecksumHashOut && self->sdkChecksumHash)
+                        {
+                            self->sdkChecksumHash->setExpectedHash(partNumberChecksumHashOut->getExpectedHash());
+                        }
                     }
                 }
 
@@ -2936,8 +2954,11 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     onMatchCallback(*self->matchInfo, frag_info, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum));
                 }
 
+                const bool fullRange = rangeStart==0 && rangeEnd==res.total_len;
+
                 evb->runInEventBaseThread([self = self, hasRange=!range.empty() || partNumberSize, 
-                        rangeStart, rangeEnd, md5sum, partNumberEtag, last_modified = res.last_modified]()
+                        rangeStart, rangeEnd, md5sum, partNumberEtag, last_modified = res.last_modified,
+                        checksumModeEnabled, returnPart = partNumberStr.has_value(), fullRange ]()
                                               {
                     if(self->matchInfo && !self->matchInfo->match)
                     {
@@ -2957,7 +2978,8 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
                     ObjMetadata::addRespHeaders(self->objMetadata.get(), resp);
 
-                    if(self->sdkChecksumHash)
+                    if(checksumModeEnabled && self->sdkChecksumHash &&
+                        (fullRange || returnPart) )
                     {
                         if(!self->multiPartDownloadData || self->sdkChecksumHash->isFull())
                         {
@@ -2967,14 +2989,18 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         else
                         {
                             const auto hashVal = folly::base64Encode(self->sdkChecksumHash->getExpectedHash());
-                            resp.header(std::string(self->sdkChecksumHash->getHeaderKey()), hashVal + "-" + std::to_string(self->multiPartDownloadData->numParts));
+                            if(returnPart)
+                                resp.header(std::string(self->sdkChecksumHash->getHeaderKey()), hashVal);
+                            else
+                                resp.header(std::string(self->sdkChecksumHash->getHeaderKey()), hashVal + "-" + std::to_string(self->multiPartDownloadData->numParts));
+
                             resp.header("x-amz-checksum-type", "COMPOSITE");
                         }
                     }
 
                     if(self->request_action==Action::HeadObject)
                     {
-                        XLOGF(DBG0, "Content length {} bytes for readObject HEAD of {}", rangeEnd, self->keyInfo.key);
+                        XLOGF(DBG0, "Content length {} bytes for readObject HEAD of {}", rangeEnd-rangeStart, self->keyInfo.key);
                         // .send() sets the content length to the body length (which is zero) -- https://github.com/facebook/proxygen/issues/556
                         self->downstream_->sendHeaders(*const_cast<HTTPMessage*>(resp.getHeaders()));
                         self->downstream_->sendEOM();
@@ -2982,7 +3008,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     }
                     else
                     {
-                        XLOGF(DBG0, "Content length {} bytes for readObject GET of {}", rangeEnd, self->keyInfo.key);
+                        XLOGF(DBG0, "Content length {} bytes for readObject GET of {}", rangeEnd-rangeStart, self->keyInfo.key);
                         resp.send();
                     }
                                               });
@@ -3467,36 +3493,33 @@ void S3Handler::finalizeMultipartUpload()
                     return;
                 }
 
+                bool checkUploadSdkChecksumHash = true;
+
                 if(uploadSdkChecksumHash)
                 {
-                    if(!self->sdkChecksumHash)
+                    if(self->sdkChecksumHash)
                     {
-                        XLOGF(WARN, "Upload has checksum but no overall checksum specified for uploadId {}", multiPartData->uploadId.id);
-                        evb->runInEventBaseThread([self = self]()
-                                                {
-                            ResponseBuilder(self->downstream_)
-                                .status(500, "Internal error")
-                                .body(s3errorXml(S3ErrorCode::InternalError, "Upload has checksum but no overall checksum specified", self->fullKeyPath(), ""))
-                                .sendWithEOM();
-                            self->finished_ = true; });
-                        return;
-                    }
+                        if(uploadSdkChecksumHash->getHashType() != self->sdkChecksumHash->getHashType())
+                        {
+                            XLOGF(WARN, "Upload checksum type {} does not match specified overall checksum type {} for uploadId {}", 
+                                    static_cast<int>(uploadSdkChecksumHash->getHashType()), static_cast<int>(self->sdkChecksumHash->getHashType()), multiPartData->uploadId.id);
+                            evb->runInEventBaseThread([self = self]()
+                                                    {
+                                ResponseBuilder(self->downstream_)
+                                    .status(500, "Internal error")
+                                    .body(s3errorXml(S3ErrorCode::InternalError, "Upload checksum type does not match specified overall checksum type", self->fullKeyPath(), ""))
+                                    .sendWithEOM();
+                                self->finished_ = true; });
+                            return;
+                        }
 
-                    if(uploadSdkChecksumHash->getHashType() != self->sdkChecksumHash->getHashType())
+                        uploadSdkChecksumHash->setExpectedHash(self->sdkChecksumHash->getExpectedHash());
+                    }
+                    else
                     {
-                        XLOGF(WARN, "Upload checksum type {} does not match specified overall checksum type {} for uploadId {}", 
-                                static_cast<int>(uploadSdkChecksumHash->getHashType()), static_cast<int>(self->sdkChecksumHash->getHashType()), multiPartData->uploadId.id);
-                        evb->runInEventBaseThread([self = self]()
-                                                {
-                            ResponseBuilder(self->downstream_)
-                                .status(500, "Internal error")
-                                .body(s3errorXml(S3ErrorCode::InternalError, "Upload checksum type does not match specified overall checksum type", self->fullKeyPath(), ""))
-                                .sendWithEOM();
-                            self->finished_ = true; });
-                        return;
+                        XLOGF(INFO, "Upload has checksum but no overall checksum specified for uploadId {}", multiPartData->uploadId.id);
+                        checkUploadSdkChecksumHash = false;
                     }
-
-                    uploadSdkChecksumHash->setExpectedHash(self->sdkChecksumHash->getExpectedHash());
                 }
 
                 if(self->withBucketVersioning)
@@ -3590,19 +3613,7 @@ void S3Handler::finalizeMultipartUpload()
                         }
                     }
 
-                    if( (partFlags & metadata_flag_with_checksum) && !uploadSdkChecksumHash)
-                    {
-                        XLOGF(WARN, "Part {} of uploadId {} has checksum but no overall checksum specified", part.partNumber, multiPartData->uploadId.id);
-                        evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
-                                                {
-                            ResponseBuilder(self->downstream_)
-                                .status(500, "Internal error")
-                                .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Part {} has checksum but no overall checksum specified", partNumber), self->fullKeyPath(), ""))
-                                .sendWithEOM();
-                            self->finished_ = true; });
-                        return;
-                    }
-                    else if(uploadSdkChecksumHash)
+                    if(uploadSdkChecksumHash)
                     {
                         if(!(partFlags & metadata_flag_with_checksum))
                         {
@@ -3700,12 +3711,14 @@ void S3Handler::finalizeMultipartUpload()
 
                 uploadObjMetadata.serialize(wdata);
 
-                if(uploadSdkChecksumHash)
+                if(uploadSdkChecksumHash && checkUploadSdkChecksumHash)
                     serializeSdkChecksum(uploadSdkChecksumHash->getExpectedHash(), uploadSdkChecksumHash->getHashType(), wdata);
+                else if(uploadSdkChecksumHash)
+                    serializeSdkChecksum(uploadSdkChecksumHash->final(), uploadSdkChecksumHash->getHashType(), wdata);
 
                 EVP_DigestFinal_ex(md5Ctx, reinterpret_cast<unsigned char*>(wdata.getDataPtr()) + md5sumOffset, nullptr);
 
-                if(uploadSdkChecksumHash && !uploadSdkChecksumHash->isFinalCombinedExpected(multiPartData->parts.size())) 
+                if(uploadSdkChecksumHash && checkUploadSdkChecksumHash && !uploadSdkChecksumHash->isFinalCombinedExpected(multiPartData->parts.size())) 
                 {
                     XLOGF(WARN, "Overall checksum does not match combined part checksums for uploadId {}", multiPartData->uploadId.id);
                     evb->runInEventBaseThread([self = self]()
@@ -4395,12 +4408,11 @@ int S3Handler::seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
         }
     }
 
-    std::string etag;
-    return readMultipartExt(sfs, seekOffset, bucketId, true, multiPartDownloadData, extents, etag);
+    return readMultipartExt(sfs, seekOffset, bucketId, true, multiPartDownloadData, extents, nullptr, nullptr);
 }
 
 int S3Handler::seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData, 
-    std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen)
+    std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen, std::unique_ptr<PayloadHashBase>& partHash)
 {
 
     if(multiPartDownloadData.exts.empty())
@@ -4446,11 +4458,11 @@ int S3Handler::seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t buc
     }
 
     partLen = multiPartDownloadData.currExt.size;
-    return readMultipartExt(sfs, offset, bucketId, addReading, multiPartDownloadData, extents, etag);
+    return readMultipartExt(sfs, offset, bucketId, addReading, multiPartDownloadData, extents, &etag, &partHash);
 }
 
 int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, const bool addReading, 
-    MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string& etag)
+    MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string* etag, std::unique_ptr<PayloadHashBase>* partHash)
 {
     auto partNum = multiPartDownloadData.currExt.start;
     const auto partsBucketId = buckets::getPartsBucket(bucketId);
@@ -4477,9 +4489,31 @@ int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
         size += ext.len;
     }
 
-    etag = getEtag(res.md5sum);
+    if(etag)
+    {
+        *etag = getEtag(res.md5sum);
+    }
 
-    XLOGF(DBG0, "Multi-part ext offset {} partNum {} extents {} size {} etag {}", offset, partNum, extents.size(), size, etag);
+    if(partHash)
+    {
+        CRData rdata(res.md5sum.data(), res.md5sum.size());
+        int64_t flags = 0;
+        rdata.getVarInt(&flags);
+
+        if(flags & metadata_flag_with_checksum)
+        {
+            std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
+            int64_t multiPartSize;
+            std::unique_ptr<ObjMetadata> partObjMetadata;
+            if(!parseMultipartInfo(res.md5sum, multiPartSize, multiPartDownloadData, &partObjMetadata, partHash))
+            {
+                XLOGF(WARN, "Error parsing multi-part info for part hash");
+            }       
+        }
+    }
+
+    XLOGF(DBG0, "Multi-part ext offset {} partNum {} extents {} size {} etag {} checksum {}", offset, partNum,
+        extents.size(), size, etag ? *etag : "null", (partHash && *partHash) ? folly::base64Encode((*partHash)->getExpectedHash()) : "null");
 
     return 0;
 }
@@ -4534,8 +4568,7 @@ int S3Handler::readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int6
         multiPartDownloadData.needsFinalize = false;
     }
 
-    std::string etag;
-    const auto rc = readMultipartExt(sfs, offset, bucketId, true, multiPartDownloadData, extents, etag);
+    const auto rc = readMultipartExt(sfs, offset, bucketId, true, multiPartDownloadData, extents, nullptr, nullptr);
     if(rc)
     {
         XLOGF(WARN, "Error reading next multipart extents code {}", rc);
