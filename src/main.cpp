@@ -64,7 +64,6 @@ DEFINE_string(data_path, ".", "Path where to put the data file");
 DEFINE_bool(stop_on_error, false, "Stop on write/read errors");
 DEFINE_bool(punch_holes, true, "Free up space if not enough free space is left by punching holes");
 DEFINE_string(server_url, "", "URL of server");
-DEFINE_bool(bucket_versioning, false, "Enable bucket versioning");
 DEFINE_string(index_wal_path, "", "Path where to put the index WAL file. Disabled if empty");
 DEFINE_bool(wal_write_meta, true, "Write metadata to WAL file");
 DEFINE_int32(wal_write_data, 0, "Write objects smaller than defined to WAL file in addition to metadata (-1 to write all data, 0 to disable)");
@@ -145,7 +144,7 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
         isStaticFile(path))
       return new StaticHandler();
 
-    return new S3Handler(sfs, FLAGS_server_url, FLAGS_bucket_versioning, duckDbFs);
+    return new S3Handler(sfs, FLAGS_server_url, duckDbFs);
   }
 
   SingleFileStorage& getSfs()
@@ -268,7 +267,7 @@ int realMain(int argc, char* argv[])
     proxygen::HTTPSessionBase::setMaxReadBufferSize(FLAGS_max_put_buffer_size);
 
     SingleFileStorage sfs(sfsoptions);
-    auto duckDbFs = duckdb::make_uniq<DuckDbFs>(sfs, FLAGS_bucket_versioning);
+    auto duckDbFs = duckdb::make_uniq<DuckDbFs>(sfs);
   
     proxygen::HTTPServerOptions options;
     options.threads = static_cast<size_t>(FLAGS_http_worker_threads);
@@ -286,7 +285,7 @@ int realMain(int argc, char* argv[])
       XLOGF(INFO, "Listening on {}", ip.address.describe());
     }
 
-    XLOGF(INFO, "Config: Bucket versioning: {}, Punch holes: {}, Stop on error: {}, Manual commit: {}", FLAGS_bucket_versioning, FLAGS_punch_holes, FLAGS_stop_on_error, FLAGS_manual_commit);
+    XLOGF(INFO, "Config: Punch holes: {}, Stop on error: {}, Manual commit: {}", FLAGS_punch_holes, FLAGS_stop_on_error, FLAGS_manual_commit);
 
     std::thread t([&]() {
       folly::setThreadName("http srv main");
@@ -301,7 +300,7 @@ int realMain(int argc, char* argv[])
       duckdb::Connection con(getDuckDb());
 
       auto& fs =(getDuckDb().instance)->GetFileSystem();
-      fs.RegisterSubSystem(duckdb::make_uniq<DuckDbFs>(sfs, FLAGS_bucket_versioning));
+      fs.RegisterSubSystem(duckdb::make_uniq<DuckDbFs>(sfs));
 
       auto res = con.Query("SET ui_local_port = "+std::to_string(FLAGS_duckdb_port));
       if(res->HasError())

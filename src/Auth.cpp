@@ -164,13 +164,13 @@ bool isAuthorizedNoLock(const std::string_view resource, const Action action, co
         
         if(!bucketName.empty())
         {
-            const auto bucketAndPerms = buckets::getBucketAndPublicPerms(bucketName);
+            const auto bucketInfo = buckets::getBucketInfo(bucketName);
 
-            if(bucketAndPerms)
+            if(bucketInfo)
             {
-                bucketIdOpt = bucketAndPerms->first;
+                bucketIdOpt = bucketInfo->id;
 
-                if(hasSimplePermission(bucketAndPerms->second, action))
+                if(hasSimplePermission(bucketInfo->publicPerms, action))
                     return true;
             }
         }

@@ -58,17 +58,19 @@ void DuckDbFileHandle::Initialize()
 {
     const auto parsedUrl = DuckDbFs::Hs5UrlParse(path);
 
-    const auto bucketIdOpt = buckets::getBucket(parsedUrl.bucket);
-    if(!bucketIdOpt)
+    const auto bucketInfoOpt = buckets::getBucketInfo(parsedUrl.bucket);
+    if(!bucketInfoOpt)
     {
         throw duckdb::IOException("Bucket not found");
     }
 
-    bucketId = *bucketIdOpt;
+    const auto& bucketInfo = bucketInfoOpt.value();
+
+    bucketId = bucketInfo.id;
 
     unsigned int readPrepFlags = 0;
 
-    const auto withVersioning = static_cast<DuckDbFs&>(file_system).isWithBucketVersioning();
+    const auto withVersioning = bucketInfo.versioning == buckets::VersioningState::Enabled || bucketInfo.versioning == buckets::VersioningState::Suspended;
     if(withVersioning)
     {
         s3key = make_key(parsedUrl.key, bucketId, std::numeric_limits<int64_t>::max());

@@ -85,7 +85,6 @@ class Hs5Runner:
             str(self._port),
             "--init_root_password", self._root_key,
             "--with_stop_command", "true",
-            "--bucket_versioning=false",
             f"--folly_global_cpu_executor_threads={multiprocessing.cpu_count()*2}"]
 
         if os.environ.get("MANUAL_COMMIT") == "1":

@@ -47,6 +47,12 @@ struct KeyInfo
     std::string key;
     int64_t version;
     int64_t bucketId;
+    buckets::VersioningState versioning;
+
+    bool withVersioning() const
+    {
+        return versioning == buckets::VersioningState::Enabled || versioning == buckets::VersioningState::Suspended;
+    }
 };
 
 struct KeyInfoView
@@ -116,10 +122,8 @@ class DuckDbFs;
 class S3Handler : public proxygen::RequestHandler
 {
 public:
-    const bool withBucketVersioning;
-
-    S3Handler(SingleFileStorage &sfs, const std::string& serverUrl, bool withBucketVersioning, DuckDbFs& duckDbFs) : 
-        _sfs(sfs), self(this), serverUrl(serverUrl), withBucketVersioning(withBucketVersioning), _duckDbFs(duckDbFs) {}
+    S3Handler(SingleFileStorage &sfs, const std::string& serverUrl, DuckDbFs& duckDbFs) : 
+        _sfs(sfs), self(this), serverUrl(serverUrl), _duckDbFs(duckDbFs) {}
 
     void
     onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexcept override;
@@ -237,11 +241,12 @@ private:
     void readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> self, int64_t offset);
     void onBodyChunked(std::unique_ptr<folly::IOBuf> body);
 	void onBodyCPU(folly::EventBase *evb, int64_t offs, std::unique_ptr<folly::IOBuf> body);
-    void listObjects(proxygen::HTTPMessage& headers, const std::string& bucket, const bool partial);
-    void listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId, const bool partial);
+    void listObjects(proxygen::HTTPMessage& headers, const std::string& bucket);
+    void listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId);
     void listBuckets(proxygen::HTTPMessage& headers, std::string accessKey);
     void listBuckets(folly::EventBase *evb, std::shared_ptr<S3Handler> self, std::string accessKey);
     void getBucketLocation(proxygen::HTTPMessage& headers, const std::string& bucket);
+    void getBucketVersioning(proxygen::HTTPMessage& headers, const std::string& bucket);
     void getCommitObject(proxygen::HTTPMessage& headers);
     void getObject(proxygen::HTTPMessage& headers, const std::string& accessKey);
     void putObject(proxygen::HTTPMessage& headers);
@@ -250,14 +255,16 @@ private:
     void deleteObject(proxygen::HTTPMessage& headers);
     void abortMultipartUpload(proxygen::HTTPMessage& headers, const std::string& uploadIdStr);
     void deleteBucket(proxygen::HTTPMessage& headers);
+    void putBucketVersioning(proxygen::HTTPMessage& headers);
     bool commit();
 
     void listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& continuationToken, 
         const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter, const std::string& delimiter, const int64_t bucket,
-        const bool listV2, const std::string& bucketName, const bool partial, const std::string& markerVersionStr, const bool urlEncode);
+        const bool listV2, const std::string& bucketName, const std::string& markerVersionStr, const bool urlEncode);
     void createMultipartUpload(proxygen::HTTPMessage& headers);
     void finalizeMultipartUpload();
     void finalizeCreateBucket();
+    void finalizePutBucketVersioning();
     std::string getEtagParsedMultipart(const std::string& md5sum);
     
     void readBodyThread(folly::EventBase *evb);

@@ -1381,15 +1381,15 @@ Api::LogoutResp ApiHandler::logout(const Api::LogoutParams& params, SessionScope
 
 Api::ListBucketPermissionsResp ApiHandler::listBucketPermissions(const Api::ListBucketPermissionsParams& params, const ApiSessionStorage& sessionStorage)
 {
-    const auto bucketIdOpt = buckets::getBucketAndPublicPerms(params.bucketName);
-    if(!bucketIdOpt)
+    const auto bucketInfoOpt = buckets::getBucketInfo(params.bucketName);
+    if(!bucketInfoOpt)
         throw ApiError(Api::Herror::bucketNotFound);
-    const auto [bucketId, publicPerms] = bucketIdOpt.value();
+    const auto& bucketInfo = bucketInfoOpt.value();
 
     if(!isAuthorized("arn:aws:s3:::"+params.bucketName, Action::ListBucketPermissions, sessionStorage.userId))
         throw ApiError(Api::Herror::accessDenied);
 
-    const auto permissions = dao.getBucketPermissionsWithUsername(bucketId);
+    const auto permissions = dao.getBucketPermissionsWithUsername(bucketInfo.id);
     
     Api::ListBucketPermissionsResp resp;
     resp.isTruncated = false;
@@ -1413,11 +1413,11 @@ Api::ListBucketPermissionsResp ApiHandler::listBucketPermissions(const Api::List
         resp.bucketPermissions.push_back(std::move(item));
     }
 
-    if(publicPerms & BUCKET_PERMISSION_READ)
+    if(bucketInfo.publicPerms & BUCKET_PERMISSION_READ)
         resp.publicPermissions.push_back(Api::Permission::read);
-    if(publicPerms & BUCKET_PERMISSION_WRITE)
+    if(bucketInfo.publicPerms & BUCKET_PERMISSION_WRITE)
         resp.publicPermissions.push_back(Api::Permission::write);
-    if(publicPerms & BUCKET_PERMISSION_DELETE)
+    if(bucketInfo.publicPerms & BUCKET_PERMISSION_DELETE)
         resp.publicPermissions.push_back(Api::Permission::permissionDelete);
 
     return resp;

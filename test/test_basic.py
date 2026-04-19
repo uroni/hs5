@@ -1607,3 +1607,28 @@ def test_put_sdk_checksum_multipart(hs5: Hs5Runner, tmp_path: Path):
     obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload3.txt", ChecksumMode="ENABLED")
     assert "ChecksumCRC64NVME" in obj and obj["ChecksumCRC64NVME"] == crc64nvme_b64
     assert "ChecksumType" in obj and obj["ChecksumType"] == "FULL_OBJECT"
+
+
+def test_enable_bucket_versioning(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    s3_client.put_bucket_versioning(Bucket=hs5.testbucketname(), VersioningConfiguration={"Status": "Enabled"})
+
+    # Upload two versions, then list
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="versioned.txt", Body=b"version1")
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="versioned.txt", Body=b"version2")
+
+    versions = s3_client.list_object_versions(Bucket=hs5.testbucketname(), Prefix="versioned.txt")
+    assert not versions["IsTruncated"]
+    assert "Versions" in versions
+    assert len(versions["Versions"]) == 2
+    assert "Key" in versions["Versions"][0] and versions["Versions"][0]["Key"] == "versioned.txt"
+    assert "VersionId" in versions["Versions"][0]
+    assert "VersionId" in versions["Versions"][1]
+    assert versions["Versions"][0]["VersionId"] != versions["Versions"][1]["VersionId"]
+    assert "IsLatest" in versions["Versions"][0]
+    assert "IsLatest" in versions["Versions"][1]
+    assert versions["Versions"][0]["IsLatest"] != versions["Versions"][1]["IsLatest"]
+
+    ver = s3_client.get_bucket_versioning(Bucket=hs5.testbucketname())
+    assert "Status" in ver and ver["Status"] == "Enabled"

@@ -166,11 +166,19 @@ void upgrade3_4(sqlgen::Database& db)
 	)""");
 }
 
+void upgrade4_5(sqlgen::Database& db)
+{
+	db.write(R"""(
+		ALTER TABLE buckets ADD versioning INTEGER DEFAULT 0;
+	)""");
+}
+
 const std::map<int64_t, upgrade_func_t*> upgrade_funcs {
 	{0, upgrade0_1},
 	{1, upgrade1_2},
 	{2, upgrade2_3},
-	{3, upgrade3_4}
+	{3, upgrade3_4},
+	{4, upgrade4_5}
 };
 
 sqlgen::Database& DbDao::getStaticDb()
@@ -708,15 +716,15 @@ void DbDao::removeAccessKey(int64_t id)
 /**
 * @-SQLGenAccess
 * @func vector<Bucket> DbDao::getBuckets
-* @return int64 id, string name, int64 created, int publicPerms
+* @return int64 id, string name, int64 created, int publicPerms, int versioning
 * @sql
-*      SELECT id, name, created, publicPerms FROM buckets
+*      SELECT id, name, created, publicPerms, versioning FROM buckets
 */
 std::vector<DbDao::Bucket> DbDao::getBuckets()
 {
 	if(!_getBuckets.prepared())
 	{
-		_getBuckets=db.prepare("SELECT id, name, created, publicPerms FROM buckets");
+		_getBuckets=db.prepare("SELECT id, name, created, publicPerms, versioning FROM buckets");
 	}
 	auto& cursor=_getBuckets.cursor();
 	std::vector<DbDao::Bucket> ret;
@@ -728,6 +736,7 @@ std::vector<DbDao::Bucket> DbDao::getBuckets()
 		cursor.get(1, obj.name);
 		cursor.get(2, obj.created);
 		cursor.get(3, obj.publicPerms);
+		cursor.get(4, obj.versioning);
 	}
 	cursor.shutdown();
 	return ret;
@@ -1444,6 +1453,24 @@ void DbDao::setBucketPublicPerms(int publicPerms, int64_t id)
 	_setBucketPublicPerms.bind(id);
 	_setBucketPublicPerms.write();
 	_setBucketPublicPerms.reset();
+}
+
+/**
+* @-SQLGenAccess
+* @func void DbDao::setBucketVersioning
+* @sql
+*      UPDATE buckets SET versioning=:versioning(int) WHERE id=:id(int64)
+*/
+void DbDao::setBucketVersioning(int versioning, int64_t id)
+{
+	if(!_setBucketVersioning.prepared())
+	{
+		_setBucketVersioning=db.prepare("UPDATE buckets SET versioning=? WHERE id=?");
+	}
+	_setBucketVersioning.bind(versioning);
+	_setBucketVersioning.bind(id);
+	_setBucketVersioning.write();
+	_setBucketVersioning.reset();
 }
 
 

@@ -12,20 +12,11 @@
 #include <gflags/gflags.h>
 #include <folly/logging/xlog.h>
 
-DEFINE_bool(autogen_buckets, false, "Automatically create buckets when they are used");
-
 namespace buckets
 {
 
 namespace
 {
-    struct BucketInfo
-    {
-        int64_t id;
-        std::chrono::seconds created;
-        int publicPerms = 0;
-    };
-
     std::map<std::string, BucketInfo> buckets;
     std::map<int64_t, std::map<std::string, BucketInfo>::iterator> bucketNames;
     int64_t currMaxId = 1;
@@ -62,7 +53,8 @@ void refreshBucketCache()
         BucketInfo info{
             .id = bucket.id,
             .created = std::chrono::seconds(bucket.created),
-            .publicPerms = bucket.publicPerms
+            .publicPerms = bucket.publicPerms,
+            .versioning = static_cast<VersioningState>(bucket.versioning)
         };
         auto ins = buckets.insert(std::make_pair(bucket.name, info));
         bucketNames.insert(std::make_pair(bucket.id, ins.first));
@@ -89,7 +81,8 @@ int64_t addBucket(const std::string_view bucketName, bool failIfAlreadyExists)
     BucketInfo info{
         .id = id,
         .created = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()),
-        .publicPerms = 0
+        .publicPerms = 0,
+        .versioning = VersioningState::Disabled
     };
 
     dao.addBucket(id, std::string(bucketName), info.created.count());
@@ -139,27 +132,22 @@ bool isValidBucketName(const std::string_view bucketName)
 
 std::optional<int64_t> getBucket(const std::string_view bucketName)
 {
-    auto ret = getBucketAndPublicPerms(bucketName);
+    auto ret = getBucketInfo(bucketName);
     if(!ret)
         return {};
-    return ret->first;
+    return ret->id;
 }
 
-std::optional<std::pair<int64_t, int>> getBucketAndPublicPerms(const std::string_view bucketName)
+std::optional<BucketInfo> getBucketInfo(const std::string_view bucketName)
 {
     std::unique_lock lock{mutex};
 
     auto it = buckets.find(std::string(bucketName));
     if(it==buckets.end())
     {
-        if(FLAGS_autogen_buckets)
-        {
-            lock.unlock();
-            return std::make_pair(addBucket(bucketName, false), 0);
-        }
         return {};
     }
-    return std::make_pair(it->second.id, it->second.publicPerms);
+    return it->second;
 }
 
 bool deleteBucket(int64_t bucketId)
@@ -231,6 +219,51 @@ Api::ListResp getBucketNames()
     resp.isTruncated = false;
 
     return resp;
+}
+
+std::optional<VersioningState> versioningStateFromStr(const std::string_view str)
+{
+    if(str == "Enabled")
+        return VersioningState::Enabled;
+    else if(str == "Suspended")
+        return VersioningState::Suspended;
+    else if(str.empty())
+        return VersioningState::Disabled;
+    return {};
+}
+
+std::string versioningStateToStr(VersioningState state)
+{
+    switch(state)
+    {
+        case VersioningState::Disabled:
+            return "Disabled";
+        case VersioningState::Enabled:
+            return "Enabled";
+        case VersioningState::Suspended:
+            return "Suspended";
+    }
+    return {};
+}
+
+bool setVersioning(const std::string_view bucketName, VersioningState versioningState)
+{
+    DbDao dao;
+    
+    std::scoped_lock lock{mutex};
+
+    auto it = buckets.find(std::string(bucketName));
+    if(it==buckets.end())
+        return false;
+
+    dao.setBucketVersioning(static_cast<int>(versioningState), it->second.id);
+
+    if(dao.getDb().getLastChanges() != 1)
+        return false;
+
+    it->second.versioning = versioningState;
+
+    return true;
 }
 
 } // namespace buckets

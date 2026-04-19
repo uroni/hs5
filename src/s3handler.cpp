@@ -913,13 +913,15 @@ static void multiPartUploadXmlCharData(void *userData,
         !multiPartData->parts.empty())
     {
         std::string data(s, len);
-        multiPartData->partNumBuf += data;
+        if(multiPartData->partNumBuf.size() < 100)
+            multiPartData->partNumBuf += data;
     }
     else if(multiPartData->parseState == S3Handler::MultiPartUploadData::ParseState::InEtag &&
         !multiPartData->parts.empty())
     {
         std::string data(s, len);
-        multiPartData->parts.back().etag += data;
+        if(multiPartData->parts.back().etag.size() < 100)
+            multiPartData->parts.back().etag += data;
     }
 }
 
@@ -1037,38 +1039,123 @@ static void deleteObjectsXmlCharData(void *userData,
         case S3Handler::DeleteObjectsData::ParseState::InKey:
         {
             auto& obj = deleteObjectsData->objects.back();
-            obj.key += std::string(data);
+            if(obj.key.size() < 2000)
+                obj.key += std::string(data);
         } break;
         case S3Handler::DeleteObjectsData::ParseState::InEtag:
         {
             auto& obj = deleteObjectsData->objects.back();
-            obj.etag += std::string(data);
+            if(obj.etag.size() < 100)
+                obj.etag += std::string(data);
         } break;
         case S3Handler::DeleteObjectsData::ParseState::InLastModified:
         {
             auto& obj = deleteObjectsData->objects.back();
-            obj.lastModified += std::string(data);
+            if(obj.lastModified.size() < 100)
+                obj.lastModified += std::string(data);
         } break;
         case S3Handler::DeleteObjectsData::ParseState::InSize:
         {
             auto& obj = deleteObjectsData->objects.back();
-            obj.size += std::string(data);
+            if(obj.size.size() < 100)
+                obj.size += std::string(data);
         } break;
         case S3Handler::DeleteObjectsData::ParseState::InVersionId:
         {
             auto& obj = deleteObjectsData->objects.back();
-            obj.versionId += std::string(data);
+            if(obj.versionId.size() < 100)
+                obj.versionId += std::string(data);
         } break;
         case S3Handler::DeleteObjectsData::ParseState::InQuiet:
         {
-            deleteObjectsData->buf += std::string(data);
+            if(deleteObjectsData->buf.size() < 100)
+                deleteObjectsData->buf += std::string(data);
         } break;
         default:
             break;
     }
 }
 
+static void putBucketVersioningXmlElementStart(void *userData,
+                                                const XML_Char *name,
+                                                const XML_Char **atts)
+{
+    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
 
+    switch(deleteObjectsData->parseState)
+    {
+    case S3Handler::DeleteObjectsData::ParseState::Init:
+        {
+            if(strcmp(name, "VersioningConfiguration")==0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        } break;
+    case S3Handler::DeleteObjectsData::ParseState::InRoot:
+    {
+        if(strcmp(name, "Status")==0)
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InQuiet;
+        else if(strcmp(name, "MfaDelete") == 0)
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InVersionId;
+        else
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+    } break;
+    default:
+        break;
+    }
+}
+
+static void putBucketVersioningXmlElementEnd(void *userData,
+                                               const XML_Char *name)
+{
+    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
+
+    switch(deleteObjectsData->parseState)
+    {
+    case S3Handler::DeleteObjectsData::ParseState::InRoot:
+        {
+            if(strcmp(name, "VersioningConfiguration")==0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Finished;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        } break;
+    case S3Handler::DeleteObjectsData::ParseState::InQuiet:
+        {
+            if(strcmp(name, "Status") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        } break;
+    case S3Handler::DeleteObjectsData::ParseState::InVersionId:
+        {
+            if(strcmp(name, "MfaDelete") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        } break;
+    default:
+        break;
+    }
+}
+
+static void putBucketVersioningXmlCharData(void *userData,
+                                               const XML_Char *s, int len)
+{
+    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
+
+    std::string_view data(s, len);
+
+    switch(deleteObjectsData->parseState)
+    {
+        case S3Handler::DeleteObjectsData::ParseState::InQuiet:
+        {
+            if(deleteObjectsData->buf.size() < 100)
+                deleteObjectsData->buf += std::string(data);
+        } break;
+        default:
+            break;
+    }
+}
 
 enum class S3ErrorCode
 {
@@ -1525,10 +1612,14 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         {
             const auto partial = headers->hasQueryParam("uploads");
             const auto location = headers->hasQueryParam("location");
+            const auto versions = headers->hasQueryParam("versions");
+            const auto versioning = headers->hasQueryParam("versioning");
 
             const auto bucketName = header_path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
+
             const auto action = bucketName.empty() ? Action::ListBuckets : 
-                    (location ? Action::GetBucketLocation : (partial ? Action::ListMultipartUploads : Action::ListObjects));
+                    (location ? Action::GetBucketLocation : (partial ? Action::ListMultipartUploads : (versions ? Action::ListObjectVersions : 
+                        (versioning ? Action::GetBucketVersioning : Action::ListObjects))));
             const auto resource = bucketName.empty() ? std::string() : fmt::format("arn:aws:s3:::{}", bucketName);
             auto accessKey = checkSig(this, *headers, "", resource, action, true);
             if(!accessKey)
@@ -1548,21 +1639,27 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             request_action = action;
 
-            if(bucketName.empty())
+            if(action == Action::ListBuckets)
                 XLOGF(INFO, "List buckets");
-            else if(location)
+            else if(action == Action::GetBucketLocation)
                 XLOGF(INFO, "Get bucket location {}", bucketName);
-            else if(partial)
-                XLOGF(INFO, "List partial uploads bucket {}", bucketName);            
+            else if(action == Action::ListMultipartUploads)
+                XLOGF(INFO, "List partial uploads bucket {}", bucketName);
+            else if(action == Action::ListObjectVersions)
+                XLOGF(INFO, "List object versions bucket {}", bucketName);
+            else if(action == Action::GetBucketVersioning)
+                XLOGF(INFO, "Get bucket versioning {}", bucketName);
             else
                 XLOGF(INFO, "List bucket {}", bucketName);
 
-            if(bucketName.empty())
+            if(action == Action::ListBuckets)
                 listBuckets(*headers, std::move(*accessKey));
-            else if(location)
+            else if(action == Action::GetBucketLocation)
                 getBucketLocation(*headers, std::string(bucketName));
+            else if(action == Action::GetBucketVersioning)
+                getBucketVersioning(*headers, std::string(bucketName));
             else
-                listObjects(*headers, std::string(bucketName), partial);
+                listObjects(*headers, std::string(bucketName));
             return;
         }   
 
@@ -1698,7 +1795,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         bool createBucket = false;
         const auto nextSlash = path.empty() ? std::string::npos : path.find('/', 1);
-        if(!path.empty() && (nextSlash==std::string::npos || nextSlash == path.size()-1) && (xid.empty() || xid == "CreateBucket") )
+        const bool onlyBucketInPath = !path.empty() && (nextSlash==std::string::npos || nextSlash == path.size()-1) ;
+        if(onlyBucketInPath && (xid.empty() || xid == "CreateBucket" || xid == "PutBucketVersioning") )
         {
             createBucket = true;
             const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
@@ -1720,7 +1818,26 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         const auto stringToSignHeaderPtr = hasAwsChunkedEncoding ? &awsChunkedEncoding->stringToSignHeader : nullptr;
         const auto signingKeyOutput = hasAwsChunkedEncoding ? &awsChunkedEncoding->signingKey : nullptr;
 
-        if(!createBucket && headers->hasQueryParam("uploadId") && (xid.empty() || xid == "UploadPart" || xid=="UploadPartCopy"))
+        if(createBucket && headers->hasQueryParam("versioning") && (xid.empty() || xid == "PutBucketVersioning"))
+        {
+            const auto action = Action::PutBucketVersioning;
+
+            if(!checkSig(this, *headers, payload, resource, action, false, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
+                || ( currSigPtr != nullptr && currSigPtr->empty()))
+            {
+                XLOGF(INFO, "Unauthorized PutBucketVersioning: {}", path);
+                ResponseBuilder(downstream_)
+                    .status(403, "Forbidden")
+                    .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
+                    .sendWithEOM();
+                return;
+            }
+
+            request_action = action;
+            putBucketVersioning(*headers);
+            return;
+        }
+        else if(!createBucket && headers->hasQueryParam("uploadId") && (xid.empty() || xid == "UploadPart" || xid=="UploadPartCopy"))
         {
             int partNumber = 0;
             const auto& queryParams = headers->getQueryParams();
@@ -2227,8 +2344,8 @@ bool S3Handler::setKeyInfoFromPath(const std::string_view path)
     const auto bucketName = path.substr(1, bucketEnd-1);
     const auto keyStr = path.substr(bucketEnd+1);
 
-    const auto bucketId = buckets::getBucket(bucketName);
-    if(!bucketId)
+    const auto bucketInfoOpt = buckets::getBucketInfo(bucketName);
+    if(!bucketInfoOpt)
     {
         XLOGF(INFO, "Bucket of {} not found", path);
         ResponseBuilder(downstream_)
@@ -2238,17 +2355,20 @@ bool S3Handler::setKeyInfoFromPath(const std::string_view path)
         return false;
     }
 
-    keyInfo.bucketId = *bucketId;
+    const auto& bucketInfo = bucketInfoOpt.value();
+
+    keyInfo.bucketId = bucketInfo.id;
     keyInfo.key = keyStr;
     keyInfo.version = 0;
+    keyInfo.versioning = bucketInfo.versioning;
 
     return true;
 }
 
-void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& bucket, const bool partial)
+void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& bucket)
 {
-    auto bucketId = buckets::getBucket(bucket);
-    if(!bucketId)
+    auto bucketInfoOpt = buckets::getBucketInfo(bucket);
+    if(!bucketInfoOpt)
     {
         if(headers.getMethod() == HTTPMethod::HEAD)
         {
@@ -2273,12 +2393,15 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
         return;
     }
 
-    keyInfo.bucketId = *bucketId;
+    const auto bucketInfo = bucketInfoOpt.value();
+
+    keyInfo.bucketId = bucketInfo.id;
+    keyInfo.versioning = bucketInfo.versioning;
 
     const auto listType = headers.getQueryParam("list-type");
-    if(!partial && listType=="2")
+    if(request_action == Action::ListObjects && listType=="2")
     {
-        listObjectsV2(headers, bucket, *bucketId, partial);
+        listObjectsV2(headers, bucket, bucketInfo.id);
         return;
     }
     else if(!listType.empty())
@@ -2290,12 +2413,15 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
         return;
     }
 
-    request_action = Action::ListObjects;
-    const auto marker = partial ? headers.getDecodedQueryParam("key-marker") : headers.getDecodedQueryParam("marker");
-    const auto maxKeys = partial ? headers.getIntQueryParam("max-uploads", 1000) : headers.getIntQueryParam("max-keys", 1000);
+    const auto listPartial = request_action == Action::ListMultipartUploads;
+    const auto listVersions = request_action == Action::ListObjectVersions;
+
+    const auto marker = (listPartial || listVersions) ? headers.getDecodedQueryParam("key-marker") : headers.getDecodedQueryParam("marker");
+    const auto maxKeys = listPartial ? headers.getIntQueryParam("max-uploads", 1000) : headers.getIntQueryParam("max-keys", 1000);
     const auto prefix = headers.hasQueryParam("prefix") ? std::make_optional(headers.getDecodedQueryParam("prefix")) : std::nullopt;
     const auto delimiter = headers.getDecodedQueryParam("delimiter");
-    const auto uploadIdMarkerStr = partial ? headers.getDecodedQueryParam("upload-id-marker") : std::string();
+    const auto uploadIdMarkerStr = listPartial ? headers.getDecodedQueryParam("upload-id-marker") :
+        (listVersions ? headers.getDecodedQueryParam("version-id-marker") : std::string());
     const auto encodingType = headers.getDecodedQueryParam("encoding-type");
     const bool urlEncode = encodingType == "url";
 
@@ -2320,15 +2446,14 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     folly::getGlobalCPUExecutor()->add(
-    [self = self, evb, marker, maxKeys, prefix, delimiter, bucket, bucketId, partial, uploadIdMarkerStr, urlEncode]()
+    [self = self, evb, marker, maxKeys, prefix, delimiter, bucket, bucketId = bucketInfo.id, uploadIdMarkerStr, urlEncode]()
     {
-        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, std::nullopt, delimiter, *bucketId, false, bucket, partial, uploadIdMarkerStr, urlEncode);
+        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, std::nullopt, delimiter, bucketId, false, bucket, uploadIdMarkerStr, urlEncode);
     });
 }
 
-void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId, const bool partial)
+void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId)
 {
-    request_action = Action::ListObjects;
     const auto continuationToken = headers.getDecodedQueryParam("continuation-token");
     const auto maxKeys = headers.getIntQueryParam("max-keys", 1000);
     const auto prefix = headers.hasQueryParam("prefix") ? std::make_optional(headers.getDecodedQueryParam("prefix")) : std::nullopt;
@@ -2368,9 +2493,9 @@ void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string&
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     folly::getGlobalCPUExecutor()->add(
-    [self = self, evb, marker, maxKeys, prefix, startAfter, delimiter, bucket, bucketId, partial, urlEncode]()
+    [self = self, evb, marker, maxKeys, prefix, startAfter, delimiter, bucket, bucketId, urlEncode]()
     {
-        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, startAfter, delimiter, bucketId, true, bucket, partial, std::string(), urlEncode);
+        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, startAfter, delimiter, bucketId, true, bucket, std::string(), urlEncode);
     });
 }
 
@@ -2383,6 +2508,31 @@ void S3Handler::getBucketLocation(proxygen::HTTPMessage& headers, const std::str
                                 "<LocationConstraint xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
                                 "{}"
                                 "</LocationConstraint>", FLAGS_aws_region))
+                            .sendWithEOM();
+
+}
+
+void S3Handler::getBucketVersioning(proxygen::HTTPMessage& headers, const std::string& bucket)
+{
+    const auto bucketInfoOpt = buckets::getBucketInfo(bucket);
+    if(!bucketInfoOpt)
+    {
+        ResponseBuilder(self->downstream_)
+                            .status(404, "Not found")
+                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucket, ""))
+                            .sendWithEOM();
+        return;
+    }
+
+    const auto& bucketInfo = bucketInfoOpt.value();
+
+    ResponseBuilder(self->downstream_)
+                            .status(200, "OK")
+                            .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
+                            .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                                "<VersioningConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
+                                "<Status>{}</Status>"
+                                "</VersioningConfiguration>", buckets::versioningStateToStr(bucketInfo.versioning)))
                             .sendWithEOM();
 
 }
@@ -2736,7 +2886,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                 
                 std::string findPath;
 
-                const auto withVersioning = self->withBucketVersioning && self->keyInfo.version==0;
+                const auto withVersioning = self->keyInfo.withVersioning() && self->keyInfo.version==0;
                 if(withVersioning)
                 {
                     flags |= SingleFileStorage::ReadNewest;
@@ -3057,7 +3207,7 @@ int S3Handler::checkMatchInfo()
     std::string findPath;
     unsigned int flags = SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading;
 
-    const auto withVersioning = self->withBucketVersioning && self->keyInfo.version==0;
+    const auto withVersioning = self->keyInfo.withVersioning() && self->keyInfo.version==0;
     if(withVersioning)
     {
         flags |= SingleFileStorage::ReadNewest;
@@ -3129,7 +3279,7 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                     return;
                 }
 
-                if(self->withBucketVersioning)
+                if(self->keyInfo.withVersioning())
                     self->keyInfo.version = self->sfs().get_next_version();
 
                 if(self->keyInfo.key.size()>1024)
@@ -3522,7 +3672,7 @@ void S3Handler::finalizeMultipartUpload()
                     }
                 }
 
-                if(self->withBucketVersioning)
+                if(self->keyInfo.withVersioning())
                 {
                     self->keyInfo.version = self->sfs().get_next_version();
                     uploadFPath = make_key(self->keyInfo);
@@ -3750,7 +3900,7 @@ void S3Handler::finalizeMultipartUpload()
 
                 if(self->matchInfo)
                 {
-                    if(self->withBucketVersioning && self->keyInfo.version != 0)
+                    if(self->keyInfo.withVersioning() && self->keyInfo.version != 0)
                     {
                         self->matchInfo->readFn = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
                         self->matchInfo->readNewest = true;
@@ -3926,6 +4076,56 @@ void S3Handler::finalizeCreateBucket()
         );
 }
 
+void S3Handler::finalizePutBucketVersioning()
+{
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+    folly::getGlobalCPUExecutor()->add(
+            [self = this->self, evb]()
+            {
+                const auto versioningState = buckets::versioningStateFromStr(folly::trimWhitespace(self->deleteObjectsData->buf));
+
+                if(!versioningState)
+                {
+                    XLOGF(WARN, "Invalid versioning state specified for bucket {}: {}", self->keyInfo.key, self->deleteObjectsData->buf);
+                    evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(400, "Bad Request")
+                            .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid versioning state specified", self->fullKeyPath(), ""))
+                            .sendWithEOM();
+                        self->finished_ = true;
+                                              });
+                    return;
+                }
+
+                if(!buckets::setVersioning(self->keyInfo.key, versioningState.value()))
+                {
+                    XLOGF(ERR, "Failed to set bucket versioning for bucket {}", self->keyInfo.key);
+                    evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Failed to set bucket versioning", self->fullKeyPath(), ""))
+                            .sendWithEOM();
+                        self->finished_ = true;
+                                              });
+                    return;
+                }
+
+                XLOGF(INFO, "Set bucket versioning for bucket {} to {}", self->keyInfo.key, buckets::versioningStateToStr(versioningState.value()));
+
+                evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(200, "OK")
+                            .sendWithEOM();
+                        self->finished_ = true;
+                });
+                return;
+            }
+        );
+}
+
 void S3Handler::deleteObjects()
 {
     if(deleteObjectsData->objects.size() > 1000)
@@ -3944,6 +4144,7 @@ void S3Handler::deleteObjects()
             [self = this->self, evb, deleteObjectsData = this->deleteObjectsData.get()]()
             {
                 const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
+                const auto withVersioning = self->keyInfo.withVersioning();
 
                 size_t deletedObjects = 0;
 
@@ -3969,12 +4170,12 @@ void S3Handler::deleteObjects()
 
                     int64_t version = 0;
 
-                    if(self->withBucketVersioning && obj.versionId.empty())
+                    if(withVersioning && obj.versionId.empty())
                     {
                         version= std::numeric_limits<int64_t>::max();
                         delNewest = true;
                     }
-                    else if(self->withBucketVersioning && !obj.versionId.empty())
+                    else if(withVersioning && !obj.versionId.empty())
                     {
                         try
                         {
@@ -4198,7 +4399,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
 
             bool delNewest = false;            
 
-            if(self->withBucketVersioning && self->keyInfo.version==0)
+            if(self->keyInfo.withVersioning() && self->keyInfo.version==0)
             {
                 self->keyInfo.version = std::numeric_limits<int64_t>::max();
                 delNewest = true;
@@ -4278,6 +4479,26 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                                             });
 
         });
+}
+
+void S3Handler::putBucketVersioning(proxygen::HTTPMessage& headers)
+{
+    xmlBody.init();
+    if(xmlBody.parser == nullptr)
+    {
+        ResponseBuilder(downstream_)
+            .status(500, "Internal error")
+            .body(s3errorXml(S3ErrorCode::InternalError, "Could not init XML parser", keyInfo.key, ""))
+            .sendWithEOM();
+        return;
+    }
+
+    deleteObjectsData = std::make_unique<DeleteObjectsData>();
+
+    XML_SetUserData(xmlBody.parser, deleteObjectsData.get());
+
+    XML_SetElementHandler(xmlBody.parser, putBucketVersioningXmlElementStart, putBucketVersioningXmlElementEnd);
+    XML_SetCharacterDataHandler(xmlBody.parser, putBucketVersioningXmlCharData);
 }
 
 void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
@@ -4773,11 +4994,13 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
 void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& marker,
     const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter,
     const std::string& delimiter, const int64_t bucketId,
-    const bool listV2, const std::string& bucketName, const bool partial, const std::string& markerVersionStr,
+    const bool listV2, const std::string& bucketName, const std::string& markerVersionStr,
     const bool urlEncode)
 {
+    const bool listPartial = request_action == Action::ListMultipartUploads;
+    const bool listVersions = request_action == Action::ListObjectVersions;
     const auto markerVersion = !markerVersionStr.empty() ? decryptUploadId(markerVersionStr).id : std::numeric_limits<int64_t>::max();
-    const auto listBucketId = partial ? buckets::getPartialUploadsBucket(bucketId) : bucketId;
+    const auto listBucketId = listPartial ? buckets::getPartialUploadsBucket(bucketId) : bucketId;
     SingleFileStorage::IterData iter_data = {};
     std::string iterStartVal;
     std::string lastOutputKeyStr;
@@ -4905,7 +5128,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             ++skippedKeys;
             outputKey = false;
         }
-        else if(md5sum.size() == 1 && md5sum[0] == metadata_tombstone)
+        else if(!listVersions && md5sum.size() == 1 && md5sum[0] == metadata_tombstone)
         {
             lastOutputKeyStr = keyInfo.key;
             ++skippedKeys;
@@ -4938,7 +5161,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         if(i >= maxKeys + skippedKeys)
             break;
 
-        if (outputKey && !partial)
+        if (outputKey && !listPartial && !listVersions)
         {
             lastOutputKeyStr = keyInfo.key;
 
@@ -4959,10 +5182,10 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 "\t\t<ETag>{}</ETag>\n"
                 "\t\t<Size>{}</Size>\n"
                 "\t\t<StorageClass>STANDARD</StorageClass>\n"
-                "\t</Contents>", encode(urlEncode, keyInfo.key), format_last_modified(last_modified), getEtag(md5sum), size);
+                "\t</Contents>\n", encode(urlEncode, keyInfo.key), format_last_modified(last_modified), getEtag(md5sum), size);
             ++keyCount;
         }
-        else if(outputKey && partial)
+        else if(outputKey && listPartial)
         {
             lastOutputKeyStr = keyInfo.key;
             lastOutputVersion = keyInfo.version;
@@ -4977,7 +5200,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 "\t\t<Initiated>{}</Initiated>\n"
                 "\t\t<Key>{}</Key>\n"
                 "\t\t<UploadId>{}-{}</UploadId>\n"
-                "\t</Upload>", format_last_modified(last_modified), 
+                "\t</Upload>\n", format_last_modified(last_modified), 
                 encode(urlEncode, keyInfo.key), folly::hexlify(encId.encryptedId), folly::hexlify(encId.nonce));
             ++keyCount;
         }
@@ -4994,6 +5217,54 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             sfs().iter_stop(iter_data);
             return;
         }
+
+        if(outputKey && listVersions)
+        {
+            bool isLatest = true;
+            {
+                //TODO perf: Reading key twice...
+                std::string keyBin, md5sum;
+                int64_t offset, size, last_modified;
+                std::vector<SingleFileStorage::SPunchItem> extra_exts;
+                if(sfs().iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
+                {
+                    const auto keyInfoNext = extractKeyInfoView(keyBin);
+
+                    if(keyInfoNext.key == keyInfo.key && keyInfoNext.bucketId == listBucketId)
+                    {
+                        isLatest = false;
+                    }
+                }                
+            }
+
+            lastOutputKeyStr = keyInfo.key;
+            lastOutputVersion = keyInfo.version;
+
+            if(md5sum.size() == 1 && md5sum[0] == metadata_tombstone)
+            {
+                val_data += fmt::format("\t<DeleteMarker>\n"
+                "\t\t<IsLatest>{}</IsLatest>\n"
+                "\t\t<Key>{}</Key>\n"
+                "\t\t<VersionId>{}</VersionId>\n"
+                "\t\t<LastModified>{}</LastModified>\n"
+                "\t</DeleteMarker>", isLatest ? "true" : "false", encode(urlEncode, keyInfo.key), sfs().encrypt_id(keyInfo.version), format_last_modified(last_modified));
+                ++keyCount;
+            }
+            else
+            {
+                val_data += fmt::format("\t<Version>\n"
+                    "\t\t<Key>{}</Key>\n"
+                    "\t\t<VersionId>{}</VersionId>\n"
+                    "\t\t<IsLatest>{}</IsLatest>\n"
+                    "\t\t<LastModified>{}</LastModified>\n"
+                    "\t\t<ETag>{}</ETag>\n"
+                    "\t\t<Size>{}</Size>\n"
+                    "\t\t<StorageClass>STANDARD</StorageClass>\n"
+                    "\t</Version>", encode(urlEncode, keyInfo.key), sfs().encrypt_id(keyInfo.version), isLatest ? "true" : "false",
+                    format_last_modified(last_modified), getEtag(md5sum), size);
+                ++keyCount;
+            }
+        }
     }
 
     if(maxKeys==0)
@@ -5005,10 +5276,14 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     {
         nextMarker = lastOutputKeyStr;
         
-        if(partial)
+        if(listPartial)
         {
             const auto encId = sfs().encrypt_id_separate(lastOutputVersion, lastOutputUploadNonce);
             nextVersionMarker = folly::hexlify(encId.encryptedId) + "-" + folly::hexlify(encId.nonce);
+        }
+        else if(listVersions)
+        {
+            nextVersionMarker = sfs().encrypt_id(lastOutputVersion);
         }
     }
 
@@ -5016,7 +5291,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
     std::string resp;
     
-    if(partial)
+    if(listPartial)
     {
         resp+=fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
         "<ListMultipartUploadsResult>\n"
@@ -5028,6 +5303,16 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         "\t<IsTruncated>{}</IsTruncated>\n"
         "\t<MaxUploads>{}</MaxUploads>\n", escapeXML(bucketName), escapeXML(marker), escapeXML(markerVersionStr),
              escapeXML(nextMarker), nextVersionMarker, truncated ? "true" : "false", maxKeys);
+    }
+    else if(listVersions)
+    {
+        resp = fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<ListVersionsResult>\n"
+        "\t<Name>{}</Name>\n"
+        "\t<IsTruncated>{}</IsTruncated>\n"
+        "\t<KeyMarker>{}</KeyMarker>\n"
+        "\t<VersionIdMarker>{}</VersionIdMarker>\n"
+        "\t<MaxKeys>{}</MaxKeys>\n", escapeXML(bucketName), truncated ? "true" : "false", escapeXML(marker), markerVersionStr.empty() ? "" : escapeXML(markerVersionStr), maxKeys);
     }
     else
     {
@@ -5048,10 +5333,15 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         resp+=fmt::format("\t<ContinuationToken>{}</ContinuationToken>\n", folly::hexlify(marker));
     }
 
-    if(partial && truncated)
+    if(listPartial && truncated)
     {
         resp+=fmt::format("\t<NextKeyMarker>{}</NextKeyMarker>\n", escapeXML(nextMarker));
         resp+=fmt::format("\t<NextUploadIdMarker>{}</NextUploadIdMarker>\n", nextVersionMarker);
+    }
+    else if(listVersions && truncated)
+    {
+        resp+=fmt::format("\t<NextKeyMarker>{}</NextKeyMarker>\n", escapeXML(nextMarker));
+        resp+=fmt::format("\t<NextVersionIdMarker>{}</NextVersionIdMarker>\n", nextVersionMarker);
     }
     else if(listV2 && truncated)
     {
@@ -5099,8 +5389,10 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         }
     }
 
-    if(partial)
+    if(listPartial)
         resp+="</ListMultipartUploadsResult>";
+    else if(listVersions)
+        resp+="</ListVersionsResult>";
     else
         resp+="</ListBucketResult>";
 
@@ -5590,7 +5882,8 @@ void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
     XLOGF(DBG0, "Received body of {} bytes for request type {} for obj {}", body_bytes, static_cast<int>(request_action), keyInfo.key);
 
     if(request_action == Action::CompleteMultipartUpload ||
-        request_action == Action::DeleteObjects)
+        request_action == Action::DeleteObjects ||
+        request_action == Action::PutBucketVersioning)
     {
         if(payloadHash)
             payloadHash->update(body->data(), body->length());
@@ -6132,6 +6425,14 @@ void S3Handler::onEOM() noexcept
         }
 
         deleteObjects();
+        return;
+    }
+    else if(request_action == Action::PutBucketVersioning)
+    {
+        if(finished_)
+            return;
+
+        finalizePutBucketVersioning();
         return;
     }
 }

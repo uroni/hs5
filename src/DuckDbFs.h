@@ -83,7 +83,7 @@ class DuckDbFs : public duckdb::FileSystem {
 public:
     friend DuckDbFileHandle;
 
-    DuckDbFs(SingleFileStorage& sfs, const bool withBucketVersioning) : sfs(sfs), withBucketVersioning(withBucketVersioning) {
+    DuckDbFs(SingleFileStorage& sfs) : sfs(sfs) {
     }
 
     bool CanSeek() override {
@@ -123,15 +123,10 @@ public:
     duckdb::unique_ptr<duckdb::FileHandle> OpenFile(const std::string &path, duckdb::FileOpenFlags flags,
         duckdb::optional_ptr<duckdb::FileOpener> opener = nullptr) override;
 
-    bool isWithBucketVersioning() const {
-        return withBucketVersioning;
-    }
-
     virtual int64_t GetFileSize(duckdb::FileHandle &handle);
 
     virtual time_t GetLastModifiedTime(duckdb::FileHandle &handle) override;
 private:
     SingleFileStorage& sfs;
-    const bool withBucketVersioning;
 };
 
