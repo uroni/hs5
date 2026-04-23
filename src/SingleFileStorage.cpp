@@ -2356,7 +2356,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 
 	if ((flags & ReadUnsynced) == 0)
 	{
-		std::unique_lock lock(mutex);
+		std::lock_guard lock(mutex);
 
 		auto it = commit_items.find(common_prefix_hash_func(fn));
 		if(it!=commit_items.end())
@@ -2380,7 +2380,15 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 
 		if(!(flags & ReadSkipAddReading) && (frag_info.offset != 0 || frag_info.len>0))
 		{
-			std::lock_guard lock(mutex);
+			std::unique_lock lock(mutex);
+
+			auto it = commit_items.find(common_prefix_hash_func(fn));
+			if(it!=commit_items.end())
+			{
+				lock.unlock();
+				return read_prepare(fn, flags | ReadUnsynced);
+			}
+
 			add_reading_item(frag_info);
 		}
 	}
@@ -2394,10 +2402,12 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 		curr_frag.fn = fn;
 		curr_frag.commit_info = &commit_info;
 		curr_frag.offset = read_newest ? 1 : 0;
+		curr_frag.len = (flags & ReadSkipAddReading) ? 0 : 1;
 
 		{
 			std::unique_lock lock(mutex);
 			wait_startup_finished(lock);
+			wait_queue(lock, false, false);
 
 			commit_queue.push_back(std::move(curr_frag));
 			cond.notify_all();
@@ -2409,12 +2419,6 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 		{
 			XLOG(INFO) << "Could not find metadata for fragment " << fn << " in LMDB (read unsynced) sfs " << db_path;
 			return ReadPrepareResult{ENOENT};
-		}
-
-		if(!(flags & ReadSkipAddReading) && (frag_info.offset != 0 || frag_info.len>0))
-		{
-			std::lock_guard lock(mutex);
-			add_reading_item(frag_info);
 		}
 	}
 
@@ -8064,6 +8068,8 @@ void SingleFileStorage::operator()()
 				if (frag_info.commit_info->frag_info != nullptr)
 				{
 					*frag_info.commit_info->frag_info = get_frag_info(txn, frag_info.fn, frag_info.action == FragAction::ReadFragInfo, frag_info.offset>0);
+					if(frag_info.len == 1 && (frag_info.commit_info->frag_info->offset != 0 || frag_info.commit_info->frag_info->len>0))
+						add_reading_item(*frag_info.commit_info->frag_info);
 				}
 
 				frag_info.commit_info->commit_done.notify_all();
