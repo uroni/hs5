@@ -6947,7 +6947,7 @@ std::string S3Handler::fullKeyPath() const
 }
 
 
-void S3Handler::onAddReadingCallback(const SingleFileStorage::SFragInfo& fragInfo)
+void S3Handler::onAddReadingCallback(const std::string_view fn, const SingleFileStorage::SFragInfo& fragInfo)
 {
     CRData rdata(fragInfo.md5sum.data(), fragInfo.md5sum.size());
     int64_t itype;
@@ -6960,7 +6960,7 @@ void S3Handler::onAddReadingCallback(const SingleFileStorage::SFragInfo& fragInf
     if(itype == metadata_multipart_object)
     {
         std::scoped_lock lock{readingMultipartObjectsMutex};
-        auto& obj = readingMultipartObjects[fragInfo.fn];
+        auto& obj = readingMultipartObjects[std::string(fn)];
         obj.refs++;
     }
 }

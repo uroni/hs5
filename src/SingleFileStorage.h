@@ -162,7 +162,7 @@ public:
 	using on_delete_callback_t = std::function<std::vector<SingleFileStorage::SFragInfo>(const std::string&, const std::string&)>;
 	using modify_data_callback_t = std::function<std::optional<std::string>(const std::string&, std::string, std::string)>;
 	using match_callback_t = std::function<void(MatchInfo&, const SingleFileStorage::SFragInfo&)>;
-	using add_reading_callback_t = std::function<void(const SingleFileStorage::SFragInfo&)>;
+	using add_reading_callback_t = std::function<void(const std::string_view fn, const SingleFileStorage::SFragInfo&)>;
 	
 	struct SFSOptions
 	{

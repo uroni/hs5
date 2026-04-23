@@ -2403,7 +2403,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 			}
 
 			if(add_reading_callback)
-				add_reading_callback(frag_info);
+				add_reading_callback(read_newest ? frag_info.fn : fn, frag_info);
 		}
 	}
 	else
@@ -8100,7 +8100,7 @@ void SingleFileStorage::operator()()
 						add_reading_item(*frag_info.commit_info->frag_info);
 					else if((flags & ReadAddReadingCallback) && add_reading_callback && frag_info.commit_info->frag_info->offset==0 
 						&& frag_info.commit_info->frag_info->len==0 && frag_info.commit_info->frag_info->md5sum.size()>1)
-						add_reading_callback(*frag_info.commit_info->frag_info);
+						add_reading_callback(read_newest ? frag_info.commit_info->frag_info->fn : frag_info.fn, *frag_info.commit_info->frag_info);
 				}
 
 				frag_info.commit_info->commit_done.notify_all();
