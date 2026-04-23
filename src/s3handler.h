@@ -217,10 +217,11 @@ public:
     
     static int seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
     static int seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData, 
-            std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen, std::unique_ptr<PayloadHashBase>& partHash);
+            std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen, std::unique_ptr<PayloadHashBase>& partHash, int64_t* partSize);
     static int readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, const bool addReading,
-         MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string* etag, std::unique_ptr<PayloadHashBase>* partHash);
-    static int readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
+         MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string* etag, std::unique_ptr<PayloadHashBase>* partHash, int64_t* partSize);
+    static int readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, 
+        std::string* etag, std::unique_ptr<PayloadHashBase>* partHash, int64_t* partSize);
     static int finalizeMultiPart(SingleFileStorage& sfs, const std::string& fn, const int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
 
     static std::vector<SingleFileStorage::SFragInfo> onDeleteCallback(const std::string& fn, const std::string& md5sum);
@@ -231,8 +232,6 @@ public:
     static std::string md5sumBinFromData(const std::string_view md5sumData);
 
     static std::pair<int64_t, std::string_view> flagsAndMd5sumBinFromData(const std::string_view md5sumData);
-
-    static void addReadingMultipartObject(const std::string& key);
 
     void sigCheckOk();
     void sigCheckFailed();
@@ -250,6 +249,7 @@ private:
     void getBucketVersioning(proxygen::HTTPMessage& headers, const std::string& bucket);
     void getCommitObject(proxygen::HTTPMessage& headers);
     void getObject(proxygen::HTTPMessage& headers, const std::string& accessKey);
+    void getObjectAttributes(proxygen::HTTPMessage& headers, const std::string& accessKey);
     void putObject(proxygen::HTTPMessage& headers);
     void putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId);
     void manualCommit(proxygen::HTTPMessage& headers);
@@ -270,7 +270,7 @@ private:
     
     void readBodyThread(folly::EventBase *evb);
     void startReadBodyThread(folly::EventBase *evb);
-    bool setKeyInfoFromPath(const std::string_view path);
+    bool setKeyInfoFromPath(const std::string_view path, const std::string* versionId);
     std::optional<std::string> initPayloadHash(proxygen::HTTPMessage& message);
     bool initSdkChecksum(proxygen::HTTPMessage& message, const Action action);
     void deleteObjects();

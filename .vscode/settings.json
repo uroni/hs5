@@ -112,5 +112,8 @@
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
     "python.envFile": "${workspaceFolder}/.env",
-    "python.debugger.justMyCode": false
+    "python.debugger.justMyCode": false,
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}/builds/ninja-multi-vcpkg-lld"
+    ]
 }

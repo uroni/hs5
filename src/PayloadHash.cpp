@@ -2,11 +2,12 @@
  * Copyright Martin Raiber. All Rights Reserved.
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
-#include <folly/lang/Bits.h>
-#include <cstring>
 #include "PayloadHash.h"
-#include <folly/String.h>
 #include <aws/checksums/crc.h>
+#include <cstring>
+#include <folly/String.h>
+#include <folly/base64.h>
+#include <folly/lang/Bits.h>
 #include <folly/logging/xlog.h>
 #include <openssl/sha.h>
 
@@ -14,7 +15,7 @@ bool PayloadHashBase::isFinalExpected()
 {
     const auto gotHash = final();
     const bool ok = expectedHash == gotHash;
-    if(ok)
+    if (ok)
     {
         XLOGF(INFO, "Payload hash {} ok", folly::hexlify(expectedHash));
     }
@@ -29,7 +30,7 @@ bool PayloadHashBase::isFinalCombinedExpected(const uint64_t numParts)
 {
     const auto gotHash = finalCombined(numParts);
     const bool ok = expectedHash == gotHash;
-    if(ok)
+    if (ok)
     {
         XLOGF(INFO, "Payload combined hash {} ok", folly::hexlify(expectedHash));
     }
@@ -38,6 +39,14 @@ bool PayloadHashBase::isFinalCombinedExpected(const uint64_t numParts)
         XLOGF(INFO, "Payload combined hash mismatch, expected {}, got {}", folly::hexlify(expectedHash), folly::hexlify(gotHash));
     }
     return ok;
+}
+
+std::string PayloadHashBase::expectedCombined(const uint64_t numParts) const
+{
+    if(isFull() || numParts == 0)
+        return folly::base64Encode(expectedHash);
+    else
+        return folly::base64Encode(expectedHash) + "-" + std::to_string(numParts);   
 }
 
 // PayloadHashSha256 methods
@@ -50,11 +59,11 @@ std::string PayloadHashSha256::final()
 {
     std::string binHash;
     binHash.resize(SHA256_DIGEST_LENGTH);
-    EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&binHash[0]), nullptr);
+    EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char *>(&binHash[0]), nullptr);
     return binHash;
 }
 
-void PayloadHashSha256::update(const unsigned char* data, const size_t len)
+void PayloadHashSha256::update(const unsigned char *data, const size_t len)
 {
     EVP_DigestUpdate(evpMdCtx.ctx, data, len);
 }
@@ -76,11 +85,11 @@ std::string PayloadHashSha1::final()
 {
     std::string binHash;
     binHash.resize(SHA1_DIGEST_LENGTH);
-    EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&binHash[0]), nullptr);
+    EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char *>(&binHash[0]), nullptr);
     return binHash;
 }
 
-void PayloadHashSha1::update(const unsigned char* data, const size_t len)
+void PayloadHashSha1::update(const unsigned char *data, const size_t len)
 {
     EVP_DigestUpdate(evpMdCtx.ctx, data, len);
 }
@@ -100,19 +109,19 @@ std::string PayloadHashCrc32::final()
 {
     auto val = folly::Endian::big(crc32Value);
     std::string binHash;
-    binHash.resize(sizeof(val));    
+    binHash.resize(sizeof(val));
     memcpy(&binHash[0], &val, sizeof(val));
     return binHash;
 }
 
-void PayloadHashCrc32::update(const unsigned char* data, const size_t len)
+void PayloadHashCrc32::update(const unsigned char *data, const size_t len)
 {
     crc32Value = aws_checksums_crc32(data, len, crc32Value);
 }
 
-void PayloadHashCrc32Full::combine(const PayloadHashBase& other, const uint64_t len)
+void PayloadHashCrc32Full::combine(const PayloadHashBase &other, const uint64_t len)
 {
-    if(other.getHashType() != AwsHashType::Crc32 || other.getExpectedHash().size() != sizeof(uint32_t))
+    if (other.getHashType() != AwsHashType::Crc32 || other.getExpectedHash().size() != sizeof(uint32_t))
     {
         XLOGF(ERR, "Attempting to combine incompatible hash types: {} and {}", static_cast<int>(getHashType()), static_cast<int>(other.getHashType()));
         abort();
@@ -139,14 +148,14 @@ std::string PayloadHashCrc32c::final()
     return binHash;
 }
 
-void PayloadHashCrc32c::update(const unsigned char* data, const size_t len)
+void PayloadHashCrc32c::update(const unsigned char *data, const size_t len)
 {
     crc32Value = aws_checksums_crc32c(data, len, crc32Value);
 }
 
-void PayloadHashCrc32cFull::combine(const PayloadHashBase& other, const uint64_t len)
+void PayloadHashCrc32cFull::combine(const PayloadHashBase &other, const uint64_t len)
 {
-    if(other.getHashType() != AwsHashType::Crc32c || other.getExpectedHash().size() != sizeof(uint32_t))
+    if (other.getHashType() != AwsHashType::Crc32c || other.getExpectedHash().size() != sizeof(uint32_t))
     {
         XLOGF(ERR, "Attempting to combine incompatible hash types: {} and {}", static_cast<int>(getHashType()), static_cast<int>(other.getHashType()));
         abort();
@@ -168,19 +177,19 @@ std::string PayloadHashCrc64Nvme::final()
 {
     auto val = folly::Endian::big(crc64Value);
     std::string binHash;
-    binHash.resize(sizeof(val));    
+    binHash.resize(sizeof(val));
     memcpy(&binHash[0], &val, sizeof(val));
     return binHash;
 }
 
-void PayloadHashCrc64Nvme::update(const unsigned char* data, const size_t len)
+void PayloadHashCrc64Nvme::update(const unsigned char *data, const size_t len)
 {
     crc64Value = aws_checksums_crc64nvme(data, len, crc64Value);
 }
 
-void PayloadHashCrc64NvmeFull::combine(const PayloadHashBase& other, const uint64_t len)
+void PayloadHashCrc64NvmeFull::combine(const PayloadHashBase &other, const uint64_t len)
 {
-    if(other.getHashType() != AwsHashType::Crc64Nvme || other.getExpectedHash().size() != sizeof(uint64_t))
+    if (other.getHashType() != AwsHashType::Crc64Nvme || other.getExpectedHash().size() != sizeof(uint64_t))
     {
         XLOGF(ERR, "Attempting to combine incompatible hash types: {} and {}", static_cast<int>(getHashType()), static_cast<int>(other.getHashType()));
         abort();
@@ -192,34 +201,34 @@ void PayloadHashCrc64NvmeFull::combine(const PayloadHashBase& other, const uint6
     crc64Value = aws_checksums_crc64nvme_combine(crc64Value, otherCrc, len);
 }
 
-std::unique_ptr<PayloadHashBase> createPayloadHash(const std::string_view& awsHashType)
+std::unique_ptr<PayloadHashBase> createPayloadHash(const std::string_view &awsHashType)
 {
     XLOGF(DBG0, "Creating payload hash for AWS hash type: {}", awsHashType);
-    if(awsHashType == "x-amz-checksum-sha256")
+    if (awsHashType == "x-amz-checksum-sha256")
     {
         auto hash = std::make_unique<PayloadHashSha256>();
-        if(hash->init())
+        if (hash->init())
             return hash;
     }
-    else if(awsHashType == "x-amz-checksum-crc32")
+    else if (awsHashType == "x-amz-checksum-crc32")
     {
         auto hash = std::make_unique<PayloadHashCrc32>();
         return hash;
     }
-    else if(awsHashType == "x-amz-checksum-crc32c")
+    else if (awsHashType == "x-amz-checksum-crc32c")
     {
         auto hash = std::make_unique<PayloadHashCrc32c>();
         return hash;
     }
-    else if(awsHashType == "x-amz-checksum-crc64nvme")
+    else if (awsHashType == "x-amz-checksum-crc64nvme")
     {
         auto hash = std::make_unique<PayloadHashCrc64Nvme>();
         return hash;
     }
-    else if(awsHashType == "x-amz-checksum-sha1")
+    else if (awsHashType == "x-amz-checksum-sha1")
     {
         auto hash = std::make_unique<PayloadHashSha1>();
-        if(hash->init())
+        if (hash->init())
             return hash;
     }
     else
@@ -230,41 +239,41 @@ std::unique_ptr<PayloadHashBase> createPayloadHash(const std::string_view& awsHa
     return nullptr;
 }
 
-std::unique_ptr<PayloadHashBase> createSdkChecksum(const std::string_view& awsSdkChecksumType, const bool compositeChecksum)
+std::unique_ptr<PayloadHashBase> createSdkChecksum(const std::string_view &awsSdkChecksumType, const bool compositeChecksum)
 {
     XLOGF(DBG0, "Creating SDK checksum for AWS SDK checksum type: {}", awsSdkChecksumType);
-    if(awsSdkChecksumType == "CRC32" || awsSdkChecksumType == "crc32")
+    if (awsSdkChecksumType == "CRC32" || awsSdkChecksumType == "crc32")
     {
         return compositeChecksum ? std::make_unique<PayloadHashCrc32>() : std::make_unique<PayloadHashCrc32Full>();
     }
-    else if(awsSdkChecksumType == "CRC32C" || awsSdkChecksumType == "crc32c")
+    else if (awsSdkChecksumType == "CRC32C" || awsSdkChecksumType == "crc32c")
     {
         return compositeChecksum ? std::make_unique<PayloadHashCrc32c>() : std::make_unique<PayloadHashCrc32cFull>();
     }
-    else if(awsSdkChecksumType == "CRC64NVME" || awsSdkChecksumType == "crc64nvme")
+    else if (awsSdkChecksumType == "CRC64NVME" || awsSdkChecksumType == "crc64nvme")
     {
         return compositeChecksum ? std::make_unique<PayloadHashCrc64Nvme>() : std::make_unique<PayloadHashCrc64NvmeFull>();
     }
-    else if(awsSdkChecksumType == "SHA1" || awsSdkChecksumType == "sha1")
+    else if (awsSdkChecksumType == "SHA1" || awsSdkChecksumType == "sha1")
     {
-        if(!compositeChecksum)
+        if (!compositeChecksum)
         {
             XLOGF(WARNING, "Non-composite checksum requested for unsupported AWS SDK checksum type: {}", awsSdkChecksumType);
             return nullptr;
         }
         auto hash = std::make_unique<PayloadHashSha1>();
-        if(hash->init())
+        if (hash->init())
             return hash;
     }
-    else if(awsSdkChecksumType == "SHA256" || awsSdkChecksumType == "sha256")
+    else if (awsSdkChecksumType == "SHA256" || awsSdkChecksumType == "sha256")
     {
-        if(!compositeChecksum)
+        if (!compositeChecksum)
         {
             XLOGF(WARNING, "Non-composite checksum requested for unsupported AWS SDK checksum type: {}", awsSdkChecksumType);
             return nullptr;
         }
         auto hash = std::make_unique<PayloadHashSha256>();
-        if(hash->init())
+        if (hash->init())
             return hash;
     }
     else
@@ -277,22 +286,24 @@ std::unique_ptr<PayloadHashBase> createSdkChecksum(const std::string_view& awsSd
 
 std::unique_ptr<PayloadHashBase> createPayloadHash(const AwsHashType hashType)
 {
-    switch(hashType)
+    switch (hashType)
     {
         case AwsHashType::None:
             return nullptr;
         case AwsHashType::Sha256:
         {
             auto hash = std::make_unique<PayloadHashSha256>();
-            if(hash->init())
+            if (hash->init())
                 return hash;
-        } break;
+        }
+        break;
         case AwsHashType::Sha1:
         {
             auto hash = std::make_unique<PayloadHashSha1>();
-            if(hash->init())
+            if (hash->init())
                 return hash;
-        } break;
+        }
+        break;
         case AwsHashType::Crc32:
             return std::make_unique<PayloadHashCrc32>();
         case AwsHashType::Crc32Full:
@@ -314,26 +325,26 @@ std::unique_ptr<PayloadHashBase> createPayloadHash(const AwsHashType hashType)
     return nullptr;
 }
 
-void serializeSdkChecksum(const std::string_view hashVal, const AwsHashType hashType, CWData& wdata)
+void serializeSdkChecksum(const std::string_view hashVal, const AwsHashType hashType, CWData &wdata)
 {
     wdata.addInt64(static_cast<int64_t>(hashType));
     wdata.addBuffer(hashVal.data(), hashVal.size());
 }
 
-bool deserializeSdkChecksum(CRData& rdata, std::unique_ptr<PayloadHashBase>& hash, const bool withExpectedHash)
+bool deserializeSdkChecksum(CRData &rdata, std::unique_ptr<PayloadHashBase> &hash, const bool withExpectedHash)
 {
     int64_t hashTypeInt;
-    if(!rdata.getInt64(&hashTypeInt))
+    if (!rdata.getInt64(&hashTypeInt))
         return false;
     const auto hashType = static_cast<AwsHashType>(hashTypeInt);
     hash = createPayloadHash(hashType);
-    if(!hash)
+    if (!hash)
         return false;
-    if(!withExpectedHash)
-        return true;    
-    if(rdata.getLeft() < hash->getSize())
+    if (!withExpectedHash)
+        return true;
+    if (rdata.getLeft() < hash->getSize())
         return false;
-    
+
     const auto hashVal = std::string_view(rdata.getCurrDataPtr(), hash->getSize());
     hash->setExpectedHash(hashVal);
     rdata.incrementPtr(hash->getSize());

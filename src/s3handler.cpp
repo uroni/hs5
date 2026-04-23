@@ -4,6 +4,7 @@
  */
 #include "s3handler.h"
 #include "ApiHandler.h"
+#include "PayloadHash.h"
 #include "SingleFileStorage.h"
 #include <algorithm>
 #include <asm-generic/errno-base.h>
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <expat.h>
+#include <fmt/format.h>
 #include <folly/Format.h>
 #include <folly/Range.h>
 #include <folly/ScopeGuard.h>
@@ -39,6 +41,7 @@
 #include "data.h"
 #include "utils.h"
 #include <limits.h>
+#include <string>
 #include <string_view>
 #include "Auth.h"
 #include "main.h"
@@ -1664,7 +1667,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         }   
 
         const auto resource = fmt::format("arn:aws:s3:::{}", header_path.substr(1));
-        const auto action = headers->getMethod() == HTTPMethod::GET ? Action::GetObject : Action::HeadObject;
+        const auto action = headers->getMethod() == HTTPMethod::GET ? 
+                (headers->hasQueryParam("attributes") ? Action::GetObjectAttributes : Action::GetObject) : Action::HeadObject;
 
         auto accessKey = checkSig(this, *headers, "", resource, action, true);
 
@@ -1692,8 +1696,14 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        if(!setKeyInfoFromPath(header_path))
+        if(!setKeyInfoFromPath(header_path, headers->getQueryParamPtr("versionId")))
             return;
+
+        if(action == Action::GetObjectAttributes)
+        {
+            getObjectAttributes(*headers, *accessKey);
+            return;
+        }
 
         parseMatchInfo(*headers, true, true);
         
@@ -1802,7 +1812,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
             keyInfo.key = bucketName;
         }
-        else if(!setKeyInfoFromPath(path))
+        else if(!setKeyInfoFromPath(path, nullptr))
             return;
 
         const auto copySource = headers->getHeaders().getSingleOrEmpty("x-amz-copy-source");
@@ -2061,6 +2071,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         const auto path = std::string_view(path_str);
         bool isDeleteBucket = false;
+        const auto uploadId = headers->getQueryParam("uploadId");
+        const auto abortMultipart = !uploadId.empty();
         const auto nextSlash = path.empty() ? std::string::npos : path.find('/', 1);
         if(!path.empty() && (nextSlash==std::string::npos || nextSlash == path.size()-1) )
         {
@@ -2068,11 +2080,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
             keyInfo.key = bucketName;
         }
-        else if(!setKeyInfoFromPath(path))
-            return;
-
-        const auto uploadId = headers->getQueryParam("uploadId");
-        const auto abortMultipart = !uploadId.empty();
+        else if(!setKeyInfoFromPath(path, abortMultipart ? nullptr : headers->getQueryParamPtr("versionId")))
+            return;        
 
         const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
         const auto action = abortMultipart ? Action::AbortMultipartUpload 
@@ -2209,7 +2218,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        if(!setKeyInfoFromPath(path))
+        if(!setKeyInfoFromPath(path, nullptr))
             return;
 
         const std::string uploadsStr = "uploads";
@@ -2317,7 +2326,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     }
 }
 
-bool S3Handler::setKeyInfoFromPath(const std::string_view path)
+bool S3Handler::setKeyInfoFromPath(const std::string_view path, const std::string* versionId)
 {
     if(path.empty())
     {
@@ -2327,6 +2336,21 @@ bool S3Handler::setKeyInfoFromPath(const std::string_view path)
                     .body(s3errorXml(S3ErrorCode::InternalError, "Path is empty", "", ""))
                     .sendWithEOM();
         return false;
+    }
+
+    int64_t version = 0;
+    if(versionId)
+    {
+        version = sfs().decrypt_id(*versionId);
+        if(version<0)
+        {
+            XLOGF(INFO, "Version {} cannot be decrypted when getting key info", *versionId);
+            ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body(s3errorXml(S3ErrorCode::InternalError, "VersionId invalid", "", ""))
+                    .sendWithEOM();
+            return false;
+        }
     }
 
     const auto bucketEnd = path.find_first_of('/', 1);
@@ -2359,7 +2383,7 @@ bool S3Handler::setKeyInfoFromPath(const std::string_view path)
 
     keyInfo.bucketId = bucketInfo.id;
     keyInfo.key = keyStr;
-    keyInfo.version = 0;
+    keyInfo.version = version;
     keyInfo.versioning = bucketInfo.versioning;
 
     return true;
@@ -2888,8 +2912,8 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                 
                 std::string findPath;
 
-                const auto withVersioning = self->keyInfo.withVersioning() && self->keyInfo.version==0;
-                if(withVersioning)
+                const auto findNewestVersion = self->keyInfo.withVersioning() && self->keyInfo.version==0;
+                if(findNewestVersion)
                 {
                     flags |= SingleFileStorage::ReadNewest;
                     findPath = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
@@ -2942,7 +2966,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                                               });
                     return;
                 }
-                else if(withVersioning)
+                else if(findNewestVersion)
                 {
                     findPath = res.key;
                     self->keyInfo.version = extractKeyInfoView(findPath).version;
@@ -3068,7 +3092,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         int64_t partNumberSizeOut;
                         std::unique_ptr<PayloadHashBase> partNumberChecksumHashOut;
                         const auto rc = seekMultipart(self->sfs(), partNumber, self->keyInfo.bucketId, self->request_action != Action::HeadObject,
-                            *self->multiPartDownloadData, self->extents, partNumberEtagOut, partNumberOffset, partNumberSizeOut, partNumberChecksumHashOut);
+                            *self->multiPartDownloadData, self->extents, partNumberEtagOut, partNumberOffset, partNumberSizeOut, partNumberChecksumHashOut, nullptr);
                         if(rc!=0)
                         {
                             XLOGF(WARN, "Error seeking to part number {} of key {}: {}",
@@ -3172,6 +3196,359 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
                 self->readObject(evb, std::move(self), rangeStart);
             });
+}
+
+void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::string& accessKey)
+{
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+
+    const auto maxPartsStr = headers.getHeaders().getSingleOrEmpty("x-amz-max-parts");
+    const auto partNumberMarkerStr = headers.getHeaders().getSingleOrEmpty("x-amz-part-number-marker");
+
+    int partNumberMarker = 0;
+    try
+    {
+        if(!partNumberMarkerStr.empty())
+            partNumberMarker = std::stoi(partNumberMarkerStr);
+    }
+    catch(const std::exception&)
+    {
+        ResponseBuilder(self->downstream_)
+                    .status(400, "Bad request")
+                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid part number marker", fullKeyPath(), ""))
+                    .sendWithEOM();
+        return;
+    }
+
+    int maxParts = 1000;
+    try
+    {
+        if(!maxPartsStr.empty())
+            maxParts = std::stoi(maxPartsStr);
+    }
+    catch(const std::exception&)
+    {
+        ResponseBuilder(self->downstream_)
+                    .status(400, "Bad request")
+                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid max parts", fullKeyPath(), ""))
+                    .sendWithEOM();
+        return;
+    }
+
+    if(maxParts<1 || maxParts>1000)
+    {
+        ResponseBuilder(self->downstream_)
+                    .status(400, "Bad request")
+                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "max parts must be between 1 and 1000", fullKeyPath(), ""))
+                    .sendWithEOM();
+        return;
+    }
+
+    bool outputEtag = false;
+    bool outputChecksum = false;
+    bool outputLastModified = false;
+    bool outputSize = false;
+    bool outputParts = false;
+    bool outputStorageClass = false;
+
+    headers.getHeaders().forEachValueOfHeader("x-amz-object-attributes", [&](std::string_view val) -> bool
+    {
+        if(val=="ETag")
+            outputEtag = true;
+        else if(val=="Checksum")
+            outputChecksum = true;
+        else if(val=="LastModified")
+            outputLastModified = true;
+        else if(val=="ObjectSize")
+            outputSize = true;
+        else if(val=="ObjectParts")
+            outputParts = true;
+        else if(val=="StorageClass")
+            outputStorageClass = true;
+        else
+        {
+            std::vector<std::string_view> parts;
+            folly::split(',', val, parts);
+            for (const auto& part : parts)
+            {
+                const auto trimmedPart = folly::trimWhitespace(part);
+                if(trimmedPart=="ETag")
+                    outputEtag = true;
+                else if(trimmedPart=="Checksum")
+                    outputChecksum = true;
+                else if(trimmedPart=="LastModified")
+                    outputLastModified = true;
+                else if(trimmedPart=="ObjectSize")
+                    outputSize = true;
+                else if(trimmedPart=="ObjectParts")
+                    outputParts = true;
+                else if(trimmedPart=="StorageClass")
+                    outputStorageClass = true;
+            }
+        }
+
+        return false;
+    });
+    
+
+    folly::getGlobalCPUExecutor()->add(
+            [self = self, evb, outputEtag, outputChecksum, outputLastModified, outputSize, outputParts, outputStorageClass, accessKey, partNumberMarker, maxParts, hasPartNumberMarker = !partNumberMarkerStr.empty()]()
+            { 
+                unsigned int flags = SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading;
+                const auto findNewestVersion = self->keyInfo.withVersioning() && self->keyInfo.version==0;
+                std::string findPath;
+                if(findNewestVersion)
+                {
+                    flags |= SingleFileStorage::ReadNewest;
+                    findPath = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
+                }
+                else
+                {
+                    findPath = make_key(self->keyInfo);
+                }               
+
+                auto res = self->sfs().read_prepare(findPath, flags);
+
+                if (res.err != 0)
+                {
+                    XLOGF(INFO, "Object {} err {}", self->keyInfo.key, res.err);
+                    evb->runInEventBaseThread([self = self, res, accessKey]()
+                                              {
+
+                        if(res.err==ENOENT)
+                        {
+                            const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
+                            if(isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), Action::ListObjects, accessKey))
+                            {
+                                ResponseBuilder(self->downstream_)
+                                    .status(404, "Not found")
+                                    .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
+                                    .sendWithEOM();
+                            }
+                            else
+                            {
+                                ResponseBuilder(self->downstream_)
+                                    .status(403, "Forbidden")
+                                    .body(s3errorXml(S3ErrorCode::AccessDenied, "Access is forbidden", self->fullKeyPath(), ""))
+                                    .sendWithEOM();
+                            }
+                        }
+                        else if(res.err==ENOTRECOVERABLE)
+                        {
+                            ResponseBuilder(self->downstream_)
+                                .status(500, "Internal error")
+                                .body(s3errorXml(S3ErrorCode::InternalError, "Storage is dead", self->fullKeyPath(), ""))
+                                .sendWithEOM();
+                        }
+                        else
+                        {
+                            ResponseBuilder(self->downstream_)
+                                .status(500, "Internal error")
+                                .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error code: {}", res.err), self->fullKeyPath(), ""))
+                                .sendWithEOM();
+                        }
+                                              });
+                    return;
+                }
+                else if(findNewestVersion)
+                {
+                    findPath = res.key;
+                    self->keyInfo.version = extractKeyInfoView(findPath).version;
+                }
+
+                if(!self->parseMultipartInfo(res.md5sum, res.total_len, self->multiPartDownloadData, &self->objMetadata, &self->sdkChecksumHash))
+                {
+                    evb->runInEventBaseThread([self = self]()
+                                              {
+                                ResponseBuilder(self->downstream_)
+                                .status(500, "Internal error")
+                                .body(s3errorXml(S3ErrorCode::InternalError, "Error parsing object metadata", self->fullKeyPath(), ""))
+                                .sendWithEOM();
+                                              });
+                                            return;
+                }
+                
+                std::string output= "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                    "<GetObjectAttributesResponse>\n";
+
+                if(outputEtag)
+                {
+                    const auto md5sum = S3Handler::md5sumBinFromData(res.md5sum);
+                    output += fmt::format("\t<ETag>{}</ETag>\n", self->getEtagParsedMultipart(md5sum));
+                }
+
+                if(outputChecksum && self->sdkChecksumHash)
+                {
+                    const auto checksumType = (!self->multiPartDownloadData || self->sdkChecksumHash->isFull()) ? "FULL_OBJECT" : "COMPOSITE";
+
+                    output += fmt::format("\t<Checksum>\n\t\t<Checksum{}>{}</Checksum{}>\n\t\t<ChecksumType>{}</ChecksumType>\n\t</Checksum>\n",
+                        self->sdkChecksumHash->getHashTypeStr(), self->sdkChecksumHash->expectedCombined(self->multiPartDownloadData ? self->multiPartDownloadData->numParts : 0), 
+                        self->sdkChecksumHash->getHashTypeStr(), checksumType);
+                }
+
+                if(outputParts)
+                {
+                    std::string partEtag;
+                    int64_t partOffset;
+                    int64_t partLen;
+                    int64_t partSize;
+                    std::unique_ptr<PayloadHashBase> partChecksumHash;
+                    const auto rc = seekMultipart(self->sfs(), partNumberMarker, self->keyInfo.bucketId, false, 
+                        *self->multiPartDownloadData, res.extents, partEtag, partOffset, partLen, partChecksumHash, &partSize);
+
+                    if(rc)
+                    {
+                        evb->runInEventBaseThread([self = self, rc]()
+                                {
+                                    ResponseBuilder(self->downstream_)
+                                        .status(500, "Internal error")
+                                        .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error seeking to part: {}", rc), self->fullKeyPath(), ""))
+                                        .sendWithEOM();
+                            });
+                        return;
+                    }
+
+                    output+= fmt::format("\t<ObjectParts>\n\t\t<MaxParts>{}</MaxParts>\n", maxParts);
+
+                    if(hasPartNumberMarker)
+                    {
+                        output += fmt::format("\t\t<PartNumberMarker>{}</PartNumberMarker>\n", partNumberMarker);
+                    }
+
+                    int outputPartNumber = 0;
+                    bool isTruncated = true;
+
+                    do
+                    {
+
+                        output+= "\t\t<Part>\n";
+
+                        if(partChecksumHash)
+                        {
+                            output += fmt::format("\t\t\t<Checksum{}>{}</Checksum{}>\n", partChecksumHash->getHashTypeStr(), partChecksumHash->expectedCombined(0), partChecksumHash->getHashTypeStr());
+                        }
+
+                        output += fmt::format(
+                            "\t\t\t<PartNumber>{}</PartNumber>\n"
+                            "\t\t\t<Size>{}</Size>\n"
+                            "\t\t</Part>\n", partNumberMarker + outputPartNumber + 1, partSize);
+
+                        ++outputPartNumber;
+
+                        std::vector<SingleFileStorage::Ext> extents;
+                        const int rc = readNextMultipartExt(self->sfs(), partOffset, self->keyInfo.bucketId, false,
+                             *self->multiPartDownloadData, extents, &partEtag, &partChecksumHash, &partSize);
+                        if(rc && rc != ENOENT)
+                        {
+                            XLOGF(WARN, "Error reading part number {} of key {}: {}",
+                                outputPartNumber+1, self->keyInfo.key, rc);
+                            evb->runInEventBaseThread([self = self, rc]()
+                                    {
+                                        ResponseBuilder(self->downstream_)
+                                            .status(500, "Internal error")
+                                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error reading part: {}", rc), self->fullKeyPath(), ""))
+                                            .sendWithEOM();
+                            });
+                            return;
+                        }
+                        else if(rc==EIO)
+                        {
+                            const auto keyRc = self->sfs().read_prepare(findPath, SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading);
+                            if(keyRc.err == ENOENT)
+                            {
+                                const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
+                                if(isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), Action::ListObjects, accessKey))
+                                {
+                                    evb->runInEventBaseThread([self = self]()
+                                        {
+                                    ResponseBuilder(self->downstream_)
+                                        .status(404, "Not found")
+                                        .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
+                                        .sendWithEOM();
+                                    });
+                                }
+                                else
+                                {
+                                    evb->runInEventBaseThread([self = self]()
+                                        {
+                                    ResponseBuilder(self->downstream_)
+                                        .status(403, "Forbidden")
+                                        .body(s3errorXml(S3ErrorCode::AccessDenied, "Access is forbidden", self->fullKeyPath(), ""))
+                                        .sendWithEOM();
+                                        });
+                                }
+                                return;
+                            }
+                            else
+                            {
+                                XLOGF(WARN, "Error reading part number {} of key {}: {}",
+                                outputPartNumber+1, self->keyInfo.key, rc);
+                                evb->runInEventBaseThread([self = self, rc]()
+                                        {
+                                            ResponseBuilder(self->downstream_)
+                                                .status(500, "Internal error")
+                                                .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error reading part: {}", rc), self->fullKeyPath(), ""))
+                                                .sendWithEOM();
+                                });
+                                return;
+                            }
+                        }
+                        else if(rc==ENOENT)
+                        {
+                            isTruncated=false;
+                            break;
+                        }
+                    }
+                    while(outputPartNumber<maxParts);
+
+                    if(isTruncated)
+                    {
+                        output += fmt::format("\t\t<IsTruncated>true</IsTruncated>\n"
+                            "\t\t<NextPartNumberMarker>{}</NextPartNumberMarker>\n", partNumberMarker + outputPartNumber);
+                    }
+                    else
+                    {
+                        output += "\t\t<IsTruncated>false</IsTruncated>\n";
+                    }
+
+                    output += fmt::format("\t\t<PartsCount>{}</PartsCount>\n"
+                        "\t</ObjectParts>\n", outputPartNumber);
+                }
+
+                if(outputStorageClass)
+                {
+                    output += "\t<StorageClass>STANDARD</StorageClass>\n";
+                }
+
+                if(outputSize)
+                {
+                    output += fmt::format("\t<ObjectSize>{}</ObjectSize>\n", res.total_len);
+                }
+
+                output += "</GetObjectAttributesResponse>";
+
+                XLOGF(INFO, "Output for GetObjectAttributes of {}: {}", self->keyInfo.key, output);
+
+                evb->runInEventBaseThread([self = self, 
+                        last_modified = res.last_modified, outputLastModified, output = std::move(output)]()
+                                              {
+                    
+                    auto resp = std::move(ResponseBuilder(self->downstream_).status(200, "OK"));
+
+                    if(outputLastModified)
+                    {
+                        resp.header("Last-Modified", format_last_modified_rfc1123(last_modified));
+                    }
+
+                    if(self->keyInfo.version!=0)
+                    {
+                        resp.header("x-amz-version-id", self->sfs().encrypt_id(self->keyInfo.version));
+                    }
+
+                    resp.body(output).sendWithEOM();
+                    self->finished_ = true;
+                });
+    });
 }
 
 std::string S3Handler::md5sumBinFromData(const std::string_view md5sumData)
@@ -4627,11 +5004,11 @@ int S3Handler::seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
         }
     }
 
-    return readMultipartExt(sfs, seekOffset, bucketId, true, multiPartDownloadData, extents, nullptr, nullptr);
+    return readMultipartExt(sfs, seekOffset, bucketId, true, multiPartDownloadData, extents, nullptr, nullptr, nullptr);
 }
 
 int S3Handler::seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData, 
-    std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen, std::unique_ptr<PayloadHashBase>& partHash)
+    std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen, std::unique_ptr<PayloadHashBase>& partHash, int64_t* partSize)
 {
 
     if(multiPartDownloadData.exts.empty())
@@ -4677,11 +5054,11 @@ int S3Handler::seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t buc
     }
 
     partLen = multiPartDownloadData.currExt.size;
-    return readMultipartExt(sfs, offset, bucketId, addReading, multiPartDownloadData, extents, &etag, &partHash);
+    return readMultipartExt(sfs, offset, bucketId, addReading, multiPartDownloadData, extents, &etag, &partHash, partSize);
 }
 
 int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, const bool addReading, 
-    MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string* etag, std::unique_ptr<PayloadHashBase>* partHash)
+    MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string* etag, std::unique_ptr<PayloadHashBase>* partHash, int64_t* partSize)
 {
     auto partNum = multiPartDownloadData.currExt.start;
     const auto partsBucketId = buckets::getPartsBucket(bucketId);
@@ -4694,7 +5071,7 @@ int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
         return EIO;
     }
 
-    multiPartDownloadData.needsFinalize = true;
+    multiPartDownloadData.needsFinalize = addReading;
 
     extents = std::move(res.extents);
 
@@ -4708,10 +5085,11 @@ int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
         size += ext.len;
     }
 
+    if(partSize)
+        *partSize = size;
+
     if(etag)
-    {
         *etag = getEtag(res.md5sum);
-    }
 
     if(partHash)
     {
@@ -4737,7 +5115,8 @@ int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
     return 0;
 }
 
-int S3Handler::readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents)
+int S3Handler::readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData,
+    std::vector<SingleFileStorage::Ext>& extents, std::string* etag, std::unique_ptr<PayloadHashBase>* partHash, int64_t* partSize)
 {
     XLOGF(DBG0, "Reading next multi-part ext for offset {}", offset);
     int lastPartNum = -1;
@@ -4787,7 +5166,7 @@ int S3Handler::readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int6
         multiPartDownloadData.needsFinalize = false;
     }
 
-    const auto rc = readMultipartExt(sfs, offset, bucketId, true, multiPartDownloadData, extents, nullptr, nullptr);
+    const auto rc = readMultipartExt(sfs, offset, bucketId, addReading, multiPartDownloadData, extents, etag, partHash, partSize);
     if(rc)
     {
         XLOGF(WARN, "Error reading next multipart extents code {}", rc);
@@ -4881,7 +5260,7 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
         {
             if(multiPartDownloadData)
             {
-                const int rc = readNextMultipartExt(self->sfs(), offset, self->keyInfo.bucketId, *self->multiPartDownloadData, self->extents);
+                const int rc = readNextMultipartExt(self->sfs(), offset, self->keyInfo.bucketId, true, *self->multiPartDownloadData, self->extents, nullptr, nullptr, nullptr);
                 if(rc)
                 {
                     XLOGF(WARN, "Error reading next part code {} while reading object {}", rc, self->keyInfo.key);
@@ -6579,10 +6958,10 @@ void S3Handler::onAddReadingCallback(const SingleFileStorage::SFragInfo& fragInf
     itype = itype & ~metadata_known_flags;
 
     if(itype == metadata_multipart_object)
-{
-    std::scoped_lock lock{readingMultipartObjectsMutex};
+    {
+        std::scoped_lock lock{readingMultipartObjectsMutex};
         auto& obj = readingMultipartObjects[fragInfo.fn];
-    obj.refs++;
+        obj.refs++;
     }
 }
 

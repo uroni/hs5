@@ -142,7 +142,7 @@ void DuckDbFileHandle::Read(char* buffer, int64_t bsize, int64_t offset)
         {
             if(multiPartDownloadData)
             {
-                const int rc = S3Handler::readNextMultipartExt(sfs(), offset, bucketId, true, *multiPartDownloadData, extents, nullptr, nullptr);
+                const int rc = S3Handler::readNextMultipartExt(sfs(), offset, bucketId, true, *multiPartDownloadData, extents, nullptr, nullptr, nullptr);
                 if(rc)
                 {
                     throw duckdb::IOException("Error reading next part code " + std::to_string(rc));

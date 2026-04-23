@@ -1632,3 +1632,57 @@ def test_enable_bucket_versioning(hs5: Hs5Runner):
 
     ver = s3_client.get_bucket_versioning(Bucket=hs5.testbucketname())
     assert "Status" in ver and ver["Status"] == "Enabled"
+
+
+def test_get_object_attributes(hs5: Hs5Runner, tmp_path: Path):
+    s3_client = hs5.get_s3_client()
+
+    fdata = os.urandom(1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), Metadata={"foo": "bar"})
+
+    obj = s3_client.get_object_attributes(Bucket=hs5.testbucketname(), Key="upload.txt", ObjectAttributes=["ETag", "ObjectSize", "Checksum", "StorageClass"])
+    assert "ETag" in obj
+    assert "ObjectSize" in obj
+    assert obj["ObjectSize"] == len(fdata)
+    assert "Checksum" in obj
+    assert "ChecksumCRC32" in obj["Checksum"]
+    assert "StorageClass" in obj and obj["StorageClass"] == "STANDARD"
+
+def test_get_object_attributes_multipart(hs5: Hs5Runner, tmp_path: Path):
+    s3_client = hs5.get_s3_client()
+
+    fdata = os.urandom(10*1024*1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+
+    config = TransferConfig(multipart_chunksize=5*1024*1024)
+    s3_client.upload_file(str(tmp_path / "upload.txt"), hs5.testbucketname(), "upload.txt", Config=config)
+
+    obj = s3_client.get_object_attributes(Bucket=hs5.testbucketname(), Key="upload.txt", ObjectAttributes=["ETag", "ObjectSize", "Checksum", "StorageClass", "ObjectParts"])
+    assert "ETag" in obj
+    assert "ObjectSize" in obj
+    assert obj["ObjectSize"] == len(fdata)
+    assert "Checksum" in obj
+    assert "ChecksumCRC32" in obj["Checksum"]
+    assert "StorageClass" in obj and obj["StorageClass"] == "STANDARD"
+    assert "ObjectParts" in obj
+    parts = obj["ObjectParts"]
+    assert "TotalPartsCount" in parts and parts["TotalPartsCount"] == 2
+    assert "IsTruncated" in parts and not parts["IsTruncated"]
+    assert not "NextPartNumberMarker" in parts
+    assert "Parts" in parts and len(parts["Parts"]) == 2
+    part1 = parts["Parts"][0]
+    part2 = parts["Parts"][1]
+
+    from awscrt.checksums import crc32
+
+    assert "PartNumber" in part1 and part1["PartNumber"] == 1
+    assert "PartNumber" in part2 and part2["PartNumber"] == 2
+    assert "Size" in part1 and part1["Size"] == 5*1024*1024
+    assert "Size" in part2 and part2["Size"] == 5*1024*1024
+    assert "ChecksumCRC32" in part1 and part1["ChecksumCRC32"] == base64.b64encode(crc32(fdata[0:5*1024*1024]).to_bytes(4, byteorder='big')).decode()
+    assert "ChecksumCRC32" in part2 and part2["ChecksumCRC32"] == base64.b64encode(crc32(fdata[5*1024*1024:]).to_bytes(4, byteorder='big')).decode()
+

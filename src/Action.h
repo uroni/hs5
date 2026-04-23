@@ -52,7 +52,8 @@ enum class Action
     PutBucketVersioning=45,
     GetBucketVersioning=46,
     ListObjectVersions=47,
-    LastDummyAction=48,
+    GetObjectAttributes=48,
+    LastDummyAction=49,
 };
 
 Action actionFromStr(const std::string_view action);

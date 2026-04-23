@@ -2,6 +2,7 @@
 #include <string>
 #include <memory>
 #include <openssl/evp.h>
+#include <assert.h>
 #include "data.h"
 
 enum class AwsHashType
@@ -79,6 +80,8 @@ public:
         return getHashType() == other.getHashType();
     }
 
+    virtual std::string expectedCombined(const uint64_t numParts) const;
+
     bool isFinalExpected();
     bool isFinalCombinedExpected(const uint64_t numParts);
 
@@ -86,6 +89,8 @@ public:
     {
         return false;
     }
+
+    virtual std::string getHashTypeStr() const = 0;
 };
 
 class PayloadHashSha256 : public PayloadHashBase
@@ -101,6 +106,7 @@ public:
         AwsHashType getHashType() const override { return AwsHashType::Sha256; }
         std::string_view getHeaderKey() const override { return "x-amz-checksum-sha256"; }
         size_t getSize() const override;
+        virtual std::string getHashTypeStr() const override { return "SHA256"; }
     };
 
 class PayloadHashSha1 : public PayloadHashBase
@@ -116,6 +122,7 @@ public:
         AwsHashType getHashType() const override { return AwsHashType::Sha1; }
         std::string_view getHeaderKey() const override { return "x-amz-checksum-sha1"; }
         size_t getSize() const override;
+        virtual std::string getHashTypeStr() const override { return "SHA1"; }
     };
 
 class PayloadHashCrc32 : public PayloadHashBase
@@ -129,6 +136,7 @@ public:
     AwsHashType getHashType() const override { return AwsHashType::Crc32; }
     std::string_view getHeaderKey() const override { return "x-amz-checksum-crc32"; }
     size_t getSize() const override;
+    virtual std::string getHashTypeStr() const override { return "CRC32"; }
 };
 
 class PayloadHashCrc32Full: public PayloadHashCrc32
@@ -162,6 +170,7 @@ public:
     AwsHashType getHashType() const override { return AwsHashType::Crc32c; }
     std::string_view getHeaderKey() const override { return "x-amz-checksum-crc32c"; }
     size_t getSize() const override;
+    virtual std::string getHashTypeStr() const override { return "CRC32C"; }
 };
 
 class PayloadHashCrc32cFull : public PayloadHashCrc32c
@@ -195,6 +204,7 @@ public:
     AwsHashType getHashType() const override { return AwsHashType::Crc64Nvme; }
     std::string_view getHeaderKey() const override { return "x-amz-checksum-crc64nvme"; }
     size_t getSize() const override;
+    virtual std::string getHashTypeStr() const override { return "CRC64NVME"; }
 };
 
 class PayloadHashCrc64NvmeFull : public PayloadHashCrc64Nvme

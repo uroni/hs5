@@ -45,6 +45,10 @@ Action actionFromStr(const std::string_view action)
     if(action == "hs5:ChangePassword") return Action::ChangePassword;
     if(action == "hs5:ChangeOwnPassword") return Action::ChangeOwnPassword;
     if(action == "hs5:SetBucketPublic") return Action::SetBucketPublic;
+    if(action== "s3:PutBucketVersioning") return Action::PutBucketVersioning;
+    if(action== "s3:GetBucketVersioning") return Action::GetBucketVersioning;
+    if(action== "s3:ListObjectVersions") return Action::ListObjectVersions;
+    if(action== "s3:GetObjectAttributes") return Action::GetObjectAttributes;    
     return Action::Unknown;
 }
 
@@ -83,6 +87,10 @@ std::string actionToStr(const Action action)
         case Action::AllActions:return  "*";
         case Action::ListBuckets:return  "s3:ListBuckets"; 
         case Action::SetBucketPublic:return  "hs5:SetBucketPublic";
+        case Action::PutBucketVersioning:return  "s3:PutBucketVersioning";
+        case Action::GetBucketVersioning:return  "s3:GetBucketVersioning";
+        case Action::ListObjectVersions:return  "s3:ListObjectVersions";
+        case Action::GetObjectAttributes:return  "s3:GetObjectAttributes";
     }
     return "";
 }
