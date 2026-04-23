@@ -226,6 +226,7 @@ public:
     static std::vector<SingleFileStorage::SFragInfo> onDeleteCallback(const std::string& fn, const std::string& md5sum);
     static std::optional<std::string> onModifyCallback(const std::string& fn, std::string md5sum, std::string md5sumParam);
     static void onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride);
+    static void onAddReadingCallback(const SingleFileStorage::SFragInfo& fragInfo);
 
     static std::string md5sumBinFromData(const std::string_view md5sumData);
 

@@ -2883,6 +2883,8 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                 unsigned int flags = 0;
                 if(self->request_action == Action::HeadObject)
                     flags |= SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading;
+                else
+                    flags |= SingleFileStorage::ReadAddReadingCallback;
                 
                 std::string findPath;
 
@@ -2968,10 +2970,6 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                                 .sendWithEOM();
                                               });
                                             return;
-                }
-                else if(self->multiPartDownloadData && self->request_action != Action::HeadObject)
-                {
-                    addReadingMultipartObject(findPath);
                 }
 
                 if(res.md5sum.size()==1 && res.md5sum[0] == metadata_tombstone)
@@ -6569,11 +6567,23 @@ std::string S3Handler::fullKeyPath() const
     return buckets::getBucketName(keyInfo.bucketId) + "/" + keyInfo.key;
 }
 
-void S3Handler::addReadingMultipartObject(const std::string& key)
+
+void S3Handler::onAddReadingCallback(const SingleFileStorage::SFragInfo& fragInfo)
+{
+    CRData rdata(fragInfo.md5sum.data(), fragInfo.md5sum.size());
+    int64_t itype;
+    if(!rdata.getVarInt(&itype))
+        return;
+
+    const auto itypeFlags = itype;
+    itype = itype & ~metadata_known_flags;
+
+    if(itype == metadata_multipart_object)
 {
     std::scoped_lock lock{readingMultipartObjectsMutex};
-    auto& obj = readingMultipartObjects[key];
+        auto& obj = readingMultipartObjects[fragInfo.fn];
     obj.refs++;
+    }
 }
 
 void S3Handler::removeReadingMultipartObject(const std::string& key, SingleFileStorage& sfs)

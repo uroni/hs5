@@ -255,6 +255,9 @@ int realMain(int argc, char* argv[])
     sfsoptions.match_callback = [](SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo) {
       S3Handler::onMatchCallback(matchInfo, fragInfo, {});
     };
+    sfsoptions.add_reading_callback = [](const SingleFileStorage::SFragInfo& fragInfo) {
+      S3Handler::onAddReadingCallback(fragInfo);
+    };
     sfsoptions.wal_write_meta = FLAGS_wal_write_meta;
     sfsoptions.wal_write_data = FLAGS_wal_write_data;    
 

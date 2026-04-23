@@ -68,7 +68,7 @@ void DuckDbFileHandle::Initialize()
 
     bucketId = bucketInfo.id;
 
-    unsigned int readPrepFlags = 0;
+    unsigned int readPrepFlags = SingleFileStorage::ReadAddReadingCallback;
 
     const auto withVersioning = bucketInfo.versioning == buckets::VersioningState::Enabled || bucketInfo.versioning == buckets::VersioningState::Suspended;
     if(withVersioning)
@@ -112,9 +112,7 @@ void DuckDbFileHandle::Initialize()
         lastModified = res.last_modified;
 
         if(!multiPartDownloadData)
-            etag = S3Handler::md5sumBinFromData(res.md5sum);     
-        else
-            S3Handler::addReadingMultipartObject(s3key);   
+            etag = S3Handler::md5sumBinFromData(res.md5sum);
     }
 }
 
@@ -144,7 +142,7 @@ void DuckDbFileHandle::Read(char* buffer, int64_t bsize, int64_t offset)
         {
             if(multiPartDownloadData)
             {
-                const int rc = S3Handler::readNextMultipartExt(sfs(), offset, bucketId, *multiPartDownloadData, extents);
+                const int rc = S3Handler::readNextMultipartExt(sfs(), offset, bucketId, true, *multiPartDownloadData, extents, nullptr, nullptr);
                 if(rc)
                 {
                     throw duckdb::IOException("Error reading next part code " + std::to_string(rc));

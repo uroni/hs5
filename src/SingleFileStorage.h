@@ -162,6 +162,7 @@ public:
 	using on_delete_callback_t = std::function<std::vector<SingleFileStorage::SFragInfo>(const std::string&, const std::string&)>;
 	using modify_data_callback_t = std::function<std::optional<std::string>(const std::string&, std::string, std::string)>;
 	using match_callback_t = std::function<void(MatchInfo&, const SingleFileStorage::SFragInfo&)>;
+	using add_reading_callback_t = std::function<void(const SingleFileStorage::SFragInfo&)>;
 	
 	struct SFSOptions
 	{
@@ -190,6 +191,7 @@ public:
 		on_delete_callback_t on_delete_callback;
 		modify_data_callback_t modify_data_callback;
 		match_callback_t match_callback;
+		add_reading_callback_t add_reading_callback;
 		bool wal_write_meta = true;
 		int64_t wal_write_data = 0;
 	};
@@ -231,6 +233,7 @@ public:
 	const static unsigned int ReadMetaOnly = 4;
 	const static unsigned int ReadSkipAddReading = 8;
 	const static unsigned int ReadNewest = 16;
+	const static unsigned int ReadAddReadingCallback = 32;
 
 	struct ReadPrepareResult
 	{
@@ -687,6 +690,7 @@ private:
 	on_delete_callback_t on_delete_callback;
 	modify_data_callback_t modify_data_callback;
 	match_callback_t match_callback;
+	add_reading_callback_t add_reading_callback;
 
 	int64_t curr_version = 0;
 

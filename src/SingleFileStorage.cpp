@@ -434,7 +434,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	stop_on_error(options.stop_on_error), punch_holes(options.punch_holes),
 	data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func),
 	common_prefix_hash_func(options.common_prefix_hash_func), on_delete_callback(options.on_delete_callback), modify_data_callback(options.modify_data_callback), 
-	match_callback(options.match_callback), wal_write_meta(options.wal_write_meta), wal_write_data(options.wal_write_data)
+	match_callback(options.match_callback), wal_write_meta(options.wal_write_meta), wal_write_data(options.wal_write_data), add_reading_callback(options.add_reading_callback)
 {
 	if(common_prefix_func==nullptr)
 		common_prefix_func = common_prefix_passthrough;
@@ -2391,6 +2391,20 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 
 			add_reading_item(frag_info);
 		}
+		else if((flags & ReadAddReadingCallback) && frag_info.offset==0 && frag_info.len==0 && frag_info.md5sum.size()>1)
+		{
+			std::unique_lock lock(mutex);
+
+			auto it = commit_items.find(common_prefix_hash_func(fn));
+			if(it!=commit_items.end())
+			{
+				lock.unlock();
+				return read_prepare(fn, flags | ReadUnsynced);
+			}
+
+			if(add_reading_callback)
+				add_reading_callback(frag_info);
+		}
 	}
 	else
 	{
@@ -2401,8 +2415,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 		curr_frag.action = FragAction::ReadFragInfo;
 		curr_frag.fn = fn;
 		curr_frag.commit_info = &commit_info;
-		curr_frag.offset = read_newest ? 1 : 0;
-		curr_frag.len = (flags & ReadSkipAddReading) ? 0 : 1;
+		curr_frag.offset = flags;
 
 		{
 			std::unique_lock lock(mutex);
@@ -2492,7 +2505,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::check_existence(const st
 		curr_frag.action =FragAction::ReadFragInfoWithoutParsing;
 		curr_frag.fn = fn;
 		curr_frag.commit_info = &commit_info;
-		curr_frag.offset = read_newest ? 1 : 0;
+		curr_frag.offset = flags | ReadSkipAddReading;
 
 		{
 			std::unique_lock lock(mutex);
@@ -3228,10 +3241,15 @@ int64_t SingleFileStorage::remove_fn(const std::string & fn, MDB_txn * txn, MDB_
 				if(call_callback && !md5sum.empty())
 				{
 					auto other_actions = on_delete_callback(fn, md5sum);
+					std::unique_lock lock(mutex, std::defer_lock);
 					for(const auto& action: other_actions)
 					{
 						if(has_commit_item(action.action))
+						{
+							if(!lock.owns_lock())
+								lock.lock();
 							commit_items[common_prefix_hash_func(action.fn)]++;
+						}
 					}
 					callback_queue.insert(callback_queue.end(), 
 						std::make_move_iterator(other_actions.begin()), 
@@ -7209,6 +7227,8 @@ void SingleFileStorage::operator()()
 	while (!do_quit
 		&& !is_dead)
 	{
+		assert(lock.owns_lock());
+
 		if (commit_errors > 0)
 		{
 			write_offline = true;
@@ -7433,12 +7453,18 @@ void SingleFileStorage::operator()()
 					while(linked)
 					{
 						if (has_commit_item(linked->action))
+						{
+							if(!lock.owns_lock())
+								lock.lock();
+
 							--commit_items[common_prefix_hash_func(linked->fn)];
+						}
 
 						linked = std::move(linked->linked);
 					}
 
-					lock.lock();
+					if(!lock.owns_lock())
+						lock.lock();
 					continue;
 				}
 			}
@@ -8067,9 +8093,14 @@ void SingleFileStorage::operator()()
 				frag_info.commit_info->commit_errors = 0;
 				if (frag_info.commit_info->frag_info != nullptr)
 				{
-					*frag_info.commit_info->frag_info = get_frag_info(txn, frag_info.fn, frag_info.action == FragAction::ReadFragInfo, frag_info.offset>0);
-					if(frag_info.len == 1 && (frag_info.commit_info->frag_info->offset != 0 || frag_info.commit_info->frag_info->len>0))
+					const auto flags = frag_info.offset;
+					const bool read_newest = flags & ReadNewest;;
+					*frag_info.commit_info->frag_info = get_frag_info(txn, frag_info.fn, frag_info.action == FragAction::ReadFragInfo, read_newest);
+					if(!(flags & ReadSkipAddReading) && (frag_info.commit_info->frag_info->offset != 0 || frag_info.commit_info->frag_info->len>0))
 						add_reading_item(*frag_info.commit_info->frag_info);
+					else if((flags & ReadAddReadingCallback) && add_reading_callback && frag_info.commit_info->frag_info->offset==0 
+						&& frag_info.commit_info->frag_info->len==0 && frag_info.commit_info->frag_info->md5sum.size()>1)
+						add_reading_callback(*frag_info.commit_info->frag_info);
 				}
 
 				frag_info.commit_info->commit_done.notify_all();
