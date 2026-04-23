@@ -8097,7 +8097,10 @@ void SingleFileStorage::operator()()
 					const bool read_newest = flags & ReadNewest;;
 					*frag_info.commit_info->frag_info = get_frag_info(txn, frag_info.fn, frag_info.action == FragAction::ReadFragInfo, read_newest);
 					if(!(flags & ReadSkipAddReading) && (frag_info.commit_info->frag_info->offset != 0 || frag_info.commit_info->frag_info->len>0))
+					{
+						std::lock_guard lock(mutex);
 						add_reading_item(*frag_info.commit_info->frag_info);
+					}
 					else if((flags & ReadAddReadingCallback) && add_reading_callback && frag_info.commit_info->frag_info->offset==0 
 						&& frag_info.commit_info->frag_info->len==0 && frag_info.commit_info->frag_info->md5sum.size()>1)
 						add_reading_callback(read_newest ? frag_info.commit_info->frag_info->fn : frag_info.fn, *frag_info.commit_info->frag_info);
