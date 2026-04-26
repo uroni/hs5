@@ -100,9 +100,7 @@ Data and metadata will be stored in the current directory by default. It'll prin
 
 ## Omissions #
 
-At this point HS5 implements most major S3 operations. One major operation that is missing is POST Object uploading.
-
-Long term the goal is to pass most of the [Ceph S3 tests](https://github.com/ceph/s3-tests).
+At this point HS5 implements most major S3 operations. One major operation that is missing is POST Object uploading. Object locks are also TBD.
 
 ## How the storage works #
 
