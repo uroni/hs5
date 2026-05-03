@@ -2355,7 +2355,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            const auto contentType = headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_CONTENT_TYPE);
+            const auto contentTypeStr = headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_CONTENT_TYPE);
+            const std::string_view contentType(contentTypeStr);
 
             const auto paramsStart = contentType.find(';');
             if(paramsStart == std::string::npos)
