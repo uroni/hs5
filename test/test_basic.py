@@ -14,6 +14,7 @@ from uuid import uuid4
 import boto3
 from botocore.exceptions import ClientError
 import os
+from hs5_api.models.set_bucket_public_params import SetBucketPublicParams
 from hs5_fixture import Hs5Runner, hs5, hs5_large, hs5_large_small_alloc_chunksize, hs5_no_precheck
 import pytest
 import threading
@@ -1686,3 +1687,27 @@ def test_get_object_attributes_multipart(hs5: Hs5Runner, tmp_path: Path):
     assert "ChecksumCRC32" in part1 and part1["ChecksumCRC32"] == base64.b64encode(crc32(fdata[0:5*1024*1024]).to_bytes(4, byteorder='big')).decode()
     assert "ChecksumCRC32" in part2 and part2["ChecksumCRC32"] == base64.b64encode(crc32(fdata[5*1024*1024:]).to_bytes(4, byteorder='big')).decode()
 
+
+def test_post_form_upload_public(hs5: Hs5Runner, tmp_path: Path):
+    s3_client = hs5.get_s3_client()
+
+    # Make public writable bucket
+    hs5.get_api_client_admin().set_bucket_public(set_bucket_public_params=SetBucketPublicParams(bucketName=hs5.testbucketname(), public=["write"]))
+
+    fdata = os.urandom(1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+
+    # Generate presigned POST URL
+    post_fields = s3_client.generate_presigned_post(Bucket=hs5.testbucketname(), Key="upload.txt", ExpiresIn=3600)
+
+    # Use the generated URL and fields to upload the file
+    with open(tmp_path / "upload.txt", "rb") as f:
+        files = {'file': ((tmp_path / "upload.txt").name, f)}
+        response = requests.post(post_fields['url'], data=post_fields['fields'], files=files)
+        response.raise_for_status()
+
+    # Verify the file was uploaded correctly
+    dl_path = tmp_path / "download.txt"
+    s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
+    assert filecmp.cmp(tmp_path / "upload.txt", dl_path)

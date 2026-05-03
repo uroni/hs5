@@ -22,6 +22,7 @@
 #include <folly/io/IOBuf.h>
 #include <folly/io/IOBufQueue.h>
 #include <folly/logging/LogLevel.h>
+#include <folly/logging/LogStreamProcessor.h>
 #include <folly/logging/xlog.h>
 #include <folly/Uri.h>
 #include <folly/lang/Bits.h>
@@ -30,6 +31,7 @@
 #include <folly/base64.h>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
 #include <openssl/md5.h>
@@ -43,6 +45,7 @@
 #include <limits.h>
 #include <string>
 #include <string_view>
+#include <vector>
 #include "Auth.h"
 #include "main.h"
 #include "Buckets.h"
@@ -2218,14 +2221,14 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        if(!setKeyInfoFromPath(path, nullptr))
-            return;
-
         const std::string uploadsStr = "uploads";
         
         if(headers->getQueryStringAsStringPiece() == uploadsStr ||
             headers->hasQueryParam("uploads"))
         {
+            if(!setKeyInfoFromPath(path, nullptr))
+                return;
+
             const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
             const auto action = Action::CreateMultipartUpload;
 
@@ -2259,8 +2262,11 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             createMultipartUpload(*headers);
             return;
         }
-        else
+        else if(headers->hasQueryParam("uploadId"))
         {
+            if(!setKeyInfoFromPath(path, nullptr))
+                return;
+
             const auto payloadOpt = initPayloadHash(*headers);
             if(!payloadOpt)
                 return;
@@ -2322,6 +2328,110 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             parseMatchInfo(*headers, false, false);
 
             XLOGF(INFO, "Complete multi-part upload of {} uploadId {}", keyInfo.key, uploadId.id);
+        }
+        else
+        {
+            std::string cl = headers->getHeaders().getSingleOrEmpty(
+                    proxygen::HTTP_HEADER_CONTENT_LENGTH);
+            if (cl.empty())
+            {
+                ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("Content-Length header not set")
+                    .sendWithEOM();
+                return;
+            }
+
+            try
+            {
+                put_remaining = std::atoll(cl.c_str());
+            }
+            catch(const std::exception& e)
+            {
+                ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("Invalid Content-Length header")
+                    .sendWithEOM();
+                return;
+            }
+
+            const auto contentType = headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_CONTENT_TYPE);
+
+            const auto paramsStart = contentType.find(';');
+            if(paramsStart == std::string::npos)
+            {
+                ResponseBuilder(downstream_)
+                    .status(400, "Bad request")
+                    .body("Content-Type must be multipart/form-data with a boundary for POST requests (1)")
+                    .sendWithEOM();
+                return;
+            }
+
+            const auto contentTypeMain = contentType.substr(0, paramsStart);
+            if(folly::trimWhitespace(contentTypeMain) != "multipart/form-data")
+            {
+                ResponseBuilder(downstream_)
+                    .status(400, "Bad request")
+                    .body("Content-Type must be multipart/form-data with a boundary for POST requests (2)")
+                    .sendWithEOM();
+                return;
+            }
+
+            const auto paramsStr = contentType.substr(paramsStart+1);
+            
+            const auto eqPos = paramsStr.find('=');
+            if(eqPos == std::string::npos)
+            {
+                ResponseBuilder(downstream_)
+                    .status(400, "Bad request")
+                    .body("Content-Type must be multipart/form-data with a boundary for POST requests (3)")
+                    .sendWithEOM();
+                return;
+            }
+
+            const auto paramName = folly::trimWhitespace(paramsStr.substr(0, eqPos));
+            const auto paramValue = folly::trimWhitespace(paramsStr.substr(eqPos+1));
+
+            if(paramName != "boundary" || paramValue.empty())
+            {
+                ResponseBuilder(downstream_)
+                    .status(400, "Bad request")
+                    .body("Content-Type must be multipart/form-data with a boundary for POST requests (4)")
+                    .sendWithEOM();
+                return;
+            }
+
+            if(path.empty())
+            {
+                ResponseBuilder(downstream_)
+                    .status(500, "Internal error")
+                    .body("Path empty when getting key info")
+                    .sendWithEOM();
+                return;
+            }
+
+            const auto bucketName = path.substr(1);
+
+            const auto bucketInfoOpt = buckets::getBucketInfo(bucketName);
+            if(!bucketInfoOpt)
+            {
+                XLOGF(INFO, "Bucket of {} not found", path);
+                ResponseBuilder(downstream_)
+                            .status(404, "Not found")
+                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucketName, ""))
+                            .sendWithEOM();
+                return;
+            }
+
+            const auto& bucketInfo = bucketInfoOpt.value();
+
+            keyInfo.bucketId = bucketInfo.id;
+            keyInfo.version = 0;
+            keyInfo.versioning = bucketInfo.versioning;
+            request_action = Action::PostObject;
+            postObjectData = std::make_unique<PostObjectData>(std::string(paramValue));
+            postObjectData->rfc1867Codec.setCallback(this);
+            return;
         }
     }
 }
@@ -3710,6 +3820,21 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                 {
                     self->copyObject(evb, fpath, *copyObjectInfo);
                     return;   
+                }
+
+                if(self->put_remaining>5ULL*1024*1024*1024)
+                {
+                    XLOGF(WARN, "Object too large. Size {}", self->put_remaining.load());
+                    evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Object too large", self->fullKeyPath(), ""))
+                            .sendWithEOM();
+                        std::lock_guard lock(self->extents_mutex);
+                        self->finished_ = true;
+                        self->extents_cond.notify_all(); });
+                    return;
                 }
 
                 auto res = self->sfs().write_prepare(fpath, self->put_remaining);
@@ -6337,6 +6462,17 @@ void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
         }
         return;
     }
+    else if(request_action == Action::PostObject)
+    {
+        auto& currBuf = postObjectData->bodyBuf ? postObjectData->bodyBuf : body;
+
+        if(postObjectData->bodyBuf)
+            currBuf->appendChain(std::move(body));
+
+        auto remainingBuf = postObjectData->rfc1867Codec.onIngress(std::move(currBuf));
+        postObjectData->bodyBuf = remainingBuf ? std::move(remainingBuf) : nullptr;
+        return;
+    }
     else if(request_action != Action::PutObject && request_action != Action::PutObjectPart)
     {
         XLOGF(WARN, "Ignoring body received in request type {}", static_cast<int>(request_action));
@@ -6766,10 +6902,21 @@ void S3Handler::onEOM() noexcept
         finalizeMultipartUpload();
         return;
     }
-    else if(request_action == Action::PutObject || request_action == Action::PutObjectPart)
+    else if(request_action == Action::PutObject || request_action == Action::PutObjectPart || request_action == Action::PostObject)
     {
         if(finished_)
             return;
+
+        if(request_action == Action::PostObject && postObjectData->state != PostObjectState::Done)
+        {
+            XLOGF(WARN, "Received EOM for PostObject but not finished parsing form data for obj {}", keyInfo.key);
+            ResponseBuilder(self->downstream_)
+                .status(400, "Bad request")
+                .body("Received EOM for PostObject but not finished parsing form data")
+                .sendWithEOM();
+            finished_ = true; 
+            return;
+        }
 
         XLOGF(DBG0, "Received EOM for PutObject {} done_bytes {} put_remaining {}", keyInfo.key, done_bytes, put_remaining.load(std::memory_order_relaxed));
 
@@ -7422,4 +7569,245 @@ void S3Handler::sigCheckFailed()
 #ifndef NDEBUG
     sigChecked = SigCheckResult::Failed;
 #endif
+}
+
+int S3Handler::onFieldStart(const std::string& name,
+                             folly::Optional<std::string> filename,
+                             std::unique_ptr<proxygen::HTTPMessage> msg,
+                             uint64_t postBytesProcessed)
+{
+    XLOGF(DBG0, "onFieldStart name {} filename {} postBytesProcessed {}", name, filename ? *filename : "nullopt", postBytesProcessed);
+
+    if(name=="success_action_status")
+    {
+        if(postObjectData->state != PostObjectState::Init)
+        {
+            XLOGF(WARN, "Multipart form data field 'success_action_status' received in invalid state {}", static_cast<int>(postObjectData->state));
+            postObjectData->state = PostObjectState::MultipartParsingError;
+            return -1;
+        }
+
+        postObjectData->state = PostObjectState::ParseSuccessActionStatus;        
+    }
+    else if(name=="file")
+    {
+        if(postObjectData->state != PostObjectState::Init)
+        {
+            XLOGF(WARN, "Multipart form data field 'file' received in invalid state {}", static_cast<int>(postObjectData->state));
+            postObjectData->state = PostObjectState::MultipartParsingError;
+            return -1;
+        }
+
+        if(!filename)
+        {
+            XLOGF(WARN, "Multipart form data field 'file' is missing filename");
+            postObjectData->state = PostObjectState::MultipartParsingError;
+            return 0;
+        }
+
+        if(postBytesProcessed>put_remaining)
+        {
+            XLOGF(WARN, "Multipart form data field 'file' has already received more data than expected. postBytesProcessed {} put_remaining {}", postBytesProcessed, put_remaining.load(std::memory_order_relaxed));
+            postObjectData->state = PostObjectState::MultipartParsingError;
+            return 0;
+        }
+
+        postObjectData->state = PostObjectState::File;
+        keyInfo.key = *filename;
+        put_remaining -= postBytesProcessed;
+        postObjectData->expectedLength = put_remaining;
+        postObject();
+    }
+    return 0;
+}
+
+int S3Handler::onFieldData(std::unique_ptr<folly::IOBuf> data,
+                        uint64_t postBytesProcessed)
+{
+    XLOGF(DBG0, "onFieldData postBytesProcessed {} state {}", postBytesProcessed, static_cast<int>(postObjectData->state));
+    switch(postObjectData->state)
+    {
+        case PostObjectState::ParseSuccessActionStatus:
+        {
+            auto str = data->moveToFbString().toStdString();
+            if(!postObjectData->successActionStatus)
+                postObjectData->successActionStatus = str;
+            else
+                postObjectData->successActionStatus.value() += str;
+            break;
+        }
+        case PostObjectState::File:
+        {            
+            auto evb = folly::EventBaseManager::get()->getEventBase();
+            const auto body_bytes = data->computeChainDataLength();
+            std::scoped_lock lock{bodyMutex};
+            const bool pause = bodyQueue.size()>7;
+            if(pause)
+                downstream_->pauseIngress();
+            bodyQueue.emplace(BodyObj{.offset = done_bytes, .body = std::move(data), .unpause = pause});
+            startReadBodyThread(evb);
+            done_bytes += body_bytes;
+        }
+        default:
+            break;
+    }
+    return 0;
+}
+
+void S3Handler::onFieldEnd(bool endedOnBoundary,
+                        uint64_t postBytesProcessed) 
+{
+    XLOGF(DBG0, "onFieldEnd postBytesProcessed {} endedOnBoundary {} state {}", postBytesProcessed, endedOnBoundary, static_cast<int>(postObjectData->state));
+
+    if(postObjectData->state == PostObjectState::File)
+    {
+        auto toremove = postObjectData->expectedLength - done_bytes;
+        if(toremove>0)
+        {            
+            XLOGF(DBG0, "Finished receiving file data for PostObject but {} remaining bytes.", toremove);
+            std::vector<SingleFileStorage::Ext> to_remove_extents;
+            {
+                std::scoped_lock lock(extents_mutex);
+                while(toremove>0 && !extents.empty())            
+                {
+                    auto& ext = extents.back();
+                    if(ext.len <= toremove)
+                    {
+                        put_remaining.fetch_sub(ext.len, std::memory_order_relaxed);
+                        toremove -= ext.len;
+                        to_remove_extents.push_back(ext);
+                        extents.pop_back();
+                    }
+                    else
+                    {
+                        ext.len -= toremove;
+                        put_remaining.fetch_sub(toremove, std::memory_order_relaxed);
+                        sfs().remove_extent_end(ext.data_file_offset+ext.len, toremove);
+                        break;
+                    }
+                }
+            }
+
+            if(!to_remove_extents.empty())
+            {
+                sfs().free_extents(to_remove_extents);
+            }
+        }
+        XLOGF(DBG0, "PostObject done");
+        postObjectData->state = PostObjectState::Done;
+    }
+    else if(postObjectData->state != PostObjectState::MultipartParsingError &&
+        postObjectData->state != PostObjectState::Error)
+        postObjectData->state = PostObjectState::Init;
+}
+
+void S3Handler::onError()
+{
+    XLOGF(INFO, "Error parsing multipart form data for PostObject");
+    postObjectData->state = PostObjectState::MultipartParsingError;
+}
+
+void S3Handler::postObject()
+{
+    const auto bucketName = buckets::getBucketName(keyInfo.bucketId);
+    const auto resource = fmt::format("arn:aws:s3:::{}", bucketName);
+
+    // TODO: Use Signature param
+
+    if(!isAuthorized(resource, Action::PostObject, -1))
+    {
+        XLOGF(WARN, "Unauthorized PostObject request for bucket {} key {}", bucketName, keyInfo.key);
+        ResponseBuilder(self->downstream_)
+            .status(403, "Forbidden")
+            .body(s3errorXml(S3ErrorCode::AccessDenied, "", fullKeyPath(), ""))
+            .sendWithEOM();
+        postObjectData->state = PostObjectState::Error;
+        finished_ = true;
+        return;
+    }
+
+    sigCheckOk();
+
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+    folly::getGlobalCPUExecutor()->add(
+            [self = this->self, evb]()
+            {
+                if(!self->evpMdCtx.init(EVP_md5()))
+                {
+                    XLOGF(ERR, "Failed to initialize md5 context");
+                    evb->runInEventBaseThread([self = self]()
+                                                {
+                        self->postObjectData->state = PostObjectState::Error;
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Could not initialize md5", self->fullKeyPath(), ""))
+                            .sendWithEOM();
+                        std::lock_guard lock(self->extents_mutex);
+                        self->finished_ = true;
+                        self->extents_cond.notify_all(); });
+                    return;
+                }
+
+                if(self->keyInfo.withVersioning())
+                    self->keyInfo.version = self->sfs().get_next_version();
+
+                if(self->keyInfo.key.size()>1024)
+                {
+                    XLOGF(WARN, "Key too long. Size {}", self->keyInfo.key.size());
+                    evb->runInEventBaseThread([self = self]()
+                                                {
+                        self->postObjectData->state = PostObjectState::Error;
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Key too long", self->fullKeyPath(), ""))
+                            .sendWithEOM();
+                        std::lock_guard lock(self->extents_mutex);
+                        self->finished_ = true;
+                        self->extents_cond.notify_all(); });
+                    return;
+                }
+
+                if(self->put_remaining>5ULL*1024*1024*1024)
+                {
+                    XLOGF(WARN, "Object too large. Size {}", self->put_remaining.load(std::memory_order_relaxed));
+                    evb->runInEventBaseThread([self = self]()
+                                                {
+                        self->postObjectData->state = PostObjectState::Error;
+                        ResponseBuilder(self->downstream_)
+                            .status(400, "Bad request")
+                            .body("Object too large")
+                            .sendWithEOM();
+                        std::lock_guard lock(self->extents_mutex);
+                        self->finished_ = true;
+                        self->extents_cond.notify_all(); });
+                    return;
+                }
+
+                const auto fpath = make_key(self->keyInfo);
+
+                auto res = self->sfs().write_prepare(fpath, self->put_remaining);
+                if (res.err != 0)
+                {            
+                    XLOGF(WARN, "Write object prepare failed for key {} err {}", self->keyInfo.key, res.err);        
+                    evb->runInEventBaseThread([self = self, res]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error preparing writing. Errno {}", res.err), self->fullKeyPath(), ""))
+                            .sendWithEOM();
+                        std::lock_guard lock(self->extents_mutex);
+                        self->finished_ = true;
+                        self->extents_cond.notify_all(); });
+                    return;
+                }
+
+                std::lock_guard lock(self->extents_mutex);
+                
+                if(!res.extents.empty())
+                    self->extents = std::move(res.extents);
+
+                self->extentsInitialized = true;
+                self->extents_cond.notify_all();
+            }
+        );
 }

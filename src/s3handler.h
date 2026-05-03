@@ -5,6 +5,7 @@
 #include "Policy.h"
 #include "Action.h"
 #include <condition_variable>
+#include <folly/io/IOBuf.h>
 #include <memory>
 #include <proxygen/httpserver/HTTPServer.h>
 #include <proxygen/httpserver/RequestHandler.h>
@@ -13,6 +14,7 @@
 #include <proxygen/lib/http/HTTPHeaders.h>
 #include <proxygen/lib/http/HTTPMessage.h>
 #include <proxygen/lib/http/ProxygenErrorEnum.h>
+#include <proxygen/lib/http/experimental/RFC1867.h>
 #include <vector>
 #include <thread>
 #include <expat.h>
@@ -89,6 +91,29 @@ struct ParsePartRes
     std::vector<MultiPartDownloadData::PartExt> parts;
 };
 
+enum class PostObjectState
+{
+    Init,
+    MultipartParsingError,
+    Error,
+    ParseSuccessActionStatus,
+    File,
+    Done
+};
+
+struct PostObjectData
+{
+    PostObjectData(const std::string& boundary)
+        : rfc1867Codec(boundary)
+    {}
+
+    std::unique_ptr<folly::IOBuf> bodyBuf;
+    proxygen::RFC1867Codec rfc1867Codec;
+    PostObjectState state = PostObjectState::Init;
+    std::optional<std::string> successActionStatus;
+    int64_t expectedLength = 0;
+};
+
 ParsePartRes parsePartExtsFromStr(const std::string& rdata);
 std::vector<MultiPartDownloadData::PartExt> parsePartExts(CRData& rdata);
 std::vector<MultiPartDownloadData::PartExt> addPartExt(std::vector<MultiPartDownloadData::PartExt> parts, const int64_t partSize, const int partNum);
@@ -119,7 +144,7 @@ const int64_t metadata_known_flags = metadata_flag_with_content_type | metadata_
 
 class DuckDbFs;
 
-class S3Handler : public proxygen::RequestHandler
+class S3Handler : public proxygen::RequestHandler, public proxygen::RFC1867Codec::Callback
 {
 public:
     S3Handler(SingleFileStorage &sfs, const std::string& serverUrl, DuckDbFs& duckDbFs) : 
@@ -235,6 +260,17 @@ public:
 
     void sigCheckOk();
     void sigCheckFailed();
+    
+    // multipart/form-data parsing callbacks
+    virtual int onFieldStart(const std::string& name,
+                             folly::Optional<std::string> filename,
+                             std::unique_ptr<proxygen::HTTPMessage> msg,
+                             uint64_t postBytesProcessed) override;
+    virtual int onFieldData(std::unique_ptr<folly::IOBuf>,
+                            uint64_t postBytesProcessed) override;
+    virtual void onFieldEnd(bool endedOnBoundary,
+                            uint64_t postBytesProcessed) override;
+    virtual void onError() override;
 
 private:
     void readFile(folly::EventBase *evb);
@@ -290,6 +326,8 @@ private:
     bool serializeMetadataValues(CWData& wdata);
     bool unserializeMetadataValues(CRData& rdata);
 
+    void postObject();
+
     struct CopyObjectInfo
     {
         std::string source;
@@ -323,6 +361,7 @@ private:
     std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
     std::unique_ptr<DeleteObjectsData> deleteObjectsData;
     std::unique_ptr<ObjMetadata> objMetadata;
+    std::unique_ptr<PostObjectData> postObjectData;
 
 	std::mutex extents_mutex;
 	std::condition_variable extents_cond;

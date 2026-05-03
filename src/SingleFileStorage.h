@@ -411,6 +411,9 @@ public:
 
 	void free_extents(const std::vector<Ext>& extents);
 
+	// Make an extent smaller by the specified amount from the end
+	void remove_extent_end(int64_t offset, int64_t len);
+
 	void wait_for_wal_startup_finished();
 
 	void assert_reading_items_empty();

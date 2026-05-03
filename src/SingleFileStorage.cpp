@@ -4439,9 +4439,6 @@ void SingleFileStorage::free_extents(const std::vector<Ext>& extents)
 	if(extents.size() == 1 && extents[0].data_file_offset==0 && extents[0].len == 0)
 		return;
 
-	std::unique_lock lock(mutex);
-	wait_queue(lock, false, false);
-
 	SFragInfo curr_frag(extents[0].data_file_offset, extents[0].len);
 	for (size_t i = 1; i < extents.size(); ++i)
 	{
@@ -4449,9 +4446,25 @@ void SingleFileStorage::free_extents(const std::vector<Ext>& extents)
 	}
 	curr_frag.action = FragAction::FreeExtents;
 
+	std::unique_lock lock(mutex);
+	wait_queue(lock, false, false);
+
 	commit_queue.push_back(std::move(curr_frag));
 
 	cond.notify_all();
+}
+
+void SingleFileStorage::remove_extent_end(int64_t offset, int64_t len)
+{
+	const auto start_block = offset / block_size;
+	const auto end_block = (offset + len) / block_size;
+
+	if(start_block == end_block)
+		return;
+
+	XLOGF(INFO, "Freeing {} blocks at extent end ({} - {})", end_block - start_block, offset, offset + len);
+
+	free_extents({Ext(0, offset, len)});
 }
 
 int64_t SingleFileStorage::get_really_min_space(int64_t& index_file_size)
