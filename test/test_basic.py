@@ -1515,7 +1515,7 @@ def test_put_checksum(hs5: Hs5Runner, tmp_path: Path):
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
 
-    md5sum = hashlib.md5(fdata).hexdigest()
+    md5sum = base64.b64encode(hashlib.md5(fdata).digest()).decode()
     s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ContentMD5=md5sum)
 
     dl_path = tmp_path / "download.txt"

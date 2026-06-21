@@ -1925,12 +1925,18 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            if(!folly::unhexlify(headers->getHeaders().getSingleOrEmpty("Content-MD5"), contentMd5))
+            try
             {
-                XLOGF(INFO, "Invalid Content-MD5 header in putObjectPart of {}: {}", path, headers->getHeaders().getSingleOrEmpty("Content-MD5"));
+                const auto contentMd5Base64 = headers->getHeaders().getSingleOrEmpty("Content-MD5");
+                if(!contentMd5Base64.empty())
+                    contentMd5 = folly::base64Decode(contentMd5Base64);
+            }
+            catch(const folly::base64_decode_error&)
+            {
+                XLOGF(INFO, "Invalid base64 in Content-MD5 header in putObjectPart of {}: {}", path, headers->getHeaders().getSingleOrEmpty("Content-MD5"));
                 ResponseBuilder(downstream_)
                     .status(400, "Bad request")
-                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid Content-MD5 header", resource, ""))
+                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid base64 in Content-MD5 header", resource, ""))
                     .sendWithEOM();
                 return;
             }
@@ -1989,9 +1995,15 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
         }
 
-        if(!folly::unhexlify(headers->getHeaders().getSingleOrEmpty("Content-MD5"), contentMd5))
+        try
         {
-            XLOGF(INFO, "Invalid Content-MD5 header in PutObject of {}: {}", path, headers->getHeaders().getSingleOrEmpty("Content-MD5"));
+            const auto contentMd5Base64 = headers->getHeaders().getSingleOrEmpty("Content-MD5");
+            if(!contentMd5Base64.empty())
+                contentMd5 = folly::base64Decode(contentMd5Base64);
+        }
+        catch(const folly::base64_decode_error&)
+        {
+            XLOGF(INFO, "Invalid base64 in Content-MD5 header in PutObject of {}: {}", path, headers->getHeaders().getSingleOrEmpty("Content-MD5"));
             ResponseBuilder(downstream_)
                 .status(400, "Bad request")
                 .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid Content-MD5 header", resource, ""))
