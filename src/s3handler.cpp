@@ -1794,16 +1794,6 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         const auto nextSlash = header_path.find('/', 1);
         if(nextSlash==std::string::npos || nextSlash == header_path.size()-1)
         {
-            if(headers->getMethod() == HTTPMethod::HEAD)
-            {
-                ResponseBuilder(downstream_)
-                    .status(400, "Bad request")
-                    .body("HEAD request not available for this action")
-                    .sendWithEOM();
-                return;
-            }
-
-
             const auto partial = headers->hasQueryParam("uploads");
             const auto location = headers->hasQueryParam("location");
             const auto versions = headers->hasQueryParam("versions");
