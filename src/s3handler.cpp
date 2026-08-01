@@ -1163,6 +1163,183 @@ static void putBucketVersioningXmlCharData(void *userData,
     }
 }
 
+static void putBucketCorsXmlElementStart(void *userData,
+                                                const XML_Char *name,
+                                                const XML_Char **atts)
+{
+    auto putBucketCorsData = reinterpret_cast<S3Handler::PutBucketCorsData*>(userData);
+
+    switch(putBucketCorsData->parseState)
+    {
+    case S3Handler::PutBucketCorsData::ParseState::Init:
+        {
+            if(strcmp(name, "CORSConfiguration")==0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRoot;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        } break;
+    case S3Handler::PutBucketCorsData::ParseState::InRoot:
+    {
+        if(strcmp(name, "CORSRule")==0)
+        {
+            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
+            putBucketCorsData->rules.push_back(buckets::BucketCorsRule());
+        }
+        else
+            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+    } break;
+    case S3Handler::PutBucketCorsData::ParseState::InRule:
+    {
+        if(strcmp(name, "AllowedHeader")==0)
+        {
+            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InAllowedHeader;
+            putBucketCorsData->rules.back().allowedHeaders.push_back("");
+        }
+        else if(strcmp(name, "AllowedOrigin") == 0)
+        {
+            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InAllowedOrigin;
+            putBucketCorsData->rules.back().allowedOrigins.push_back("");
+        }
+        else if(strcmp(name, "AllowedMethod") == 0)
+        {
+            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InAllowedMethod;
+            putBucketCorsData->rules.back().allowedMethods.push_back("");
+        }
+        else if(strcmp(name, "ExposeHeader") == 0)
+        {
+            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InExposeHeader;
+            putBucketCorsData->rules.back().exposeHeaders.push_back("");
+        }
+        else if(strcmp(name, "MaxAgeSeconds") == 0)
+            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InMaxAgeSeconds;
+        else if(strcmp(name, "ID") == 0)
+            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InId;
+        else
+            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+    } break;
+    default:
+        break;
+    }
+}
+
+static void putBucketCorsXmlElementEnd(void *userData,
+                                               const XML_Char *name)
+{
+    auto putBucketCorsData = reinterpret_cast<S3Handler::PutBucketCorsData*>(userData);
+
+    switch(putBucketCorsData->parseState)
+    {
+    case S3Handler::PutBucketCorsData::ParseState::InRoot:
+        {
+            if(strcmp(name, "CORSConfiguration")==0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Finished;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        } break;
+    case S3Handler::PutBucketCorsData::ParseState::InRule:
+        {
+            if(strcmp(name, "CORSRule")==0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRoot;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        } break;
+    case S3Handler::PutBucketCorsData::ParseState::InAllowedHeader:
+        {
+            if(strcmp(name, "AllowedHeader") == 0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        } break;
+    case S3Handler::PutBucketCorsData::ParseState::InAllowedOrigin:
+        {
+            if(strcmp(name, "AllowedOrigin") == 0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        } break;
+    case S3Handler::PutBucketCorsData::ParseState::InAllowedMethod:
+        {
+            if(strcmp(name, "AllowedMethod") == 0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        } break;
+    case S3Handler::PutBucketCorsData::ParseState::InExposeHeader:
+        {
+            if(strcmp(name, "ExposeHeader") == 0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        } break;
+    case S3Handler::PutBucketCorsData::ParseState::InMaxAgeSeconds:
+        {
+            if(strcmp(name, "MaxAgeSeconds") == 0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        } break;
+    case S3Handler::PutBucketCorsData::ParseState::InId:
+        {
+            if(strcmp(name, "ID") == 0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        } break;
+    default:
+        break;
+    }
+}
+
+static void putBucketCorsXmlCharData(void *userData,
+                                               const XML_Char *s, int len)
+{
+    auto putBucketCorsData = reinterpret_cast<S3Handler::PutBucketCorsData*>(userData);
+
+    std::string_view data(s, len);
+
+    switch(putBucketCorsData->parseState)
+    {
+        case S3Handler::PutBucketCorsData::ParseState::InAllowedHeader:
+        {
+            auto& rule = putBucketCorsData->rules.back();
+            if(rule.allowedHeaders.back().size() < 100)
+                rule.allowedHeaders.back() += std::string(data);
+        } break;
+        case S3Handler::PutBucketCorsData::ParseState::InAllowedOrigin:
+        {
+            auto& rule = putBucketCorsData->rules.back();
+            if(rule.allowedOrigins.back().size() < 100)
+                rule.allowedOrigins.back() += std::string(data);
+        } break;
+        case S3Handler::PutBucketCorsData::ParseState::InAllowedMethod:
+        {
+            auto& rule = putBucketCorsData->rules.back();
+            if(rule.allowedMethods.back().size() < 100)
+                rule.allowedMethods.back() += std::string(data);
+        } break;
+        case S3Handler::PutBucketCorsData::ParseState::InExposeHeader:
+        {
+            auto& rule = putBucketCorsData->rules.back();
+            if(rule.exposeHeaders.back().size() < 100)
+                rule.exposeHeaders.back() += std::string(data);
+        } break;
+        case S3Handler::PutBucketCorsData::ParseState::InMaxAgeSeconds:
+        {
+            auto& rule = putBucketCorsData->rules.back();
+            if(rule.maxAgeSeconds.size() < 50)
+                rule.maxAgeSeconds += std::string(data);
+        } break;
+        case S3Handler::PutBucketCorsData::ParseState::InId:
+        {
+            auto& rule = putBucketCorsData->rules.back();
+            if(rule.id.size() < 100)
+                rule.id += std::string(data);
+        } break;
+        default:
+            break;
+    }
+}
+
 enum class S3ErrorCode
 {
     NoSuchBucket,
@@ -1588,11 +1765,12 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         headers->getMethod() != HTTPMethod::GET &&
         headers->getMethod() != HTTPMethod::HEAD &&
         headers->getMethod() != HTTPMethod::DELETE &&
-        headers->getMethod() != HTTPMethod::POST)
+        headers->getMethod() != HTTPMethod::POST &&
+        headers->getMethod() != HTTPMethod::OPTIONS)
     {
         ResponseBuilder(downstream_)
             .status(400, "Bad method")
-            .body("Only GET/PUT/HEAD/DELETE/POST is supported")
+            .body("Only GET/PUT/HEAD/DELETE/POST/OPTIONS is supported")
             .sendWithEOM();
         return;
     }
@@ -1616,16 +1794,31 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         const auto nextSlash = header_path.find('/', 1);
         if(nextSlash==std::string::npos || nextSlash == header_path.size()-1)
         {
+            if(headers->getMethod() == HTTPMethod::HEAD)
+            {
+                ResponseBuilder(downstream_)
+                    .status(400, "Bad request")
+                    .body("HEAD request not available for this action")
+                    .sendWithEOM();
+                return;
+            }
+
+
             const auto partial = headers->hasQueryParam("uploads");
             const auto location = headers->hasQueryParam("location");
             const auto versions = headers->hasQueryParam("versions");
             const auto versioning = headers->hasQueryParam("versioning");
+            const auto cors = headers->hasQueryParam("cors");
 
             const auto bucketName = header_path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
 
+            setCorsAllowOrigin(*headers, bucketName);
+
             const auto action = bucketName.empty() ? Action::ListBuckets : 
                     (location ? Action::GetBucketLocation : (partial ? Action::ListMultipartUploads : (versions ? Action::ListObjectVersions : 
-                        (versioning ? Action::GetBucketVersioning : Action::ListObjects))));
+                        (versioning ? Action::GetBucketVersioning : 
+                            (cors ? Action::GetBucketCors : Action::ListObjects)))));
+
             const auto resource = bucketName.empty() ? std::string() : fmt::format("arn:aws:s3:::{}", bucketName);
             auto accessKey = checkSig(this, *headers, "", resource, action, true);
             if(!accessKey)
@@ -1655,6 +1848,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 XLOGF(INFO, "List object versions bucket {}", bucketName);
             else if(action == Action::GetBucketVersioning)
                 XLOGF(INFO, "Get bucket versioning {}", bucketName);
+            else if(action == Action::GetBucketCors)
+                XLOGF(INFO, "Get bucket CORS {}", bucketName);
             else
                 XLOGF(INFO, "List bucket {}", bucketName);
 
@@ -1664,6 +1859,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 getBucketLocation(*headers, std::string(bucketName));
             else if(action == Action::GetBucketVersioning)
                 getBucketVersioning(*headers, std::string(bucketName));
+            else if(action == Action::GetBucketCors)
+                getBucketCors(*headers, std::string(bucketName));
             else
                 listObjects(*headers, std::string(bucketName));
             return;
@@ -1699,11 +1896,20 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        if(!setKeyInfoFromPath(header_path, headers->getQueryParamPtr("versionId")))
+        if(!setKeyInfoFromPath(*headers, header_path, headers->getQueryParamPtr("versionId"), true))
             return;
 
         if(action == Action::GetObjectAttributes)
         {
+            if(headers->getMethod() == HTTPMethod::HEAD)
+            {
+                ResponseBuilder(downstream_)
+                    .status(400, "Bad request")
+                    .body("HEAD request not available for this action")
+                    .sendWithEOM();
+                return;
+            }
+            
             getObjectAttributes(*headers, *accessKey);
             return;
         }
@@ -1809,13 +2015,13 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         bool createBucket = false;
         const auto nextSlash = path.empty() ? std::string::npos : path.find('/', 1);
         const bool onlyBucketInPath = !path.empty() && (nextSlash==std::string::npos || nextSlash == path.size()-1) ;
-        if(onlyBucketInPath && (xid.empty() || xid == "CreateBucket" || xid == "PutBucketVersioning") )
+        if(onlyBucketInPath && (xid.empty() || xid == "CreateBucket" || xid == "PutBucketVersioning" || xid == "PutBucketCors") )
         {
             createBucket = true;
             const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
             keyInfo.key = bucketName;
         }
-        else if(!setKeyInfoFromPath(path, nullptr))
+        else if(!setKeyInfoFromPath(*headers, path, nullptr, false))
             return;
 
         const auto copySource = headers->getHeaders().getSingleOrEmpty("x-amz-copy-source");
@@ -1948,6 +2154,25 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             putObjectPart(*headers, partNumber, uploadId.id, uploadId.nonce);
             return;
         }
+        else if(createBucket && headers->hasQueryParam("cors") && (xid.empty() || xid=="PutBucketCors") )
+        {
+            const auto action = Action::PutBucketCors;
+
+            if(!checkSig(this, *headers, payload, resource, action, false, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
+                || ( currSigPtr != nullptr && currSigPtr->empty()))
+            {
+                XLOGF(INFO, "Unauthorized PutBucketCors: {}", path);
+                ResponseBuilder(downstream_)
+                    .status(403, "Forbidden")
+                    .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
+                    .sendWithEOM();
+                return;
+            }
+
+            request_action = action;
+            putBucketCors(*headers);
+            return;
+        }
 
         const auto action = createBucket ? Action::CreateBucket : 
                     (copyObject ? Action::CopyObject : Action::PutObject);
@@ -2006,7 +2231,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             XLOGF(INFO, "Invalid base64 in Content-MD5 header in PutObject of {}: {}", path, headers->getHeaders().getSingleOrEmpty("Content-MD5"));
             ResponseBuilder(downstream_)
                 .status(400, "Bad request")
-                .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid Content-MD5 header", resource, ""))
+                .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid base64 in Content-MD5 header", resource, ""))
                 .sendWithEOM();
             return;
         }
@@ -2095,8 +2320,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
             keyInfo.key = bucketName;
         }
-        else if(!setKeyInfoFromPath(path, abortMultipart ? nullptr : headers->getQueryParamPtr("versionId")))
-            return;        
+        else if(!setKeyInfoFromPath(*headers, path, abortMultipart ? nullptr : headers->getQueryParamPtr("versionId"), false))
+            return;
 
         const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
         const auto action = abortMultipart ? Action::AbortMultipartUpload 
@@ -2238,7 +2463,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         if(headers->getQueryStringAsStringPiece() == uploadsStr ||
             headers->hasQueryParam("uploads"))
         {
-            if(!setKeyInfoFromPath(path, nullptr))
+            if(!setKeyInfoFromPath(*headers, path, nullptr, false))
                 return;
 
             const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
@@ -2276,7 +2501,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         }
         else if(headers->hasQueryParam("uploadId"))
         {
-            if(!setKeyInfoFromPath(path, nullptr))
+            if(!setKeyInfoFromPath(*headers, path, nullptr, false))
                 return;
 
             const auto payloadOpt = initPayloadHash(*headers);
@@ -2447,9 +2672,50 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
     }
+    else if(headers->getMethod() == HTTPMethod::OPTIONS)
+    {
+        std::string path_str;
+        if(!folly::tryUriUnescape(headers->getPathAsStringPiece(), path_str))
+        {
+            ResponseBuilder(downstream_)
+                        .status(500, "Internal error")
+                        .body("Path cannot be unescaped")
+                        .sendWithEOM();
+            return;
+        }
+
+        const auto path = std::string_view(path_str);
+
+        const auto nextSlash = path.empty() ? std::string::npos : path.find('/', 1);
+        const bool onlyBucketInPath = !path.empty() && (nextSlash==std::string::npos || nextSlash == path.size()-1) ;
+        if(onlyBucketInPath)
+        {
+            const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
+            keyInfo.key = bucketName;
+
+            const auto bucketId = buckets::getBucket(bucketName);
+            if(!bucketId)
+            {
+                XLOGF(INFO, "Bucket {} not found", bucketName);
+                ResponseBuilder(downstream_)
+                            .status(404, "Not found")
+                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucketName, ""))
+                            .sendWithEOM();
+                return;
+            }
+
+            keyInfo.bucketId = *bucketId;
+        }
+        else if(!setKeyInfoFromPath(*headers, path, nullptr, false))
+            return;
+
+        XLOGF(INFO, "Options {}", path);
+
+        optionsObject(*headers);
+    }
 }
 
-bool S3Handler::setKeyInfoFromPath(const std::string_view path, const std::string* versionId)
+bool S3Handler::setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::string_view path, const std::string* versionId, const bool setCorsHeader)
 {
     if(path.empty())
     {
@@ -2503,6 +2769,11 @@ bool S3Handler::setKeyInfoFromPath(const std::string_view path, const std::strin
     }
 
     const auto& bucketInfo = bucketInfoOpt.value();
+
+    if(setCorsHeader)
+    {
+        setCorsAllowOrigin(headers, bucketName);
+    }
 
     keyInfo.bucketId = bucketInfo.id;
     keyInfo.key = keyStr;
@@ -2648,8 +2919,7 @@ void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string&
 
 void S3Handler::getBucketLocation(proxygen::HTTPMessage& headers, const std::string& bucket)
 {
-    ResponseBuilder(self->downstream_)
-                            .status(200, "OK")
+    responseBuilderWithCors(200, "OK")
                             .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
                             .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
                                 "<LocationConstraint xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
@@ -2664,8 +2934,7 @@ void S3Handler::getBucketVersioning(proxygen::HTTPMessage& headers, const std::s
     const auto bucketInfoOpt = buckets::getBucketInfo(bucket);
     if(!bucketInfoOpt)
     {
-        ResponseBuilder(self->downstream_)
-                            .status(404, "Not found")
+        responseBuilderWithCors(404, "Not found")
                             .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucket, ""))
                             .sendWithEOM();
         return;
@@ -2673,16 +2942,58 @@ void S3Handler::getBucketVersioning(proxygen::HTTPMessage& headers, const std::s
 
     const auto& bucketInfo = bucketInfoOpt.value();
 
-    ResponseBuilder(self->downstream_)
-                            .status(200, "OK")
+    responseBuilderWithCors(200, "OK")
                             .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
-                            .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
-                                "<VersioningConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
-                                "<Status>{}</Status>"
+                            .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                                "<VersioningConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n"
+                                "\t<Status>{}</Status>\n"
                                 "</VersioningConfiguration>", buckets::versioningStateToStr(bucketInfo.versioning)))
                             .sendWithEOM();
 
 }
+
+void S3Handler::getBucketCors(proxygen::HTTPMessage& headers, const std::string& bucket)
+{
+    const auto bucketInfoOpt = buckets::getBucketInfo(bucket);
+    if(!bucketInfoOpt)
+    {
+        responseBuilderWithCors(404, "Not found")
+                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucket, ""))
+                            .sendWithEOM();
+        return;
+    }
+
+    const auto& bucketInfo = bucketInfoOpt.value();
+
+    std::string corsRulesXml;
+
+    for(const auto& rule: bucketInfo.corsRules)
+    {
+        corsRulesXml += "\t<CORSRule>\n";
+        for(const auto& origin: rule.allowedOrigins)
+            corsRulesXml += fmt::format("\t\t<AllowedOrigin>{}</AllowedOrigin>\n", escapeXML(origin));
+        for(const auto& method: rule.allowedMethods)
+            corsRulesXml += fmt::format("\t\t<AllowedMethod>{}</AllowedMethod>\n", escapeXML(method));
+        for(const auto& header: rule.exposeHeaders)
+            corsRulesXml += fmt::format("\t\t<ExposeHeader>{}</ExposeHeader>\n", escapeXML(header));
+        for(const auto& header: rule.allowedHeaders)
+            corsRulesXml += fmt::format("\t\t<AllowedHeader>{}</AllowedHeader>\n", escapeXML(header));
+        
+        corsRulesXml += fmt::format(
+                "\t\t<ID>{}</ID>\n"
+                "\t\t<MaxAgeSeconds>{}</MaxAgeSeconds>\n", escapeXML(rule.id), escapeXML(rule.maxAgeSeconds));
+
+        corsRulesXml += "\t</CORSRule>\n";
+    }
+
+    responseBuilderWithCors(200, "OK")
+                            .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
+                            .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                                "<CORSConfiguration>"
+                                "{}"
+                                "</CORSConfiguration>", corsRulesXml))
+                            .sendWithEOM();
+}    
 
 void S3Handler::listBuckets(proxygen::HTTPMessage& headers, std::string accessKey)
 {
@@ -2726,8 +3037,7 @@ void S3Handler::listBuckets(folly::EventBase* evb, std::shared_ptr<S3Handler> se
 
     evb->runInEventBaseThread([self = self, resp = std::move(resp)]()
                                               {
-                        ResponseBuilder(self->downstream_)
-                            .status(200, "OK")
+                        self->responseBuilderWithCors(200, "OK")
                             .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
                             .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(resp.size()))
                             .body(std::move(resp))
@@ -2740,7 +3050,7 @@ void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
     if(request_action==Action::HeadObject)
     {
         XLOGF(DBG0, "Head commit object, runtime id size {}", runtime_id.size());
-        auto resp = std::move(ResponseBuilder(self->downstream_).status(200, "OK").header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(runtime_id.size())));
+        auto resp = std::move(responseBuilderWithCors(200, "OK").header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(runtime_id.size())));
         // Work-around for it not setting the Content-Length header properly for HEAD requests
         self->downstream_->sendHeaders(*const_cast<HTTPMessage*>(resp.getHeaders()));
         self->downstream_->sendEOM();
@@ -2748,8 +3058,8 @@ void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
     }
 
     XLOGF(DBG0, "Get commit object, runtime id size {}", runtime_id.size());
-    ResponseBuilder(self->downstream_)
-                        .status(200, "OK")
+    
+    responseBuilderWithCors(200, "OK")
                         .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(runtime_id.size()))
                         .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "binary/octet-stream")
                         .body(runtime_id)
@@ -3059,30 +3369,26 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                             const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
                             if(isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), Action::ListObjects, accessKey))
                             {
-                                ResponseBuilder(self->downstream_)
-                                    .status(404, "Not found")
+                                self->responseBuilderWithCors(404, "Not found")
                                     .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
                                     .sendWithEOM();
                             }
                             else
                             {
-                                ResponseBuilder(self->downstream_)
-                                    .status(403, "Forbidden")
+                                self->responseBuilderWithCors(403, "Forbidden")
                                     .body(s3errorXml(S3ErrorCode::AccessDenied, "Access is forbidden", self->fullKeyPath(), ""))
                                     .sendWithEOM();
                             }
                         }
                         else if(res.err==ENOTRECOVERABLE)
                         {
-                            ResponseBuilder(self->downstream_)
-                                .status(500, "Internal error")
+                            self->responseBuilderWithCors(500, "Internal error")
                                 .body(s3errorXml(S3ErrorCode::InternalError, "Storage is dead", self->fullKeyPath(), ""))
                                 .sendWithEOM();
                         }
                         else
                         {
-                            ResponseBuilder(self->downstream_)
-                                .status(500, "Internal error")
+                            self->responseBuilderWithCors(500, "Internal error")
                                 .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error code: {}", res.err), self->fullKeyPath(), ""))
                                 .sendWithEOM();
                         }
@@ -3111,8 +3417,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                 {
                     evb->runInEventBaseThread([self = self]()
                                               {
-                                ResponseBuilder(self->downstream_)
-                                .status(500, "Internal error")
+                                self->responseBuilderWithCors(500, "Internal error")
                                 .body(s3errorXml(S3ErrorCode::InternalError, "Error parsing md5sum data", self->fullKeyPath(), ""))
                                 .sendWithEOM();
                                               });
@@ -3126,8 +3431,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     {
                         evb->runInEventBaseThread([self = self, res]()
                         {
-                            ResponseBuilder(self->downstream_)
-                                        .status(404, "Not found")
+                            self->responseBuilderWithCors(404, "Not found")
                                         .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
                                         .sendWithEOM();
                         });
@@ -3136,8 +3440,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     {
                         evb->runInEventBaseThread([self = self, res]()
                         {
-                            ResponseBuilder(self->downstream_)
-                                    .status(403, "Forbidden")
+                            self->responseBuilderWithCors(403, "Forbidden")
                                     .body(s3errorXml(S3ErrorCode::AccessDenied, "Access is forbidden", self->fullKeyPath(), ""))
                                     .sendWithEOM();
                         });
@@ -3154,8 +3457,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                 {
                     evb->runInEventBaseThread([self = self, res]()
                         {
-                            ResponseBuilder(self->downstream_)
-                                    .status(416, "Range Not Satisfiable")
+                            self->responseBuilderWithCors(416, "Range Not Satisfiable")
                                     .sendWithEOM();
                         });
                     return;
@@ -3170,8 +3472,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     {
                         evb->runInEventBaseThread([self = self]()
                                 {
-                                    ResponseBuilder(self->downstream_)
-                                        .status(400, "Bad Request")
+                                    self->responseBuilderWithCors(400, "Bad Request")
                                         .body(s3errorXml(S3ErrorCode::InvalidArgument, "Cannot specify both Range header and partNumber parameter", self->fullKeyPath(), ""))
                                         .sendWithEOM();
                             });
@@ -3187,8 +3488,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     {
                         evb->runInEventBaseThread([self = self]()
                                 {
-                                    ResponseBuilder(self->downstream_)
-                                        .status(400, "Bad Request")
+                                    self->responseBuilderWithCors(400, "Bad Request")
                                         .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid partNumber parameter", self->fullKeyPath(), ""))
                                         .sendWithEOM();
                             });
@@ -3200,8 +3500,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     {
                         evb->runInEventBaseThread([self = self, partNumber]()
                                 {
-                                    ResponseBuilder(self->downstream_)
-                                        .status(400, "Bad Request")
+                                    self->responseBuilderWithCors(400, "Bad Request")
                                         .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid partNumber parameter", self->fullKeyPath(), ""))
                                         .sendWithEOM();
                             });
@@ -3222,8 +3521,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                                 partNumber+1, self->keyInfo.key, rc);
                             evb->runInEventBaseThread([self = self, rc]()
                                     {
-                                        ResponseBuilder(self->downstream_)
-                                            .status(500, "Internal error")
+                                        self->responseBuilderWithCors(500, "Internal error")
                                             .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error seeking to part: {}", rc), self->fullKeyPath(), ""))
                                             .sendWithEOM();
                             });
@@ -3257,8 +3555,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                                               {
                     if(self->matchInfo && !self->matchInfo->match)
                     {
-                        ResponseBuilder(self->downstream_)
-                            .status(412, "Precondition Failed")
+                        self->responseBuilderWithCors(412, "Precondition Failed")
                             .header(proxygen::HTTP_HEADER_ETAG, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum))
                             .header("Last-Modified", format_last_modified_rfc1123(last_modified))
                             .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", self->fullKeyPath(), ""))
@@ -3266,7 +3563,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         return;
                     }
                     
-                    auto resp = std::move(ResponseBuilder(self->downstream_).status(hasRange ? 206 : 200, hasRange ? "Partial Content" : "OK")
+                    auto resp = std::move(self->responseBuilderWithCors(hasRange ? 206 : 200, hasRange ? "Partial Content" : "OK")
                         .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(rangeEnd-rangeStart))
                         .header(proxygen::HTTP_HEADER_ETAG, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum))
                         .header("Last-Modified", format_last_modified_rfc1123(last_modified)));
@@ -3336,8 +3633,7 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
     }
     catch(const std::exception&)
     {
-        ResponseBuilder(self->downstream_)
-                    .status(400, "Bad request")
+        self->responseBuilderWithCors(400, "Bad request")
                     .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid part number marker", fullKeyPath(), ""))
                     .sendWithEOM();
         return;
@@ -3351,8 +3647,7 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
     }
     catch(const std::exception&)
     {
-        ResponseBuilder(self->downstream_)
-                    .status(400, "Bad request")
+        self->responseBuilderWithCors(400, "Bad request")
                     .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid max parts", fullKeyPath(), ""))
                     .sendWithEOM();
         return;
@@ -3360,8 +3655,7 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
 
     if(maxParts<1 || maxParts>1000)
     {
-        ResponseBuilder(self->downstream_)
-                    .status(400, "Bad request")
+        self->responseBuilderWithCors(400, "Bad request")
                     .body(s3errorXml(S3ErrorCode::InvalidArgument, "max parts must be between 1 and 1000", fullKeyPath(), ""))
                     .sendWithEOM();
         return;
@@ -3443,30 +3737,26 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
                             const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
                             if(isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), Action::ListObjects, accessKey))
                             {
-                                ResponseBuilder(self->downstream_)
-                                    .status(404, "Not found")
+                                self->responseBuilderWithCors(404, "Not found")
                                     .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
                                     .sendWithEOM();
                             }
                             else
                             {
-                                ResponseBuilder(self->downstream_)
-                                    .status(403, "Forbidden")
+                                self->responseBuilderWithCors(403, "Forbidden")
                                     .body(s3errorXml(S3ErrorCode::AccessDenied, "Access is forbidden", self->fullKeyPath(), ""))
                                     .sendWithEOM();
                             }
                         }
                         else if(res.err==ENOTRECOVERABLE)
                         {
-                            ResponseBuilder(self->downstream_)
-                                .status(500, "Internal error")
+                            self->responseBuilderWithCors(500, "Internal error")
                                 .body(s3errorXml(S3ErrorCode::InternalError, "Storage is dead", self->fullKeyPath(), ""))
                                 .sendWithEOM();
                         }
                         else
                         {
-                            ResponseBuilder(self->downstream_)
-                                .status(500, "Internal error")
+                            self->responseBuilderWithCors(500, "Internal error")
                                 .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error code: {}", res.err), self->fullKeyPath(), ""))
                                 .sendWithEOM();
                         }
@@ -3483,8 +3773,7 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
                 {
                     evb->runInEventBaseThread([self = self]()
                                               {
-                                ResponseBuilder(self->downstream_)
-                                .status(500, "Internal error")
+                                self->responseBuilderWithCors(500, "Internal error")
                                 .body(s3errorXml(S3ErrorCode::InternalError, "Error parsing object metadata", self->fullKeyPath(), ""))
                                 .sendWithEOM();
                                               });
@@ -3523,8 +3812,7 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
                     {
                         evb->runInEventBaseThread([self = self, rc]()
                                 {
-                                    ResponseBuilder(self->downstream_)
-                                        .status(500, "Internal error")
+                                    self->responseBuilderWithCors(500, "Internal error")
                                         .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error seeking to part: {}", rc), self->fullKeyPath(), ""))
                                         .sendWithEOM();
                             });
@@ -3567,8 +3855,7 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
                                 outputPartNumber+1, self->keyInfo.key, rc);
                             evb->runInEventBaseThread([self = self, rc]()
                                     {
-                                        ResponseBuilder(self->downstream_)
-                                            .status(500, "Internal error")
+                                        self->responseBuilderWithCors(500, "Internal error")
                                             .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error reading part: {}", rc), self->fullKeyPath(), ""))
                                             .sendWithEOM();
                             });
@@ -3584,8 +3871,7 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
                                 {
                                     evb->runInEventBaseThread([self = self]()
                                         {
-                                    ResponseBuilder(self->downstream_)
-                                        .status(404, "Not found")
+                                    self->responseBuilderWithCors(404, "Not found")
                                         .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
                                         .sendWithEOM();
                                     });
@@ -3594,8 +3880,7 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
                                 {
                                     evb->runInEventBaseThread([self = self]()
                                         {
-                                    ResponseBuilder(self->downstream_)
-                                        .status(403, "Forbidden")
+                                    self->responseBuilderWithCors(403, "Forbidden")
                                         .body(s3errorXml(S3ErrorCode::AccessDenied, "Access is forbidden", self->fullKeyPath(), ""))
                                         .sendWithEOM();
                                         });
@@ -3608,8 +3893,7 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
                                 outputPartNumber+1, self->keyInfo.key, rc);
                                 evb->runInEventBaseThread([self = self, rc]()
                                         {
-                                            ResponseBuilder(self->downstream_)
-                                                .status(500, "Internal error")
+                                            self->responseBuilderWithCors(500, "Internal error")
                                                 .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error reading part: {}", rc), self->fullKeyPath(), ""))
                                                 .sendWithEOM();
                                 });
@@ -3656,17 +3940,16 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
                         last_modified = res.last_modified, outputLastModified, output = std::move(output)]()
                                               {
                     
-                    auto resp = std::move(ResponseBuilder(self->downstream_).status(200, "OK"));
+                    auto resp = std::move(self->responseBuilderWithCors(200, "OK"));
 
-                    if(outputLastModified)
-                    {
-                        resp.header("Last-Modified", format_last_modified_rfc1123(last_modified));
-                    }
+                    if(outputLastModified)                       
+                        resp.header(HTTPHeaderCode::HTTP_HEADER_LAST_MODIFIED, format_last_modified_rfc1123(last_modified));
 
                     if(self->keyInfo.version!=0)
-                    {
                         resp.header("x-amz-version-id", self->sfs().encrypt_id(self->keyInfo.version));
-                    }
+
+                    if(!self->corsAllowOrigin.empty())
+                        resp.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN, self->corsAllowOrigin);
 
                     resp.body(output).sendWithEOM();
                     self->finished_ = true;
@@ -4639,6 +4922,43 @@ void S3Handler::finalizePutBucketVersioning()
         );
 }
 
+void S3Handler::finalizePutBucketCors()
+{
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+    folly::getGlobalCPUExecutor()->add(
+            [self = this->self, evb]()
+            {
+                for(auto rule: self->putBucketCorsData->rules)
+                {
+                    if(!buckets::validateCorsRule(rule))
+                    {
+                        XLOGF(WARN, "Invalid CORS rule specified for bucket {}", self->keyInfo.bucketId);
+                        evb->runInEventBaseThread([self = self]()
+                                                  {
+                            ResponseBuilder(self->downstream_)
+                                .status(400, "Bad Request")
+                                .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid CORS rule specified", self->fullKeyPath(), ""))
+                                .sendWithEOM();
+                            self->finished_ = true;
+                                                    });
+                        return;
+                    }
+                }
+
+                buckets::replaceCorsRules(self->keyInfo.bucketId, self->putBucketCorsData->rules);
+
+                evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(200, "OK")
+                            .sendWithEOM();
+                        self->finished_ = true;
+                });
+                return;
+            }
+        );
+}
+
 void S3Handler::deleteObjects()
 {
     if(deleteObjectsData->objects.size() > 1000)
@@ -5012,6 +5332,106 @@ void S3Handler::putBucketVersioning(proxygen::HTTPMessage& headers)
 
     XML_SetElementHandler(xmlBody.parser, putBucketVersioningXmlElementStart, putBucketVersioningXmlElementEnd);
     XML_SetCharacterDataHandler(xmlBody.parser, putBucketVersioningXmlCharData);
+}
+
+void S3Handler::putBucketCors(proxygen::HTTPMessage& headers)
+{
+    xmlBody.init();
+    if(xmlBody.parser == nullptr)
+    {
+        ResponseBuilder(downstream_)
+            .status(500, "Internal error")
+            .body(s3errorXml(S3ErrorCode::InternalError, "Could not init XML parser", keyInfo.key, ""))
+            .sendWithEOM();
+        return;
+    }
+
+    putBucketCorsData = std::make_unique<PutBucketCorsData>();
+
+    XML_SetUserData(xmlBody.parser, putBucketCorsData.get());
+
+    XML_SetElementHandler(xmlBody.parser, putBucketCorsXmlElementStart, putBucketCorsXmlElementEnd);
+    XML_SetCharacterDataHandler(xmlBody.parser, putBucketCorsXmlCharData);
+}
+
+void S3Handler::optionsObject(proxygen::HTTPMessage& headers)
+{
+    const auto bucketName = buckets::getBucketName(keyInfo.bucketId);
+    const auto bucketInfoOpt = buckets::getBucketInfo(bucketName);
+    if(!bucketInfoOpt)
+        return;
+    const auto& bucketInfo = bucketInfoOpt.value();
+
+    const auto allowHeadersStr = headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_ALLOW_HEADERS);
+    const auto requestMethod = headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_REQUEST_METHOD);
+    const auto origin = headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_ORIGIN);
+
+    std::vector<std::string_view> allowHeaders;
+    if(!allowHeadersStr.empty())
+        folly::split(",", allowHeadersStr, allowHeaders);
+
+    const auto ruleMatch = [](const std::vector<std::string>& allowed, const std::string_view val) -> std::optional<std::string_view>
+    {
+        if(val.empty())
+            return std::nullopt;
+
+        auto it = std::find(allowed.begin(), allowed.end(), "*");
+        if(it != allowed.end())
+            return *it;
+
+        it = std::find(allowed.begin(), allowed.end(), val);
+        if(it != allowed.end())
+            return *it;
+
+        return std::nullopt;                
+    };
+
+    for(const auto& rule: bucketInfo.corsRules)
+    {
+        auto methodMatch = ruleMatch(rule.allowedMethods, requestMethod);
+        if(!methodMatch && !requestMethod.empty())
+            continue;
+
+        auto originMatch = ruleMatch(rule.allowedOrigins, origin);
+        if(!originMatch && !origin.empty())
+            continue;
+
+        bool noAllowHeaderMatch=false;
+        std::optional<std::string_view> allowHeaderMatch;
+        for(const auto& allowHeader: allowHeaders)
+        {
+            allowHeaderMatch = ruleMatch(rule.allowedHeaders, asciiToLower(allowHeader));
+            if(!allowHeaderMatch)
+            {
+                noAllowHeaderMatch=true;
+                break;
+            }
+        }
+
+        if(noAllowHeaderMatch && !allowHeaders.empty())
+            continue;
+
+        ResponseBuilder resp(downstream_);
+        resp.status(200, "OK");
+
+        if(!rule.allowedMethods.empty())
+            resp.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_ALLOW_METHODS, folly::join(", ", rule.allowedMethods));
+        if(originMatch)
+            resp.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN, *originMatch);
+        if(!rule.allowedHeaders.empty())
+            resp.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_ALLOW_HEADERS, folly::join(", ", rule.allowedHeaders));
+        if(!rule.exposeHeaders.empty())
+            resp.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_EXPOSE_HEADERS, folly::join(", ", rule.exposeHeaders));
+        if(!rule.maxAgeSeconds.empty())
+            resp.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_MAX_AGE, rule.maxAgeSeconds);
+
+        resp.sendWithEOM();
+        return;
+    }
+
+    ResponseBuilder(downstream_)
+        .status(403, "Forbidden")
+        .sendWithEOM();
 }
 
 void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
@@ -5560,8 +5980,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         XLOGF(ERR, "Error starting listing");
         evb->runInEventBaseThread([self = self, bucketName]()
                                               {
-                        ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
+                        self->responseBuilderWithCors(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, "Error starting listing", bucketName, ""))
                             .sendWithEOM(); });
         return;
@@ -5724,9 +6143,8 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         {
             XLOGF(ERR, "Error iterating listing");
             evb->runInEventBaseThread([self = self, bucketName]()
-                                              {
-                        ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
+                                              {                        
+                        self->responseBuilderWithCors(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, "Error listing (in iteration)", bucketName, ""))
                             .sendWithEOM(); });
             sfs().iter_stop(iter_data);
@@ -5913,8 +6331,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
     evb->runInEventBaseThread([self = self, resp = std::move(resp)]()
                                               {
-                        ResponseBuilder(self->downstream_)
-                            .status(200, "OK")
+                        self->responseBuilderWithCors(200, "OK")
                             .body(std::move(resp))
                             .sendWithEOM(); });
 }
@@ -6398,7 +6815,8 @@ void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
 
     if(request_action == Action::CompleteMultipartUpload ||
         request_action == Action::DeleteObjects ||
-        request_action == Action::PutBucketVersioning)
+        request_action == Action::PutBucketVersioning ||
+        request_action == Action::PutBucketCors)
     {
         if(payloadHash)
             payloadHash->update(body->data(), body->length());
@@ -6435,6 +6853,16 @@ void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
             ResponseBuilder(self->downstream_)
                 .status(400, "Bad Request")
                 .body(s3errorXml(S3ErrorCode::InvalidArgument, "Too many objects in DeleteObjects request", "", ""))
+                .sendWithEOM();
+            finished_ = true;
+        }
+
+        if(request_action == Action::PutBucketCors && putBucketCorsData && putBucketCorsData->rules.size() > 100)
+        {
+            XLOGF(WARN, "Too many CORS rules in PutBucketCors request: {}", putBucketCorsData->rules.size());
+            ResponseBuilder(self->downstream_)
+                .status(400, "Bad Request")
+                .body(s3errorXml(S3ErrorCode::InvalidArgument, "Too many CORS rules in PutBucketCors request", "", ""))
                 .sendWithEOM();
             finished_ = true;
         }
@@ -6830,9 +7258,9 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
                 resp.status(200, "OK");
                 resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, etag);
                 if(keyInfo.version != 0)
-                {
                     resp.header("x-amz-version-id", sfs().encrypt_id(keyInfo.version));
-                }
+                if(!corsAllowOrigin.empty())
+                    resp.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN, corsAllowOrigin);
                 if(request_action==Action::UploadPartCopy)
                 {
                     auto bodyStr = fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -6970,6 +7398,14 @@ void S3Handler::onEOM() noexcept
             return;
 
         finalizePutBucketVersioning();
+        return;
+    }
+    else if(request_action == Action::PutBucketCors)
+    {
+        if(finished_)
+            return;
+
+        finalizePutBucketCors();
         return;
     }
 }
@@ -7823,4 +8259,58 @@ void S3Handler::postObject()
                 self->extents_cond.notify_all();
             }
         );
+}
+
+void S3Handler::setCorsAllowOrigin(proxygen::HTTPMessage& headers, const std::string_view bucketName)
+{
+    const auto bucketInfoOpt = buckets::getBucketInfo(bucketName);
+    if(!bucketInfoOpt)
+        return;
+
+    setCorsAllowOrigin(headers, *bucketInfoOpt);
+}
+
+void S3Handler::setCorsAllowOrigin(proxygen::HTTPMessage& headers, const buckets::BucketInfo& bucketInfo)
+{
+    const auto origin = headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_ORIGIN);
+    if(origin.empty())
+        return;
+
+    const auto ruleMatch = [](const std::vector<std::string>& allowed, const std::string_view val) -> std::optional<std::string_view>
+    {
+        if(val.empty())
+            return std::nullopt;
+
+        auto it = std::find(allowed.begin(), allowed.end(), "*");
+        if(it != allowed.end())
+            return *it;
+
+        it = std::find(allowed.begin(), allowed.end(), val);
+        if(it != allowed.end())
+            return *it;
+
+        return std::nullopt;
+    };
+
+    for(const auto& corsRule: bucketInfo.corsRules)
+    {
+        auto allowedOrigin = ruleMatch(corsRule.allowedOrigins, origin);
+        if(!allowedOrigin)
+            continue;
+
+        if(!ruleMatch(corsRule.allowedMethods, headers.getMethodString()))
+            continue;
+
+        corsAllowOrigin = *allowedOrigin;
+        return;
+    }
+}
+
+proxygen::ResponseBuilder S3Handler::responseBuilderWithCors(uint16_t code, const std::string& message)
+{
+    auto builder = ResponseBuilder(downstream_);
+    builder.status(code, message);
+    if(!corsAllowOrigin.empty())
+        builder.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN, corsAllowOrigin);
+    return builder;
 }

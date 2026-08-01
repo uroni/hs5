@@ -173,12 +173,57 @@ void upgrade4_5(sqlgen::Database& db)
 	)""");
 }
 
+void upgrade5_6(sqlgen::Database& db)
+{
+	db.write(R"""(
+		CREATE TABLE bucket_cors (
+			id INTEGER PRIMARY KEY,
+			bucket_id INTEGER NOT NULL REFERENCES buckets(id) ON DELETE CASCADE,
+			max_age_seconds INTEGER NOT NULL,
+			cors_id TEXT NOT NULL
+		) STRICT;
+	)""");
+
+	db.write(R"""(
+		CREATE TABLE bucket_cors_allowed_origins (
+			id INTEGER PRIMARY KEY,
+			bucket_cors_id INTEGER NOT NULL REFERENCES bucket_cors(id) ON DELETE CASCADE,
+			allowed_origin TEXT NOT NULL
+		) STRICT;
+	)""");
+
+	db.write(R"""(
+		CREATE TABLE bucket_cors_allowed_methods (
+			id INTEGER PRIMARY KEY,
+			bucket_cors_id INTEGER NOT NULL REFERENCES bucket_cors(id) ON DELETE CASCADE,
+			allowed_method TEXT NOT NULL
+		) STRICT;
+	)""");
+
+	db.write(R"""(
+		CREATE TABLE bucket_cors_allowed_headers (
+			id INTEGER PRIMARY KEY,
+			bucket_cors_id INTEGER NOT NULL REFERENCES bucket_cors(id) ON DELETE CASCADE,
+			allowed_header TEXT NOT NULL
+		) STRICT;
+	)""");
+
+	db.write(R"""(
+		CREATE TABLE bucket_cors_expose_headers (
+			id INTEGER PRIMARY KEY,
+			bucket_cors_id INTEGER NOT NULL REFERENCES bucket_cors(id) ON DELETE CASCADE,
+			expose_header TEXT NOT NULL
+		) STRICT;
+	)""");
+}
+
 const std::map<int64_t, upgrade_func_t*> upgrade_funcs {
 	{0, upgrade0_1},
 	{1, upgrade1_2},
 	{2, upgrade2_3},
 	{3, upgrade3_4},
-	{4, upgrade4_5}
+	{4, upgrade4_5},
+	{5, upgrade5_6}
 };
 
 sqlgen::Database& DbDao::getStaticDb()
@@ -1473,5 +1518,294 @@ void DbDao::setBucketVersioning(int versioning, int64_t id)
 	_setBucketVersioning.reset();
 }
 
+/**
+* @-SQLGenAccess
+* @func optional<int64_t> DbDao::addCorsRule
+* @return int64_raw id
+* @sql
+*      INSERT INTO bucket_cors (bucket_id, max_age_seconds, cors_id) VALUES (:bucket_id(int64), :max_age_seconds(int), :cors_id(string)) RETURNING id
+*/
+std::optional<int64_t> DbDao::addCorsRule(int64_t bucket_id, int max_age_seconds, const std::string& cors_id)
+{
+	if(!_addCorsRule.prepared())
+	{
+		_addCorsRule=db.prepare("INSERT INTO bucket_cors (bucket_id, max_age_seconds, cors_id) VALUES (?, ?, ?) RETURNING id");
+	}
+	_addCorsRule.bind(bucket_id);
+	_addCorsRule.bind(max_age_seconds);
+	_addCorsRule.bind(cors_id);
+	auto& cursor=_addCorsRule.cursor();
+	if(!cursor.next())
+	{
+		_addCorsRule.reset();
+		return {};
+	}
+	int64_t ret;
+	cursor.get(0, ret);
+	_addCorsRule.reset();
+	return ret;
+}
+
+/**
+* @-SQLGenAccess
+* @func optional<int64_t> DbDao::addCorsAllowedOrigin
+* @return int64_raw id
+* @sql
+*      INSERT INTO bucket_cors_allowed_origins (bucket_cors_id, allowed_origin) VALUES (:bucket_cors_id(int64), :allowed_origin(string))
+*/
+std::optional<int64_t> DbDao::addCorsAllowedOrigin(int64_t bucket_cors_id, const std::string& allowed_origin)
+{
+	if(!_addCorsAllowedOrigin.prepared())
+	{
+		_addCorsAllowedOrigin=db.prepare("INSERT INTO bucket_cors_allowed_origins (bucket_cors_id, allowed_origin) VALUES (?, ?)");
+	}
+	_addCorsAllowedOrigin.bind(bucket_cors_id);
+	_addCorsAllowedOrigin.bind(allowed_origin);
+	auto& cursor=_addCorsAllowedOrigin.cursor();
+	if(!cursor.next())
+	{
+		_addCorsAllowedOrigin.reset();
+		return {};
+	}
+	int64_t ret;
+	cursor.get("id", ret);
+	_addCorsAllowedOrigin.reset();
+	return ret;
+}
+
+/**
+* @-SQLGenAccess
+* @func optional<int64_t> DbDao::addCorsAllowedMethod
+* @return int64_raw id
+* @sql
+*      INSERT INTO bucket_cors_allowed_methods (bucket_cors_id, allowed_method) VALUES (:bucket_cors_id(int64), :allowed_method(string))
+*/
+std::optional<int64_t> DbDao::addCorsAllowedMethod(int64_t bucket_cors_id, const std::string& allowed_method)
+{
+	if(!_addCorsAllowedMethod.prepared())
+	{
+		_addCorsAllowedMethod=db.prepare("INSERT INTO bucket_cors_allowed_methods (bucket_cors_id, allowed_method) VALUES (?, ?)");
+	}
+	_addCorsAllowedMethod.bind(bucket_cors_id);
+	_addCorsAllowedMethod.bind(allowed_method);
+	auto& cursor=_addCorsAllowedMethod.cursor();
+	if(!cursor.next())
+	{
+		_addCorsAllowedMethod.reset();
+		return {};
+	}
+	int64_t ret;
+	cursor.get("id", ret);
+	_addCorsAllowedMethod.reset();
+	return ret;
+}
+
+/**
+* @-SQLGenAccess
+* @func optional<int64_t> DbDao::addCorsExposeHeader
+* @return int64_raw id
+* @sql
+*      INSERT INTO bucket_cors_expose_headers (bucket_cors_id, expose_header) VALUES (:bucket_cors_id(int64), :expose_header(string))
+*/
+std::optional<int64_t> DbDao::addCorsExposeHeader(int64_t bucket_cors_id, const std::string& expose_header)
+{
+	if(!_addCorsExposeHeader.prepared())
+	{
+		_addCorsExposeHeader=db.prepare("INSERT INTO bucket_cors_expose_headers (bucket_cors_id, expose_header) VALUES (?, ?)");
+	}
+	_addCorsExposeHeader.bind(bucket_cors_id);
+	_addCorsExposeHeader.bind(expose_header);
+	auto& cursor=_addCorsExposeHeader.cursor();
+	if(!cursor.next())
+	{
+		_addCorsExposeHeader.reset();
+		return {};
+	}
+	int64_t ret;
+	cursor.get("id", ret);
+	_addCorsExposeHeader.reset();
+	return ret;
+}
+
+/**
+* @-SQLGenAccess
+* @func optional<int64_t> DbDao::addCorsAllowedHeader
+* @return int64_raw id
+* @sql
+*      INSERT INTO bucket_cors_allowed_headers (bucket_cors_id, allowed_header) VALUES (:bucket_cors_id(int64), :allowed_header(string))
+*/
+std::optional<int64_t> DbDao::addCorsAllowedHeader(int64_t bucket_cors_id, const std::string& allowed_header)
+{
+	if(!_addCorsAllowedHeader.prepared())
+	{
+		_addCorsAllowedHeader=db.prepare("INSERT INTO bucket_cors_allowed_headers (bucket_cors_id, allowed_header) VALUES (?, ?)");
+	}
+	_addCorsAllowedHeader.bind(bucket_cors_id);
+	_addCorsAllowedHeader.bind(allowed_header);
+	auto& cursor=_addCorsAllowedHeader.cursor();
+	if(!cursor.next())
+	{
+		_addCorsAllowedHeader.reset();
+		return {};
+	}
+	int64_t ret;
+	cursor.get("id", ret);
+	_addCorsAllowedHeader.reset();
+	return ret;
+}
+
+/**
+* @-SQLGenAccess
+* @func vector<CorsRule> DbDao::getCorsRules
+* @return int64 id, int64 bucket_id, int max_age_seconds, string cors_id
+* @sql
+*	  SELECT id, bucket_id, max_age_seconds, cors_id FROM bucket_cors WHERE bucket_id=:bucket_id(int64)
+*/
+std::vector<DbDao::CorsRule> DbDao::getCorsRules(int64_t bucket_id)
+{
+	if(!_getCorsRules.prepared())
+	{
+		_getCorsRules=db.prepare("SELECT id, bucket_id, max_age_seconds, cors_id FROM bucket_cors WHERE bucket_id=?");
+	}
+	_getCorsRules.bind(bucket_id);
+	auto& cursor=_getCorsRules.cursor();
+	std::vector<DbDao::CorsRule> ret;
+	while(cursor.next())
+	{
+		ret.emplace_back();
+		DbDao::CorsRule& obj=ret.back();
+		cursor.get(0, obj.id);
+		cursor.get(1, obj.bucket_id);
+		cursor.get(2, obj.max_age_seconds);
+		cursor.get(3, obj.cors_id);
+	}
+	_getCorsRules.reset();
+	return ret;
+}
+
+/**
+* @-SQLGenAccess
+* @func vector<AllowedOrigin> DbDao::getCorsRuleAllowedOrigins
+* @return int64 id, string allowed_origin
+* @sql
+*	  SELECT id, allowed_origin FROM bucket_cors_allowed_origins WHERE bucket_cors_id=:bucket_cors_id(int64)
+*/
+std::vector<DbDao::AllowedOrigin> DbDao::getCorsRuleAllowedOrigins(int64_t bucket_cors_id)
+{
+	if(!_getCorsRuleAllowedOrigins.prepared())
+	{
+		_getCorsRuleAllowedOrigins=db.prepare("SELECT id, allowed_origin FROM bucket_cors_allowed_origins WHERE bucket_cors_id=?");
+	}
+	_getCorsRuleAllowedOrigins.bind(bucket_cors_id);
+	auto& cursor=_getCorsRuleAllowedOrigins.cursor();
+	std::vector<DbDao::AllowedOrigin> ret;
+	while(cursor.next())
+	{
+		ret.emplace_back();
+		DbDao::AllowedOrigin& obj=ret.back();
+		cursor.get(0, obj.id);
+		cursor.get(1, obj.allowed_origin);
+	}
+	_getCorsRuleAllowedOrigins.reset();
+	return ret;
+}
+
+/**
+* @-SQLGenAccess
+* @func vector<AllowedMethod> DbDao::getCorsRuleAllowedMethods
+* @return int64 id, string allowed_method
+* @sql
+*	  SELECT id, allowed_method FROM bucket_cors_allowed_methods WHERE bucket_cors_id=:bucket_cors_id(int64)
+*/
+std::vector<DbDao::AllowedMethod> DbDao::getCorsRuleAllowedMethods(int64_t bucket_cors_id)
+{
+	if(!_getCorsRuleAllowedMethods.prepared())
+	{
+		_getCorsRuleAllowedMethods=db.prepare("SELECT id, allowed_method FROM bucket_cors_allowed_methods WHERE bucket_cors_id=?");
+	}
+	_getCorsRuleAllowedMethods.bind(bucket_cors_id);
+	auto& cursor=_getCorsRuleAllowedMethods.cursor();
+	std::vector<DbDao::AllowedMethod> ret;
+	while(cursor.next())
+	{
+		ret.emplace_back();
+		DbDao::AllowedMethod& obj=ret.back();
+		cursor.get(0, obj.id);
+		cursor.get(1, obj.allowed_method);
+	}
+	_getCorsRuleAllowedMethods.reset();
+	return ret;
+}
+
+/**
+* @-SQLGenAccess
+* @func vector<AllowedHeader> DbDao::getCorsRuleAllowedHeaders
+* @return int64 id, string allowed_header
+* @sql
+*	  SELECT id, allowed_header FROM bucket_cors_allowed_headers WHERE bucket_cors_id=:bucket_cors_id(int64)
+*/
+std::vector<DbDao::AllowedHeader> DbDao::getCorsRuleAllowedHeaders(int64_t bucket_cors_id)
+{
+	if(!_getCorsRuleAllowedHeaders.prepared())
+	{
+		_getCorsRuleAllowedHeaders=db.prepare("SELECT id, allowed_header FROM bucket_cors_allowed_headers WHERE bucket_cors_id=?");
+	}
+	_getCorsRuleAllowedHeaders.bind(bucket_cors_id);
+	auto& cursor=_getCorsRuleAllowedHeaders.cursor();
+	std::vector<DbDao::AllowedHeader> ret;
+	while(cursor.next())
+	{
+		ret.emplace_back();
+		DbDao::AllowedHeader& obj=ret.back();
+		cursor.get(0, obj.id);
+		cursor.get(1, obj.allowed_header);
+	}
+	_getCorsRuleAllowedHeaders.reset();
+	return ret;
+}
+
+/**
+* @-SQLGenAccess
+* @func vector<ExposeHeader> DbDao::getCorsRuleExposeHeaders
+* @return int64 id, string expose_header
+* @sql
+*	  SELECT id, expose_header FROM bucket_cors_expose_headers WHERE bucket_cors_id=:bucket_cors_id(int64)
+*/
+std::vector<DbDao::ExposeHeader> DbDao::getCorsRuleExposeHeaders(int64_t bucket_cors_id)
+{
+	if(!_getCorsRuleExposeHeaders.prepared())
+	{
+		_getCorsRuleExposeHeaders=db.prepare("SELECT id, expose_header FROM bucket_cors_expose_headers WHERE bucket_cors_id=?");
+	}
+	_getCorsRuleExposeHeaders.bind(bucket_cors_id);
+	auto& cursor=_getCorsRuleExposeHeaders.cursor();
+	std::vector<DbDao::ExposeHeader> ret;
+	while(cursor.next())
+	{
+		ret.emplace_back();
+		DbDao::ExposeHeader& obj=ret.back();
+		cursor.get(0, obj.id);
+		cursor.get(1, obj.expose_header);
+	}
+	_getCorsRuleExposeHeaders.reset();
+	return ret;
+}
+
+/**
+* @-SQLGenAccess
+* @func void DbDao::deleteCorsRules
+* @sql
+*	  DELETE FROM bucket_cors WHERE bucket_id=:bucket_id(int64)
+*/
+void DbDao::deleteCorsRules(int64_t bucket_id)
+{
+	if(!_deleteCorsRules.prepared())
+	{
+		_deleteCorsRules=db.prepare("DELETE FROM bucket_cors WHERE bucket_id=?");
+	}
+	_deleteCorsRules.bind(bucket_id);
+	_deleteCorsRules.write();
+	_deleteCorsRules.reset();
+}
 
 //eof

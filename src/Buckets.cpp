@@ -5,12 +5,14 @@
  #include "Buckets.h"
 #include "DbDao.h"
 #include "apigen/Object.hpp"
+#include <Database.h>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <map>
 #include <gflags/gflags.h>
 #include <folly/logging/xlog.h>
+#include "utils.h"
 
 namespace buckets
 {
@@ -56,6 +58,41 @@ void refreshBucketCache()
             .publicPerms = bucket.publicPerms,
             .versioning = static_cast<VersioningState>(bucket.versioning)
         };
+
+        const auto corsRules = dao.getCorsRules(bucket.id);
+        for(const auto& corsRule : corsRules)
+        {
+            buckets::BucketCorsRule rule;
+            rule.maxAgeSeconds = corsRule.max_age_seconds >= 0 ? std::to_string(corsRule.max_age_seconds) : "";
+            rule.id = corsRule.cors_id;
+
+            auto allowedOrigins = dao.getCorsRuleAllowedOrigins(corsRule.id);
+            for(const auto& allowedOrigin : allowedOrigins)
+            {
+                rule.allowedOrigins.emplace_back(allowedOrigin.allowed_origin);
+            }
+
+            auto allowedMethods = dao.getCorsRuleAllowedMethods(corsRule.id);
+            for(const auto& allowedMethod : allowedMethods)
+            {
+                rule.allowedMethods.emplace_back(allowedMethod.allowed_method);
+            }
+
+            auto allowedHeaders = dao.getCorsRuleAllowedHeaders(corsRule.id);
+            for(const auto& allowedHeader : allowedHeaders)
+            {
+                rule.allowedHeaders.emplace_back(allowedHeader.allowed_header);
+            }
+
+            auto exposeHeaders = dao.getCorsRuleExposeHeaders(corsRule.id);
+            for(const auto& exposeHeader : exposeHeaders)
+            {
+                rule.exposeHeaders.emplace_back(exposeHeader.expose_header);
+            }
+
+            info.corsRules.emplace_back(std::move(rule));
+        }
+
         auto ins = buckets.insert(std::make_pair(bucket.name, info));
         bucketNames.insert(std::make_pair(bucket.id, ins.first));
     }   
@@ -140,7 +177,7 @@ std::optional<int64_t> getBucket(const std::string_view bucketName)
 
 std::optional<BucketInfo> getBucketInfo(const std::string_view bucketName)
 {
-    std::unique_lock lock{mutex};
+    std::scoped_lock lock{mutex};
 
     auto it = buckets.find(std::string(bucketName));
     if(it==buckets.end())
@@ -262,6 +299,72 @@ bool setVersioning(const std::string_view bucketName, VersioningState versioning
         return false;
 
     it->second.versioning = versioningState;
+
+    return true;
+}
+
+bool validateCorsRule(BucketCorsRule& rule)
+{
+    try
+    {
+        if(!rule.maxAgeSeconds.empty())
+        {
+            const auto maxAge = std::stoi(rule.maxAgeSeconds);
+            if(maxAge < 0)
+                return false;
+
+            rule.maxAgeSeconds = std::to_string(maxAge);
+        }
+
+        for(auto& allowedHeader: rule.allowedHeaders)
+            allowedHeader = asciiToLower(allowedHeader);
+    }
+    catch(const std::exception& ex)
+    {
+        return false;
+    }
+    return true;
+}
+
+bool replaceCorsRules(int64_t bucketId, const std::vector<BucketCorsRule>& rules)
+{
+    DbDao dao;
+
+    {
+        sqlgen::ScopedAutoCommitWriteTransaction trans{&dao.getDb()};
+
+        dao.deleteCorsRules(bucketId);
+
+        for(const auto& rule: rules)
+        {
+            const auto maxAge = !rule.maxAgeSeconds.empty() ? std::stoi(rule.maxAgeSeconds) : -1;
+            const auto ruleId = dao.addCorsRule(bucketId, maxAge, rule.id);
+            if(!ruleId)
+                return false;
+
+            for(const auto& origin: rule.allowedOrigins)
+                dao.addCorsAllowedOrigin(*ruleId, origin);
+
+            for(const auto& method: rule.allowedMethods)
+                dao.addCorsAllowedMethod(*ruleId, method);
+
+            for(const auto& header: rule.allowedHeaders)
+                dao.addCorsAllowedHeader(*ruleId, header);
+
+            for(const auto& exposeHeader: rule.exposeHeaders)
+                dao.addCorsExposeHeader(*ruleId, exposeHeader);
+        }
+    }
+
+    std::scoped_lock lock{mutex};
+
+    auto it = bucketNames.find(bucketId);
+    if(it==bucketNames.end())
+        return false;
+
+    auto& bucketInfo = it->second->second;
+
+    bucketInfo.corsRules = rules;
 
     return true;
 }

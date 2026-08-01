@@ -67,3 +67,12 @@ std::string asciiToLower(std::string str)
         [](auto c) { return std::tolower(c); });
     return str;
 }
+
+std::string asciiToLower(const std::string_view str)
+{
+	std::string ret;
+	ret.reserve(str.size());
+	for (char c : str)
+		ret += std::tolower(c);
+	return ret;
+}

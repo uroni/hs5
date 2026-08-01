@@ -236,6 +236,29 @@ public:
         std::string buf;
     };
 
+    struct PutBucketCorsData
+    {
+        enum class ParseState
+        {
+            Init,
+            InRoot,
+            InRule,
+            InAllowedOrigin,
+            InAllowedMethod,
+            InAllowedHeader,
+            InExposeHeader,
+            InMaxAgeSeconds,
+            InId,
+            Unknown,
+            InUnknownObjectAttr,
+            Finished,
+            Invalid
+        };
+
+        ParseState parseState = ParseState::Init;
+        std::vector<buckets::BucketCorsRule> rules;
+    };
+
     static bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, 
             std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, std::unique_ptr<ObjMetadata>* objMetadata, std::unique_ptr<PayloadHashBase>* sdkChecksumHash);
     static std::string getEtag(const std::string& md5sum);
@@ -283,6 +306,7 @@ private:
     void listBuckets(folly::EventBase *evb, std::shared_ptr<S3Handler> self, std::string accessKey);
     void getBucketLocation(proxygen::HTTPMessage& headers, const std::string& bucket);
     void getBucketVersioning(proxygen::HTTPMessage& headers, const std::string& bucket);
+    void getBucketCors(proxygen::HTTPMessage& headers, const std::string& bucket);
     void getCommitObject(proxygen::HTTPMessage& headers);
     void getObject(proxygen::HTTPMessage& headers, const std::string& accessKey);
     void getObjectAttributes(proxygen::HTTPMessage& headers, const std::string& accessKey);
@@ -293,6 +317,10 @@ private:
     void abortMultipartUpload(proxygen::HTTPMessage& headers, const std::string& uploadIdStr);
     void deleteBucket(proxygen::HTTPMessage& headers);
     void putBucketVersioning(proxygen::HTTPMessage& headers);
+    void putBucketCors(proxygen::HTTPMessage& headers);
+    void optionsObject(proxygen::HTTPMessage& headers);
+    void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const std::string_view bucketName);
+    void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const buckets::BucketInfo& bucketInfo);
     bool commit();
 
     void listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& continuationToken, 
@@ -302,11 +330,12 @@ private:
     void finalizeMultipartUpload();
     void finalizeCreateBucket();
     void finalizePutBucketVersioning();
+    void finalizePutBucketCors();
     std::string getEtagParsedMultipart(const std::string& md5sum);
     
     void readBodyThread(folly::EventBase *evb);
     void startReadBodyThread(folly::EventBase *evb);
-    bool setKeyInfoFromPath(const std::string_view path, const std::string* versionId);
+    bool setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::string_view path, const std::string* versionId, const bool setCorsHeader);
     std::optional<std::string> initPayloadHash(proxygen::HTTPMessage& message);
     bool initSdkChecksum(proxygen::HTTPMessage& message, const Action action);
     void deleteObjects();
@@ -342,6 +371,8 @@ private:
 
     void copyObject(folly::EventBase* evb, const std::string& targetFn, CopyObjectInfo& copyObjectInfo);
 
+    proxygen::ResponseBuilder responseBuilderWithCors(uint16_t code, const std::string& message);
+
 	std::shared_ptr<S3Handler> self;
 	Action request_action = Action::Unknown;
 
@@ -362,6 +393,7 @@ private:
     std::unique_ptr<DeleteObjectsData> deleteObjectsData;
     std::unique_ptr<ObjMetadata> objMetadata;
     std::unique_ptr<PostObjectData> postObjectData;
+    std::unique_ptr<PutBucketCorsData> putBucketCorsData;
 
 	std::mutex extents_mutex;
 	std::condition_variable extents_cond;
@@ -450,5 +482,7 @@ private:
 
     SigCheckResult sigChecked = SigCheckResult::NotChecked;
     bool sfsWasUsed = false;
-#endif  
+#endif 
+
+    std::string corsAllowOrigin;
 };

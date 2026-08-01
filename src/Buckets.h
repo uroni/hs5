@@ -2,6 +2,7 @@
 
 #include <string>
 #include <optional>
+#include <vector>
 #include "apigen/ListResp.hpp"
 
 namespace buckets
@@ -26,12 +27,23 @@ std::optional<VersioningState> versioningStateFromStr(const std::string_view str
 
 std::string versioningStateToStr(VersioningState state);
 
+struct BucketCorsRule
+{
+    std::vector<std::string> allowedOrigins;
+    std::vector<std::string> allowedMethods;
+    std::vector<std::string> allowedHeaders;
+    std::vector<std::string> exposeHeaders;
+    std::string maxAgeSeconds;
+    std::string id;
+};
+
 struct BucketInfo
 {
     int64_t id;
     std::chrono::seconds created;
     int publicPerms = 0;
     VersioningState versioning = VersioningState::Disabled;
+    std::vector<BucketCorsRule> corsRules;
 };
 
 std::optional<BucketInfo> getBucketInfo(const std::string_view bucketName);
@@ -51,5 +63,11 @@ std::string getBucketName(int64_t bucketId);
 Api::ListResp getBucketNames();
 
 bool setVersioning(const std::string_view bucketName, VersioningState versioningState);
+
+bool validateCorsRule(BucketCorsRule& rule);
+
+bool replaceCorsRules(int64_t bucketId, const std::vector<BucketCorsRule>& rules);
+
+
 
 } // namespace buckets

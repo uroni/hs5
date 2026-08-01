@@ -59,6 +59,17 @@ class DbDao
 	sqlgen::DatabaseQuery _getBucketPermission;
 	sqlgen::DatabaseQuery _setBucketPublicPerms;
 	sqlgen::DatabaseQuery _setBucketVersioning;
+	sqlgen::DatabaseQuery _addCorsRule;
+	sqlgen::DatabaseQuery _addCorsAllowedOrigin;
+	sqlgen::DatabaseQuery _addCorsAllowedMethod;
+	sqlgen::DatabaseQuery _addCorsExposeHeader;
+	sqlgen::DatabaseQuery _addCorsAllowedHeader;
+	sqlgen::DatabaseQuery _getCorsRules;
+	sqlgen::DatabaseQuery _getCorsRuleAllowedOrigins;
+	sqlgen::DatabaseQuery _getCorsRuleAllowedMethods;
+	sqlgen::DatabaseQuery _getCorsRuleAllowedHeaders;
+	sqlgen::DatabaseQuery _getCorsRuleExposeHeaders;
+	sqlgen::DatabaseQuery _deleteCorsRules;
 	//@-SQLGenVariablesEnd
 
 public:
@@ -85,6 +96,21 @@ public:
 		std::string key;
 		std::string secret_key;
 	};
+	struct AllowedHeader
+	{
+		int64_t id;
+		std::string allowed_header;
+	};
+	struct AllowedMethod
+	{
+		int64_t id;
+		std::string allowed_method;
+	};
+	struct AllowedOrigin
+	{
+		int64_t id;
+		std::string allowed_origin;
+	};
 	struct Bucket
 	{
 		int64_t id;
@@ -107,6 +133,18 @@ public:
 		int64_t user_id;
 		int permissions;
 		std::string username;
+	};
+	struct CorsRule
+	{
+		int64_t id;
+		int64_t bucket_id;
+		int max_age_seconds;
+		std::string cors_id;
+	};
+	struct ExposeHeader
+	{
+		int64_t id;
+		std::string expose_header;
 	};
 	struct Policy
 	{
@@ -218,5 +256,16 @@ public:
 	std::optional<BucketPermission> getBucketPermission(int64_t id);
 	void setBucketPublicPerms(int publicPerms, int64_t id);
 	void setBucketVersioning(int versioning, int64_t id);
+	std::optional<int64_t> addCorsRule(int64_t bucket_id, int max_age_seconds, const std::string& cors_id);
+	std::optional<int64_t> addCorsAllowedOrigin(int64_t bucket_cors_id, const std::string& allowed_origin);
+	std::optional<int64_t> addCorsAllowedMethod(int64_t bucket_cors_id, const std::string& allowed_method);
+	std::optional<int64_t> addCorsExposeHeader(int64_t bucket_cors_id, const std::string& expose_header);
+	std::optional<int64_t> addCorsAllowedHeader(int64_t bucket_cors_id, const std::string& allowed_header);
+	std::vector<CorsRule> getCorsRules(int64_t bucket_id);
+	std::vector<AllowedOrigin> getCorsRuleAllowedOrigins(int64_t bucket_cors_id);
+	std::vector<AllowedMethod> getCorsRuleAllowedMethods(int64_t bucket_cors_id);
+	std::vector<AllowedHeader> getCorsRuleAllowedHeaders(int64_t bucket_cors_id);
+	std::vector<ExposeHeader> getCorsRuleExposeHeaders(int64_t bucket_cors_id);
+	void deleteCorsRules(int64_t bucket_id);
 	//@-SQLGenFunctionsEnd
 };

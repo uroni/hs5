@@ -77,6 +77,8 @@ std::string rfc2047Decode(const std::string_view text);
 
 std::string asciiToLower(std::string str);
 
+std::string asciiToLower(const std::string_view str);
+
 // Escape using upper case hex values. Copied & adjusted folly::uriEscape() 
 template <class String>
 void uriEscapeUpper(folly::StringPiece str, String& out, folly::UriEscapeMode mode) {

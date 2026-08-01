@@ -28,6 +28,7 @@ import hashlib
 from hs5_commit import Hs5Commit, Hs5RestartError
 from awsgosdktest import UploadAwsSdkGo, goawssdk_test_fixture
 from miniosdktest import UploadMinioGo, miniosdk_test_fixture
+from mypy_boto3_s3.type_defs import CORSConfigurationTypeDef
 
 def create_random_file(fn: Path, size: int) -> int:
     with open(fn, "wb") as f:
@@ -1711,3 +1712,58 @@ def test_post_form_upload_public(hs5: Hs5Runner, tmp_path: Path):
     dl_path = tmp_path / "download.txt"
     s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
     assert filecmp.cmp(tmp_path / "upload.txt", dl_path)
+
+def test_put_bucket_cors(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    s3_client.upload_fileobj(io.BytesIO(b"test"), hs5.testbucketname(), "test.txt")
+
+    cors_config : CORSConfigurationTypeDef = {
+        'CORSRules': [
+            {
+                'AllowedOrigins': ['*'],
+                'AllowedMethods': ['GET', 'POST'],
+                'AllowedHeaders': ['*'],
+                'ExposeHeaders': ['ETag'],
+                'MaxAgeSeconds': 3000
+            }
+        ]
+    }
+
+    s3_client.put_bucket_cors(Bucket=hs5.testbucketname(), CORSConfiguration=cors_config)
+
+    response = s3_client.get_bucket_cors(Bucket=hs5.testbucketname())
+    assert 'CORSRules' in response
+    assert len(response['CORSRules']) == 1
+    rule = response['CORSRules'][0]
+    assert rule['AllowedOrigins'] == ['*']
+    assert rule['AllowedMethods'] == ['GET', 'POST']
+    assert "AllowedHeaders" in rule
+    assert rule['AllowedHeaders'] == ['*']
+    assert "ExposeHeaders" in rule
+    assert rule['ExposeHeaders'] == ['ETag']
+    assert "MaxAgeSeconds" in rule
+    assert rule['MaxAgeSeconds'] == 3000
+
+    hs5_url = hs5.get_url()
+    resp = requests.options(hs5_url + "/" + hs5.testbucketname() + "/test.txt", headers={
+        "Origin": "http://example.com",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "X-Custom-Header"
+    })
+    assert resp.status_code == 200
+    assert resp.headers.get("Access-Control-Allow-Origin") == "*"
+    assert resp.headers.get("Access-Control-Allow-Methods") == "GET, POST"
+    assert resp.headers.get("Access-Control-Allow-Headers") == "*"
+    assert resp.headers.get("Access-Control-Expose-Headers") == "ETag"
+    assert resp.headers.get("Access-Control-Max-Age") == "3000"
+
+    def add_origin_header(request, **kwargs):
+        request.headers['Origin'] = 'https://example.com'
+
+    s3_client.meta.events.register('before-sign.s3.GetObject', add_origin_header)
+
+    obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="test.txt")
+    assert obj["ResponseMetadata"]["HTTPHeaders"]["access-control-allow-origin"] == "*"
+
+
