@@ -25,6 +25,57 @@ permissions:
   contents: write
 
 jobs:
+  vcpkg-bootstrap:
+    name: ubuntu-latest-vcpkg-bootstrap
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup system packages for vcpkg
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: sudo apt-get update &&
+            sudo apt-get install autoconf automake autoconf-archive lld
+
+      - uses: lukka/get-cmake@v3.31.5
+
+      - name: Verify CMake vcpkg bootstrap pin
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          mapfile -t vcpkg_commits < <(python - <<'PY'
+          import re
+          from pathlib import Path
+          
+          cmake_lists = Path("CMakeLists.txt").read_text()
+          ci_workflow = Path(".github/workflows/ci.yml").read_text()
+          
+          cmake_commit = re.search(r'set\(HS5_VCPKG_GIT_COMMIT "([0-9a-f]+)"\)', cmake_lists)
+          ci_commit = re.search(r'vcpkgGitCommitId:\s*([0-9a-f]+)', ci_workflow)
+          
+          if cmake_commit is None or ci_commit is None:
+              raise SystemExit("Failed to locate vcpkg commit pins")
+          
+          print(cmake_commit.group(1))
+          print(ci_commit.group(1))
+          PY
+          )
+
+          cmake_vcpkg_commit="${vcpkg_commits[0]}"
+          ci_vcpkg_commit="${vcpkg_commits[1]}"
+
+          test -n "$cmake_vcpkg_commit"
+          test -n "$ci_vcpkg_commit"
+          test "$cmake_vcpkg_commit" = "$ci_vcpkg_commit"
+          test ! -e vcpkg/scripts/buildsystems/vcpkg.cmake
+
+          cmake --preset ninja-multi-vcpkg
+
+          actual_vcpkg_commit="$(git -C vcpkg rev-parse HEAD)"
+          test "$actual_vcpkg_commit" = "$cmake_vcpkg_commit"
+
   job:
     name: ${{ matrix.os }}-${{ github.workflow }}
     runs-on: ${{ matrix.os }}
