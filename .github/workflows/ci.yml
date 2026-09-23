@@ -49,10 +49,10 @@ jobs:
           import re
           from pathlib import Path
           
-          cmake_lists = Path("CMakeLists.txt").read_text()
+          bootstrap_module = Path("cmake/BootstrapVcpkg.cmake").read_text()
           ci_workflow = Path(".github/workflows/ci.yml").read_text()
           
-          cmake_commit = re.search(r'set\(HS5_VCPKG_GIT_COMMIT "([0-9a-f]+)"\)', cmake_lists)
+          cmake_commit = re.search(r'set\(HS5_VCPKG_GIT_COMMIT "([0-9a-f]+)"\)', bootstrap_module)
           ci_commit = re.search(r'vcpkgGitCommitId:\s*([0-9a-f]+)', ci_workflow)
           
           if cmake_commit is None or ci_commit is None:
@@ -70,11 +70,15 @@ jobs:
           test -n "$ci_vcpkg_commit"
           test "$cmake_vcpkg_commit" = "$ci_vcpkg_commit"
           test ! -e vcpkg/scripts/buildsystems/vcpkg.cmake
+          test ! -e vcpkg/vcpkg
 
-          cmake --preset ninja-multi-vcpkg
+          cmake -DCMAKE_TOOLCHAIN_FILE="$PWD/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -P cmake/BootstrapVcpkg.cmake
 
           actual_vcpkg_commit="$(git -C vcpkg rev-parse HEAD)"
           test "$actual_vcpkg_commit" = "$cmake_vcpkg_commit"
+          test ! -e vcpkg/vcpkg
+          test ! -e vcpkg/buildtrees
 
   job:
     name: ${{ matrix.os }}-${{ github.workflow }}
