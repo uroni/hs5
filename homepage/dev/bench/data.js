@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790198480920,
+  "lastUpdate": 1790198870587,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -11178,6 +11178,61 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.1334455343268194",
             "extra": "mean: 11.116246441200019 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "uroni",
+            "username": "uroni"
+          },
+          "committer": {
+            "name": "uroni",
+            "username": "uroni"
+          },
+          "id": "f07b8422bc716479f9f2956c2382cc3ed97597c9",
+          "message": "Add CI coverage for CMake-driven vcpkg bootstrap pinning",
+          "timestamp": "2026-09-23T21:09:51Z",
+          "url": "https://github.com/uroni/hs5/pull/7/commits/f07b8422bc716479f9f2956c2382cc3ed97597c9"
+        },
+        "date": 1790198869746,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007912232085247417,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.38658588700002 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007879964923867376,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.904118186 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08014706510308746,
+            "unit": "iter/sec",
+            "range": "stddev: 0.07793611736275478",
+            "extra": "mean: 12.477063242599979 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06398541200502486,
+            "unit": "iter/sec",
+            "range": "stddev: 0.07095416690165451",
+            "extra": "mean: 15.628562334200002 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05815232594965124,
+            "unit": "iter/sec",
+            "range": "stddev: 0.380699939033683",
+            "extra": "mean: 17.196216723399992 sec\nrounds: 5"
           }
         ]
       }
