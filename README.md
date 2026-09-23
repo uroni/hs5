@@ -98,6 +98,10 @@ chmod +x hs5
 ```
 Data and metadata will be stored in the current directory by default. It'll print the randomly generated root password to stdout on the first run. Access the S3 API and the web interface at port 80 per default.
 
+### Building from source
+
+When configuring HS5 via the provided CMake presets (including `build.sh`), the build now automatically clones `https://github.com/microsoft/vcpkg` into `./vcpkg` on first use if that checkout is missing, and pins it to the same commit used in CI.
+
 ## Omissions #
 
 At this point HS5 implements most major S3 operations. One major operation that is missing is POST Object uploading. Object locks are also TBD.
@@ -168,4 +172,3 @@ SELECT MIN(arrival_time - departure_time)
 FROM "hs5://test/train_services.parquet"
   WHERE arrival_time > departure_time;
 ```
-
