@@ -46,10 +46,10 @@ class MinioRunner:
     def _minio_url(self) -> tuple[str, str]:
         # if arm64
         if os.uname().machine == "aarch64":
-            return ("https://dl.min.io/server/minio/release/linux-arm64/archive/minio.RELEASE.2025-04-22T22-12-26Z",
+            return ("https://github.com/minio/minio/releases/download/RELEASE.2025-04-22T22-12-26Z/minio.linux-arm64.RELEASE.2025-04-22T22-12-26Z",
                     "6c2f3142c94240206123177f4ba1e360daa5d1e0a4962e90757ef4f92c3ab57c")
         else:
-            return ("https://dl.min.io/server/minio/release/linux-amd64/archive/minio.RELEASE.2025-04-22T22-12-26Z",
+            return ("https://github.com/minio/minio/releases/download/RELEASE.2025-04-22T22-12-26Z/minio.linux-amd64.RELEASE.2025-04-22T22-12-26Z",
                     "53e2a2cb16c5366ea6fbbc479c19ddb4c6a0948273e752f740fb1fbf27bb817c")
 
     def _download_minio(self):
