@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790198870587,
+  "lastUpdate": 1790198899237,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -11233,6 +11233,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.380699939033683",
             "extra": "mean: 17.196216723399992 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "198982749+Copilot@users.noreply.github.com",
+            "name": "copilot-swe-agent[bot]",
+            "username": "Copilot"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f07b8422bc716479f9f2956c2382cc3ed97597c9",
+          "message": "Avoid building in vcpkg bootstrap CI check\n\nCo-authored-by: uroni <2711429+uroni@users.noreply.github.com>",
+          "timestamp": "2026-09-23T21:12:30Z",
+          "tree_id": "cad7cdba0e5ea67b1f4409ab8bc2b402ccfb2430",
+          "url": "https://github.com/uroni/hs5/commit/f07b8422bc716479f9f2956c2382cc3ed97597c9"
+        },
+        "date": 1790198897772,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007919191874670382,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.275510914 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007875839342570173,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.97059405400006 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08196357994739371,
+            "unit": "iter/sec",
+            "range": "stddev: 0.14516730299386674",
+            "extra": "mean: 12.200540784600003 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.0620403144413943,
+            "unit": "iter/sec",
+            "range": "stddev: 0.5069182724951415",
+            "extra": "mean: 16.118551445200023 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05723071910721086,
+            "unit": "iter/sec",
+            "range": "stddev: 0.22414785190537165",
+            "extra": "mean: 17.473133582800006 sec\nrounds: 5"
           }
         ]
       }
