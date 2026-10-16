@@ -4,6 +4,7 @@
  */
 #include "ObjMetadata.h"
 #include "s3handler.h"
+#include "utils.h"
 
 int64_t ObjMetadata::flags() const
 {
@@ -22,6 +23,10 @@ int64_t ObjMetadata::flags() const
         f |= metadata_flag_with_language;
     if(expires.has_value())
         f |= metadata_flag_with_expires;
+    if(lockInfo.has_value())
+        f |= metadata_flag_with_lock_info;
+    if(legalHold)
+        f |= metadata_flag_with_legal_hold;
     return f;
 }
 
@@ -41,6 +46,14 @@ void ObjMetadata::serialize(CWData& wdata) const
         wdata.addString2(*language);
     if(expires.has_value())
         wdata.addString2(*expires);
+    if(lockInfo.has_value())
+    {
+        wdata.addInt64(lockInfo->flags);
+        if(lockInfo->retainUntilSet())
+            wdata.addInt64(std::chrono::duration_cast<std::chrono::seconds>(lockInfo->retainUntil.time_since_epoch()).count());
+        if(lockInfo->eventHold())
+            wdata.addInt64(lockInfo->eventDurationDays*1000 + lockInfo->eventDurationYears);
+    }
 }
 
 bool ObjMetadata::deserialize(CRData& rdata, const int64_t flags)
@@ -92,6 +105,33 @@ bool ObjMetadata::deserialize(CRData& rdata, const int64_t flags)
             return false;
         expires = std::move(val);
     }
+    if(flags & metadata_flag_with_lock_info)
+    {
+        lockInfo.emplace();
+        int64_t lockInfoFlags;
+        if(!rdata.getInt64(&lockInfoFlags))
+            return false;
+        lockInfo->flags = static_cast<unsigned int>(lockInfoFlags);
+        if(lockInfo->retainUntilSet())
+        {
+            int64_t retainUntilSec;
+            if(!rdata.getInt64(&retainUntilSec))
+                return false;
+            lockInfo->retainUntil = std::chrono::system_clock::time_point(std::chrono::seconds(retainUntilSec));
+        }
+        if(lockInfo->eventHold())
+        {
+            int64_t eventDuration;
+            if(!rdata.getInt64(&eventDuration))
+                return false;
+            lockInfo->eventDurationDays = eventDuration / 1000;
+            lockInfo->eventDurationYears = eventDuration % 1000;
+        }
+    }
+    if(flags & metadata_flag_with_legal_hold)
+    {
+        legalHold = true;
+    }
     return true;
 }
 
@@ -113,6 +153,26 @@ void ObjMetadata::addRespHeaders(proxygen::ResponseBuilder& resp)
         resp.header(proxygen::HTTP_HEADER_CONTENT_LANGUAGE, *language);
     if(expires.has_value())
         resp.header(proxygen::HTTP_HEADER_EXPIRES, *expires);
+    if(legalHold)
+        resp.header("x-amz-object-lock-legal-hold", "ON");
+    if(lockInfo.has_value())
+    {
+        if(lockInfo->complianceMode())
+            resp.header("x-amz-object-lock-mode", "COMPLIANCE");
+        else
+            resp.header("x-amz-object-lock-mode", "GOVERNANCE");
+
+        if(lockInfo->retainUntilSet())
+            resp.header("x-amz-object-lock-retain-until-date", format_last_modified_rfc1123(lockInfo->retainUntil));
+
+        if(lockInfo->eventHold())
+        {
+            resp.header("x-amz-object-lock-event-hold", "ON");
+            resp.header("x-amz-object-lock-event-hold-duration-days", std::to_string(lockInfo->eventDurationDays));
+            resp.header("x-amz-object-lock-event-hold-duration-years", std::to_string(lockInfo->eventDurationYears));
+        }
+    }
+
 }
 
 void ObjMetadata::addRespHeaders(ObjMetadata* objMetadata, proxygen::ResponseBuilder& resp)

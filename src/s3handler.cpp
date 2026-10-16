@@ -1523,26 +1523,6 @@ std::string serializePartExts(const ParsePartRes& partRes)
     return std::string(wdata.getDataPtr(), wdata.getDataSize());
 }
 
-std::string format_last_modified(const int64_t lastModified)
-{
-    constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
-    const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(lastModified));
-
-    char datebuf[sizeof("2011-10-08T07:07:09Z")];
-    std::strftime(datebuf, sizeof(datebuf), "%FT%TZ", std::gmtime(&lastModifiedTp));
-    return datebuf;
-}
-
-std::string format_last_modified_rfc1123(const int64_t lastModified)
-{
-    constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
-    const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(lastModified));
-
-    char datebuf[sizeof("Fri, 08 Oct 2011 07:07:09 GMT")];
-    std::strftime(datebuf, sizeof(datebuf), "%a, %d %b %Y %H:%M:%S GMT", std::gmtime(&lastModifiedTp));
-    return datebuf;
-}
-
 std::mutex S3Handler::readingMultipartObjectsMutex;
 std::unordered_map<std::string, S3Handler::ReadingMultipartObject> S3Handler::readingMultipartObjects;
 

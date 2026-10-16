@@ -134,13 +134,17 @@ const int64_t metadata_flag_with_encoding = 1<<7;
 const int64_t metadata_flag_with_expires = 1<<8;
 const int64_t metadata_flag_with_language = 1<<9;
 const int64_t metadata_flag_with_disposition = 1<<10;
+const int64_t metadata_flag_with_lock_info = 1<<11;
+const int64_t metadata_flag_with_legal_hold = 1<<12;
 const int64_t metadata_flag_has_obj_metadata = metadata_flag_with_content_type | metadata_flag_with_meta | 
     metadata_flag_with_disposition | metadata_flag_with_cache_control | 
-    metadata_flag_with_encoding | metadata_flag_with_language | metadata_flag_with_expires;
+    metadata_flag_with_encoding | metadata_flag_with_language | metadata_flag_with_expires |
+    metadata_flag_with_lock_info | metadata_flag_with_legal_hold;
 const int64_t metadata_known_flags = metadata_flag_with_content_type | metadata_flag_with_meta |
      metadata_flag_with_disposition | metadata_flag_with_cache_control | 
      metadata_flag_with_encoding | metadata_flag_with_language | 
-     metadata_flag_with_expires | metadata_flag_with_checksum;
+     metadata_flag_with_expires | metadata_flag_with_checksum |
+     metadata_flag_with_lock_info | metadata_flag_with_legal_hold;
 
 class DuckDbFs;
 

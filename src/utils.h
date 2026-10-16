@@ -3,6 +3,7 @@
 #include <string>
 #include <stdint.h>
 #include <folly/String.h>
+#include <chrono>
 
 static bool next(const std::string &pData, const size_t & doff, const std::string &pStr)
 {
@@ -121,3 +122,8 @@ String uriEscapeUpper(folly::StringPiece str, folly::UriEscapeMode mode = folly:
   uriEscapeUpper(str, out, mode);
   return out;
 }
+
+std::string format_last_modified(const int64_t lastModified);
+
+std::string format_last_modified_rfc1123(const int64_t lastModified);
+std::string format_last_modified_rfc1123(const std::chrono::system_clock::time_point lastModified);
