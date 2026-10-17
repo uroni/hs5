@@ -25,6 +25,26 @@ permissions:
   contents: write
 
 jobs:
+  format:
+    name: format-check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      - name: Install formatters
+        run: pip install clang-format==18.1.8 black==25.1.0
+
+      - name: Check C++ formatting
+        run: git ls-files 'src/*.cpp' 'src/*.h' ':!src/apigen/*' | xargs clang-format --dry-run --Werror
+
+      - name: Check Python formatting
+        run: black --check --diff .
+
   vcpkg-bootstrap:
     name: ubuntu-latest-vcpkg-bootstrap
     runs-on: ubuntu-latest
