@@ -7898,6 +7898,44 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
 
     if(!body)
     {
+        if(request_action == Action::PostObject)
+        {
+            // Size of form data file is only known at the end. All data before was written, so
+            // remove the remaining unused space at the end of the extents
+            auto toremove = put_remaining.load(std::memory_order_relaxed);
+            if(toremove>0)
+            {
+                XLOGF(DBG0, "Finished receiving file data for PostObject but {} remaining bytes.", toremove);
+                std::vector<SingleFileStorage::Ext> to_remove_extents;
+                {
+                    std::scoped_lock lock(extents_mutex);
+                    while(toremove>0 && !extents.empty())
+                    {
+                        auto& ext = extents.back();
+                        if(ext.len <= toremove)
+                        {
+                            put_remaining.fetch_sub(ext.len, std::memory_order_relaxed);
+                            toremove -= ext.len;
+                            to_remove_extents.push_back(ext);
+                            extents.pop_back();
+                        }
+                        else
+                        {
+                            ext.len -= toremove;
+                            put_remaining.fetch_sub(toremove, std::memory_order_relaxed);
+                            sfs().remove_extent_end(ext.data_file_offset+ext.len, toremove);
+                            break;
+                        }
+                    }
+                }
+
+                if(!to_remove_extents.empty())
+                {
+                    sfs().free_extents(to_remove_extents);
+                }
+            }
+        }
+
         if(put_remaining!=0)
         {
             XLOGF(WARN, "Key {}, remaining bytes {}. Returning error", keyInfo.key, put_remaining.load(std::memory_order_relaxed));
@@ -9347,39 +9385,9 @@ void S3Handler::onFieldEnd(bool endedOnBoundary,
 
     if(postObjectData->state == PostObjectState::File)
     {
-        auto toremove = postObjectData->expectedLength - done_bytes;
-        if(toremove>0)
-        {            
-            XLOGF(DBG0, "Finished receiving file data for PostObject but {} remaining bytes.", toremove);
-            std::vector<SingleFileStorage::Ext> to_remove_extents;
-            {
-                std::scoped_lock lock(extents_mutex);
-                while(toremove>0 && !extents.empty())            
-                {
-                    auto& ext = extents.back();
-                    if(ext.len <= toremove)
-                    {
-                        put_remaining.fetch_sub(ext.len, std::memory_order_relaxed);
-                        toremove -= ext.len;
-                        to_remove_extents.push_back(ext);
-                        extents.pop_back();
-                    }
-                    else
-                    {
-                        ext.len -= toremove;
-                        put_remaining.fetch_sub(toremove, std::memory_order_relaxed);
-                        sfs().remove_extent_end(ext.data_file_offset+ext.len, toremove);
-                        break;
-                    }
-                }
-            }
-
-            if(!to_remove_extents.empty())
-            {
-                sfs().free_extents(to_remove_extents);
-            }
-        }
-        XLOGF(DBG0, "PostObject done");
+        // Unused space at the end of extents is removed in onBodyCPU, as extents may not be
+        // initialized yet and are used by the body thread
+        XLOGF(DBG0, "PostObject done. Received {} of {} expected bytes", done_bytes, postObjectData->expectedLength);
         postObjectData->state = PostObjectState::Done;
     }
     else if(postObjectData->state != PostObjectState::MultipartParsingError &&
