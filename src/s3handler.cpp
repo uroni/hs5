@@ -5304,7 +5304,7 @@ void S3Handler::finalizePutBucketCors()
                 {
                     if(!buckets::validateCorsRule(rule))
                     {
-                        XLOGF(WARN, "Invalid CORS rule specified for bucket {}", self->keyInfo.bucketId);
+                        XLOGF(WARN, "Invalid CORS rule specified for bucket {}", self->keyInfo.key);
                         evb->runInEventBaseThread([self = self]()
                                                   {
                             ResponseBuilder(self->downstream_)
@@ -5317,7 +5317,33 @@ void S3Handler::finalizePutBucketCors()
                     }
                 }
 
-                buckets::replaceCorsRules(self->keyInfo.bucketId, self->putBucketCorsData->rules);
+                const auto bucketId = buckets::getBucket(self->keyInfo.key);
+                if(!bucketId)
+                {
+                    evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(404, "Not found")
+                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", self->keyInfo.key, ""))
+                            .sendWithEOM();
+                        self->finished_ = true;
+                                              });
+                    return;
+                }
+
+                if(!buckets::replaceCorsRules(*bucketId, self->putBucketCorsData->rules))
+                {
+                    XLOGF(ERR, "Failed to set CORS rules for bucket {}", self->keyInfo.key);
+                    evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(500, "Internal error")
+                            .body(s3errorXml(S3ErrorCode::InternalError, "Failed to set CORS rules", self->keyInfo.key, ""))
+                            .sendWithEOM();
+                        self->finished_ = true;
+                                              });
+                    return;
+                }
 
                 evb->runInEventBaseThread([self = self]()
                                               {
