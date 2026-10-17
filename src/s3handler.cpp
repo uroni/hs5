@@ -8688,29 +8688,34 @@ void S3Handler::onAddReadingCallback(const std::string_view fn, const SingleFile
 
 void S3Handler::removeReadingMultipartObject(const std::string& key, SingleFileStorage& sfs)
 {
-    std::scoped_lock lock{readingMultipartObjectsMutex};
-    auto it = readingMultipartObjects.find(key);
-    assert(it!=readingMultipartObjects.end());
-    if(it==readingMultipartObjects.end())
-        return;
-
-    assert(it->second.refs>0);
-    if(--it->second.refs==0)
+    ReadingMultipartObject obj;
     {
-        if(it->second.delUploadId != -1)
+        std::scoped_lock lock{readingMultipartObjectsMutex};
+        auto it = readingMultipartObjects.find(key);
+        assert(it!=readingMultipartObjects.end());
+        if(it==readingMultipartObjects.end())
+            return;
+
+        assert(it->second.refs>0);
+        if(--it->second.refs!=0)
+            return;
+
+        obj = std::move(it->second);
+        readingMultipartObjects.erase(it);
+    }
+
+    if(obj.delUploadId != -1)
+    {
+        XLOGF(INFO, "Deleting multi-part upload object {} after reading completed delUploadId={} delParts.size()={}", key, obj.delUploadId, obj.delParts.size());
+        for(const auto& ext: obj.delParts)
         {
-            XLOGF(INFO, "Deleting multi-part upload object {} after reading completed delUploadId={} delParts.size()={}", key, it->second.delUploadId, it->second.delParts.size());
-            for(const auto& ext: it->second.delParts)
+            for(auto partNum=ext.start; partNum<ext.start+ext.len; ++partNum)
             {
-                for(auto partNum=ext.start; partNum<ext.start+ext.len; ++partNum)
-                {
-                    const auto rc = sfs.del(make_key({.key = uploadIdToStr(it->second.delUploadId)+"."+uploadIdToStr(partNum), .version = 0, 
-                                .bucketId = it->second.delBucketId}), SingleFileStorage::DelAction::DelWithQueued, false);
-                    assert(rc==0);
-                }
+                const auto rc = sfs.del(make_key({.key = uploadIdToStr(obj.delUploadId)+"."+uploadIdToStr(partNum), .version = 0,
+                            .bucketId = obj.delBucketId}), SingleFileStorage::DelAction::DelWithQueued, false);
+                assert(rc==0);
             }
         }
-        readingMultipartObjects.erase(it);
     }
 }
 
