@@ -5,6 +5,7 @@ import os
 import shutil
 import tempfile
 
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]):
     if os.getenv("CI"):
         return
@@ -13,6 +14,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if "slow" in item.keywords:
             item.add_marker(skip_slow)
+
 
 @pytest.fixture(scope="session", autouse=True)
 def init_port(testrun_uid: str):
@@ -41,4 +43,3 @@ def init_port(testrun_uid: str):
     except OSError:
         shutil.rmtree(tmp_path)
         print("Port files already exist, skipping initialization.")
-

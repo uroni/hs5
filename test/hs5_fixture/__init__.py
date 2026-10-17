@@ -23,7 +23,9 @@ import hs5_api
 
 
 def get_next_port(testrun_uid: str) -> int:
-    with portalocker.Lock(f"/tmp/hs5-ports-{testrun_uid}/hs5", mode="r+", flags=portalocker.LOCK_EX) as f:
+    with portalocker.Lock(
+        f"/tmp/hs5-ports-{testrun_uid}/hs5", mode="r+", flags=portalocker.LOCK_EX
+    ) as f:
         cp = f.read()
         p = int(cp)
         p += 1
@@ -34,6 +36,7 @@ def get_next_port(testrun_uid: str) -> int:
         f.flush()
 
         return p
+
 
 @dataclass
 class Hs5Stats:
@@ -51,7 +54,15 @@ class Hs5Runner:
     manual_commit_list_consistent = True
     with_heaptrack = False
 
-    def __init__(self, workdir : Path, data_file_size_limit_mb: int, testrun_uid: str, perf: bool = False, data_file_alloc_chunk_size: Optional[int] = None, extra_args: list[str] = []) -> None:
+    def __init__(
+        self,
+        workdir: Path,
+        data_file_size_limit_mb: int,
+        testrun_uid: str,
+        perf: bool = False,
+        data_file_alloc_chunk_size: Optional[int] = None,
+        extra_args: list[str] = [],
+    ) -> None:
         self._port = get_next_port(testrun_uid)
         self._workdir = workdir
         self._root_key = uuid.uuid4().hex
@@ -59,18 +70,20 @@ class Hs5Runner:
         if data_file_alloc_chunk_size is None:
             data_file_alloc_chunk_size_str = os.getenv("DATA_FILE_ALLOC_CHUNKSIZE")
             if data_file_alloc_chunk_size_str is None:
-                data_file_alloc_chunk_size = 10*1024*1024
+                data_file_alloc_chunk_size = 10 * 1024 * 1024
             else:
                 data_file_alloc_chunk_size = int(data_file_alloc_chunk_size_str)
 
-        locs = [Path("builds/ninja-multi-vcpkg-lld/Debug/hs5"),
-                Path("builds/ninja-multi-vcpkg-lld/RelWithDebInfo/hs5"),
-                Path("builds/ninja-multi-vcpkg-lld/Release/hs5"),
-                Path("builds/ninja-multi-vcpkg/Debug/hs5"),
-                Path("builds/ninja-multi-vcpkg/RelWithDebInfo/hs5"),
-                Path("builds/ninja-multi-vcpkg/Release/hs5"),
-                Path("build/hs5")]
-        
+        locs = [
+            Path("builds/ninja-multi-vcpkg-lld/Debug/hs5"),
+            Path("builds/ninja-multi-vcpkg-lld/RelWithDebInfo/hs5"),
+            Path("builds/ninja-multi-vcpkg-lld/Release/hs5"),
+            Path("builds/ninja-multi-vcpkg/Debug/hs5"),
+            Path("builds/ninja-multi-vcpkg/RelWithDebInfo/hs5"),
+            Path("builds/ninja-multi-vcpkg/Release/hs5"),
+            Path("build/hs5"),
+        ]
+
         hs5_loc = None
         hs5_binary = os.environ.get("HS5_BINARY")
         if hs5_binary:
@@ -83,19 +96,23 @@ class Hs5Runner:
 
         assert hs5_loc is not None
 
-        self.args = [str(hs5_loc),
-                "internal",
-                "--ip",
-                "127.0.0.1",
-                "--http_port",
+        self.args = [
+            str(hs5_loc),
+            "internal",
+            "--ip",
+            "127.0.0.1",
+            "--http_port",
             str(self._port),
-            "--init_root_password", self._root_key,
-            "--with_stop_command", "true",
-            f"--folly_global_cpu_executor_threads={multiprocessing.cpu_count()*2}"]
+            "--init_root_password",
+            self._root_key,
+            "--with_stop_command",
+            "true",
+            f"--folly_global_cpu_executor_threads={multiprocessing.cpu_count()*2}",
+        ]
 
         if os.environ.get("MANUAL_COMMIT") == "1":
             self.manual_commit = True
-        
+
         if os.environ.get("ENABLE_WAL") == "1" or perf:
             self.args.append("--index_wal_path")
             self.args.append(".")
@@ -142,7 +159,9 @@ class Hs5Runner:
         if not perf and os.environ.get("ENABLE_DB_SYNC") != "1":
             self.args.append("--test_db_no_sync")
 
-        self.args.append(f"--http_worker_threads={os.environ.get('HS5_HTTP_WORKER_THREADS', '4')}")
+        self.args.append(
+            f"--http_worker_threads={os.environ.get('HS5_HTTP_WORKER_THREADS', '4')}"
+        )
 
         self.args.extend(extra_args)
 
@@ -156,10 +175,7 @@ class Hs5Runner:
 
     def start(self) -> None:
         self._process = subprocess.Popen(
-            self.args,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-            cwd=self._workdir
+            self.args, stdout=sys.stdout, stderr=sys.stderr, cwd=self._workdir
         )
 
         self._wait_for_startup()
@@ -182,10 +198,10 @@ class Hs5Runner:
     def login_user(self, username: str, password: str) -> tuple[str, requests.Session]:
         req = requests.session()
 
-        response = req.post(self.get_api_url()+"login", json={
-            "username": username,
-            "password": password
-        })
+        response = req.post(
+            self.get_api_url() + "login",
+            json={"username": username, "password": password},
+        )
 
         assert response.status_code == 200
         resp = response.json()
@@ -221,50 +237,71 @@ class Hs5Runner:
 
     def get_url(self) -> str:
         return f"http://127.0.0.1:{self._port}"
-    
+
     def get_api_url(self) -> str:
         return f"http://127.0.0.1:{self._port}/api-v1-b64be512-4b03-4028-a589-13931942e205/"
-    
+
     def get_admin_session(self) -> str:
         return self._admin_ses
 
     def get_api_client_admin(self) -> hs5_api.DefaultApi:
         ses = self._ses.cookies.get("ses", "")
         assert isinstance(ses, str)
-        config = hs5_api.Configuration(host=f"http://127.0.0.1:{self._port}",
-                                    api_key={"cookieAuth": f"ses={ses}"},
-                                    access_token=self.get_admin_session())
+        config = hs5_api.Configuration(
+            host=f"http://127.0.0.1:{self._port}",
+            api_key={"cookieAuth": f"ses={ses}"},
+            access_token=self.get_admin_session(),
+        )
         return hs5_api.DefaultApi(hs5_api.ApiClient(config))
-    
+
     def get_api_client(self, username: str, password: str) -> hs5_api.DefaultApi:
         (ses, req) = self.login_user(username, password)
         cookieSes = req.cookies.get("ses", "")
         assert isinstance(cookieSes, str)
-        config = hs5_api.Configuration(host=f"http://127.0.0.1:{self._port}",
-                                    api_key={"cookieAuth": f"ses={cookieSes}"},
-                                    access_token=ses)
+        config = hs5_api.Configuration(
+            host=f"http://127.0.0.1:{self._port}",
+            api_key={"cookieAuth": f"ses={cookieSes}"},
+            access_token=ses,
+        )
         return hs5_api.DefaultApi(hs5_api.ApiClient(config))
 
     def get_s3_client(self, sig_v2: bool = False) -> S3Client:
-        config = botocore.config.Config(signature_version='s3v4', request_checksum_calculation="when_supported") if not sig_v2 else None
-        return boto3.client('s3', endpoint_url=self.get_url(), aws_access_key_id="root", aws_secret_access_key=self._root_key, config=config)
-    
+        config = (
+            botocore.config.Config(
+                signature_version="s3v4", request_checksum_calculation="when_supported"
+            )
+            if not sig_v2
+            else None
+        )
+        return boto3.client(
+            "s3",
+            endpoint_url=self.get_url(),
+            aws_access_key_id="root",
+            aws_secret_access_key=self._root_key,
+            config=config,
+        )
+
     def commit_storage(self, s3: S3Client, force: bool = False) -> None:
         if not self.manual_commit:
             return
         if self.manual_commit_list_consistent and not force:
             return
 
-        s3.put_object(Bucket="manualcommit", Key="a711e93e-93b4-4a9e-8a0b-688797470002", Body="")
+        s3.put_object(
+            Bucket="manualcommit", Key="a711e93e-93b4-4a9e-8a0b-688797470002", Body=""
+        )
 
     def stop_server(self, fast: bool):
         def stop_thread():
             s3 = self.get_s3_client()
             try:
-                pkey = "3db7da22-8ce2-4420-a8ca-f09f0b8e0e61" + ("-fast" if fast else "")
+                pkey = "3db7da22-8ce2-4420-a8ca-f09f0b8e0e61" + (
+                    "-fast" if fast else ""
+                )
                 s3.put_object(Bucket="manualcommit", Key=pkey, Body="")
             except:
                 pass
+
         t = threading.Thread(target=stop_thread, daemon=True)
         t.start()
 
@@ -273,20 +310,20 @@ class Hs5Runner:
 
     def get_root_key(self):
         return self._root_key
-    
+
     def testbucketname(self):
         return "testbucket"
-    
+
     def get_datafile_size(self) -> int:
         data_file_path = self._workdir / "data0"
         if not data_file_path.exists():
             return 0
         return os.path.getsize(data_file_path)
-    
+
     def get_stats(self) -> Hs5Stats:
         url = self.get_api_url() + "stats"
         response = self._ses.post(url, json={})
-        
+
         assert response.status_code == 200
         resp = response.json()
         return Hs5Stats(**resp)
@@ -298,7 +335,7 @@ class Hs5Runner:
         except psutil.NoSuchProcess:
             return 0.0
 
-    def track_rss(self, interval: float = 0.1) -> 'RssTracker':
+    def track_rss(self, interval: float = 0.1) -> "RssTracker":
         return RssTracker(self._process.pid, interval)
 
 
@@ -321,7 +358,7 @@ class RssTracker:
         except psutil.NoSuchProcess:
             pass
 
-    def __enter__(self) -> 'RssTracker':
+    def __enter__(self) -> "RssTracker":
         self._thread = threading.Thread(target=self._sample, daemon=True)
         self._thread.start()
         return self
@@ -334,7 +371,7 @@ class RssTracker:
     @property
     def peak_mb(self) -> float:
         return self._peak_mb
-    
+
 
 @pytest.fixture
 def hs5(tmpdir: Path, testrun_uid: str):
@@ -348,17 +385,21 @@ def hs5(tmpdir: Path, testrun_uid: str):
     except:
         pass
 
+
 @pytest.fixture
 def hs5_perf(tmpdir: Path, testrun_uid: str):
     loc = tmpdir / uuid.uuid4().hex
     loc.mkdir()
-    runner = Hs5Runner(loc, data_file_size_limit_mb=100, testrun_uid=testrun_uid, perf=True)
+    runner = Hs5Runner(
+        loc, data_file_size_limit_mb=100, testrun_uid=testrun_uid, perf=True
+    )
     yield runner
     runner.stop(cleanup=True, kill=False)
     try:
         rmtree(loc)
     except:
         pass
+
 
 @pytest.fixture
 def hs5_large(tmpdir: Path, testrun_uid: str):
@@ -372,35 +413,53 @@ def hs5_large(tmpdir: Path, testrun_uid: str):
     except:
         pass
 
+
 @pytest.fixture
 def hs5_large_small_alloc_chunksize(tmpdir: Path, testrun_uid: str):
     loc = tmpdir / uuid.uuid4().hex
     loc.mkdir()
-    runner = Hs5Runner(loc, data_file_size_limit_mb=5000, data_file_alloc_chunk_size=10*1024*1024, testrun_uid=testrun_uid)
+    runner = Hs5Runner(
+        loc,
+        data_file_size_limit_mb=5000,
+        data_file_alloc_chunk_size=10 * 1024 * 1024,
+        testrun_uid=testrun_uid,
+    )
     yield runner
     runner.stop(cleanup=True, kill=False)
     try:
         rmtree(loc)
     except:
         pass
+
 
 @pytest.fixture
 def hs5_modify_delay(tmpdir: Path, testrun_uid: str):
     loc = tmpdir / uuid.uuid4().hex
     loc.mkdir()
-    runner = Hs5Runner(loc, data_file_size_limit_mb=100, testrun_uid=testrun_uid, extra_args=["--test_delay_before_modify_ms=2000"])
+    runner = Hs5Runner(
+        loc,
+        data_file_size_limit_mb=100,
+        testrun_uid=testrun_uid,
+        extra_args=["--test_delay_before_modify_ms=2000"],
+    )
     yield runner
     runner.stop(cleanup=True, kill=False)
     try:
         rmtree(loc)
     except:
         pass
+
 
 @pytest.fixture
 def hs5_protected_check_delay(tmpdir: Path, testrun_uid: str):
     loc = tmpdir / uuid.uuid4().hex
     loc.mkdir()
-    runner = Hs5Runner(loc, data_file_size_limit_mb=100, testrun_uid=testrun_uid, extra_args=["--test_delay_after_protected_check_ms=2000"])
+    runner = Hs5Runner(
+        loc,
+        data_file_size_limit_mb=100,
+        testrun_uid=testrun_uid,
+        extra_args=["--test_delay_after_protected_check_ms=2000"],
+    )
     yield runner
     runner.stop(cleanup=True, kill=False)
     try:
@@ -408,11 +467,17 @@ def hs5_protected_check_delay(tmpdir: Path, testrun_uid: str):
     except:
         pass
 
+
 @pytest.fixture
 def hs5_no_precheck(tmpdir: Path, testrun_uid: str):
     loc = tmpdir / uuid.uuid4().hex
     loc.mkdir()
-    runner = Hs5Runner(loc, data_file_size_limit_mb=100, testrun_uid=testrun_uid, extra_args=["--nocheck_conditional_headers_before_upload"])
+    runner = Hs5Runner(
+        loc,
+        data_file_size_limit_mb=100,
+        testrun_uid=testrun_uid,
+        extra_args=["--nocheck_conditional_headers_before_upload"],
+    )
     yield runner
     runner.stop(cleanup=True, kill=False)
     try:

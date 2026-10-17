@@ -1,96 +1,94 @@
 #pragma once
 
-#include <string>
-#include <optional>
-#include <vector>
 #include "apigen/ListResp.hpp"
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace buckets
 {
 
-void refreshBucketCache();
+    void refreshBucketCache();
 
-int64_t addBucket(const std::string_view bucketName, const bool failIfAlreadyExists, const bool objectLockEnabled = false);
+    int64_t addBucket(const std::string_view bucketName, const bool failIfAlreadyExists, const bool objectLockEnabled = false);
 
-bool isValidBucketName(const std::string_view bucketName);
+    bool isValidBucketName(const std::string_view bucketName);
 
-std::optional<int64_t> getBucket(const std::string_view bucketName);
+    std::optional<int64_t> getBucket(const std::string_view bucketName);
 
-enum class VersioningState
-{
-    Disabled = 0,
-    Enabled = 1,
-    Suspended = 2
-};
+    enum class VersioningState
+    {
+        Disabled = 0,
+        Enabled = 1,
+        Suspended = 2
+    };
 
-std::optional<VersioningState> versioningStateFromStr(const std::string_view str);
+    std::optional<VersioningState> versioningStateFromStr(const std::string_view str);
 
-std::string versioningStateToStr(VersioningState state);
+    std::string versioningStateToStr(VersioningState state);
 
-struct BucketCorsRule
-{
-    std::vector<std::string> allowedOrigins;
-    std::vector<std::string> allowedMethods;
-    std::vector<std::string> allowedHeaders;
-    std::vector<std::string> exposeHeaders;
-    std::string maxAgeSeconds;
-    std::string id;
-};
+    struct BucketCorsRule
+    {
+        std::vector<std::string> allowedOrigins;
+        std::vector<std::string> allowedMethods;
+        std::vector<std::string> allowedHeaders;
+        std::vector<std::string> exposeHeaders;
+        std::string maxAgeSeconds;
+        std::string id;
+    };
 
-struct BucketInfo
-{
-    int64_t id;
-    std::chrono::seconds created;
-    int publicPerms = 0;
-    VersioningState versioning = VersioningState::Disabled;
-    std::vector<BucketCorsRule> corsRules;
-    // Object lock is enabled for the bucket, so it may have locked objects (legal hold). Cannot be disabled.
-    bool objectLockEnabled = false;
-};
+    struct BucketInfo
+    {
+        int64_t id;
+        std::chrono::seconds created;
+        int publicPerms = 0;
+        VersioningState versioning = VersioningState::Disabled;
+        std::vector<BucketCorsRule> corsRules;
+        // Object lock is enabled for the bucket, so it may have locked objects (legal hold). Cannot be disabled.
+        bool objectLockEnabled = false;
+    };
 
-std::optional<BucketInfo> getBucketInfo(const std::string_view bucketName);
+    std::optional<BucketInfo> getBucketInfo(const std::string_view bucketName);
 
-bool deleteBucket(int64_t bucketId);
+    bool deleteBucket(int64_t bucketId);
 
-int64_t getPartialUploadsBucket(int64_t bucketId);
+    int64_t getPartialUploadsBucket(int64_t bucketId);
 
-bool isPartialUploadsBucket(int64_t bucketId);
+    bool isPartialUploadsBucket(int64_t bucketId);
 
-int64_t getPartsBucket(int64_t bucketId);
+    int64_t getPartsBucket(int64_t bucketId);
 
-bool isPartsBucket(int64_t bucketId);
+    bool isPartsBucket(int64_t bucketId);
 
-std::string getBucketName(int64_t bucketId);
+    std::string getBucketName(int64_t bucketId);
 
-Api::ListResp getBucketNames();
+    Api::ListResp getBucketNames();
 
-enum class SetVersioningResult
-{
-    Ok,
-    NotFound,
-    ObjectLockEnabled,
-    Error
-};
+    enum class SetVersioningResult
+    {
+        Ok,
+        NotFound,
+        ObjectLockEnabled,
+        Error
+    };
 
-SetVersioningResult setVersioning(const std::string_view bucketName, VersioningState versioningState);
+    SetVersioningResult setVersioning(const std::string_view bucketName, VersioningState versioningState);
 
-bool isObjectLockEnabled(int64_t bucketId);
+    bool isObjectLockEnabled(int64_t bucketId);
 
-enum class EnableObjectLockResult
-{
-    Ok,
-    NotFound,
-    VersioningNotEnabled,
-    Error
-};
+    enum class EnableObjectLockResult
+    {
+        Ok,
+        NotFound,
+        VersioningNotEnabled,
+        Error
+    };
 
-// Enables object lock. Requires versioning to be enabled.
-EnableObjectLockResult enableObjectLock(int64_t bucketId);
+    // Enables object lock. Requires versioning to be enabled.
+    EnableObjectLockResult enableObjectLock(int64_t bucketId);
 
-bool validateCorsRule(BucketCorsRule& rule);
+    bool validateCorsRule(BucketCorsRule& rule);
 
-bool replaceCorsRules(int64_t bucketId, const std::vector<BucketCorsRule>& rules);
-
-
+    bool replaceCorsRules(int64_t bucketId, const std::vector<BucketCorsRule>& rules);
 
 } // namespace buckets

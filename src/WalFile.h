@@ -1,12 +1,12 @@
-#include <string>
 #include "File.h"
 #include "SingleFileStorage.h"
-#include <mutex>
 #include "data.h"
-#include <vector>
 #include <condition_variable>
-#include <optional>
 #include <map>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <vector>
 
 class WalFile
 {
@@ -64,10 +64,10 @@ class WalFile
     {
         return alt ? primaryFileDirtyBlocks : altFileDirtyBlocks;
     }
-    
+
     void incrPendingData()
     {
-        if(useAltFile)
+        if (useAltFile)
             ++altFilePendingData;
         else
             ++primaryFilePendingData;
@@ -75,7 +75,7 @@ class WalFile
 
     bool lastPendingData(const bool alt)
     {
-        if(alt)
+        if (alt)
             return altFilePendingData == 1;
         else
             return primaryFilePendingData == 1;
@@ -83,7 +83,7 @@ class WalFile
 
     bool decrPendingData(const bool alt)
     {
-        if(alt)
+        if (alt)
         {
             --altFilePendingData;
             return altFilePendingData == 0;
@@ -133,16 +133,16 @@ class WalFile
     // Skip fsync (for testing only)
     bool noSync;
 
-    template<typename F>
+    template <typename F>
     int fsyncFile(F& file)
     {
-        if(noSync)
+        if (noSync)
             return 0;
         return file.fsyncNoInt();
     }
 
 public:
-    WalFile(const std::string &path, const std::string_view walUuid, MultiFile& dataFile, const bool trackDirtyBlocks, const bool noSync);
+    WalFile(const std::string& path, const std::string_view walUuid, MultiFile& dataFile, const bool trackDirtyBlocks, const bool noSync);
 
     bool write(const int64_t transid, const SingleFileStorage::SFragInfo& info);
     bool writeData(const int64_t off, const char* data, const size_t dataSize, const bool useThreadWrite);
@@ -160,7 +160,6 @@ public:
         int64_t local_curr_version;
         std::vector<SingleFileStorage::SPunchItem> reserved_extents;
     };
-
 
     struct ReadResult
     {
@@ -180,7 +179,7 @@ public:
         ResetPrep(WalFile* walFile)
             : walFile(walFile)
         {
-            if(walFile)
+            if (walFile)
             {
                 std::unique_lock<std::mutex> nl(walFile->mutex);
                 lock.swap(nl);
@@ -189,7 +188,7 @@ public:
 
         void unlock()
         {
-            if(walFile)
+            if (walFile)
                 lock.unlock();
         }
 
@@ -197,7 +196,6 @@ public:
         ResetPrep& operator=(const ResetPrep&) = delete;
     };
 
-    
     void reset(ResetPrep& prep, const bool sync, const std::optional<bool> useAltFileManual);
     bool sync(const CommitInfo& commitInfo);
     bool fsync();

@@ -1,31 +1,30 @@
 #pragma once
-#include <folly/io/IOBuf.h>
-#include <string>
-#include <vector>
-#include <set>
-#include <map>
-#include <unordered_map>
-#include <unordered_set>
-#include <memory>
-#include <quic/common/Expected.h>
-#include <queue>
-#include <memory.h>
 #include "../external/lmdb/lmdb.h"
-#include <assert.h>
-#include "relaxed_atomic.h"
-#include <sys/types.h>
-#include <mutex>
-#include <condition_variable>
-#include <shared_mutex>
-#include <iostream>
-#include <stdint.h>
-#include <filesystem>
-#include <thread>
-#include <folly/io/IOBufQueue.h>
-#include <sodium.h>
 #include "File.h"
 #include "crypt.h"
-
+#include "relaxed_atomic.h"
+#include <assert.h>
+#include <condition_variable>
+#include <filesystem>
+#include <folly/io/IOBuf.h>
+#include <folly/io/IOBufQueue.h>
+#include <iostream>
+#include <map>
+#include <memory.h>
+#include <memory>
+#include <mutex>
+#include <queue>
+#include <quic/common/Expected.h>
+#include <set>
+#include <shared_mutex>
+#include <sodium.h>
+#include <stdint.h>
+#include <string>
+#include <sys/types.h>
+#include <thread>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 using THREAD_ID = pid_t;
 
@@ -35,729 +34,739 @@ class WalFile;
 
 class SingleFileStorage
 {
-	friend WalFile;
+    friend WalFile;
+
 public:
-
     struct SPunchItem
-	{
-		SPunchItem()
-			: offset(-1), len(0) {}
+    {
+        SPunchItem()
+            : offset(-1), len(0) {}
 
-		SPunchItem(int64_t offset, int64_t len)
-			: offset(offset), len(len) {}
+        SPunchItem(int64_t offset, int64_t len)
+            : offset(offset), len(len) {}
 
-		bool operator<(const SPunchItem& other) const
-		{
-			return offset < other.offset;
-		}
+        bool operator<(const SPunchItem& other) const
+        {
+            return offset < other.offset;
+        }
 
-		int64_t offset;
-		int64_t len;
-	};
+        int64_t offset;
+        int64_t len;
+    };
 
-	struct Ext
-	{
-		Ext()
-			: obj_offset(0), data_file_offset(-1), len(0) {}
+    struct Ext
+    {
+        Ext()
+            : obj_offset(0), data_file_offset(-1), len(0) {}
 
-		Ext(int64_t obj_offset, int64_t data_file_offset, int64_t len)
-			: obj_offset(obj_offset), data_file_offset(data_file_offset), len(len) {}
+        Ext(int64_t obj_offset, int64_t data_file_offset, int64_t len)
+            : obj_offset(obj_offset), data_file_offset(data_file_offset), len(len) {}
 
-		bool operator<(const Ext& other) const
-		{
-			return obj_offset < other.obj_offset;
-		}
+        bool operator<(const Ext& other) const
+        {
+            return obj_offset < other.obj_offset;
+        }
 
-		int64_t obj_offset;
-		int64_t data_file_offset;
-		int64_t len;
-	};
+        int64_t obj_offset;
+        int64_t data_file_offset;
+        int64_t len;
+    };
 
     enum class DelAction
-	{
-		Del = 0,
-		DelOld = 1,
-		DelWithQueued = 2,
-		Queue = 3,
-		Unqueue = 4,
-		AssertQueueEmpty = 5,
-		DelNoCallback = 6
-	};
+    {
+        Del = 0,
+        DelOld = 1,
+        DelWithQueued = 2,
+        Queue = 3,
+        Unqueue = 4,
+        AssertQueueEmpty = 5,
+        DelNoCallback = 6
+    };
 
-	enum class FragAction
-	{
-		Add,
-		Del,
-		DelNoCallback,
-		Commit,
-		FindFree,
-		AddNoDelOld,
-		DelOld,
-		RestoreOld,
-		EmptyQueue,
-		ReadFragInfo,
-		ReadFragInfoWithoutParsing,
-		FreeExtents,
-		ResetDelLog,
-		GetDiskId,
-		QueueDel,
-		UnqueueDel,
-		DelWithQueued,
-		ResetDelQueue,
-		AssertDelQueueEmpty,
-		DelFreemapWal,
-		AddFreemapWal,
-		ModifyData,
-		ModifyMetadata
-	};
+    enum class FragAction
+    {
+        Add,
+        Del,
+        DelNoCallback,
+        Commit,
+        FindFree,
+        AddNoDelOld,
+        DelOld,
+        RestoreOld,
+        EmptyQueue,
+        ReadFragInfo,
+        ReadFragInfoWithoutParsing,
+        FreeExtents,
+        ResetDelLog,
+        GetDiskId,
+        QueueDel,
+        UnqueueDel,
+        DelWithQueued,
+        ResetDelQueue,
+        AssertDelQueueEmpty,
+        DelFreemapWal,
+        AddFreemapWal,
+        ModifyData,
+        ModifyMetadata
+    };
 
-	struct SFragInfo;
+    struct SFragInfo;
 
-	struct MatchInfo
-	{
-		std::optional<std::string> readFn;
-		bool readNewest = false;
-		std::vector<std::string> ifMatch;
-		std::vector<std::string> ifNoneMatch;
-		folly::Optional<int64_t> ifModifiedSince;
-		folly::Optional<int64_t> ifUnmodifiedSince;
-		bool match = false;
-		// If set, the match callback sets match=false and isProtected=true if the current object is protected from modification
-		bool checkProtected = false;
-		bool isProtected = false;
-		// Governance mode retention does not protect the object (with checkProtected)
-		bool bypassGovernance = false;
-		// Time (seconds since epoch) at which protection is checked (with checkProtected). Current time if 0
-		int64_t protectedCheckTime = 0;
-	};
+    struct MatchInfo
+    {
+        std::optional<std::string> readFn;
+        bool readNewest = false;
+        std::vector<std::string> ifMatch;
+        std::vector<std::string> ifNoneMatch;
+        folly::Optional<int64_t> ifModifiedSince;
+        folly::Optional<int64_t> ifUnmodifiedSince;
+        bool match = false;
+        // If set, the match callback sets match=false and isProtected=true if the current object is protected from modification
+        bool checkProtected = false;
+        bool isProtected = false;
+        // Governance mode retention does not protect the object (with checkProtected)
+        bool bypassGovernance = false;
+        // Time (seconds since epoch) at which protection is checked (with checkProtected). Current time if 0
+        int64_t protectedCheckTime = 0;
+    };
 
-	struct SCommitInfo
-	{
-		SCommitInfo()
-			: commit_errors(0),
-			frag_info(nullptr), match_info(nullptr)
-		{}
-		int64_t commit_errors;
-		std::mutex commit_done_mutex;
-		std::condition_variable commit_done;
-		int64_t new_datafile_offset;
-		int64_t new_datafile_offset_end;
-		SFragInfo* frag_info;
-		MatchInfo* match_info;
-	};
+    struct SCommitInfo
+    {
+        SCommitInfo()
+            : commit_errors(0),
+              frag_info(nullptr), match_info(nullptr)
+        {
+        }
+        int64_t commit_errors;
+        std::mutex commit_done_mutex;
+        std::condition_variable commit_done;
+        int64_t new_datafile_offset;
+        int64_t new_datafile_offset_end;
+        SFragInfo* frag_info;
+        MatchInfo* match_info;
+    };
 
-	struct SFragInfo
-	{
-		SFragInfo() : offset(-1), len(0),
-			last_modified(0), commit_info(nullptr), linked(nullptr) {
-		}
-		SFragInfo(int64_t offset, int64_t len)
-			: offset(offset), len(len),
-			last_modified(0), commit_info(nullptr), linked(nullptr) {}
+    struct SFragInfo
+    {
+        SFragInfo() : offset(-1), len(0),
+                      last_modified(0), commit_info(nullptr), linked(nullptr)
+        {
+        }
+        SFragInfo(int64_t offset, int64_t len)
+            : offset(offset), len(len),
+              last_modified(0), commit_info(nullptr), linked(nullptr) {}
 
-		FragAction action;
-		std::string fn;
-		int64_t offset;
-		int64_t len;
-		int64_t last_modified;
-		std::string md5sum;
-		SCommitInfo* commit_info;
-		std::unique_ptr<SFragInfo> linked;
-		std::vector<SPunchItem> extra_exts;
-	};
+        FragAction action;
+        std::string fn;
+        int64_t offset;
+        int64_t len;
+        int64_t last_modified;
+        std::string md5sum;
+        SCommitInfo* commit_info;
+        std::unique_ptr<SFragInfo> linked;
+        std::vector<SPunchItem> extra_exts;
+    };
 
-	typedef std::string(*common_prefix_func_t)(const std::string_view);
-	typedef size_t(*common_prefix_hash_func_t)(const std::string_view);
-	using on_delete_callback_t = std::function<std::vector<SingleFileStorage::SFragInfo>(const std::string&, const std::string&)>;
-	using modify_data_callback_t = std::function<std::optional<std::string>(const std::string&, std::string, std::string)>;
-	// Returns the new md5sum or an error code
-	using modify_metadata_callback_t = std::function<nonstd::expected<std::string, int>(const std::string&, const std::string&, const std::string&)>;
-	using match_callback_t = std::function<void(MatchInfo&, const SingleFileStorage::SFragInfo&)>;
-	using add_reading_callback_t = std::function<void(const std::string_view fn, const SingleFileStorage::SFragInfo&)>;
-	
-	struct SFSOptions
-	{
-		std::string data_path;
-		std::string db_path;
-		std::string freespace_cache_path;
-		std::string dm_cache_path;
-		std::string wal_file_path;
-		int64_t dm_cache_size = 0;
-		bool use_direct_io = false;
-		int64_t data_file_size_limit_mb = 0;
-		int64_t alloc_chunk_size = 512 * 1024 * 1024;
-		// If this amount of free space is available in the data file, 
-		// use free space in data file instead of extending data file
-		// Use >1 to disable
-		float alloc_use_free_space_percent = 0.1;
-		std::string runtime_id;
-		bool manual_commit = false;
-		bool manual_commit_list_consistent = true;
-		bool stop_on_error = false;
-		bool punch_holes = true;
-		int64_t data_file_chunk_size = 10LL * 1024 * 1024 * 1024 * 1024;
-		MDB_cmp_func* key_compare_func = nullptr;
-		common_prefix_func_t common_prefix_func = nullptr;
-		common_prefix_hash_func_t common_prefix_hash_func = nullptr;
-		on_delete_callback_t on_delete_callback;
-		modify_data_callback_t modify_data_callback;
-		modify_metadata_callback_t modify_metadata_callback;
-		match_callback_t match_callback;
-		add_reading_callback_t add_reading_callback;
-		bool wal_write_meta = true;
-		int64_t wal_write_data = 0;
-		// Do not fsync LMDB, data file and WAL file. For testing only, data may get lost/corrupted on power loss!
-		bool no_sync = false;
-	};
+    typedef std::string (*common_prefix_func_t)(const std::string_view);
+    typedef size_t (*common_prefix_hash_func_t)(const std::string_view);
+    using on_delete_callback_t = std::function<std::vector<SingleFileStorage::SFragInfo>(const std::string&, const std::string&)>;
+    using modify_data_callback_t = std::function<std::optional<std::string>(const std::string&, std::string, std::string)>;
+    // Returns the new md5sum or an error code
+    using modify_metadata_callback_t = std::function<nonstd::expected<std::string, int>(const std::string&, const std::string&, const std::string&)>;
+    using match_callback_t = std::function<void(MatchInfo&, const SingleFileStorage::SFragInfo&)>;
+    using add_reading_callback_t = std::function<void(const std::string_view fn, const SingleFileStorage::SFragInfo&)>;
 
-	SingleFileStorage(SFSOptions options);
+    struct SFSOptions
+    {
+        std::string data_path;
+        std::string db_path;
+        std::string freespace_cache_path;
+        std::string dm_cache_path;
+        std::string wal_file_path;
+        int64_t dm_cache_size = 0;
+        bool use_direct_io = false;
+        int64_t data_file_size_limit_mb = 0;
+        int64_t alloc_chunk_size = 512 * 1024 * 1024;
+        // If this amount of free space is available in the data file,
+        // use free space in data file instead of extending data file
+        // Use >1 to disable
+        float alloc_use_free_space_percent = 0.1;
+        std::string runtime_id;
+        bool manual_commit = false;
+        bool manual_commit_list_consistent = true;
+        bool stop_on_error = false;
+        bool punch_holes = true;
+        int64_t data_file_chunk_size = 10LL * 1024 * 1024 * 1024 * 1024;
+        MDB_cmp_func* key_compare_func = nullptr;
+        common_prefix_func_t common_prefix_func = nullptr;
+        common_prefix_hash_func_t common_prefix_hash_func = nullptr;
+        on_delete_callback_t on_delete_callback;
+        modify_data_callback_t modify_data_callback;
+        modify_metadata_callback_t modify_metadata_callback;
+        match_callback_t match_callback;
+        add_reading_callback_t add_reading_callback;
+        bool wal_write_meta = true;
+        int64_t wal_write_data = 0;
+        // Do not fsync LMDB, data file and WAL file. For testing only, data may get lost/corrupted on power loss!
+        bool no_sync = false;
+    };
 
-	//Start with dead SFS
-	SingleFileStorage();
+    SingleFileStorage(SFSOptions options);
 
-	void operator=(const SingleFileStorage&) = delete;
-	SingleFileStorage(SingleFileStorage&) = delete;
+    // Start with dead SFS
+    SingleFileStorage();
 
-	~SingleFileStorage();
+    void operator=(const SingleFileStorage&) = delete;
+    SingleFileStorage(SingleFileStorage&) = delete;
 
-	static void init_mutex();
+    ~SingleFileStorage();
 
-	static void handle_mmap_read_error(void* addr);
+    static void init_mutex();
 
-	struct WritePrepareResult
-	{
-		int err;
-		std::vector<Ext> extents;
-	};
+    static void handle_mmap_read_error(void* addr);
 
-	WritePrepareResult write_prepare(const std::string& fn, size_t data_size);
+    struct WritePrepareResult
+    {
+        int err;
+        std::vector<Ext> extents;
+    };
 
-	int write_ext(const Ext& ext, const char* data, size_t data_size, const bool complete_obj);
+    WritePrepareResult write_prepare(const std::string& fn, size_t data_size);
 
-	int write_finalize(const std::string& fn, const std::vector<Ext>& extents, int64_t last_modified, const std::string_view md5sum,
-		bool no_del_old, bool is_fragment, std::unique_ptr<SFragInfo> linked = nullptr, MatchInfo* match_info = nullptr);
+    int write_ext(const Ext& ext, const char* data, size_t data_size, const bool complete_obj);
 
-	int write(const std::string& fn,
-		const char* data, size_t data_size, const size_t data_alloc_size, 
-		int64_t last_modified, const std::string_view md5sum,
-		bool no_del_old, bool is_fragment, MatchInfo* match_info = nullptr);
+    int write_finalize(const std::string& fn, const std::vector<Ext>& extents, int64_t last_modified, const std::string_view md5sum,
+                       bool no_del_old, bool is_fragment, std::unique_ptr<SFragInfo> linked = nullptr, MatchInfo* match_info = nullptr);
 
-	const static unsigned int ReadWithReadahead = 1;
-	const static unsigned int ReadUnsynced = 2;
-	const static unsigned int ReadMetaOnly = 4;
-	const static unsigned int ReadSkipAddReading = 8;
-	const static unsigned int ReadNewest = 16;
-	const static unsigned int ReadAddReadingCallback = 32;
+    int write(const std::string& fn,
+              const char* data, size_t data_size, const size_t data_alloc_size,
+              int64_t last_modified, const std::string_view md5sum,
+              bool no_del_old, bool is_fragment, MatchInfo* match_info = nullptr);
 
-	struct ReadPrepareResult
-	{
-		int err;
-		std::vector<Ext> extents;
-		int64_t total_len;
-		std::string md5sum;
-		std::string key;
-		int64_t last_modified;
-	};
+    const static unsigned int ReadWithReadahead = 1;
+    const static unsigned int ReadUnsynced = 2;
+    const static unsigned int ReadMetaOnly = 4;
+    const static unsigned int ReadSkipAddReading = 8;
+    const static unsigned int ReadNewest = 16;
+    const static unsigned int ReadAddReadingCallback = 32;
 
-	ReadPrepareResult read_prepare(const std::string_view fn, unsigned int flags);
-	std::string read(const std::string& fn, unsigned int flags);
-	ReadPrepareResult check_existence(const std::string_view fn, unsigned int flags);
+    struct ReadPrepareResult
+    {
+        int err;
+        std::vector<Ext> extents;
+        int64_t total_len;
+        std::string md5sum;
+        std::string key;
+        int64_t last_modified;
+    };
 
-	struct ReadExtResult
-	{
-		int err;
-		std::unique_ptr<folly::IOBuf> buf;
-	};
+    ReadPrepareResult read_prepare(const std::string_view fn, unsigned int flags);
+    std::string read(const std::string& fn, unsigned int flags);
+    ReadPrepareResult check_existence(const std::string_view fn, unsigned int flags);
 
-	ReadExtResult read_ext(const Ext& ext, const unsigned int flags, const size_t bufsize, folly::IOBufQueue& buf);
+    struct ReadExtResult
+    {
+        int err;
+        std::unique_ptr<folly::IOBuf> buf;
+    };
 
-	int read_ext(const Ext& ext, const unsigned int flags, const size_t bufsize, char* bufptr, ssize_t& read);
+    ReadExtResult read_ext(const Ext& ext, const unsigned int flags, const size_t bufsize, folly::IOBufQueue& buf);
 
-	int read_finalize(const std::string& fn, const std::vector<Ext>& extents, unsigned int flags);
+    int read_ext(const Ext& ext, const unsigned int flags, const size_t bufsize, char* bufptr, ssize_t& read);
 
-	int del(const std::string_view fn, DelAction da,
-		bool background_queue, std::unique_ptr<SFragInfo> linked = nullptr, MatchInfo* match_info = nullptr);
+    int read_finalize(const std::string& fn, const std::vector<Ext>& extents, unsigned int flags);
 
-	// Replaces the md5sum (metadata) of an existing object with the result of modify_metadata_callback
-	// called with the current md5sum and param. Waits until the modification was applied.
-	// Returns ENOENT if the object does not exist, otherwise the error code returned by the callback.
-	int modify_metadata(const std::string& fn, const std::string_view param);
+    int del(const std::string_view fn, DelAction da,
+            bool background_queue, std::unique_ptr<SFragInfo> linked = nullptr, MatchInfo* match_info = nullptr);
 
-	bool restore_old(const std::string& fn);
+    // Replaces the md5sum (metadata) of an existing object with the result of modify_metadata_callback
+    // called with the current md5sum and param. Waits until the modification was applied.
+    // Returns ENOENT if the object does not exist, otherwise the error code returned by the callback.
+    int modify_metadata(const std::string& fn, const std::string_view param);
 
+    bool restore_old(const std::string& fn);
 
-	bool commit(bool background_queue, int64_t transid, const bool pre_sync) {
-		return commit(background_queue, transid, 0, pre_sync);
-	}
+    bool commit(bool background_queue, int64_t transid, const bool pre_sync)
+    {
+        return commit(background_queue, transid, 0, pre_sync);
+    }
 
-	bool commit(bool background_queue, int64_t transid, int64_t disk_id, const bool pre_sync);
+    bool commit(bool background_queue, int64_t transid, int64_t disk_id, const bool pre_sync);
 
-	/**
-	 * For read after write consistency, when running with WAL, this commits to the LMDB if necessary
-	 * so the listings have read after write consistency.
-	 * 
-	 * This could be improved by merging the uncommited changes into the listing, but avoid doing that
-	 * work for now.
-	 */
-	bool list_commit();
+    /**
+     * For read after write consistency, when running with WAL, this commits to the LMDB if necessary
+     * so the listings have read after write consistency.
+     *
+     * This could be improved by merging the uncommited changes into the listing, but avoid doing that
+     * work for now.
+     */
+    bool list_commit();
 
-	bool empty_queue(bool background_queue);
+    bool empty_queue(bool background_queue);
 
-	struct IterData
-	{
-		MDB_txn* iter_txn;
-		MDB_cursor* iter_cur;
-		MDB_val iter_key;
-		MDB_val iter_val;
-	};
+    struct IterData
+    {
+        MDB_txn* iter_txn;
+        MDB_cursor* iter_cur;
+        MDB_val iter_key;
+        MDB_val iter_val;
+    };
 
-	bool iter_start(int64_t disk_id, bool compressed, IterData& iter_data);
+    bool iter_start(int64_t disk_id, bool compressed, IterData& iter_data);
 
-	bool iter_start(bool compressed, IterData& iter_data);
+    bool iter_start(bool compressed, IterData& iter_data);
 
-	bool iter_start(std::string fn, bool compressed, IterData& iter_data);
+    bool iter_start(std::string fn, bool compressed, IterData& iter_data);
 
-	void start_debug();
+    void start_debug();
 
-	void iter_stop(IterData& iter_data);
+    void iter_stop(IterData& iter_data);
 
-	bool iter_next(IterData& iter_data);
+    bool iter_next(IterData& iter_data);
 
-	bool iter_curr_val(std::string& fn, int64_t& offset, int64_t& size, std::vector<SPunchItem>& exta_exts, int64_t& last_modified, std::string& md5sum, IterData& iter_data);
+    bool iter_curr_val(std::string& fn, int64_t& offset, int64_t& size, std::vector<SPunchItem>& exta_exts, int64_t& last_modified, std::string& md5sum, IterData& iter_data);
 
-	bool iter_curr_val(std::string& fn, std::string& data, IterData& iter_data);
+    bool iter_curr_val(std::string& fn, std::string& data, IterData& iter_data);
 
-	virtual void operator()();
+    virtual void operator()();
 
-	int64_t get_free_space_in_data_file();
+    int64_t get_free_space_in_data_file();
 
-	int64_t get_free_space_real();
+    int64_t get_free_space_real();
 
-	/**
-	 * Get amount of free space in the data file as percentage of data
-	 * file size. Underreports a bit (compared to get_free_space_in_data_file() )
-	 */
-	float get_free_space_percent();
+    /**
+     * Get amount of free space in the data file as percentage of data
+     * file size. Underreports a bit (compared to get_free_space_in_data_file() )
+     */
+    float get_free_space_percent();
 
-	int64_t get_total_space();
+    int64_t get_total_space();
 
-	int64_t get_data_file_size();
+    int64_t get_data_file_size();
 
-	int64_t get_data_file_size_full();
+    int64_t get_data_file_size_full();
 
-	int64_t max_free_extent(int64_t& len);
+    int64_t max_free_extent(int64_t& len);
 
-	int64_t get_free_space_slow(bool verbose, int64_t& freespace_extents, std::vector<SPunchItem>* items);
+    int64_t get_free_space_slow(bool verbose, int64_t& freespace_extents, std::vector<SPunchItem>* items);
 
-	bool check_len_idx();
+    bool check_len_idx();
 
-	using str_map = std::map<std::string, std::string>;
+    using str_map = std::map<std::string, std::string>;
 
-	void defrag(str_map& params, relaxed_atomic<int64_t>& defrag_items);
+    void defrag(str_map& params, relaxed_atomic<int64_t>& defrag_items);
 
-	std::string get_db_path() { return db_path; }
+    std::string get_db_path() { return db_path; }
 
-	std::string get_cache_path() { return freespace_cache_path; }
+    std::string get_cache_path() { return freespace_cache_path; }
 
-	bool is_write_offline() { return write_offline; }
+    bool is_write_offline() { return write_offline; }
 
-	bool start_thread(int64_t transid);
+    bool start_thread(int64_t transid);
 
-	int64_t get_transid() {
+    int64_t get_transid()
+    {
         std::scoped_lock lock(mutex);
-		return curr_transid;
-	}
+        return curr_transid;
+    }
 
-	int64_t get_transid(int64_t disk_id);
+    int64_t get_transid(int64_t disk_id);
 
-	std::string meminfo();
+    std::string meminfo();
 
-	bool set_write_offline(bool b);
+    bool set_write_offline(bool b);
 
-	bool get_is_dead() { return is_dead; }
+    bool get_is_dead() { return is_dead; }
 
-	bool set_allow_defrag(bool b) {
-		return set_allow_defrag(b, 0);
-	}
+    bool set_allow_defrag(bool b)
+    {
+        return set_allow_defrag(b, 0);
+    }
 
-	bool set_allow_defrag(bool b, int64_t disk_id);
+    bool set_allow_defrag(bool b, int64_t disk_id);
 
-	bool set_stop_defrag(bool b) { stop_defrag = b; return true; }
+    bool set_stop_defrag(bool b)
+    {
+        stop_defrag = b;
+        return true;
+    }
 
-	bool reset_del_log(int64_t disk_id, int64_t reset_transid);
+    bool reset_del_log(int64_t disk_id, int64_t reset_transid);
 
-	bool reset_del_queue(int64_t disk_id, int64_t reset_transid);
+    bool reset_del_queue(int64_t disk_id, int64_t reset_transid);
 
-	int64_t get_disk_id(const std::string& uuid);
+    int64_t get_disk_id(const std::string& uuid);
 
-	void migrate_thread();
+    void migrate_thread();
 
-	bool start_migrate();
+    bool start_migrate();
 
-	void reference();
+    void reference();
 
-	void unreference();
+    void unreference();
 
-	static std::string decompress_filename(const std::string& fn);
+    static std::string decompress_filename(const std::string& fn);
 
-	static int64_t get_fn_disk_id(const std::string& fn);
+    static int64_t get_fn_disk_id(const std::string& fn);
 
-	static std::string remove_disk_id(const std::string& fn, size_t disk_id_size);
+    static std::string remove_disk_id(const std::string& fn, size_t disk_id_size);
 
-	std::string freespace_stats();
+    std::string freespace_stats();
 
-	virtual void wait_for_startup_finish();
+    virtual void wait_for_startup_finish();
 
-	std::string get_runtime_id() {
-		return runtime_id;
-	}
+    std::string get_runtime_id()
+    {
+        return runtime_id;
+    }
 
-	bool get_manual_commit() {
-		return manual_commit;
-	}
+    bool get_manual_commit()
+    {
+        return manual_commit;
+    }
 
     int64_t get_next_partid();
 
-	int64_t get_next_version();
+    int64_t get_next_version();
 
-	int64_t decrypt_id(const std::string& encdata);
+    int64_t decrypt_id(const std::string& encdata);
 
-	std::string encrypt_id(const int64_t id);
+    std::string encrypt_id(const int64_t id);
 
-	void free_extents(const std::vector<Ext>& extents);
+    void free_extents(const std::vector<Ext>& extents);
 
-	// Make an extent smaller by the specified amount from the end
-	void remove_extent_end(int64_t offset, int64_t len);
+    // Make an extent smaller by the specified amount from the end
+    void remove_extent_end(int64_t offset, int64_t len);
 
-	void wait_for_wal_startup_finished();
+    void wait_for_wal_startup_finished();
 
-	void assert_reading_items_empty();
+    void assert_reading_items_empty();
 
 private:
+    int write_int(const std::string& fn, const char* data, size_t data_size, const size_t data_alloc_size,
+                  int64_t last_modified, const std::string_view md5sum, bool allow_defrag_lock, bool no_del_old, MatchInfo* match_info);
 
-	int write_int(const std::string& fn, const char* data, size_t data_size, const size_t data_alloc_size,
-		int64_t last_modified, const std::string_view md5sum, bool allow_defrag_lock, bool no_del_old, MatchInfo* match_info);
+    int64_t remove_fn(const std::string& fn,
+                      MDB_txn* txn, MDB_txn* freespace_txn, bool del_from_main, bool del_old, THREAD_ID tid, const bool call_callback, std::set<SPunchItem>* trim_items = nullptr);
 
-	int64_t remove_fn(const std::string& fn,
-		MDB_txn* txn, MDB_txn* freespace_txn, bool del_from_main, bool del_old, THREAD_ID tid, const bool call_callback, std::set<SPunchItem>* trim_items = nullptr);
+    int64_t restore_fn(const std::string& fn,
+                       MDB_txn* txn, MDB_txn* freespace_txn, THREAD_ID tid);
 
-	int64_t restore_fn(const std::string& fn,
-		MDB_txn* txn, MDB_txn* freespace_txn, THREAD_ID tid);
+    int64_t log_fn(const std::string& fn,
+                   MDB_txn* txn, THREAD_ID tid, int64_t transid);
 
-	int64_t log_fn(const std::string& fn,
-		MDB_txn* txn, THREAD_ID tid, int64_t transid);
+    int64_t add_tmp(int64_t idx, MDB_txn* txn, THREAD_ID tid, int64_t offset, int64_t len, bool from_startup);
 
-	int64_t add_tmp(int64_t idx, MDB_txn* txn, THREAD_ID tid, int64_t offset, int64_t len, bool from_startup);
+    int64_t rm_tmp(int64_t idx, MDB_txn* txn, THREAD_ID tid);
 
-	int64_t rm_tmp(int64_t idx, MDB_txn* txn, THREAD_ID tid);
+    void wait_queue(std::unique_lock<std::mutex>& lock, bool background_queue, bool defrag_check);
 
-	void wait_queue(std::unique_lock<std::mutex>& lock, bool background_queue, bool defrag_check);
+    bool add_freemap_ext(MDB_txn* txn, int64_t offset, int64_t len, bool used_in_curr_trans, THREAD_ID tid, std::set<SPunchItem>* trim_items = nullptr);
 
-	bool add_freemap_ext(MDB_txn* txn, int64_t offset, int64_t len, bool used_in_curr_trans, THREAD_ID tid, std::set<SPunchItem>* trim_items = nullptr);
+    bool add_freemap_ext_simple(MDB_txn* txn, int64_t offset, int64_t len, THREAD_ID tid);
 
-	bool add_freemap_ext_simple(MDB_txn* txn, int64_t offset, int64_t len, THREAD_ID tid);
+    bool find_freemap_ext(MDB_txn* txn, THREAD_ID tid, int64_t& start, int64_t& len);
 
-	bool find_freemap_ext(MDB_txn* txn, THREAD_ID tid, int64_t& start, int64_t& len);
+    void lock_defrag(const std::string& fn);
 
-	void lock_defrag(const std::string& fn);
+    bool is_defrag_skip_item(const std::string& fn);
 
-	bool is_defrag_skip_item(const std::string& fn);
+    void unlock_defrag(const std::string& fn);
 
-	void unlock_defrag(const std::string& fn);
+    void wait_defrag(const std::string_view fn, std::unique_lock<std::mutex>& lock);
 
-	void wait_defrag(const std::string_view fn, std::unique_lock<std::mutex>& lock);
+    void setup_mmap_read_error(THREAD_ID tid);
 
-	void setup_mmap_read_error(THREAD_ID tid);
+    bool clear_mmap_read_error(THREAD_ID tid);
 
-	bool clear_mmap_read_error(THREAD_ID tid);
+    bool has_mmap_read_error_reset(THREAD_ID tid);
 
-	bool has_mmap_read_error_reset(THREAD_ID tid);
+    int64_t reset_del_log_fn(MDB_txn* txn, MDB_txn* freespace_txn, THREAD_ID tid, int64_t disk_id, int64_t transid);
 
-	int64_t reset_del_log_fn(MDB_txn* txn, MDB_txn* freespace_txn, THREAD_ID tid, int64_t disk_id, int64_t transid);
+    int64_t reset_holes(MDB_txn* txn, MDB_txn* freespace_txn, THREAD_ID tid);
 
-	int64_t reset_holes(MDB_txn* txn, MDB_txn* freespace_txn, THREAD_ID tid);
+    int64_t reset_del_queue(MDB_txn* txn, MDB_txn* freespace_txn, THREAD_ID tid, int64_t disk_id, int64_t transid);
 
-	int64_t reset_del_queue(MDB_txn* txn, MDB_txn* freespace_txn, THREAD_ID tid, int64_t disk_id, int64_t transid);
+    void wait_startup_finished(std::unique_lock<std::mutex>& lock);
 
-	void wait_startup_finished(std::unique_lock<std::mutex>& lock);
+    int64_t get_really_min_space(int64_t& index_file_size);
 
-	int64_t get_really_min_space(int64_t& index_file_size);
+    int64_t get_burn_in_data_size();
 
-	int64_t get_burn_in_data_size();
+    bool do_free_minspace(MDB_txn* txn, MDB_txn* freespace_txn, THREAD_ID tid);
 
-	bool do_free_minspace(MDB_txn* txn, MDB_txn* freespace_txn, THREAD_ID tid);
+    static std::mutex mmap_read_error_mutex;
 
-	static std::mutex mmap_read_error_mutex;
+    static std::unordered_map<THREAD_ID, std::pair<bool, std::vector<uintptr_t>>> mmap_read_error_jmp;
+    static std::vector<MDB_env*> mmap_dbs;
 
-	static std::unordered_map<THREAD_ID, std::pair<bool, std::vector<uintptr_t> > > mmap_read_error_jmp;
-	static std::vector<MDB_env*> mmap_dbs;
+    std::vector<uintptr_t> mmap_cleanup_addrs;
 
-	std::vector<uintptr_t> mmap_cleanup_addrs;
+    int64_t queue_del(const std::string& fn, MDB_txn* txn, THREAD_ID tid, int64_t transid);
 
-	int64_t queue_del(const std::string& fn, MDB_txn* txn, THREAD_ID tid, int64_t transid);
+    int64_t unqueue_del(const std::string& fn, MDB_txn* txn, THREAD_ID tid);
 
-	int64_t unqueue_del(const std::string& fn, MDB_txn* txn, THREAD_ID tid);
+    void add_defrag_skip_items_queue();
 
-	void add_defrag_skip_items_queue();
+    bool open_cache_db(int64_t current_txn_id, int64_t mapsize, bool use_other, bool del_create, MDB_txn*& freespace_txn);
 
-	bool open_cache_db(int64_t current_txn_id, int64_t mapsize, bool use_other, bool del_create, MDB_txn*& freespace_txn);
+    bool generate_freespace_cache(MDB_txn* source_txn, MDB_txn* dst_txncs, bool fast_gen);
 
-	bool generate_freespace_cache(MDB_txn* source_txn, MDB_txn* dst_txncs, bool fast_gen);
+    bool freespace_check(MDB_txn* source_txn, MDB_txn* freespace_txn, bool fast_check);
 
-	bool freespace_check(MDB_txn* source_txn, MDB_txn* freespace_txn, bool fast_check);
+    bool clear_freespace_cache(MDB_txn* txn);
 
-	bool clear_freespace_cache(MDB_txn* txn);
+    bool regen_datafile_free(MDB_txn* freespace_txn);
 
-	bool regen_datafile_free(MDB_txn* freespace_txn);
+    bool regen_free_len_idx(MDB_txn* freespace_txn);
 
-	bool regen_free_len_idx(MDB_txn* freespace_txn);
+    class TmpMmapedPgIds
+    {
+    public:
+        TmpMmapedPgIds();
 
-	class TmpMmapedPgIds
-	{
-	public:
-		TmpMmapedPgIds();
+        ~TmpMmapedPgIds();
 
-		~TmpMmapedPgIds();
+        void add_pgid(size_t pgid)
+        {
+            if (n_pgids * sizeof(pgid) + sizeof(pgid) >= mmap_size)
+            {
+                std::cerr << "pgid mmap too small" << std::endl;
+                abort();
+            }
+            memcpy(mmap_ptr + n_pgids * sizeof(pgid), &pgid, sizeof(pgid));
+            ++n_pgids;
+        }
 
+        size_t size()
+        {
+            return n_pgids;
+        }
 
-		void add_pgid(size_t pgid)
-		{
-			if (n_pgids * sizeof(pgid) + sizeof(pgid) >= mmap_size)
-			{
-				std::cerr << "pgid mmap too small" << std::endl;
-				abort();
-			}
-			memcpy(mmap_ptr + n_pgids * sizeof(pgid), &pgid, sizeof(pgid));
-			++n_pgids;
-		}
+        size_t* begin()
+        {
+            return reinterpret_cast<size_t*>(mmap_ptr);
+        }
 
-		size_t size()
-		{
-			return n_pgids;
-		}
+        size_t* end()
+        {
+            return reinterpret_cast<size_t*>(mmap_ptr + n_pgids * sizeof(size_t));
+        }
 
-		size_t* begin()
-		{
-			return reinterpret_cast<size_t*>(mmap_ptr);
-		}
+        size_t& get(size_t idx)
+        {
+            return *(begin() + idx);
+        }
 
-		size_t* end()
-		{
-			return reinterpret_cast<size_t*>(mmap_ptr + n_pgids * sizeof(size_t));
-		}
-
-		size_t& get(size_t idx)
-		{
-			return *(begin() + idx);
-		}
-
-	private:
+    private:
         File backing_file;
-		size_t n_pgids;
-		size_t mmap_size;
-		char* mmap_ptr;
-	};
+        size_t n_pgids;
+        size_t mmap_size;
+        char* mmap_ptr;
+    };
 
-	bool read_pgids(MDB_txn* txn, MDB_dbi dbi, THREAD_ID tid, TmpMmapedPgIds& mmap_pg_ids);
-	
+    bool read_pgids(MDB_txn* txn, MDB_dbi dbi, THREAD_ID tid, TmpMmapedPgIds& mmap_pg_ids);
 
-	std::string compress_filename(const std::string& fn);
+    std::string compress_filename(const std::string& fn);
 
-	SFragInfo get_frag_info(MDB_txn* txn, const std::string_view fn, bool parse_data, const bool read_newest);
+    SFragInfo get_frag_info(MDB_txn* txn, const std::string_view fn, bool parse_data, const bool read_newest);
 
-	bool generate_free_len_idx(MDB_txn* txn);
+    bool generate_free_len_idx(MDB_txn* txn);
 
-	int64_t get_disk_id(MDB_txn * txn, THREAD_ID tid, const std::string& uuid);
+    int64_t get_disk_id(MDB_txn* txn, THREAD_ID tid, const std::string& uuid);
 
-	int64_t get_disk_trans_id(MDB_txn * txn, THREAD_ID tid, int64_t disk_id);
+    int64_t get_disk_trans_id(MDB_txn* txn, THREAD_ID tid, int64_t disk_id);
 
-	bool set_disk_trans_id(MDB_txn * txn, THREAD_ID tid, int64_t disk_id, int64_t trans_id);
+    bool set_disk_trans_id(MDB_txn* txn, THREAD_ID tid, int64_t disk_id, int64_t trans_id);
 
-	bool rewrite_npages(MDB_txn* txn, MDB_cursor* mc, THREAD_ID tid, size_t npages);
+    bool rewrite_npages(MDB_txn* txn, MDB_cursor* mc, THREAD_ID tid, size_t npages);
 
-	int put_with_rewrite(MDB_txn* txn, MDB_dbi dbi, MDB_val* tkey, MDB_val* tval, THREAD_ID tid, size_t npages);
+    int put_with_rewrite(MDB_txn* txn, MDB_dbi dbi, MDB_val* tkey, MDB_val* tval, THREAD_ID tid, size_t npages);
 
-	int put_frag_info_md5sum(MDB_txn* txn, THREAD_ID tid, const std::string& fn, const SFragInfo& frag_info, const std::string& md5sum);
+    int put_frag_info_md5sum(MDB_txn* txn, THREAD_ID tid, const std::string& fn, const SFragInfo& frag_info, const std::string& md5sum);
 
-	void add_reading_item(const SFragInfo& fi);
+    void add_reading_item(const SFragInfo& fi);
 
-	void remove_reading_item(const std::vector<Ext>& extents);
+    void remove_reading_item(const std::vector<Ext>& extents);
 
-	void do_stop_on_error();
+    void do_stop_on_error();
 
-	bool setup_compare_funcs(MDB_txn* txn, MDB_txn* freespace_txn);
+    bool setup_compare_funcs(MDB_txn* txn, MDB_txn* freespace_txn);
 
-	int add_new_object(MDB_txn* txn, const THREAD_ID tid, const std::string& fn);
+    int add_new_object(MDB_txn* txn, const THREAD_ID tid, const std::string& fn);
 
-	bool frag_info_matches(MDB_txn* txn, SFragInfo& frag_info);
+    bool frag_info_matches(MDB_txn* txn, SFragInfo& frag_info);
 
-	bool run_trim_queue(std::set<SPunchItem>& trim_items);
+    bool run_trim_queue(std::set<SPunchItem>& trim_items);
 
-	void run_trim_thread();
+    void run_trim_thread();
 
-	bool has_commit_item(const FragAction action);
+    bool has_commit_item(const FragAction action);
 
-	void queue_linked(const SFragInfo& frag_info);
+    void queue_linked(const SFragInfo& frag_info);
 
-	bool with_rewrite;
+    bool with_rewrite;
 
-	std::unordered_set<std::string> defrag_skip_items;
-	bool is_defragging;
-	int defrag_restart;
-	std::atomic<bool> stop_defrag;
-	bool allow_defrag;
-	std::set<int64_t> disallow_defrag_disk_id;
-	std::deque<SFragInfo> commit_queue;
-	std::deque<SFragInfo> commit_background_queue;
-	std::deque<SFragInfo> callback_queue;
-	std::thread commit_thread_h;
-	std::unordered_map<size_t, size_t> commit_items;
+    std::unordered_set<std::string> defrag_skip_items;
+    bool is_defragging;
+    int defrag_restart;
+    std::atomic<bool> stop_defrag;
+    bool allow_defrag;
+    std::set<int64_t> disallow_defrag_disk_id;
+    std::deque<SFragInfo> commit_queue;
+    std::deque<SFragInfo> commit_background_queue;
+    std::deque<SFragInfo> callback_queue;
+    std::thread commit_thread_h;
+    std::unordered_map<size_t, size_t> commit_items;
 
-	bool do_quit;
+    bool do_quit;
 
-	bool startup_finished;
+    bool startup_finished;
 
-	int64_t data_file_max_size;
-	int64_t data_file_offset;
-	int64_t data_file_offset_end;
-	int64_t data_file_free;
-	std::map<int64_t, int64_t> reserved_extents;
-	std::mutex reserved_extents_mutex;
+    int64_t data_file_max_size;
+    int64_t data_file_offset;
+    int64_t data_file_offset_end;
+    int64_t data_file_free;
+    std::map<int64_t, int64_t> reserved_extents;
+    std::mutex reserved_extents_mutex;
     MultiFile data_file;
     MultiFile data_file_dio;
     MultiFile new_data_file;
     MultiFile new_data_file_dio;
-	MDB_env* db_env;
-	MDB_dbi dbi_main;
-	MDB_dbi dbi_free;
-	MDB_dbi dbi_free_len;
-	MDB_dbi dbi_size;
-	MDB_dbi dbi_old;
-	MDB_dbi dbi_holes;
-	MDB_dbi dbi_queue_del;
-	MDB_dbi dbi_new_objects;
-	MDB_env* cache_db_env;
-	MDB_dbi dbi_cache_size;
-	std::set<int64_t> curr_new_free_extents;
-	std::set<int64_t> reading_free_skip_extents;
-	std::unordered_set<std::string> defrag_items;
-	std::vector<SPunchItem> curr_free_skip_extents;
+    MDB_env* db_env;
+    MDB_dbi dbi_main;
+    MDB_dbi dbi_free;
+    MDB_dbi dbi_free_len;
+    MDB_dbi dbi_size;
+    MDB_dbi dbi_old;
+    MDB_dbi dbi_holes;
+    MDB_dbi dbi_queue_del;
+    MDB_dbi dbi_new_objects;
+    MDB_env* cache_db_env;
+    MDB_dbi dbi_cache_size;
+    std::set<int64_t> curr_new_free_extents;
+    std::set<int64_t> reading_free_skip_extents;
+    std::unordered_set<std::string> defrag_items;
+    std::vector<SPunchItem> curr_free_skip_extents;
 
-	struct ReadingItem
-	{
-		size_t refs = 0;
-		bool free_skip = false;
-	};
+    struct ReadingItem
+    {
+        size_t refs = 0;
+        bool free_skip = false;
+    };
 
-	std::map<int64_t, ReadingItem> reading_items;
+    std::map<int64_t, ReadingItem> reading_items;
 
     std::mutex mutex;
     std::condition_variable cond;
 
-	std::mutex datafileoffset_mutex;
-	std::mutex freespace_mutex;
+    std::mutex datafileoffset_mutex;
+    std::mutex freespace_mutex;
 
-	int64_t min_free_space;
+    int64_t min_free_space;
 
-	std::string db_path;
+    std::string db_path;
 
-	std::string freespace_cache_path;
+    std::string freespace_cache_path;
 
-	relaxed_atomic<bool> is_dead;
-	relaxed_atomic<bool> write_offline;
-	std::atomic<bool> data_file_dirty;
+    relaxed_atomic<bool> is_dead;
+    relaxed_atomic<bool> write_offline;
+    std::atomic<bool> data_file_dirty;
 
-	int64_t prev_transid;
-	int64_t curr_transid;
+    int64_t prev_transid;
+    int64_t curr_transid;
 
-	bool force_freespace_check;
+    bool force_freespace_check;
 
-	bool regen_freespace_cache;
-	bool sync_freespace_cache;
+    bool regen_freespace_cache;
+    bool sync_freespace_cache;
 
-	int64_t next_disk_id;
+    int64_t next_disk_id;
 
-	int64_t data_file_copy_done;
-	int64_t data_file_copy_done_sync;
-	int64_t data_file_copy_max;
-	bool stop_data_file_copy;
-	std::shared_mutex data_file_copy_mutex;
-	std::thread migrate_thread_h;
-	relaxed_atomic<int> references;
+    int64_t data_file_copy_done;
+    int64_t data_file_copy_done_sync;
+    int64_t data_file_copy_max;
+    bool stop_data_file_copy;
+    std::shared_mutex data_file_copy_mutex;
+    std::thread migrate_thread_h;
+    relaxed_atomic<int> references;
 
-	bool mdb_curr_sync;
+    bool mdb_curr_sync;
 
     std::filesystem::path data_file_path;
 
-	int64_t data_file_size_limit;
-	int64_t alloc_chunk_size;
-	float alloc_use_free_space_percent;
-	int64_t data_file_chunk_size;
+    int64_t data_file_size_limit;
+    int64_t alloc_chunk_size;
+    float alloc_use_free_space_percent;
+    int64_t data_file_chunk_size;
 
-	std::string runtime_id;
-	bool manual_commit;
-	bool manual_commit_list_consistent;
-	bool stop_on_error;
-	bool punch_holes;
-	bool no_sync;
+    std::string runtime_id;
+    bool manual_commit;
+    bool manual_commit_list_consistent;
+    bool stop_on_error;
+    bool punch_holes;
+    bool no_sync;
 
-	int64_t curr_partid = 0;
-	unsigned char enckey[crypto_secretbox_KEYBYTES];
+    int64_t curr_partid = 0;
+    unsigned char enckey[crypto_secretbox_KEYBYTES];
 
-	MDB_cmp_func* key_compare_func;
+    MDB_cmp_func* key_compare_func;
 
-	common_prefix_func_t common_prefix_func;
-	common_prefix_hash_func_t common_prefix_hash_func;
-	on_delete_callback_t on_delete_callback;
-	modify_data_callback_t modify_data_callback;
-	modify_metadata_callback_t modify_metadata_callback;
-	match_callback_t match_callback;
-	add_reading_callback_t add_reading_callback;
+    common_prefix_func_t common_prefix_func;
+    common_prefix_hash_func_t common_prefix_hash_func;
+    on_delete_callback_t on_delete_callback;
+    modify_data_callback_t modify_data_callback;
+    modify_metadata_callback_t modify_metadata_callback;
+    match_callback_t match_callback;
+    add_reading_callback_t add_reading_callback;
 
-	int64_t curr_version = 0;
+    int64_t curr_version = 0;
 
-	std::unique_ptr<WalFile> wal_file;
-	bool needs_wal_file_reset = false;
-	bool wal_write_meta = true;
-	int64_t wal_write_data = 0;
-	char wal_uuid[16];
-	size_t startup_wal_items = 0;
-	bool wal_startup_finished = true;
-	std::condition_variable wal_startup_finished_cond;
-	std::jthread wal_write_thread;
+    std::unique_ptr<WalFile> wal_file;
+    bool needs_wal_file_reset = false;
+    bool wal_write_meta = true;
+    int64_t wal_write_data = 0;
+    char wal_uuid[16];
+    size_t startup_wal_items = 0;
+    bool wal_startup_finished = true;
+    std::condition_variable wal_startup_finished_cond;
+    std::jthread wal_write_thread;
 
-	std::vector<std::unique_ptr<SingleFileStorage::SCommitInfo>> wal_startup_commit_infos;
+    std::vector<std::unique_ptr<SingleFileStorage::SCommitInfo>> wal_startup_commit_infos;
     std::vector<std::unique_ptr<SingleFileStorage::MatchInfo>> wal_startup_match_infos;
 
-	
-	std::condition_variable trim_queue_cond;
-	std::queue<SPunchItem> trim_queue;
-	std::mutex trim_queue_mutex;
-	std::map<int64_t, int> trimming_free_skip_extents;
+    std::condition_variable trim_queue_cond;
+    std::queue<SPunchItem> trim_queue;
+    std::mutex trim_queue_mutex;
+    std::map<int64_t, int> trimming_free_skip_extents;
 
-	std::jthread trim_thread;
+    std::jthread trim_thread;
 };
-
 
 class ScopedSFSRef
 {
-	SingleFileStorage* sfs;
+    SingleFileStorage* sfs;
+
 public:
-	ScopedSFSRef(SingleFileStorage* sfs)
-		: sfs(sfs) {
-		if(sfs!=nullptr)
-			sfs->reference();
-	}
+    ScopedSFSRef(SingleFileStorage* sfs)
+        : sfs(sfs)
+    {
+        if (sfs != nullptr)
+            sfs->reference();
+    }
 
-	void reset(SingleFileStorage* nsfs)
-	{
-		if (sfs != nullptr) sfs->unreference();
-		sfs = nsfs;
-		if (sfs != nullptr) sfs->reference();
-	}
+    void reset(SingleFileStorage* nsfs)
+    {
+        if (sfs != nullptr)
+            sfs->unreference();
+        sfs = nsfs;
+        if (sfs != nullptr)
+            sfs->reference();
+    }
 
-	~ScopedSFSRef() {
-		if (sfs != nullptr)
-			sfs->unreference();
-	}
+    ~ScopedSFSRef()
+    {
+        if (sfs != nullptr)
+            sfs->unreference();
+    }
 };

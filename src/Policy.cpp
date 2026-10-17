@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 #include "Policy.h"
-#include "DbDao.h"
 #include "Action.h"
-#include <nlohmann/json.hpp>
+#include "DbDao.h"
 #include <fmt/core.h>
+#include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 
@@ -18,55 +18,55 @@ Policy::Policy(const std::string& data)
     {
         j = json::parse(data);
     }
-    catch(json::parse_error& e)
+    catch (json::parse_error& e)
     {
         throw PolicyParseError(fmt::format("Error parsing JSON: {}", e.what()));
     }
 
-    if(!j.is_object())
+    if (!j.is_object())
         throw PolicyParseError("Root item is not an object");
 
     auto itVersion = j.find("Version");
-    if(itVersion==j.end())
+    if (itVersion == j.end())
         throw PolicyParseError("Version not found");
 
-    if(!itVersion->is_string())
+    if (!itVersion->is_string())
         throw PolicyParseError("Version is not a string");
 
-    if(*itVersion != "2012-10-17")
+    if (*itVersion != "2012-10-17")
         throw PolicyParseError(fmt::format("Unsupported policy version: {}", std::string(*itVersion)));
 
     auto itStatements = j.find("Statement");
-    if(!itStatements->is_array())
+    if (!itStatements->is_array())
         throw PolicyParseError("Statements array not found");
 
-    for(auto stmt: *itStatements)
+    for (auto stmt : *itStatements)
     {
         Statement newStmt;
         newStmt.sid = stmt.value("Sid", "");
         auto effect = stmt.value("Effect", "");
 
-        if(effect == "Allow")
+        if (effect == "Allow")
             newStmt.effect = Statement::Effect::Allow;
-        else if(effect == "Deny")
+        else if (effect == "Deny")
             newStmt.effect = Statement::Effect::Deny;
         else
             throw PolicyParseError(fmt::format("Invalid Effect value {} in stmt {}", effect, newStmt.sid));
 
         auto itAction = stmt.find("Action");
-        if(itAction==stmt.end())
+        if (itAction == stmt.end())
             throw PolicyParseError(fmt::format("Statement {} without Action", newStmt.sid));
 
-        if(itAction->is_string())
+        if (itAction->is_string())
         {
             const auto addActions = expandAction(std::string(*itAction));
             newStmt.actions.insert(newStmt.actions.end(), addActions.begin(), addActions.end());
         }
-        else if(itAction->is_array())
+        else if (itAction->is_array())
         {
-            for(auto val: *itAction)
+            for (auto val : *itAction)
             {
-                if(!val.is_string())
+                if (!val.is_string())
                     throw PolicyParseError(fmt::format("Invalid object in action in stmt {}", newStmt.sid));
 
                 const auto addActions = expandAction(std::string(val));
@@ -79,18 +79,18 @@ Policy::Policy(const std::string& data)
         }
 
         auto itResource = stmt.find("Resource");
-        if(itResource==stmt.end())
+        if (itResource == stmt.end())
             throw PolicyParseError(fmt::format("Statement {} without Resource", newStmt.sid));
 
-        if(itResource->is_string())
+        if (itResource->is_string())
         {
             newStmt.resources.push_back(*itResource);
         }
-        else if(itResource->is_array())
+        else if (itResource->is_array())
         {
-            for(auto val: *itResource)
+            for (auto val : *itResource)
             {
-                if(!val.is_string())
+                if (!val.is_string())
                     throw PolicyParseError(fmt::format("Invalid object in Resource in stmt {}", newStmt.sid));
 
                 newStmt.resources.push_back(val);
@@ -108,14 +108,13 @@ Policy::Policy(const std::string& data)
 Policy::Policy(std::vector<Statement> statements)
     : statements(std::move(statements))
 {
-
 }
 
 Policy::Policy(int64_t policyId)
 {
     DbDao dbDao;
     const auto stmts = dbDao.getPolicyStatements(policyId);
-    for(const auto& stmt: stmts)
+    for (const auto& stmt : stmts)
     {
         Statement newStmt;
         newStmt.sid = stmt.sid;
@@ -125,7 +124,7 @@ Policy::Policy(int64_t policyId)
 
         const auto actions = dbDao.getPolicyStatementActions(stmt.id);
         newStmt.actions.reserve(actions.size());
-        for(const auto& action: actions)
+        for (const auto& action : actions)
         {
             newStmt.actions.push_back(static_cast<Action>(action));
         }
@@ -140,24 +139,33 @@ bool Policy::resourceMatch(const std::string_view policyResource, const std::str
     size_t starIdx = std::string::npos;
     size_t matchIdx = 0;
 
-    while (r < resource.size()) {
-        if (p < policyResource.size() && (policyResource[p] == '?' || policyResource[p] == resource[r])) {
+    while (r < resource.size())
+    {
+        if (p < policyResource.size() && (policyResource[p] == '?' || policyResource[p] == resource[r]))
+        {
             p++;
             r++;
-        } else if (p < policyResource.size() && policyResource[p] == '*') {
+        }
+        else if (p < policyResource.size() && policyResource[p] == '*')
+        {
             starIdx = p;
             matchIdx = r;
             p++;
-        } else if (starIdx != std::string::npos) {
+        }
+        else if (starIdx != std::string::npos)
+        {
             p = starIdx + 1;
             matchIdx++;
             r = matchIdx;
-        } else {
+        }
+        else
+        {
             return false;
         }
     }
 
-    while (p < policyResource.size() && policyResource[p] == '*') {
+    while (p < policyResource.size() && policyResource[p] == '*')
+    {
         p++;
     }
 
@@ -167,26 +175,25 @@ bool Policy::resourceMatch(const std::string_view policyResource, const std::str
 Policy::AccessCheckResult Policy::checkAccess(const Action action, const std::string_view resource) const
 {
     auto ret = AccessCheckResult::NoMatch;
-    for(const auto& stmt: statements)
+    for (const auto& stmt : statements)
     {
-        if(std::find(stmt.actions.begin(), stmt.actions.end(), action) == stmt.actions.end()
-           && std::find(stmt.actions.begin(), stmt.actions.end(), Action::AllActions) == stmt.actions.end())
+        if (std::find(stmt.actions.begin(), stmt.actions.end(), action) == stmt.actions.end() && std::find(stmt.actions.begin(), stmt.actions.end(), Action::AllActions) == stmt.actions.end())
             continue;
 
         bool hasResourceMatch = false;
-        for(const auto& resPattern: stmt.resources)
+        for (const auto& resPattern : stmt.resources)
         {
-            if(resourceMatch(resPattern, resource))
+            if (resourceMatch(resPattern, resource))
             {
                 hasResourceMatch = true;
                 break;
             }
         }
 
-        if(!hasResourceMatch)
+        if (!hasResourceMatch)
             continue;
 
-        if(stmt.effect == Statement::Effect::Allow)
+        if (stmt.effect == Statement::Effect::Allow)
             ret = AccessCheckResult::Allow;
         else
             return AccessCheckResult::Deny;
@@ -197,29 +204,29 @@ Policy::AccessCheckResult Policy::checkAccess(const Action action, const std::st
 
 std::vector<Action> Policy::expandAction(const std::string_view actionStr)
 {
-    if(actionStr.find("*")==std::string_view::npos)
+    if (actionStr.find("*") == std::string_view::npos)
     {
         const auto actionId = actionFromStr(std::string(actionStr));
-        if(actionId == Action::Unknown)
+        if (actionId == Action::Unknown)
             throw PolicyParseError(fmt::format("Unknown action {} in policy", std::string(actionStr)));
 
-        return {actionId};
+        return { actionId };
     }
     else
     {
-        if(actionStr == "*")
+        if (actionStr == "*")
         {
-            return {Action::AllActions};
+            return { Action::AllActions };
         }
 
         std::vector<Action> actions;
-        for(int i=1; i<=static_cast<int>(Action::LastDummyAction); ++i)
+        for (int i = 1; i <= static_cast<int>(Action::LastDummyAction); ++i)
         {
             const auto actionId = static_cast<Action>(i);
             if (actionId == Action::Unknown || actionId == Action::AllActions)
                 continue;
             const auto currActionStr = actionToStr(actionId);
-            if(resourceMatch(actionStr, currActionStr))
+            if (resourceMatch(actionStr, currActionStr))
             {
                 actions.push_back(actionId);
             }

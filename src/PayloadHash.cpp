@@ -43,10 +43,10 @@ bool PayloadHashBase::isFinalCombinedExpected(const uint64_t numParts)
 
 std::string PayloadHashBase::expectedCombined(const uint64_t numParts) const
 {
-    if(isFull() || numParts == 0)
+    if (isFull() || numParts == 0)
         return folly::base64Encode(expectedHash);
     else
-        return folly::base64Encode(expectedHash) + "-" + std::to_string(numParts);   
+        return folly::base64Encode(expectedHash) + "-" + std::to_string(numParts);
 }
 
 // PayloadHashSha256 methods
@@ -59,11 +59,11 @@ std::string PayloadHashSha256::final()
 {
     std::string binHash;
     binHash.resize(SHA256_DIGEST_LENGTH);
-    EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char *>(&binHash[0]), nullptr);
+    EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&binHash[0]), nullptr);
     return binHash;
 }
 
-void PayloadHashSha256::update(const unsigned char *data, const size_t len)
+void PayloadHashSha256::update(const unsigned char* data, const size_t len)
 {
     EVP_DigestUpdate(evpMdCtx.ctx, data, len);
 }
@@ -85,11 +85,11 @@ std::string PayloadHashSha1::final()
 {
     std::string binHash;
     binHash.resize(SHA1_DIGEST_LENGTH);
-    EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char *>(&binHash[0]), nullptr);
+    EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&binHash[0]), nullptr);
     return binHash;
 }
 
-void PayloadHashSha1::update(const unsigned char *data, const size_t len)
+void PayloadHashSha1::update(const unsigned char* data, const size_t len)
 {
     EVP_DigestUpdate(evpMdCtx.ctx, data, len);
 }
@@ -114,12 +114,12 @@ std::string PayloadHashCrc32::final()
     return binHash;
 }
 
-void PayloadHashCrc32::update(const unsigned char *data, const size_t len)
+void PayloadHashCrc32::update(const unsigned char* data, const size_t len)
 {
     crc32Value = aws_checksums_crc32(data, len, crc32Value);
 }
 
-void PayloadHashCrc32Full::combine(const PayloadHashBase &other, const uint64_t len)
+void PayloadHashCrc32Full::combine(const PayloadHashBase& other, const uint64_t len)
 {
     if (other.getHashType() != AwsHashType::Crc32 || other.getExpectedHash().size() != sizeof(uint32_t))
     {
@@ -148,12 +148,12 @@ std::string PayloadHashCrc32c::final()
     return binHash;
 }
 
-void PayloadHashCrc32c::update(const unsigned char *data, const size_t len)
+void PayloadHashCrc32c::update(const unsigned char* data, const size_t len)
 {
     crc32Value = aws_checksums_crc32c(data, len, crc32Value);
 }
 
-void PayloadHashCrc32cFull::combine(const PayloadHashBase &other, const uint64_t len)
+void PayloadHashCrc32cFull::combine(const PayloadHashBase& other, const uint64_t len)
 {
     if (other.getHashType() != AwsHashType::Crc32c || other.getExpectedHash().size() != sizeof(uint32_t))
     {
@@ -182,12 +182,12 @@ std::string PayloadHashCrc64Nvme::final()
     return binHash;
 }
 
-void PayloadHashCrc64Nvme::update(const unsigned char *data, const size_t len)
+void PayloadHashCrc64Nvme::update(const unsigned char* data, const size_t len)
 {
     crc64Value = aws_checksums_crc64nvme(data, len, crc64Value);
 }
 
-void PayloadHashCrc64NvmeFull::combine(const PayloadHashBase &other, const uint64_t len)
+void PayloadHashCrc64NvmeFull::combine(const PayloadHashBase& other, const uint64_t len)
 {
     if (other.getHashType() != AwsHashType::Crc64Nvme || other.getExpectedHash().size() != sizeof(uint64_t))
     {
@@ -201,7 +201,7 @@ void PayloadHashCrc64NvmeFull::combine(const PayloadHashBase &other, const uint6
     crc64Value = aws_checksums_crc64nvme_combine(crc64Value, otherCrc, len);
 }
 
-std::unique_ptr<PayloadHashBase> createPayloadHash(const std::string_view &awsHashType)
+std::unique_ptr<PayloadHashBase> createPayloadHash(const std::string_view& awsHashType)
 {
     XLOGF(DBG0, "Creating payload hash for AWS hash type: {}", awsHashType);
     if (awsHashType == "x-amz-checksum-sha256")
@@ -239,7 +239,7 @@ std::unique_ptr<PayloadHashBase> createPayloadHash(const std::string_view &awsHa
     return nullptr;
 }
 
-std::unique_ptr<PayloadHashBase> createSdkChecksum(const std::string_view &awsSdkChecksumType, const bool compositeChecksum)
+std::unique_ptr<PayloadHashBase> createSdkChecksum(const std::string_view& awsSdkChecksumType, const bool compositeChecksum)
 {
     XLOGF(DBG0, "Creating SDK checksum for AWS SDK checksum type: {}", awsSdkChecksumType);
     if (awsSdkChecksumType == "CRC32" || awsSdkChecksumType == "crc32")
@@ -325,13 +325,13 @@ std::unique_ptr<PayloadHashBase> createPayloadHash(const AwsHashType hashType)
     return nullptr;
 }
 
-void serializeSdkChecksum(const std::string_view hashVal, const AwsHashType hashType, CWData &wdata)
+void serializeSdkChecksum(const std::string_view hashVal, const AwsHashType hashType, CWData& wdata)
 {
     wdata.addInt64(static_cast<int64_t>(hashType));
     wdata.addBuffer(hashVal.data(), hashVal.size());
 }
 
-bool deserializeSdkChecksum(CRData &rdata, std::unique_ptr<PayloadHashBase> &hash, const bool withExpectedHash)
+bool deserializeSdkChecksum(CRData& rdata, std::unique_ptr<PayloadHashBase>& hash, const bool withExpectedHash)
 {
     int64_t hashTypeInt;
     if (!rdata.getInt64(&hashTypeInt))

@@ -1,19 +1,21 @@
 #pragma once
 
+#include <folly/Exception.h>
+#include <folly/File.h>
+#include <stdint.h>
 #include <string>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <sys/syscall.h>
-#include <folly/File.h>
-#include <folly/Exception.h>
-#include <stdint.h>
 
-static std::string os_file_sep() {
+static std::string os_file_sep()
+{
     return "/";
 }
 
-static pid_t getThreadID() {
-	return syscall(__NR_gettid);
+static pid_t getThreadID()
+{
+    return syscall(__NR_gettid);
 }
 
 static int64_t fileSize(int fd)
@@ -29,14 +31,14 @@ int64_t os_free_space(const std::string& path);
 
 enum EFileType
 {
-	EFileType_File = 1,
-	EFileType_Directory = 2,
-	EFileType_Symlink = 4,
-	EFileType_Special = 8
+    EFileType_File = 1,
+    EFileType_Directory = 2,
+    EFileType_Symlink = 4,
+    EFileType_Special = 8
 };
 
 unsigned int os_get_file_type(const std::string& path);
 
 int os_popen(const std::string& cmd, std::string& ret);
 
-bool os_sync(const std::string & path);
+bool os_sync(const std::string& path);

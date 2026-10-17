@@ -15,7 +15,15 @@ import boto3
 from botocore.exceptions import ClientError
 import os
 from hs5_api.models.set_bucket_public_params import SetBucketPublicParams
-from hs5_fixture import Hs5Runner, hs5, hs5_large, hs5_large_small_alloc_chunksize, hs5_no_precheck, hs5_modify_delay, hs5_protected_check_delay
+from hs5_fixture import (
+    Hs5Runner,
+    hs5,
+    hs5_large,
+    hs5_large_small_alloc_chunksize,
+    hs5_no_precheck,
+    hs5_modify_delay,
+    hs5_protected_check_delay,
+)
 import pytest
 import threading
 import binascii
@@ -30,19 +38,21 @@ from awsgosdktest import UploadAwsSdkGo, goawssdk_test_fixture
 from miniosdktest import UploadMinioGo, miniosdk_test_fixture
 from mypy_boto3_s3.type_defs import CORSConfigurationTypeDef
 
+
 def create_random_file(fn: Path, size: int) -> int:
     with open(fn, "wb") as f:
         csize = 0
         crc = 0
         while csize < size:
-            towrite = min(size-csize, 512*1024)
+            towrite = min(size - csize, 512 * 1024)
             data = os.urandom(towrite)
-            #data = bytearray(towrite)
+            # data = bytearray(towrite)
             f.write(data)
             crc = binascii.crc32(data, crc)
             csize += towrite
 
     return crc
+
 
 def test_head_bucket(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
@@ -58,17 +68,21 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
 
     assert hs5.get_stats().used == 0
 
-    fdata = os.urandom(29*1024*1024)
+    fdata = os.urandom(29 * 1024 * 1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
 
     fdata_md5 = hashlib.md5(fdata).hexdigest()
 
-    
     s3_client = hs5.get_s3_client()
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-        res = s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file, 
-            ContentType="text/markdown", Metadata={"test": "foo"})
+        res = s3_client.put_object(
+            Bucket=hs5.testbucketname(),
+            Key="upload.txt",
+            Body=upload_file,
+            ContentType="text/markdown",
+            Metadata={"test": "foo"},
+        )
         assert res["ETag"].strip('"').lower() == fdata_md5.lower()
 
     obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
@@ -77,31 +91,41 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     assert obj_info["ContentType"] == "text/markdown"
     assert "test" in obj_info["Metadata"] and obj_info["Metadata"]["test"] == "foo"
 
-    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9")
+    obj_range = s3_client.get_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9"
+    )
     assert obj_range["ContentType"] == "text/markdown"
-    assert "test" in obj_range["Metadata"] and obj_range["Metadata"]["test"] == "foo" 
+    assert "test" in obj_range["Metadata"] and obj_range["Metadata"]["test"] == "foo"
     assert obj_range["LastModified"].year >= 2025
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
     assert bdata == fdata[:10]
 
-    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=-10")
+    obj_range = s3_client.get_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=-10"
+    )
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
     assert bdata == fdata[-10:]
 
     if os.getenv("ENABLE_WAL_WRITE_DATA") == "1":
         time.sleep(1)
-        
+
     assert hs5.get_stats().used == len(fdata)
 
-    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=10-19")
+    obj_range = s3_client.get_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=10-19"
+    )
     assert obj_range["ContentType"] == "text/markdown"
-    assert "test" in obj_range["Metadata"] and obj_range["Metadata"]["test"] == "foo" 
+    assert "test" in obj_range["Metadata"] and obj_range["Metadata"]["test"] == "foo"
     assert obj_range["Body"].read() == fdata[10:20]
 
     with pytest.raises(ClientError, match="Range Not Satisfiable"):
-        obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range=f"bytes={100*1024*1024}-{100*1024*1024 +9}")
+        obj_range = s3_client.get_object(
+            Bucket=hs5.testbucketname(),
+            Key="upload.txt",
+            Range=f"bytes={100*1024*1024}-{100*1024*1024 +9}",
+        )
 
     dl_path = tmp_path / "download.txt"
     s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
@@ -128,7 +152,7 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     assert "Key" in objs[0] and objs[0]["Key"] == "upload.txt"
     assert "Size" in objs[0] and objs[0]["Size"] == len(fdata)
     assert "ETag" in objs[0] and objs[0]["ETag"].strip('"').lower() == fdata_md5.lower()
-    
+
     s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload_nonexistent.txt")
     with pytest.raises(ClientError):
@@ -142,16 +166,19 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
 
     assert hs5.get_stats().used == 0
 
+
 def test_put_get_commit_context(tmp_path: Path, hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
 
-    fdata = os.urandom(1*1024*1024)
+    fdata = os.urandom(1 * 1024 * 1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
 
     with Hs5Commit(s3_client, hs5.testbucketname()) as commit:
         with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-            s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+            s3_client.put_object(
+                Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file
+            )
 
     hs5.restart()
 
@@ -159,20 +186,23 @@ def test_put_get_commit_context(tmp_path: Path, hs5: Hs5Runner):
     s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
     assert os.stat(dl_path).st_size == len(fdata)
 
+
 def test_put_get_commit_context_restart_fail(tmp_path: Path, hs5: Hs5Runner):
     if not hs5.manual_commit:
         pytest.skip("Skip test in manual commit disabled mode")
 
     s3_client = hs5.get_s3_client()
 
-    fdata = os.urandom(1*1024*1024)
+    fdata = os.urandom(1 * 1024 * 1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
 
     with pytest.raises(Hs5RestartError):
         with Hs5Commit(s3_client, hs5.testbucketname()) as commit:
             with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-                s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+                s3_client.put_object(
+                    Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file
+                )
 
             hs5.restart()
 
@@ -180,25 +210,36 @@ def test_put_get_commit_context_restart_fail(tmp_path: Path, hs5: Hs5Runner):
         dl_path = tmp_path / "download.txt"
         s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
 
-    
 
 def test_get_commit_obj(tmp_path: Path, hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     fpath = tmp_path / "commit_uuid.txt"
     try:
-        s3_client.download_file(hs5.testbucketname(), "a711e93e-93b4-4a9e-8a0b-688797470002", str(fpath))
+        s3_client.download_file(
+            hs5.testbucketname(), "a711e93e-93b4-4a9e-8a0b-688797470002", str(fpath)
+        )
     except ClientError as e:
-        if ("Error" not in e.response or
-           "Code" not in e.response["Error"] or
-           e.response["Error"]["Code"] != "404"):
+        if (
+            "Error" not in e.response
+            or "Code" not in e.response["Error"]
+            or e.response["Error"]["Code"] != "404"
+        ):
             raise
         assert not hs5.manual_commit
         return
 
     with open(fpath, "r") as f:
-        assert len(f.read())>5
+        assert len(f.read()) > 5
 
-def add_objects(tmp_path: Path, hs5: Hs5Runner, num_objects : int = 210, object_data = b"abc", bucketname = None, prefix="") -> set[str]:
+
+def add_objects(
+    tmp_path: Path,
+    hs5: Hs5Runner,
+    num_objects: int = 210,
+    object_data=b"abc",
+    bucketname=None,
+    prefix="",
+) -> set[str]:
     if bucketname is None:
         bucketname = hs5.testbucketname()
 
@@ -215,6 +256,7 @@ def add_objects(tmp_path: Path, hs5: Hs5Runner, num_objects : int = 210, object_
     hs5.commit_storage(s3_client)
 
     return ul_files
+
 
 def delete_all_objects(hs5: Hs5Runner, bucket: str):
     s3_client = hs5.get_s3_client()
@@ -235,10 +277,12 @@ def test_put_empty(tmp_path: Path, hs5: Hs5Runner):
     fdata = ""
     with open(tmp_path / "upload.txt", "w") as upload_file:
         upload_file.write(fdata)
-    
+
     s3_client = hs5.get_s3_client()
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+        s3_client.put_object(
+            Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file
+        )
 
     obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj_info["ContentLength"] == len(fdata)
@@ -248,14 +292,25 @@ def test_put_empty(tmp_path: Path, hs5: Hs5Runner):
     s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
     assert os.stat(dl_path).st_size == len(fdata)
 
+
 def test_put_if_match_no_precheck(tmp_path: Path, hs5_no_precheck: Hs5Runner):
-    put_if_match_test(tmp_path, hs5_no_precheck, expected_error="ConditionalRequestConflict", expected_http_error=409)
+    put_if_match_test(
+        tmp_path,
+        hs5_no_precheck,
+        expected_error="ConditionalRequestConflict",
+        expected_http_error=409,
+    )
 
 
 def test_put_if_match2(tmp_path: Path, hs5: Hs5Runner):
-    put_if_match_test(tmp_path, hs5, expected_error="PreconditionFailed", expected_http_error=412)
+    put_if_match_test(
+        tmp_path, hs5, expected_error="PreconditionFailed", expected_http_error=412
+    )
 
-def put_if_match_test(tmp_path: Path, hs5: Hs5Runner, expected_error: str, expected_http_error: int):
+
+def put_if_match_test(
+    tmp_path: Path, hs5: Hs5Runner, expected_error: str, expected_http_error: int
+):
     assert hs5.get_stats().used == 0
 
     fdata = os.urandom(1024)
@@ -264,76 +319,157 @@ def put_if_match_test(tmp_path: Path, hs5: Hs5Runner, expected_error: str, expec
 
     s3_client = hs5.get_s3_client()
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+        s3_client.put_object(
+            Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file
+        )
 
     obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj_info["ContentLength"] == len(fdata)
 
     # Test if-match with correct ETag
-    #etag = obj_info["ETag"].strip('"')
-    obj_info = s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=b"new data", IfMatch=obj_info["ETag"])
+    # etag = obj_info["ETag"].strip('"')
+    obj_info = s3_client.put_object(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        Body=b"new data",
+        IfMatch=obj_info["ETag"],
+    )
 
     # Test if-match with incorrect ETag
     with pytest.raises(ClientError) as exc_info:
-        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=b"new data", IfMatch="invalid-etag")
+        s3_client.put_object(
+            Bucket=hs5.testbucketname(),
+            Key="upload.txt",
+            Body=b"new data",
+            IfMatch="invalid-etag",
+        )
     assert "Error" in exc_info.value.response
     assert "Code" in exc_info.value.response["Error"]
     assert "ResponseMetadata" in exc_info.value.response
     assert "HTTPStatusCode" in exc_info.value.response["ResponseMetadata"]
-    assert exc_info.value.response["ResponseMetadata"]["HTTPStatusCode"] == expected_http_error
+    assert (
+        exc_info.value.response["ResponseMetadata"]["HTTPStatusCode"]
+        == expected_http_error
+    )
     assert exc_info.value.response["Error"]["Code"] == expected_error
 
     with pytest.raises(ClientError):
-        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=b"new data2", IfNoneMatch=obj_info["ETag"])
+        s3_client.put_object(
+            Bucket=hs5.testbucketname(),
+            Key="upload.txt",
+            Body=b"new data2",
+            IfNoneMatch=obj_info["ETag"],
+        )
 
-    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=b"new data2", IfNoneMatch="foobar")
+    s3_client.put_object(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        Body=b"new data2",
+        IfNoneMatch="foobar",
+    )
 
     with pytest.raises(ClientError):
-        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload2.txt", Body=b"new data3", IfMatch="*")
+        s3_client.put_object(
+            Bucket=hs5.testbucketname(),
+            Key="upload2.txt",
+            Body=b"new data3",
+            IfMatch="*",
+        )
 
-    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=b"new data3", IfMatch="*")
+    s3_client.put_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", Body=b"new data3", IfMatch="*"
+    )
 
     with pytest.raises(ClientError):
-        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=b"new data3", IfNoneMatch="*")
+        s3_client.put_object(
+            Bucket=hs5.testbucketname(),
+            Key="upload.txt",
+            Body=b"new data3",
+            IfNoneMatch="*",
+        )
 
-    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload3.txt", Body=b"new data3", IfNoneMatch="*")
+    s3_client.put_object(
+        Bucket=hs5.testbucketname(),
+        Key="upload3.txt",
+        Body=b"new data3",
+        IfNoneMatch="*",
+    )
 
     s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload3.txt")
 
     assert hs5.get_stats().used == 0
 
+
 def test_put_if_match_multipart_no_precheck(tmp_path: Path, hs5_no_precheck: Hs5Runner):
-    put_if_match_multipart(tmp_path, hs5_no_precheck, expected_error="ConditionalRequestConflict", expected_http_error=409)
+    put_if_match_multipart(
+        tmp_path,
+        hs5_no_precheck,
+        expected_error="ConditionalRequestConflict",
+        expected_http_error=409,
+    )
+
 
 def test_put_if_match_multipart2(tmp_path: Path, hs5: Hs5Runner):
-    put_if_match_multipart(tmp_path, hs5, expected_error="PreconditionFailed", expected_http_error=412)
+    put_if_match_multipart(
+        tmp_path, hs5, expected_error="PreconditionFailed", expected_http_error=412
+    )
 
-def put_if_match_multipart(tmp_path: Path, hs5: Hs5Runner, expected_error: str, expected_http_error: int):    
-    fdata = os.urandom(10*1024*1024)
+
+def put_if_match_multipart(
+    tmp_path: Path, hs5: Hs5Runner, expected_error: str, expected_http_error: int
+):
+    fdata = os.urandom(10 * 1024 * 1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
 
     s3_client = hs5.get_s3_client()
-    config = TransferConfig(multipart_chunksize=5*1024*1024)
-    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "upload.txt", Config=config)
+    config = TransferConfig(multipart_chunksize=5 * 1024 * 1024)
+    s3_client.upload_file(
+        upload_file.name, hs5.testbucketname(), "upload.txt", Config=config
+    )
 
     obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj_info["ContentLength"] == len(fdata)
 
-     # Test if-match with correct ETag
+    # Test if-match with correct ETag
     def upload_multipart(ifmatch: str):
-        upl = s3_client.create_multipart_upload(Bucket=hs5.testbucketname(), Key="upload.txt")
+        upl = s3_client.create_multipart_upload(
+            Bucket=hs5.testbucketname(), Key="upload.txt"
+        )
         with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-            part1 = s3_client.upload_part(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=1, UploadId=upl["UploadId"], Body=upload_file.read(5*1024*1024))
-            part2 = s3_client.upload_part(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=2, UploadId=upl["UploadId"], Body=upload_file.read(5*1024*1024))
+            part1 = s3_client.upload_part(
+                Bucket=hs5.testbucketname(),
+                Key="upload.txt",
+                PartNumber=1,
+                UploadId=upl["UploadId"],
+                Body=upload_file.read(5 * 1024 * 1024),
+            )
+            part2 = s3_client.upload_part(
+                Bucket=hs5.testbucketname(),
+                Key="upload.txt",
+                PartNumber=2,
+                UploadId=upl["UploadId"],
+                Body=upload_file.read(5 * 1024 * 1024),
+            )
 
         try:
-            s3_client.complete_multipart_upload(Bucket=hs5.testbucketname(), 
-                                            Key="upload.txt", UploadId=upl["UploadId"], MultipartUpload={"Parts": [{"ETag": part1["ETag"], "PartNumber": 1}, {"ETag": part2["ETag"], "PartNumber": 2}]},
-                                            IfMatch=ifmatch)
+            s3_client.complete_multipart_upload(
+                Bucket=hs5.testbucketname(),
+                Key="upload.txt",
+                UploadId=upl["UploadId"],
+                MultipartUpload={
+                    "Parts": [
+                        {"ETag": part1["ETag"], "PartNumber": 1},
+                        {"ETag": part2["ETag"], "PartNumber": 2},
+                    ]
+                },
+                IfMatch=ifmatch,
+            )
         except:
-            s3_client.abort_multipart_upload(Bucket=hs5.testbucketname(), Key="upload.txt", UploadId=upl["UploadId"])
+            s3_client.abort_multipart_upload(
+                Bucket=hs5.testbucketname(), Key="upload.txt", UploadId=upl["UploadId"]
+            )
             raise
 
     upload_multipart(obj_info["ETag"])
@@ -346,10 +482,15 @@ def put_if_match_multipart(tmp_path: Path, hs5: Hs5Runner, expected_error: str, 
     assert "Code" in exc_info.value.response["Error"]
     assert "ResponseMetadata" in exc_info.value.response
     assert "HTTPStatusCode" in exc_info.value.response["ResponseMetadata"]
-    assert exc_info.value.response["ResponseMetadata"]["HTTPStatusCode"] == expected_http_error
+    assert (
+        exc_info.value.response["ResponseMetadata"]["HTTPStatusCode"]
+        == expected_http_error
+    )
     assert exc_info.value.response["Error"]["Code"] == expected_error
 
-    s3_client.download_file(hs5.testbucketname(), "upload.txt", str(tmp_path / "download.txt"))
+    s3_client.download_file(
+        hs5.testbucketname(), "upload.txt", str(tmp_path / "download.txt")
+    )
     assert filecmp.cmp(tmp_path / "upload.txt", tmp_path / "download.txt")
 
     s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt")
@@ -364,26 +505,39 @@ def test_get_if_match(tmp_path: Path, hs5: Hs5Runner):
 
     s3_client = hs5.get_s3_client()
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+        s3_client.put_object(
+            Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file
+        )
 
     obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj_info["ContentLength"] == len(fdata)
 
     # Test if-match with correct ETag
-    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9", IfMatch=obj_info["ETag"])
+    obj_range = s3_client.get_object(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        Range="bytes=0-9",
+        IfMatch=obj_info["ETag"],
+    )
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
     assert bdata == fdata[:10]
 
     # Test if-match with incorrect ETag
     with pytest.raises(ClientError) as exc_info:
-        s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9", IfMatch="invalid-etag")
+        s3_client.get_object(
+            Bucket=hs5.testbucketname(),
+            Key="upload.txt",
+            Range="bytes=0-9",
+            IfMatch="invalid-etag",
+        )
     assert "Error" in exc_info.value.response
     assert "Code" in exc_info.value.response["Error"]
     assert "ResponseMetadata" in exc_info.value.response
     assert "HTTPStatusCode" in exc_info.value.response["ResponseMetadata"]
     assert exc_info.value.response["ResponseMetadata"]["HTTPStatusCode"] == 412
     assert exc_info.value.response["Error"]["Code"] == "PreconditionFailed"
+
 
 def test_del_if_match(tmp_path: Path, hs5: Hs5Runner):
     fdata = os.urandom(1024)
@@ -392,20 +546,28 @@ def test_del_if_match(tmp_path: Path, hs5: Hs5Runner):
 
     s3_client = hs5.get_s3_client()
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+        s3_client.put_object(
+            Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file
+        )
 
     obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj_info["ContentLength"] == len(fdata)
 
     # Test if-match with correct ETag
-    s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt", IfMatch=obj_info["ETag"])
+    s3_client.delete_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", IfMatch=obj_info["ETag"]
+    )
 
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-        obj_info = s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+        obj_info = s3_client.put_object(
+            Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file
+        )
 
     # Test if-match with incorrect ETag
     with pytest.raises(ClientError) as exc_info:
-        s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt", IfMatch="invalid-etag")
+        s3_client.delete_object(
+            Bucket=hs5.testbucketname(), Key="upload.txt", IfMatch="invalid-etag"
+        )
     assert "Error" in exc_info.value.response
     assert "Code" in exc_info.value.response["Error"]
     assert "ResponseMetadata" in exc_info.value.response
@@ -421,21 +583,24 @@ def test_list_buckets(hs5: Hs5Runner):
     bucket_names = [b["Name"] for b in buckets["Buckets"]]
     assert hs5.testbucketname() in bucket_names
 
+
 def test_multipage_list(tmp_path: Path, hs5: Hs5Runner):
 
     ul_files = add_objects(tmp_path, hs5)
 
     s3_client = hs5.get_s3_client()
 
-    marker : Optional[str]= None
+    marker: Optional[str] = None
     while True:
         if marker:
-            res = s3_client.list_objects(Bucket=hs5.testbucketname(), Marker=marker, MaxKeys=100)
+            res = s3_client.list_objects(
+                Bucket=hs5.testbucketname(), Marker=marker, MaxKeys=100
+            )
         else:
             res = s3_client.list_objects(Bucket=hs5.testbucketname(), MaxKeys=100)
 
         objs = res["Contents"]
-        assert len(objs)<=100
+        assert len(objs) <= 100
         for obj in objs:
             assert "Key" in obj
             assert obj["Key"] in ul_files
@@ -448,11 +613,12 @@ def test_multipage_list(tmp_path: Path, hs5: Hs5Runner):
             break
 
     assert not ul_files
-    
+
     hs5.commit_storage(s3_client)
 
     res = s3_client.list_objects(Bucket=hs5.testbucketname(), MaxKeys=100)
     assert "Contents" not in res
+
 
 @pytest.mark.parametrize("with_prefix", [False, True])
 def test_multipage_list_v2(tmp_path: Path, hs5: Hs5Runner, with_prefix: bool):
@@ -466,30 +632,44 @@ def test_multipage_list_v2(tmp_path: Path, hs5: Hs5Runner, with_prefix: bool):
         upload_file.write("abc")
 
     if with_prefix:
-        s3_client.upload_file(str(tmp_path / "upload_extra.txt"), hs5.testbucketname(), "v1/upload_extra.txt")
+        s3_client.upload_file(
+            str(tmp_path / "upload_extra.txt"),
+            hs5.testbucketname(),
+            "v1/upload_extra.txt",
+        )
 
-    
     if with_prefix:
         res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), Prefix="v1/")
         assert "Contents" in res
         assert len(res["Contents"]) == 1
 
-    continuation_token : Optional[str]= None
+    continuation_token: Optional[str] = None
     while True:
         if with_prefix:
             if continuation_token:
-                res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), ContinuationToken=continuation_token, Prefix=prefix, MaxKeys=100)
+                res = s3_client.list_objects_v2(
+                    Bucket=hs5.testbucketname(),
+                    ContinuationToken=continuation_token,
+                    Prefix=prefix,
+                    MaxKeys=100,
+                )
             else:
-                res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), Prefix=prefix, MaxKeys=100)
+                res = s3_client.list_objects_v2(
+                    Bucket=hs5.testbucketname(), Prefix=prefix, MaxKeys=100
+                )
 
         elif continuation_token:
-            res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), ContinuationToken=continuation_token, MaxKeys=100)
+            res = s3_client.list_objects_v2(
+                Bucket=hs5.testbucketname(),
+                ContinuationToken=continuation_token,
+                MaxKeys=100,
+            )
         else:
             res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), MaxKeys=100)
 
         assert "Contents" in res
         objs = res["Contents"]
-        assert len(objs)<=100
+        assert len(objs) <= 100
         for obj in objs:
             assert "Key" in obj
             assert obj["Key"] in ul_files
@@ -506,11 +686,12 @@ def test_multipage_list_v2(tmp_path: Path, hs5: Hs5Runner, with_prefix: bool):
 
     if with_prefix:
         s3_client.delete_object(Bucket=hs5.testbucketname(), Key="v1/upload_extra.txt")
-    
+
     hs5.commit_storage(s3_client)
 
     res = s3_client.list_objects(Bucket=hs5.testbucketname(), MaxKeys=100)
     assert "Contents" not in res
+
 
 def test_list_v2_empty(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
@@ -520,7 +701,9 @@ def test_list_v2_empty(hs5: Hs5Runner):
     assert "Contents" not in res
 
     # Test with a prefix
-    res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), Prefix="nonexistent", MaxKeys=100)
+    res = s3_client.list_objects_v2(
+        Bucket=hs5.testbucketname(), Prefix="nonexistent", MaxKeys=100
+    )
     assert not res["IsTruncated"]
     assert "Contents" not in res
 
@@ -549,7 +732,9 @@ def test_list_prefix(tmp_path: Path, hs5: Hs5Runner):
 
     s3_client.upload_file(upload_file.name, hs5.testbucketname(), "a/b/1.txt")
 
-    res = s3_client.list_objects(Bucket=hs5.testbucketname(), Prefix="a/", Delimiter="/", MaxKeys=1)
+    res = s3_client.list_objects(
+        Bucket=hs5.testbucketname(), Prefix="a/", Delimiter="/", MaxKeys=1
+    )
     assert res["IsTruncated"] == True
     assert "Contents" in res
     objs = res["Contents"]
@@ -557,7 +742,6 @@ def test_list_prefix(tmp_path: Path, hs5: Hs5Runner):
     assert len(objs) == 1
     assert "Key" in objs[0]
     assert objs[0]["Key"] == "a/2.txt"
-
 
 
 def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
@@ -594,7 +778,9 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
     assert "a/" in prefixes
     assert "b/" in prefixes
 
-    res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), Prefix="b/", Delimiter="/", MaxKeys=2)
+    res = s3_client.list_objects_v2(
+        Bucket=hs5.testbucketname(), Prefix="b/", Delimiter="/", MaxKeys=2
+    )
     assert "Contents" in res
     objs = res["Contents"]
     assert objs is not None
@@ -615,7 +801,13 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
     assert "KeyCount" in res
     assert res["KeyCount"] == len(prefixes) + len(objs)
 
-    res2 = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), Prefix="b/", Delimiter="/", MaxKeys=2, ContinuationToken=res["NextContinuationToken"])
+    res2 = s3_client.list_objects_v2(
+        Bucket=hs5.testbucketname(),
+        Prefix="b/",
+        Delimiter="/",
+        MaxKeys=2,
+        ContinuationToken=res["NextContinuationToken"],
+    )
     assert "CommonPrefixes" in res2
     common_prefixes = res2["CommonPrefixes"]
     prefixes = list[str]()
@@ -625,7 +817,9 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
     assert len(prefixes) == 1
     assert "b/d/" in prefixes
 
-    res3 = s3_client.list_objects(Bucket=hs5.testbucketname(), Delimiter="/", MaxKeys=1, Marker="a/")
+    res3 = s3_client.list_objects(
+        Bucket=hs5.testbucketname(), Delimiter="/", MaxKeys=1, Marker="a/"
+    )
     assert res3["IsTruncated"] == False
     assert "CommonPrefixes" in res3
     common_prefixes = res3["CommonPrefixes"]
@@ -634,8 +828,6 @@ def test_list_delim(tmp_path: Path, hs5: Hs5Runner):
     assert "Prefix" in common_prefixes[0]
     assert common_prefixes[0]["Prefix"] == "b/"
 
-
-    
 
 def test_list_one(tmp_path: Path, hs5: Hs5Runner):
     with open(tmp_path / "upload.txt", "w") as upload_file:
@@ -652,7 +844,7 @@ def test_list_one(tmp_path: Path, hs5: Hs5Runner):
     keys = list[str]()
 
     cont = True
-    contToken : str | None = None
+    contToken: str | None = None
     while cont:
         args = {}
         if contToken:
@@ -679,6 +871,7 @@ def test_list_one(tmp_path: Path, hs5: Hs5Runner):
     assert "Key" in objs[0]
     assert objs[0]["Key"] == "two"
 
+
 def test_list_one_common(tmp_path: Path, hs5: Hs5Runner):
     with open(tmp_path / "upload.txt", "w") as upload_file:
         upload_file.write("abc")
@@ -698,12 +891,14 @@ def test_list_one_common(tmp_path: Path, hs5: Hs5Runner):
     keys = list[str]()
 
     cont = True
-    contToken : str | None = None
+    contToken: str | None = None
     while cont:
         args = {}
         if contToken:
             args["ContinuationToken"] = contToken
-        res = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), MaxKeys=1, Delimiter="/", **args)
+        res = s3_client.list_objects_v2(
+            Bucket=hs5.testbucketname(), MaxKeys=1, Delimiter="/", **args
+        )
 
         assert "CommonPrefixes" in res
         common_prefixes = res["CommonPrefixes"]
@@ -715,6 +910,7 @@ def test_list_one_common(tmp_path: Path, hs5: Hs5Runner):
         contToken = res.get("NextContinuationToken")
 
     assert keys == ["a/", "b/"]
+
 
 def test_list_start_after(tmp_path: Path, hs5: Hs5Runner):
     with open(tmp_path / "upload.txt", "w") as upload_file:
@@ -733,26 +929,28 @@ def test_list_start_after(tmp_path: Path, hs5: Hs5Runner):
     assert objs["Contents"][0]["Key"] == "c"
 
     s3_client.upload_file(upload_file.name, hs5.testbucketname(), "b/1.txt")
-    objs = s3_client.list_objects_v2(Bucket=hs5.testbucketname(), StartAfter="a", Prefix="b/")
+    objs = s3_client.list_objects_v2(
+        Bucket=hs5.testbucketname(), StartAfter="a", Prefix="b/"
+    )
     assert "Contents" in objs
     assert len(objs["Contents"]) == 1
     assert "Key" in objs["Contents"][0]
     assert objs["Contents"][0]["Key"] == "b/1.txt"
-    
+
 
 @pytest.mark.parametrize("restart_during_download", [True, False])
 def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: bool):
 
     assert hs5.get_stats().used == 0
 
-    ul_size = 50*1024*1024
+    ul_size = 50 * 1024 * 1024
 
     fhash = hashlib.md5()
 
     with open(tmp_path / "upload_multipart.dat", "wb") as upload_file:
         size = ul_size
         while size > 0:
-            buf = os.urandom(512*1024)
+            buf = os.urandom(512 * 1024)
             fhash.update(buf)
             upload_file.write(buf)
             size -= len(buf)
@@ -764,81 +962,120 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
     MB = 1024 * 1024
     config = TransferConfig(multipart_chunksize=8 * MB)
 
-    s3_client.upload_file(upload_file.name, hs5.testbucketname(), "upload.txt", Config=config, 
-                        ExtraArgs={'Metadata': {'foo': 'bar'}, 'ContentType': 'text/plain'})
+    s3_client.upload_file(
+        upload_file.name,
+        hs5.testbucketname(),
+        "upload.txt",
+        Config=config,
+        ExtraArgs={"Metadata": {"foo": "bar"}, "ContentType": "text/plain"},
+    )
 
     hs5.commit_storage(s3_client)
 
     assert hs5.get_stats().used == ul_size
 
-    dl_path = tmp_path / "download.dat"   
+    dl_path = tmp_path / "download.dat"
     s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
 
     assert filecmp.cmp(upload_file.name, dl_path)
 
-    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9")
+    obj_range = s3_client.get_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9"
+    )
     assert obj_range["ContentType"] == "text/plain"
     assert "foo" in obj_range["Metadata"] and obj_range["Metadata"]["foo"] == "bar"
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
 
     obj_etag = obj_range["ETag"]
-    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9", IfMatch=obj_etag)
+    obj_range = s3_client.get_object(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        Range="bytes=0-9",
+        IfMatch=obj_etag,
+    )
     assert obj_range["ContentType"] == "text/plain"
     assert "foo" in obj_range["Metadata"] and obj_range["Metadata"]["foo"] == "bar"
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
 
     with pytest.raises(ClientError):
-        s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=0-9", IfMatch='invalid-etag')
+        s3_client.get_object(
+            Bucket=hs5.testbucketname(),
+            Key="upload.txt",
+            Range="bytes=0-9",
+            IfMatch="invalid-etag",
+        )
 
-    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=10-19")
+    obj_range = s3_client.get_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=10-19"
+    )
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
 
-    off = 20*1024*1024
-    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range=f"bytes={off}-{off+9}")
+    off = 20 * 1024 * 1024
+    obj_range = s3_client.get_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", Range=f"bytes={off}-{off+9}"
+    )
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
 
-    off = 20*1024*1024
+    off = 20 * 1024 * 1024
     size = off
-    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", Range=f"bytes={off}-{off+size -1}")
+    obj_range = s3_client.get_object(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        Range=f"bytes={off}-{off+size -1}",
+    )
     bdata = obj_range["Body"].read()
     assert len(bdata) == size
 
-    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=1)
+    obj_range = s3_client.get_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=1
+    )
     bdata = obj_range["Body"].read()
     md5sum = hashlib.md5(bdata).hexdigest()
-    assert len(bdata) == 8*MB
+    assert len(bdata) == 8 * MB
     with open(upload_file.name, "rb") as f:
-        assert bdata == f.read(8*MB)
+        assert bdata == f.read(8 * MB)
     assert obj_range["ETag"].strip('"').lower() == md5sum.lower()
 
-    obj_range = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=2)
+    obj_range = s3_client.get_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=2
+    )
     bdata = obj_range["Body"].read()
     md5sum = hashlib.md5(bdata).hexdigest()
-    assert len(bdata) == 8*MB
+    assert len(bdata) == 8 * MB
     with open(upload_file.name, "rb") as f:
-        f.seek(8*MB)
-        assert bdata == f.read(8*MB) 
+        f.seek(8 * MB)
+        assert bdata == f.read(8 * MB)
     assert obj_range["ETag"].strip('"').lower() == md5sum.lower()
 
     obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj["ContentLength"] == ul_size
 
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=2)
-    assert obj["ContentLength"] == 8*MB
+    obj = s3_client.head_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=2
+    )
+    assert obj["ContentLength"] == 8 * MB
     assert obj["ETag"].strip('"').lower() == md5sum.lower()
 
     with pytest.raises(ClientError):
-        s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=(70*MB)//(8*MB))
-
-    with pytest.raises(ClientError): 
-        s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=0)
+        s3_client.head_object(
+            Bucket=hs5.testbucketname(),
+            Key="upload.txt",
+            PartNumber=(70 * MB) // (8 * MB),
+        )
 
     with pytest.raises(ClientError):
-        s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=100)
+        s3_client.head_object(
+            Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=0
+        )
+
+    with pytest.raises(ClientError):
+        s3_client.get_object(
+            Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=100
+        )
 
     objs = s3_client.list_objects(Bucket=hs5.testbucketname())
     assert "Contents" in objs
@@ -848,7 +1085,7 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
     assert "Size" in objs["Contents"][0]
     assert objs["Contents"][0]["Size"] == ul_size
 
-    dl_md5sum : str = ""
+    dl_md5sum: str = ""
     download_started = threading.Event()
     object_deleted = threading.Event()
 
@@ -857,7 +1094,7 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
         obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt")
         while True:
             download_started.set()
-            data = obj["Body"].read(128*1024)
+            data = obj["Body"].read(128 * 1024)
             if data:
                 fhash.update(data)
 
@@ -879,7 +1116,7 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
 
     object_deleted.set()
 
-    hs5.commit_storage(s3_client)    
+    hs5.commit_storage(s3_client)
 
     t.join()
 
@@ -890,7 +1127,7 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
     starttime = time.monotonic()
     while time.monotonic() - starttime < 5 and hs5.get_stats().used > 0:
         time.sleep(0.1)
-        
+
     assert hs5.get_stats().used == 0
 
 
@@ -903,9 +1140,11 @@ def test_list_partial_uploads(tmp_path: Path, hs5: Hs5Runner):
     key = "partial_upload.dat"
     part_path = tmp_path / "multipart_part.bin"
     with open(part_path, "wb") as part_file:
-        part_file.write(os.urandom(6*1024*1024))
+        part_file.write(os.urandom(6 * 1024 * 1024))
 
-    create_resp = s3_client.create_multipart_upload(Bucket=hs5.testbucketname(), Key=key)
+    create_resp = s3_client.create_multipart_upload(
+        Bucket=hs5.testbucketname(), Key=key
+    )
     upload_id = create_resp["UploadId"]
 
     with open(part_path, "rb") as part_file:
@@ -914,7 +1153,7 @@ def test_list_partial_uploads(tmp_path: Path, hs5: Hs5Runner):
             Key=key,
             PartNumber=1,
             UploadId=upload_id,
-            Body=part_file
+            Body=part_file,
         )
 
     hs5.commit_storage(s3_client)
@@ -927,7 +1166,9 @@ def test_list_partial_uploads(tmp_path: Path, hs5: Hs5Runner):
     assert "Key" in uploads[0] and uploads[0]["Key"] == key
     assert "UploadId" in uploads[0] and uploads[0]["UploadId"] == upload_id
 
-    s3_client.abort_multipart_upload(Bucket=hs5.testbucketname(), Key=key, UploadId=upload_id)
+    s3_client.abort_multipart_upload(
+        Bucket=hs5.testbucketname(), Key=key, UploadId=upload_id
+    )
 
     hs5.commit_storage(s3_client)
 
@@ -940,18 +1181,20 @@ def test_list_partial_uploads(tmp_path: Path, hs5: Hs5Runner):
 
 @pytest.mark.slow
 def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
-    testfilesize = 1*1024*1024*1024
+    testfilesize = 1 * 1024 * 1024 * 1024
 
     tmpfile = tmp_path / "ulfile.dat"
     with open(tmpfile, "wb") as f:
         fsize = 0
-        while fsize<testfilesize:
-            f.write(os.urandom(512*1024))
-            fsize += 512*1024
+        while fsize < testfilesize:
+            f.write(os.urandom(512 * 1024))
+            fsize += 512 * 1024
 
     s3_client = hs5_large.get_s3_client()
     with open(tmpfile, "rb") as f:
-        s3_client.put_object(Bucket=hs5_large.testbucketname(), Key="upload.dat", Body=f)
+        s3_client.put_object(
+            Bucket=hs5_large.testbucketname(), Key="upload.dat", Body=f
+        )
 
     dl_path = tmp_path / "download.dat"
     s3_client.download_file(hs5_large.testbucketname(), "upload.dat", str(dl_path))
@@ -960,85 +1203,134 @@ def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
 
     s3_client.delete_object(Bucket=hs5_large.testbucketname(), Key="upload.dat")
 
-
-
     starttime = time.monotonic()
     while time.monotonic() - starttime < 5:
-        if hs5_large.get_stats().size_full < testfilesize/10:
+        if hs5_large.get_stats().size_full < testfilesize / 10:
             break
         time.sleep(0.1)
 
     stats = hs5_large.get_stats()
-    assert stats.used == 0 
-    assert stats.size_full < testfilesize/10
+    assert stats.used == 0
+    assert stats.size_full < testfilesize / 10
 
-@pytest.mark.parametrize("objsize", [10, 20*1024*1024 + 12])
+
+@pytest.mark.parametrize("objsize", [10, 20 * 1024 * 1024 + 12])
 def test_copy_object(hs5_large: Hs5Runner, tmp_path: Path, objsize: int):
 
     tmpfile = tmp_path / "ulfile.dat"
     with open(tmpfile, "wb") as f:
         fsize = 0
-        while fsize<objsize:
-            towrite = min(512*1024, objsize - fsize)
+        while fsize < objsize:
+            towrite = min(512 * 1024, objsize - fsize)
             f.write(os.urandom(towrite))
             fsize += towrite
 
     s3_client = hs5_large.get_s3_client()
-    s3_client.upload_file(str(tmpfile), hs5_large.testbucketname(), "upload.dat", ExtraArgs={'Metadata': {'foo': 'bar'}})
+    s3_client.upload_file(
+        str(tmpfile),
+        hs5_large.testbucketname(),
+        "upload.dat",
+        ExtraArgs={"Metadata": {"foo": "bar"}},
+    )
 
-    s3_client.copy_object(Bucket=hs5_large.testbucketname(), Key="upload_copy.dat", 
-                        CopySource={"Bucket": hs5_large.testbucketname(), "Key": "upload.dat"})
+    s3_client.copy_object(
+        Bucket=hs5_large.testbucketname(),
+        Key="upload_copy.dat",
+        CopySource={"Bucket": hs5_large.testbucketname(), "Key": "upload.dat"},
+    )
 
     if objsize < 100:
-        s3_client.copy_object(Bucket=hs5_large.testbucketname(), Key="upload_copy2.dat",
-                            CopySource={"Bucket": hs5_large.testbucketname(), "Key": "upload.dat"},
-                            MetadataDirective="REPLACE", Metadata={"foo2": "bar2"})
-        
-        obj_info = s3_client.head_object(Bucket=hs5_large.testbucketname(), Key="upload_copy2.dat")
-        assert "Metadata" in obj_info and "foo2" in obj_info["Metadata"] and obj_info["Metadata"]["foo2"] == "bar2"
+        s3_client.copy_object(
+            Bucket=hs5_large.testbucketname(),
+            Key="upload_copy2.dat",
+            CopySource={"Bucket": hs5_large.testbucketname(), "Key": "upload.dat"},
+            MetadataDirective="REPLACE",
+            Metadata={"foo2": "bar2"},
+        )
+
+        obj_info = s3_client.head_object(
+            Bucket=hs5_large.testbucketname(), Key="upload_copy2.dat"
+        )
+        assert (
+            "Metadata" in obj_info
+            and "foo2" in obj_info["Metadata"]
+            and obj_info["Metadata"]["foo2"] == "bar2"
+        )
 
     dl_path = tmp_path / "download.dat"
     s3_client.download_file(hs5_large.testbucketname(), "upload_copy.dat", str(dl_path))
 
     assert filecmp.cmp(tmpfile, dl_path)
 
-    src_etag = s3_client.head_object(Bucket=hs5_large.testbucketname(), Key="upload.dat")["ETag"]
-    obj_info = s3_client.head_object(Bucket=hs5_large.testbucketname(), Key="upload_copy.dat")
-    assert "Metadata" in obj_info and "foo" in obj_info["Metadata"] and obj_info["Metadata"]["foo"] == "bar"
+    src_etag = s3_client.head_object(
+        Bucket=hs5_large.testbucketname(), Key="upload.dat"
+    )["ETag"]
+    obj_info = s3_client.head_object(
+        Bucket=hs5_large.testbucketname(), Key="upload_copy.dat"
+    )
+    assert (
+        "Metadata" in obj_info
+        and "foo" in obj_info["Metadata"]
+        and obj_info["Metadata"]["foo"] == "bar"
+    )
     copy_etag = obj_info["ETag"]
-    if objsize < 5*1024*1024:
+    if objsize < 5 * 1024 * 1024:
         assert src_etag == copy_etag
     else:
         assert src_etag != copy_etag
 
-    if objsize > 5*1024*1024:
+    if objsize > 5 * 1024 * 1024:
 
-        mup = s3_client.create_multipart_upload(Bucket=hs5_large.testbucketname(), Key="upload_copy2.dat")
+        mup = s3_client.create_multipart_upload(
+            Bucket=hs5_large.testbucketname(), Key="upload_copy2.dat"
+        )
         assert "UploadId" in mup
         offs = 0
         partnum = 1
         uls = []
         while offs < objsize:
-            tocopy = min(5*1024*1024, objsize-offs)
-            ul = s3_client.upload_part_copy(Bucket=hs5_large.testbucketname(), Key="upload_copy2.dat", PartNumber=partnum, UploadId=mup["UploadId"], CopySourceRange=f"bytes={offs}-{offs+tocopy-1}",
-                CopySource={"Bucket": hs5_large.testbucketname(), "Key": "upload.dat"})
+            tocopy = min(5 * 1024 * 1024, objsize - offs)
+            ul = s3_client.upload_part_copy(
+                Bucket=hs5_large.testbucketname(),
+                Key="upload_copy2.dat",
+                PartNumber=partnum,
+                UploadId=mup["UploadId"],
+                CopySourceRange=f"bytes={offs}-{offs+tocopy-1}",
+                CopySource={"Bucket": hs5_large.testbucketname(), "Key": "upload.dat"},
+            )
             uls.append(ul)
 
             offs += tocopy
-            partnum+=1
+            partnum += 1
 
-        s3_client.complete_multipart_upload(Bucket=hs5_large.testbucketname(), Key="upload_copy2.dat", UploadId=mup["UploadId"], MultipartUpload={"Parts": [{"ETag": ul["CopyPartResult"]["ETag"], "PartNumber": i+1} for i, ul in enumerate(uls)]})
+        s3_client.complete_multipart_upload(
+            Bucket=hs5_large.testbucketname(),
+            Key="upload_copy2.dat",
+            UploadId=mup["UploadId"],
+            MultipartUpload={
+                "Parts": [
+                    {"ETag": ul["CopyPartResult"]["ETag"], "PartNumber": i + 1}
+                    for i, ul in enumerate(uls)
+                ]
+            },
+        )
 
         dl_path = tmp_path / "download2.dat"
-        s3_client.download_file(hs5_large.testbucketname(), "upload_copy2.dat", str(dl_path))
+        s3_client.download_file(
+            hs5_large.testbucketname(), "upload_copy2.dat", str(dl_path)
+        )
         assert filecmp.cmp(tmpfile, dl_path)
+
 
 def test_copy_object_missing_source(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
 
     with pytest.raises(ClientError) as e:
-        s3_client.copy_object(Bucket=hs5.testbucketname(), Key="copy.dat",
-                              CopySource={"Bucket": hs5.testbucketname(), "Key": "missing.dat"})
+        s3_client.copy_object(
+            Bucket=hs5.testbucketname(),
+            Key="copy.dat",
+            CopySource={"Bucket": hs5.testbucketname(), "Key": "missing.dat"},
+        )
     assert e.value.response["Error"]["Code"] == "NoSuchKey"
 
     with pytest.raises(ClientError):
@@ -1046,34 +1338,52 @@ def test_copy_object_missing_source(hs5: Hs5Runner):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("size", [512*1024, 5*1024*1024+12, 101, 51*1024*1024])
-@pytest.mark.parametrize("checksum_algorithm", ["CRC32", "CRC32C", "SHA1", "SHA256", "CRC64NVME"])
-def test_put_chunked(hs5_large: Hs5Runner, tmp_path: Path, size: int, checksum_algorithm: str):
+@pytest.mark.parametrize(
+    "size", [512 * 1024, 5 * 1024 * 1024 + 12, 101, 51 * 1024 * 1024]
+)
+@pytest.mark.parametrize(
+    "checksum_algorithm", ["CRC32", "CRC32C", "SHA1", "SHA256", "CRC64NVME"]
+)
+def test_put_chunked(
+    hs5_large: Hs5Runner, tmp_path: Path, size: int, checksum_algorithm: str
+):
 
     tmpfile = tmp_path / f"ulfile_{size}.dat"
-    with open(tmpfile, "wb") as f: 
+    with open(tmpfile, "wb") as f:
         f.write(os.urandom(size))
 
     import botocore.httpchecksum
+
     def resolve_override(request, operation_model, params):
-        botocore.httpchecksum.resolve_request_checksum_algorithm(request, operation_model, params)
-        botocore.httpchecksum.resolve_response_checksum_algorithms(request, operation_model, params)
+        botocore.httpchecksum.resolve_request_checksum_algorithm(
+            request, operation_model, params
+        )
+        botocore.httpchecksum.resolve_response_checksum_algorithms(
+            request, operation_model, params
+        )
         if operation_model.name == "PutObject":
             checksum_context = request["context"]["checksum"]
             checksum_context["request_algorithm"]["in"] = "trailer"
 
-    with patch("botocore.httpchecksum.DEFAULT_CHECKSUM_ALGORITHM", new=checksum_algorithm):
+    with patch(
+        "botocore.httpchecksum.DEFAULT_CHECKSUM_ALGORITHM", new=checksum_algorithm
+    ):
         with patch("botocore.client.resolve_checksum_context", new=resolve_override):
             s3_client = hs5_large.get_s3_client()
 
             tmpfile = tmp_path / f"ulfile_{size}.dat"
             with open(tmpfile, "rb") as f:
-                s3_client.put_object(Bucket=hs5_large.testbucketname(), Key=f"upload_{size}.dat", Body=f)
+                s3_client.put_object(
+                    Bucket=hs5_large.testbucketname(), Key=f"upload_{size}.dat", Body=f
+                )
 
             dl_path = tmp_path / f"download_{size}.dat"
-            s3_client.download_file(hs5_large.testbucketname(), f"upload_{size}.dat", str(dl_path))
+            s3_client.download_file(
+                hs5_large.testbucketname(), f"upload_{size}.dat", str(dl_path)
+            )
 
             assert filecmp.cmp(tmpfile, dl_path)
+
 
 @pytest.mark.slow
 def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
@@ -1094,16 +1404,17 @@ def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
             failures += 1
             raise
 
-
     def put_get_del(n: int, obj_size: int, throttle: bool, dl_info: DlInfo):
         for i in range(0, n):
             fname = uuid4().hex + ".dat"
             fpath = tmp_path / fname
             ul_crc = create_random_file(fpath, obj_size)
 
-            config = TransferConfig(multipart_threshold=5*1024*1024*1024)
+            config = TransferConfig(multipart_threshold=5 * 1024 * 1024 * 1024)
 
-            s3_client.upload_file(str(fpath), hs5.testbucketname(), fname, Config=config)
+            s3_client.upload_file(
+                str(fpath), hs5.testbucketname(), fname, Config=config
+            )
 
             def del_thread(fpath):
                 s3_client.delete_object(Bucket=hs5.testbucketname(), Key=fname)
@@ -1118,18 +1429,18 @@ def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
             cl -= 1
             b1 = body.read(1)
             crc = binascii.crc32(b1, crc)
-            
+
             dl_info.running_downloads += 1
 
             t.start()
-            
+
             if throttle:
                 while cl > 0:
                     b2 = body.read(min(4096, cl))
                     crc = binascii.crc32(b2, crc)
                     if dl_info.allow_throttle:
                         time.sleep(0.01)
-                    cl-=len(b2)
+                    cl -= len(b2)
             else:
                 b2 = body.read()
                 crc = binascii.crc32(b2, crc)
@@ -1142,15 +1453,17 @@ def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
 
     dl_info = DlInfo()
 
-    t0 = threading.Thread(target=put_get_del, args=(1, 90*1024*1024, True, dl_info))
+    t0 = threading.Thread(target=put_get_del, args=(1, 90 * 1024 * 1024, True, dl_info))
     t0.start()
 
-    while dl_info.running_downloads==0:
+    while dl_info.running_downloads == 0:
         time.sleep(0.1)
 
-    threads : list[threading.Thread] = []
+    threads: list[threading.Thread] = []
     for i in range(0, 1):
-        t = threading.Thread(target=put_get_del, args=(100, 1*1024*1024, False, dl_info))
+        t = threading.Thread(
+            target=put_get_del, args=(100, 1 * 1024 * 1024, False, dl_info)
+        )
         t.start()
         threads.append(t)
 
@@ -1165,7 +1478,7 @@ def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
 
     # Wait for trimming
 
-    max_test_size = 10*1024*1024
+    max_test_size = 10 * 1024 * 1024
 
     starttime = time.monotonic()
     while time.monotonic() - starttime < 20:
@@ -1174,44 +1487,48 @@ def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
         time.sleep(0.1)
 
     stats = hs5.get_stats()
-    assert stats.used == 0 
+    assert stats.used == 0
     assert stats.size_full < max_test_size
+
 
 @pytest.mark.parametrize("sig_v2", [True, False])
 def test_download_presigned(tmp_path: Path, hs5: Hs5Runner, sig_v2: bool):
 
-    fdata = os.urandom(29*1024*1024)
+    fdata = os.urandom(29 * 1024 * 1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
-    
+
     s3_client = hs5.get_s3_client(sig_v2=sig_v2)
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file)
+        s3_client.put_object(
+            Bucket=hs5.testbucketname(), Key="upload.txt", Body=upload_file
+        )
 
     # get presigned donwload URL
     presigned_url = s3_client.generate_presigned_url(
-        'get_object',
-        Params={'Bucket': hs5.testbucketname(), 'Key': 'upload.txt'},
-        ExpiresIn=3600
+        "get_object",
+        Params={"Bucket": hs5.testbucketname(), "Key": "upload.txt"},
+        ExpiresIn=3600,
     )
 
     response = requests.get(presigned_url)
     response.raise_for_status()
     assert response.content == fdata
 
+
 @pytest.mark.parametrize("sig_v2", [True, False])
 def test_upload_presigned(tmp_path: Path, hs5: Hs5Runner, sig_v2: bool):
-    fdata = os.urandom(29*1024*1024)
+    fdata = os.urandom(29 * 1024 * 1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
-    
+
     s3_client = hs5.get_s3_client(sig_v2=sig_v2)
 
     # get presigned upload URL
     presigned_url = s3_client.generate_presigned_url(
-        'put_object',
-        Params={'Bucket': hs5.testbucketname(), 'Key': 'upload.txt'},
-        ExpiresIn=3600
+        "put_object",
+        Params={"Bucket": hs5.testbucketname(), "Key": "upload.txt"},
+        ExpiresIn=3600,
     )
 
     response = requests.put(presigned_url, data=fdata)
@@ -1224,46 +1541,69 @@ def test_upload_presigned(tmp_path: Path, hs5: Hs5Runner, sig_v2: bool):
     s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
     assert filecmp.cmp(tmp_path / "upload.txt", dl_path)
 
+
 @pytest.mark.parametrize("sig_v2", [True, False])
 def test_upload_presigned_multipart(tmp_path: Path, hs5: Hs5Runner, sig_v2: bool):
 
-    fdata = os.urandom(10*1024*1024)
+    fdata = os.urandom(10 * 1024 * 1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
-    
+
     s3_client = hs5.get_s3_client(sig_v2=sig_v2)
 
-    upl = s3_client.create_multipart_upload(Bucket=hs5.testbucketname(), Key="upload.txt")
+    upl = s3_client.create_multipart_upload(
+        Bucket=hs5.testbucketname(), Key="upload.txt"
+    )
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
         part1_url = s3_client.generate_presigned_url(
-            'upload_part',
-            Params={'Bucket': hs5.testbucketname(), 'Key': 'upload.txt', 'UploadId': upl["UploadId"], 'PartNumber': 1},
-            ExpiresIn=3600
+            "upload_part",
+            Params={
+                "Bucket": hs5.testbucketname(),
+                "Key": "upload.txt",
+                "UploadId": upl["UploadId"],
+                "PartNumber": 1,
+            },
+            ExpiresIn=3600,
         )
 
         part2_url = s3_client.generate_presigned_url(
-            'upload_part',
-            Params={'Bucket': hs5.testbucketname(), 'Key': 'upload.txt', 'UploadId': upl["UploadId"], 'PartNumber': 2},
-            ExpiresIn=3600
+            "upload_part",
+            Params={
+                "Bucket": hs5.testbucketname(),
+                "Key": "upload.txt",
+                "UploadId": upl["UploadId"],
+                "PartNumber": 2,
+            },
+            ExpiresIn=3600,
         )
 
-        response1 = requests.put(part1_url, data=upload_file.read(5*1024*1024))
+        response1 = requests.put(part1_url, data=upload_file.read(5 * 1024 * 1024))
         response1.raise_for_status()
 
-        response2 = requests.put(part2_url, data=upload_file.read(5*1024*1024))
+        response2 = requests.put(part2_url, data=upload_file.read(5 * 1024 * 1024))
         response2.raise_for_status()
 
     try:
-        s3_client.complete_multipart_upload(Bucket=hs5.testbucketname(), 
-                                        Key="upload.txt", UploadId=upl["UploadId"], MultipartUpload={"Parts": [{"ETag": response1.headers["ETag"], "PartNumber": 1}, {"ETag": response2.headers["ETag"], "PartNumber": 2}]})
+        s3_client.complete_multipart_upload(
+            Bucket=hs5.testbucketname(),
+            Key="upload.txt",
+            UploadId=upl["UploadId"],
+            MultipartUpload={
+                "Parts": [
+                    {"ETag": response1.headers["ETag"], "PartNumber": 1},
+                    {"ETag": response2.headers["ETag"], "PartNumber": 2},
+                ]
+            },
+        )
     except:
-        s3_client.abort_multipart_upload(Bucket=hs5.testbucketname(), Key="upload.txt", UploadId=upl["UploadId"])
+        s3_client.abort_multipart_upload(
+            Bucket=hs5.testbucketname(), Key="upload.txt", UploadId=upl["UploadId"]
+        )
         raise
 
     dl_path = tmp_path / "download.txt"
     s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
     assert filecmp.cmp(tmp_path / "upload.txt", dl_path)
-
 
 
 def test_create_bucket(hs5: Hs5Runner, tmp_path: Path):
@@ -1279,10 +1619,10 @@ def test_create_bucket(hs5: Hs5Runner, tmp_path: Path):
     with pytest.raises(ClientError):
         s3_client.create_bucket(Bucket="INVALID")
 
-    fdata = os.urandom(2*1024)
+    fdata = os.urandom(2 * 1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
-    
+
     with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
         s3_client.put_object(Bucket=bucketname, Key="upload.txt", Body=upload_file)
 
@@ -1308,14 +1648,16 @@ def test_upload_long_key(hs5: Hs5Runner, tmp_path: Path):
 
     with pytest.raises(ClientError) as exc_info:
         with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
-            s3_client.put_object(Bucket=hs5.testbucketname(), Key= "a" * 1025, Body=upload_file)
+            s3_client.put_object(
+                Bucket=hs5.testbucketname(), Key="a" * 1025, Body=upload_file
+            )
     assert exc_info.value.response["Error"]["Code"] == "KeyTooLongError"
     assert exc_info.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
 
     dl_path = tmp_path / "download.txt"
     s3_client.download_file(hs5.testbucketname(), key, str(dl_path))
     assert os.stat(dl_path).st_size == 3
-    
+
     list = s3_client.list_objects(Bucket=hs5.testbucketname())
     assert not list["IsTruncated"]
     assert "Contents" in list
@@ -1329,7 +1671,12 @@ def test_upload_long_key(hs5: Hs5Runner, tmp_path: Path):
     assert not list["IsTruncated"]
     assert "Contents" not in list
 
-@pytest.mark.skipif(os.environ.get("ENABLE_WAL") == "1" and os.environ.get("ENABLE_WAL_WRITE_META") != "0", reason="With metadata WAL, space reuse is delayed to WAL commit")
+
+@pytest.mark.skipif(
+    os.environ.get("ENABLE_WAL") == "1"
+    and os.environ.get("ENABLE_WAL_WRITE_META") != "0",
+    reason="With metadata WAL, space reuse is delayed to WAL commit",
+)
 def test_datafile_space_reused(hs5_large_small_alloc_chunksize: Hs5Runner):
     """
     Make sure that the datafile space is reused after a delete
@@ -1337,7 +1684,7 @@ def test_datafile_space_reused(hs5_large_small_alloc_chunksize: Hs5Runner):
     hs5 = hs5_large_small_alloc_chunksize
 
     def add_remove():
-        mb_data = os.urandom(1024*1024)
+        mb_data = os.urandom(1024 * 1024)
 
         add_objects(hs5._workdir, hs5, 100, mb_data)
         hs5_large_small_alloc_chunksize.commit_storage(hs5.get_s3_client(), force=True)
@@ -1347,52 +1694,48 @@ def test_datafile_space_reused(hs5_large_small_alloc_chunksize: Hs5Runner):
     for _ in range(0, 2):
         add_remove()
 
-    assert hs5.get_datafile_size() < 120*1024*1024
-    
+    assert hs5.get_datafile_size() < 120 * 1024 * 1024
+
+
 def test_delete_multiple_objects(tmp_path: Path, hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
-    
+
     # Create multiple objects
     for i in range(5):
         with open(tmp_path / f"upload_{i}.txt", "w") as upload_file:
             upload_file.write(f"Content of file {i}")
-        s3_client.upload_file(str(tmp_path / f"upload_{i}.txt"), "testbucket", f"upload_{i}.txt")
+        s3_client.upload_file(
+            str(tmp_path / f"upload_{i}.txt"), "testbucket", f"upload_{i}.txt"
+        )
 
     hs5.commit_storage(s3_client)
 
     # Delete objects
-    objects_to_delete = [{'Key': f'upload_{i}.txt'} for i in range(5)]
+    objects_to_delete = [{"Key": f"upload_{i}.txt"} for i in range(5)]
     response = s3_client.delete_objects(
-        Bucket='testbucket',
-        Delete={
-            'Objects': objects_to_delete
-        }
+        Bucket="testbucket", Delete={"Objects": objects_to_delete}
     )
 
     # Check if all objects were deleted
-    assert response['ResponseMetadata']['HTTPStatusCode'] == 200
-    assert 'Deleted' in response and len(response['Deleted']) == 5
+    assert response["ResponseMetadata"]["HTTPStatusCode"] == 200
+    assert "Deleted" in response and len(response["Deleted"]) == 5
 
     # Verify deletion
     for i in range(5):
         with pytest.raises(ClientError):
-            s3_client.head_object(Bucket='testbucket', Key=f'upload_{i}.txt')
+            s3_client.head_object(Bucket="testbucket", Key=f"upload_{i}.txt")
 
-
-    objects_to_delete = [{'Key': f'nonexistent_{i}.txt'} for i in range(5)]
+    objects_to_delete = [{"Key": f"nonexistent_{i}.txt"} for i in range(5)]
     response = s3_client.delete_objects(
-        Bucket='testbucket',
-        Delete={
-            'Objects': objects_to_delete
-        }
+        Bucket="testbucket", Delete={"Objects": objects_to_delete}
     )
     # Check if all objects were reported as deleted (even if they didn't exist)
-    assert response['ResponseMetadata']['HTTPStatusCode'] == 200
-    assert 'Deleted' in response and len(response['Deleted']) == 5
+    assert response["ResponseMetadata"]["HTTPStatusCode"] == 200
+    assert "Deleted" in response and len(response["Deleted"]) == 5
 
 
 def test_url_encoded(hs5: Hs5Runner, tmp_path: Path):
-    
+
     s3_client = hs5.get_s3_client()
 
     tmpf = tmp_path / "file with spaces(1).txt"
@@ -1423,10 +1766,11 @@ def test_url_encoded(hs5: Hs5Runner, tmp_path: Path):
 
     # Delete the object and verify it's deleted via listing
     s3_client.delete_object(Bucket=hs5.testbucketname(), Key=tmpf.name)
-    
+
     list_resp = s3_client.list_objects(Bucket=hs5.testbucketname())
     assert not list_resp["IsTruncated"]
     assert "Contents" not in list_resp
+
 
 def test_read_commit_info(hs5: Hs5Runner, tmp_path: Path):
     if not hs5.manual_commit:
@@ -1435,13 +1779,17 @@ def test_read_commit_info(hs5: Hs5Runner, tmp_path: Path):
     s3_client = hs5.get_s3_client()
 
     runtime_id_io = io.BytesIO()
-    s3_client.download_fileobj(hs5.testbucketname(), "a711e93e-93b4-4a9e-8a0b-688797470002", runtime_id_io)
+    s3_client.download_fileobj(
+        hs5.testbucketname(), "a711e93e-93b4-4a9e-8a0b-688797470002", runtime_id_io
+    )
     runtime_id_io.seek(0)
     rid = runtime_id_io.read().decode()
 
     assert len(rid) > 5
 
-    obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="a711e93e-93b4-4a9e-8a0b-688797470002")
+    obj = s3_client.get_object(
+        Bucket=hs5.testbucketname(), Key="a711e93e-93b4-4a9e-8a0b-688797470002"
+    )
     data = obj["Body"].read().decode()
     assert data == rid
 
@@ -1453,18 +1801,28 @@ async def test_read_commit_info_async(hs5: Hs5Runner):
         pytest.skip("Skipping read commit info test in automatic commit mode")
 
     import aioboto3
-    s3_client = aioboto3.Session(aws_access_key_id="root", aws_secret_access_key=hs5._root_key)
+
+    s3_client = aioboto3.Session(
+        aws_access_key_id="root", aws_secret_access_key=hs5._root_key
+    )
     async with s3_client.client("s3", endpoint_url=hs5.get_url()) as s3:
         runtime_id_io = io.BytesIO()
-        await s3.download_fileobj(hs5.testbucketname(), "a711e93e-93b4-4a9e-8a0b-688797470002", runtime_id_io)
+        await s3.download_fileobj(
+            hs5.testbucketname(), "a711e93e-93b4-4a9e-8a0b-688797470002", runtime_id_io
+        )
         runtime_id_io.seek(0)
         rid = runtime_id_io.read().decode()
 
         assert len(rid) > 5
 
+
 @pytest.mark.skipif(os.environ.get("GOLANG_TEST") != "1", reason="Requires golang")
-@pytest.mark.parametrize("size", [512*1024, 5*1024*1024+12, 101, 51*1024*1024]) 
-def test_awsgosdk_upload(hs5: Hs5Runner, tmp_path: Path, goawssdk_test_fixture: UploadAwsSdkGo, size: int):
+@pytest.mark.parametrize(
+    "size", [512 * 1024, 5 * 1024 * 1024 + 12, 101, 51 * 1024 * 1024]
+)
+def test_awsgosdk_upload(
+    hs5: Hs5Runner, tmp_path: Path, goawssdk_test_fixture: UploadAwsSdkGo, size: int
+):
     s3_client = hs5.get_s3_client()
 
     goawssdk_test_fixture.listbuckets(hs5.testbucketname())
@@ -1473,7 +1831,9 @@ def test_awsgosdk_upload(hs5: Hs5Runner, tmp_path: Path, goawssdk_test_fixture: 
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
 
-    goawssdk_test_fixture.upload(hs5.testbucketname(), "upload.txt", tmp_path / "upload.txt")
+    goawssdk_test_fixture.upload(
+        hs5.testbucketname(), "upload.txt", tmp_path / "upload.txt"
+    )
 
     obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj_info["ContentLength"] == len(fdata)
@@ -1483,20 +1843,26 @@ def test_awsgosdk_upload(hs5: Hs5Runner, tmp_path: Path, goawssdk_test_fixture: 
     assert filecmp.cmp(tmp_path / "upload.txt", dl_path)
 
     dl_path2 = tmp_path / "download2.txt"
-    goawssdk_test_fixture.download(hs5.testbucketname(), "upload.txt",
-        dl_path2)
-    assert filecmp.cmp(tmp_path / "upload.txt", dl_path2)   
+    goawssdk_test_fixture.download(hs5.testbucketname(), "upload.txt", dl_path2)
+    assert filecmp.cmp(tmp_path / "upload.txt", dl_path2)
+
 
 @pytest.mark.skipif(os.environ.get("GOLANG_TEST") != "1", reason="Requires golang")
-@pytest.mark.parametrize("size", [512*1024, 5*1024*1024+12, 101, 51*1024*1024])                                                      
-def test_miniosdk_upload(hs5: Hs5Runner, tmp_path: Path, miniosdk_test_fixture: UploadMinioGo, size: int):
+@pytest.mark.parametrize(
+    "size", [512 * 1024, 5 * 1024 * 1024 + 12, 101, 51 * 1024 * 1024]
+)
+def test_miniosdk_upload(
+    hs5: Hs5Runner, tmp_path: Path, miniosdk_test_fixture: UploadMinioGo, size: int
+):
     s3_client = hs5.get_s3_client()
 
     fdata = os.urandom(size)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
 
-    miniosdk_test_fixture.upload(hs5.testbucketname(), "upload.txt", tmp_path / "upload.txt")
+    miniosdk_test_fixture.upload(
+        hs5.testbucketname(), "upload.txt", tmp_path / "upload.txt"
+    )
 
     obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj_info["ContentLength"] == len(fdata)
@@ -1512,8 +1878,20 @@ def test_miniosdk_upload(hs5: Hs5Runner, tmp_path: Path, miniosdk_test_fixture: 
 
 def test_object_meta(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
-    expires_time = datetime.datetime(2025, 10, 21, 7, 28, 0, tzinfo=datetime.timezone.utc)
-    s3_client.put_object(Bucket=hs5.testbucketname(), Key="meta.txt", Body=b"abc", CacheControl="no-cache", Expires=expires_time, ContentType="text/plain", Metadata={"foo": "bar"}, ContentEncoding="gzip", ContentDisposition="attachment")
+    expires_time = datetime.datetime(
+        2025, 10, 21, 7, 28, 0, tzinfo=datetime.timezone.utc
+    )
+    s3_client.put_object(
+        Bucket=hs5.testbucketname(),
+        Key="meta.txt",
+        Body=b"abc",
+        CacheControl="no-cache",
+        Expires=expires_time,
+        ContentType="text/plain",
+        Metadata={"foo": "bar"},
+        ContentEncoding="gzip",
+        ContentDisposition="attachment",
+    )
     obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="meta.txt")
     assert obj_info["CacheControl"] == "no-cache"
     assert obj_info["Expires"] == expires_time
@@ -1525,15 +1903,21 @@ def test_object_meta(hs5: Hs5Runner):
     assert obj["ContentEncoding"] == "gzip"
     assert obj["ContentDisposition"] == "attachment"
 
+
 def test_put_checksum(hs5: Hs5Runner, tmp_path: Path):
     s3_client = hs5.get_s3_client()
 
-    fdata = os.urandom(2*1024*1024)
+    fdata = os.urandom(2 * 1024 * 1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
 
     md5sum = base64.b64encode(hashlib.md5(fdata).digest()).decode()
-    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ContentMD5=md5sum)
+    s3_client.put_object(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        Body=open(tmp_path / "upload.txt", "rb"),
+        ContentMD5=md5sum,
+    )
 
     dl_path = tmp_path / "download.txt"
     s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
@@ -1541,7 +1925,12 @@ def test_put_checksum(hs5: Hs5Runner, tmp_path: Path):
 
     # test with wrong checksum
     with pytest.raises(ClientError):
-        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ContentMD5="wrongchecksum")
+        s3_client.put_object(
+            Bucket=hs5.testbucketname(),
+            Key="upload.txt",
+            Body=open(tmp_path / "upload.txt", "rb"),
+            ContentMD5="wrongchecksum",
+        )
 
 
 def test_put_sdk_checksum(hs5: Hs5Runner, tmp_path: Path):
@@ -1549,41 +1938,85 @@ def test_put_sdk_checksum(hs5: Hs5Runner, tmp_path: Path):
 
     fdata = os.urandom(1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
-        upload_file.write(fdata)   
+        upload_file.write(fdata)
 
     # SHA1 checksum
     sha1_b64 = base64.b64encode(hashlib.sha1(fdata).digest()).decode()
-    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="SHA1", ChecksumSHA1=sha1_b64)
+    s3_client.put_object(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        Body=open(tmp_path / "upload.txt", "rb"),
+        ChecksumAlgorithm="SHA1",
+        ChecksumSHA1=sha1_b64,
+    )
 
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED")
+    obj = s3_client.head_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED"
+    )
     assert "ChecksumSHA1" in obj and obj["ChecksumSHA1"] == sha1_b64
 
-
-    #CRC32C checksum
+    # CRC32C checksum
     from awscrt.checksums import crc32c
-    crc32c_b64 = base64.b64encode(crc32c(fdata).to_bytes(4, byteorder='big')).decode()
-    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="CRC32C", ChecksumCRC32C=crc32c_b64)
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED")
+
+    crc32c_b64 = base64.b64encode(crc32c(fdata).to_bytes(4, byteorder="big")).decode()
+    s3_client.put_object(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        Body=open(tmp_path / "upload.txt", "rb"),
+        ChecksumAlgorithm="CRC32C",
+        ChecksumCRC32C=crc32c_b64,
+    )
+    obj = s3_client.head_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED"
+    )
     assert "ChecksumCRC32C" in obj and obj["ChecksumCRC32C"] == crc32c_b64
 
-    #CRC32 checksum
+    # CRC32 checksum
     from awscrt.checksums import crc32
-    crc32_b64 = base64.b64encode(crc32(fdata).to_bytes(4, byteorder='big')).decode()
-    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="CRC32", ChecksumCRC32=crc32_b64)
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED")
+
+    crc32_b64 = base64.b64encode(crc32(fdata).to_bytes(4, byteorder="big")).decode()
+    s3_client.put_object(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        Body=open(tmp_path / "upload.txt", "rb"),
+        ChecksumAlgorithm="CRC32",
+        ChecksumCRC32=crc32_b64,
+    )
+    obj = s3_client.head_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED"
+    )
     assert "ChecksumCRC32" in obj and obj["ChecksumCRC32"] == crc32_b64
 
-    #CRC64NVME checksum
+    # CRC64NVME checksum
     from awscrt.checksums import crc64nvme
-    crc64nvme_b64 = base64.b64encode(crc64nvme(fdata).to_bytes(8, byteorder='big')).decode()
-    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="CRC64NVME", ChecksumCRC64NVME=crc64nvme_b64)
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED")
+
+    crc64nvme_b64 = base64.b64encode(
+        crc64nvme(fdata).to_bytes(8, byteorder="big")
+    ).decode()
+    s3_client.put_object(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        Body=open(tmp_path / "upload.txt", "rb"),
+        ChecksumAlgorithm="CRC64NVME",
+        ChecksumCRC64NVME=crc64nvme_b64,
+    )
+    obj = s3_client.head_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED"
+    )
     assert "ChecksumCRC64NVME" in obj and obj["ChecksumCRC64NVME"] == crc64nvme_b64
 
     # SHA256 checksum
     sha256_b64 = base64.b64encode(hashlib.sha256(fdata).digest()).decode()
-    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="SHA256", ChecksumSHA256=sha256_b64)
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED")
+    s3_client.put_object(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        Body=open(tmp_path / "upload.txt", "rb"),
+        ChecksumAlgorithm="SHA256",
+        ChecksumSHA256=sha256_b64,
+    )
+    obj = s3_client.head_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED"
+    )
     assert "ChecksumSHA256" in obj and obj["ChecksumSHA256"] == sha256_b64
 
     dl_path = tmp_path / "download.txt"
@@ -1592,37 +2025,73 @@ def test_put_sdk_checksum(hs5: Hs5Runner, tmp_path: Path):
 
     # test with wrong checksum
     with pytest.raises(ClientError):
-        s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), ChecksumAlgorithm="CRC32C", ChecksumCRC32C="wrongchecksum")
+        s3_client.put_object(
+            Bucket=hs5.testbucketname(),
+            Key="upload.txt",
+            Body=open(tmp_path / "upload.txt", "rb"),
+            ChecksumAlgorithm="CRC32C",
+            ChecksumCRC32C="wrongchecksum",
+        )
+
 
 def test_put_sdk_checksum_multipart(hs5: Hs5Runner, tmp_path: Path):
     s3_client = hs5.get_s3_client()
 
-    fdata = os.urandom(10*1024*1024)
+    fdata = os.urandom(10 * 1024 * 1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
-        upload_file.write(fdata)   
+        upload_file.write(fdata)
 
     from awscrt.checksums import crc32c
-    crc32c_b64 = base64.b64encode(crc32c(fdata).to_bytes(4, byteorder='big')).decode()
-    config = TransferConfig(multipart_threshold=5*1024*1024)
-    s3_client.upload_file(str(tmp_path / "upload.txt"), hs5.testbucketname(), "upload.txt", Config=config, ExtraArgs={'ChecksumCRC32C': crc32c_b64, 'ChecksumType': "FULL_OBJECT"})
 
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt" , ChecksumMode="ENABLED")
+    crc32c_b64 = base64.b64encode(crc32c(fdata).to_bytes(4, byteorder="big")).decode()
+    config = TransferConfig(multipart_threshold=5 * 1024 * 1024)
+    s3_client.upload_file(
+        str(tmp_path / "upload.txt"),
+        hs5.testbucketname(),
+        "upload.txt",
+        Config=config,
+        ExtraArgs={"ChecksumCRC32C": crc32c_b64, "ChecksumType": "FULL_OBJECT"},
+    )
+
+    obj = s3_client.head_object(
+        Bucket=hs5.testbucketname(), Key="upload.txt", ChecksumMode="ENABLED"
+    )
     assert "ChecksumCRC32C" in obj and obj["ChecksumCRC32C"] == crc32c_b64
     assert "ChecksumType" in obj and obj["ChecksumType"] == "FULL_OBJECT"
 
-    #CRC32 checksum
+    # CRC32 checksum
     from awscrt.checksums import crc32
-    crc32_b64 = base64.b64encode(crc32(fdata).to_bytes(4, byteorder='big')).decode()
-    s3_client.upload_file(str(tmp_path /"upload.txt"), hs5.testbucketname(), "upload2.txt", Config=config, ExtraArgs={'ChecksumCRC32': crc32_b64, 'ChecksumType': "FULL_OBJECT"})
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload2.txt", ChecksumMode="ENABLED")
+
+    crc32_b64 = base64.b64encode(crc32(fdata).to_bytes(4, byteorder="big")).decode()
+    s3_client.upload_file(
+        str(tmp_path / "upload.txt"),
+        hs5.testbucketname(),
+        "upload2.txt",
+        Config=config,
+        ExtraArgs={"ChecksumCRC32": crc32_b64, "ChecksumType": "FULL_OBJECT"},
+    )
+    obj = s3_client.head_object(
+        Bucket=hs5.testbucketname(), Key="upload2.txt", ChecksumMode="ENABLED"
+    )
     assert "ChecksumCRC32" in obj and obj["ChecksumCRC32"] == crc32_b64
     assert "ChecksumType" in obj and obj["ChecksumType"] == "FULL_OBJECT"
 
-    #CRC64NVME checksum
+    # CRC64NVME checksum
     from awscrt.checksums import crc64nvme
-    crc64nvme_b64 = base64.b64encode(crc64nvme(fdata).to_bytes(8, byteorder='big')).decode()
-    s3_client.upload_file(str(tmp_path / "upload.txt"), hs5.testbucketname(), "upload3.txt", Config=config, ExtraArgs={'ChecksumCRC64NVME': crc64nvme_b64, 'ChecksumType': "FULL_OBJECT"})
-    obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload3.txt", ChecksumMode="ENABLED")
+
+    crc64nvme_b64 = base64.b64encode(
+        crc64nvme(fdata).to_bytes(8, byteorder="big")
+    ).decode()
+    s3_client.upload_file(
+        str(tmp_path / "upload.txt"),
+        hs5.testbucketname(),
+        "upload3.txt",
+        Config=config,
+        ExtraArgs={"ChecksumCRC64NVME": crc64nvme_b64, "ChecksumType": "FULL_OBJECT"},
+    )
+    obj = s3_client.head_object(
+        Bucket=hs5.testbucketname(), Key="upload3.txt", ChecksumMode="ENABLED"
+    )
     assert "ChecksumCRC64NVME" in obj and obj["ChecksumCRC64NVME"] == crc64nvme_b64
     assert "ChecksumType" in obj and obj["ChecksumType"] == "FULL_OBJECT"
 
@@ -1630,17 +2099,28 @@ def test_put_sdk_checksum_multipart(hs5: Hs5Runner, tmp_path: Path):
 def test_enable_bucket_versioning(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
 
-    s3_client.put_bucket_versioning(Bucket=hs5.testbucketname(), VersioningConfiguration={"Status": "Enabled"})
+    s3_client.put_bucket_versioning(
+        Bucket=hs5.testbucketname(), VersioningConfiguration={"Status": "Enabled"}
+    )
 
     # Upload two versions, then list
-    s3_client.put_object(Bucket=hs5.testbucketname(), Key="versioned.txt", Body=b"version1")
-    s3_client.put_object(Bucket=hs5.testbucketname(), Key="versioned.txt", Body=b"version2")
+    s3_client.put_object(
+        Bucket=hs5.testbucketname(), Key="versioned.txt", Body=b"version1"
+    )
+    s3_client.put_object(
+        Bucket=hs5.testbucketname(), Key="versioned.txt", Body=b"version2"
+    )
 
-    versions = s3_client.list_object_versions(Bucket=hs5.testbucketname(), Prefix="versioned.txt")
+    versions = s3_client.list_object_versions(
+        Bucket=hs5.testbucketname(), Prefix="versioned.txt"
+    )
     assert not versions["IsTruncated"]
     assert "Versions" in versions
     assert len(versions["Versions"]) == 2
-    assert "Key" in versions["Versions"][0] and versions["Versions"][0]["Key"] == "versioned.txt"
+    assert (
+        "Key" in versions["Versions"][0]
+        and versions["Versions"][0]["Key"] == "versioned.txt"
+    )
     assert "VersionId" in versions["Versions"][0]
     assert "VersionId" in versions["Versions"][1]
     assert versions["Versions"][0]["VersionId"] != versions["Versions"][1]["VersionId"]
@@ -1652,17 +2132,42 @@ def test_enable_bucket_versioning(hs5: Hs5Runner):
     assert "Status" in ver and ver["Status"] == "Enabled"
 
     # CompleteMultipartUpload returns the version id of the new version
-    upl = s3_client.create_multipart_upload(Bucket=hs5.testbucketname(), Key="versioned.txt")
-    part = s3_client.upload_part(Bucket=hs5.testbucketname(), Key="versioned.txt", UploadId=upl["UploadId"], PartNumber=1, Body=b"version3")
-    res = s3_client.complete_multipart_upload(Bucket=hs5.testbucketname(), Key="versioned.txt", UploadId=upl["UploadId"],
-                                              MultipartUpload={"Parts": [{"ETag": part["ETag"], "PartNumber": 1}]})
+    upl = s3_client.create_multipart_upload(
+        Bucket=hs5.testbucketname(), Key="versioned.txt"
+    )
+    part = s3_client.upload_part(
+        Bucket=hs5.testbucketname(),
+        Key="versioned.txt",
+        UploadId=upl["UploadId"],
+        PartNumber=1,
+        Body=b"version3",
+    )
+    res = s3_client.complete_multipart_upload(
+        Bucket=hs5.testbucketname(),
+        Key="versioned.txt",
+        UploadId=upl["UploadId"],
+        MultipartUpload={"Parts": [{"ETag": part["ETag"], "PartNumber": 1}]},
+    )
     assert "VersionId" in res
-    obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=res["VersionId"])
+    obj = s3_client.get_object(
+        Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=res["VersionId"]
+    )
     assert obj["Body"].read() == b"version3"
-    for vid in (obj["VersionId"],
-                s3_client.get_object(Bucket=hs5.testbucketname(), Key="versioned.txt")["VersionId"],
-                s3_client.head_object(Bucket=hs5.testbucketname(), Key="versioned.txt")["VersionId"]):
-        assert s3_client.get_object(Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=vid)["Body"].read() == b"version3"
+    for vid in (
+        obj["VersionId"],
+        s3_client.get_object(Bucket=hs5.testbucketname(), Key="versioned.txt")[
+            "VersionId"
+        ],
+        s3_client.head_object(Bucket=hs5.testbucketname(), Key="versioned.txt")[
+            "VersionId"
+        ],
+    ):
+        assert (
+            s3_client.get_object(
+                Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=vid
+            )["Body"].read()
+            == b"version3"
+        )
 
 
 def test_get_object_attributes(hs5: Hs5Runner, tmp_path: Path):
@@ -1672,9 +2177,18 @@ def test_get_object_attributes(hs5: Hs5Runner, tmp_path: Path):
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
 
-    s3_client.put_object(Bucket=hs5.testbucketname(), Key="upload.txt", Body=open(tmp_path / "upload.txt", "rb"), Metadata={"foo": "bar"})
+    s3_client.put_object(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        Body=open(tmp_path / "upload.txt", "rb"),
+        Metadata={"foo": "bar"},
+    )
 
-    obj = s3_client.get_object_attributes(Bucket=hs5.testbucketname(), Key="upload.txt", ObjectAttributes=["ETag", "ObjectSize", "Checksum", "StorageClass"])
+    obj = s3_client.get_object_attributes(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        ObjectAttributes=["ETag", "ObjectSize", "Checksum", "StorageClass"],
+    )
     assert "ETag" in obj
     assert "ObjectSize" in obj
     assert obj["ObjectSize"] == len(fdata)
@@ -1682,17 +2196,30 @@ def test_get_object_attributes(hs5: Hs5Runner, tmp_path: Path):
     assert "ChecksumCRC32" in obj["Checksum"]
     assert "StorageClass" in obj and obj["StorageClass"] == "STANDARD"
 
+
 def test_get_object_attributes_multipart(hs5: Hs5Runner, tmp_path: Path):
     s3_client = hs5.get_s3_client()
 
-    fdata = os.urandom(10*1024*1024)
+    fdata = os.urandom(10 * 1024 * 1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
 
-    config = TransferConfig(multipart_chunksize=5*1024*1024)
-    s3_client.upload_file(str(tmp_path / "upload.txt"), hs5.testbucketname(), "upload.txt", Config=config)
+    config = TransferConfig(multipart_chunksize=5 * 1024 * 1024)
+    s3_client.upload_file(
+        str(tmp_path / "upload.txt"), hs5.testbucketname(), "upload.txt", Config=config
+    )
 
-    obj = s3_client.get_object_attributes(Bucket=hs5.testbucketname(), Key="upload.txt", ObjectAttributes=["ETag", "ObjectSize", "Checksum", "StorageClass", "ObjectParts"])
+    obj = s3_client.get_object_attributes(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        ObjectAttributes=[
+            "ETag",
+            "ObjectSize",
+            "Checksum",
+            "StorageClass",
+            "ObjectParts",
+        ],
+    )
     assert "ETag" in obj
     assert "ObjectSize" in obj
     assert obj["ObjectSize"] == len(fdata)
@@ -1712,10 +2239,22 @@ def test_get_object_attributes_multipart(hs5: Hs5Runner, tmp_path: Path):
 
     assert "PartNumber" in part1 and part1["PartNumber"] == 1
     assert "PartNumber" in part2 and part2["PartNumber"] == 2
-    assert "Size" in part1 and part1["Size"] == 5*1024*1024
-    assert "Size" in part2 and part2["Size"] == 5*1024*1024
-    assert "ChecksumCRC32" in part1 and part1["ChecksumCRC32"] == base64.b64encode(crc32(fdata[0:5*1024*1024]).to_bytes(4, byteorder='big')).decode()
-    assert "ChecksumCRC32" in part2 and part2["ChecksumCRC32"] == base64.b64encode(crc32(fdata[5*1024*1024:]).to_bytes(4, byteorder='big')).decode()
+    assert "Size" in part1 and part1["Size"] == 5 * 1024 * 1024
+    assert "Size" in part2 and part2["Size"] == 5 * 1024 * 1024
+    assert (
+        "ChecksumCRC32" in part1
+        and part1["ChecksumCRC32"]
+        == base64.b64encode(
+            crc32(fdata[0 : 5 * 1024 * 1024]).to_bytes(4, byteorder="big")
+        ).decode()
+    )
+    assert (
+        "ChecksumCRC32" in part2
+        and part2["ChecksumCRC32"]
+        == base64.b64encode(
+            crc32(fdata[5 * 1024 * 1024 :]).to_bytes(4, byteorder="big")
+        ).decode()
+    )
 
 
 def create_object_lock_bucket(s3_client, bucket: str) -> str:
@@ -1736,59 +2275,129 @@ def test_object_lock_configuration(hs5: Hs5Runner):
     s3_client.put_object(Bucket=bucket, Key="hold.txt", Body=b"abc")
 
     # Legal hold requires object lock
-    assert_client_error(lambda: s3_client.put_object_legal_hold(Bucket=bucket, Key="hold.txt", LegalHold={"Status": "ON"}), "InvalidRequest")
+    assert_client_error(
+        lambda: s3_client.put_object_legal_hold(
+            Bucket=bucket, Key="hold.txt", LegalHold={"Status": "ON"}
+        ),
+        "InvalidRequest",
+    )
 
     lock_config = {"ObjectLockEnabled": "Enabled"}
 
     # No object lock configuration yet
-    assert_client_error(lambda: s3_client.get_object_lock_configuration(Bucket=bucket), "ObjectLockConfigurationNotFoundError")
-    assert_client_error(lambda: s3_client.get_object_lock_configuration(Bucket="doesnotexist"), "NoSuchBucket")
+    assert_client_error(
+        lambda: s3_client.get_object_lock_configuration(Bucket=bucket),
+        "ObjectLockConfigurationNotFoundError",
+    )
+    assert_client_error(
+        lambda: s3_client.get_object_lock_configuration(Bucket="doesnotexist"),
+        "NoSuchBucket",
+    )
 
     # Object lock requires versioning
-    assert_client_error(lambda: s3_client.put_object_lock_configuration(Bucket=bucket, ObjectLockConfiguration=lock_config), "InvalidBucketState")
+    assert_client_error(
+        lambda: s3_client.put_object_lock_configuration(
+            Bucket=bucket, ObjectLockConfiguration=lock_config
+        ),
+        "InvalidBucketState",
+    )
 
-    s3_client.put_bucket_versioning(Bucket=bucket, VersioningConfiguration={"Status": "Enabled"})
+    s3_client.put_bucket_versioning(
+        Bucket=bucket, VersioningConfiguration={"Status": "Enabled"}
+    )
 
     # Default retention is not supported
-    assert_client_error(lambda: s3_client.put_object_lock_configuration(Bucket=bucket, ObjectLockConfiguration={
-        "ObjectLockEnabled": "Enabled", "Rule": {"DefaultRetention": {"Mode": "GOVERNANCE", "Days": 1}}}), "NotImplemented")
+    assert_client_error(
+        lambda: s3_client.put_object_lock_configuration(
+            Bucket=bucket,
+            ObjectLockConfiguration={
+                "ObjectLockEnabled": "Enabled",
+                "Rule": {"DefaultRetention": {"Mode": "GOVERNANCE", "Days": 1}},
+            },
+        ),
+        "NotImplemented",
+    )
 
-    s3_client.put_object_lock_configuration(Bucket=bucket, ObjectLockConfiguration=lock_config)
+    s3_client.put_object_lock_configuration(
+        Bucket=bucket, ObjectLockConfiguration=lock_config
+    )
     # Enabling again is fine
-    s3_client.put_object_lock_configuration(Bucket=bucket, ObjectLockConfiguration=lock_config)
-    assert s3_client.get_object_lock_configuration(Bucket=bucket)["ObjectLockConfiguration"] == lock_config
+    s3_client.put_object_lock_configuration(
+        Bucket=bucket, ObjectLockConfiguration=lock_config
+    )
+    assert (
+        s3_client.get_object_lock_configuration(Bucket=bucket)[
+            "ObjectLockConfiguration"
+        ]
+        == lock_config
+    )
 
     v1 = s3_client.put_object(Bucket=bucket, Key="hold.txt", Body=b"abc")["VersionId"]
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="hold.txt", VersionId=v1, LegalHold={"Status": "ON"})
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="hold.txt", VersionId=v1, LegalHold={"Status": "ON"}
+    )
 
     # Versioning cannot be suspended anymore
-    assert_client_error(lambda: s3_client.put_bucket_versioning(Bucket=bucket, VersioningConfiguration={"Status": "Suspended"}), "InvalidBucketState")
+    assert_client_error(
+        lambda: s3_client.put_bucket_versioning(
+            Bucket=bucket, VersioningConfiguration={"Status": "Suspended"}
+        ),
+        "InvalidBucketState",
+    )
 
     # Object lock is persisted
     hs5.restart()
     s3_client = hs5.get_s3_client()
 
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="hold.txt", VersionId=v1), "AccessDenied")
-    assert_client_error(lambda: s3_client.put_bucket_versioning(Bucket=bucket, VersioningConfiguration={"Status": "Suspended"}), "InvalidBucketState")
-    assert s3_client.get_object_lock_configuration(Bucket=bucket)["ObjectLockConfiguration"] == lock_config
+    assert_client_error(
+        lambda: s3_client.delete_object(Bucket=bucket, Key="hold.txt", VersionId=v1),
+        "AccessDenied",
+    )
+    assert_client_error(
+        lambda: s3_client.put_bucket_versioning(
+            Bucket=bucket, VersioningConfiguration={"Status": "Suspended"}
+        ),
+        "InvalidBucketState",
+    )
+    assert (
+        s3_client.get_object_lock_configuration(Bucket=bucket)[
+            "ObjectLockConfiguration"
+        ]
+        == lock_config
+    )
 
     # Bucket created with object lock enabled has versioning enabled
     lock_bucket = create_object_lock_bucket(s3_client, "lockbucket")
     assert s3_client.get_bucket_versioning(Bucket=lock_bucket)["Status"] == "Enabled"
-    assert s3_client.get_object_lock_configuration(Bucket=lock_bucket)["ObjectLockConfiguration"] == lock_config
+    assert (
+        s3_client.get_object_lock_configuration(Bucket=lock_bucket)[
+            "ObjectLockConfiguration"
+        ]
+        == lock_config
+    )
     s3_client.put_object(Bucket=lock_bucket, Key="hold.txt", Body=b"abc")
-    s3_client.put_object_legal_hold(Bucket=lock_bucket, Key="hold.txt", LegalHold={"Status": "ON"})
+    s3_client.put_object_legal_hold(
+        Bucket=lock_bucket, Key="hold.txt", LegalHold={"Status": "ON"}
+    )
 
 
 def test_put_object_legal_hold(hs5: Hs5Runner, tmp_path: Path):
     s3_client = hs5.get_s3_client()
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
-    s3_client.put_object(Bucket=bucket, Key="hold.txt", Body=b"abc", ContentType="text/plain", Metadata={"foo": "bar"})
+    s3_client.put_object(
+        Bucket=bucket,
+        Key="hold.txt",
+        Body=b"abc",
+        ContentType="text/plain",
+        Metadata={"foo": "bar"},
+    )
     obj_info = s3_client.head_object(Bucket=bucket, Key="hold.txt")
     assert "ObjectLockLegalHoldStatus" not in obj_info
 
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="hold.txt", LegalHold={"Status": "ON"})
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="hold.txt", LegalHold={"Status": "ON"}
+    )
 
     obj = s3_client.get_object(Bucket=bucket, Key="hold.txt")
     assert obj["ObjectLockLegalHoldStatus"] == "ON"
@@ -1803,27 +2412,38 @@ def test_put_object_legal_hold(hs5: Hs5Runner, tmp_path: Path):
     assert obj_info["ObjectLockLegalHoldStatus"] == "ON"
     assert obj_info["Metadata"] == {"foo": "bar"}
 
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="hold.txt", LegalHold={"Status": "OFF"})
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="hold.txt", LegalHold={"Status": "OFF"}
+    )
     obj_info = s3_client.head_object(Bucket=bucket, Key="hold.txt")
     assert "ObjectLockLegalHoldStatus" not in obj_info
     assert obj_info["Metadata"] == {"foo": "bar"}
 
-    assert_client_error(lambda: s3_client.put_object_legal_hold(Bucket=bucket, Key="nonexistent.txt", LegalHold={"Status": "ON"}), "NoSuchKey")
+    assert_client_error(
+        lambda: s3_client.put_object_legal_hold(
+            Bucket=bucket, Key="nonexistent.txt", LegalHold={"Status": "ON"}
+        ),
+        "NoSuchKey",
+    )
 
 
 def test_put_object_legal_hold_multipart(hs5: Hs5Runner, tmp_path: Path):
     s3_client = hs5.get_s3_client()
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
-    fdata = os.urandom(10*1024*1024)
+    fdata = os.urandom(10 * 1024 * 1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
 
-    config = TransferConfig(multipart_chunksize=5*1024*1024)
-    s3_client.upload_file(str(tmp_path / "upload.txt"), bucket, "upload.txt", Config=config)
+    config = TransferConfig(multipart_chunksize=5 * 1024 * 1024)
+    s3_client.upload_file(
+        str(tmp_path / "upload.txt"), bucket, "upload.txt", Config=config
+    )
     etag = s3_client.head_object(Bucket=bucket, Key="upload.txt")["ETag"]
 
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="upload.txt", LegalHold={"Status": "ON"})
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="upload.txt", LegalHold={"Status": "ON"}
+    )
 
     obj = s3_client.get_object(Bucket=bucket, Key="upload.txt")
     assert obj["ObjectLockLegalHoldStatus"] == "ON"
@@ -1835,10 +2455,16 @@ def test_put_object_legal_hold_versioned(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
-    v1 = s3_client.put_object(Bucket=bucket, Key="versioned.txt", Body=b"version1")["VersionId"]
-    v2 = s3_client.put_object(Bucket=bucket, Key="versioned.txt", Body=b"version2")["VersionId"]
+    v1 = s3_client.put_object(Bucket=bucket, Key="versioned.txt", Body=b"version1")[
+        "VersionId"
+    ]
+    v2 = s3_client.put_object(Bucket=bucket, Key="versioned.txt", Body=b"version2")[
+        "VersionId"
+    ]
 
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="versioned.txt", VersionId=v1, LegalHold={"Status": "ON"})
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="versioned.txt", VersionId=v1, LegalHold={"Status": "ON"}
+    )
 
     obj_info = s3_client.head_object(Bucket=bucket, Key="versioned.txt", VersionId=v1)
     assert obj_info["ObjectLockLegalHoldStatus"] == "ON"
@@ -1846,42 +2472,85 @@ def test_put_object_legal_hold_versioned(hs5: Hs5Runner):
     assert "ObjectLockLegalHoldStatus" not in obj_info
 
     # Without version id the newest version is modified
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="versioned.txt", LegalHold={"Status": "ON"})
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="versioned.txt", LegalHold={"Status": "ON"}
+    )
     obj_info = s3_client.head_object(Bucket=bucket, Key="versioned.txt", VersionId=v2)
     assert obj_info["ObjectLockLegalHoldStatus"] == "ON"
 
     s3_client.delete_object(Bucket=bucket, Key="versioned.txt")
 
-    assert_client_error(lambda: s3_client.put_object_legal_hold(Bucket=bucket, Key="versioned.txt", LegalHold={"Status": "ON"}), "MethodNotAllowed")
+    assert_client_error(
+        lambda: s3_client.put_object_legal_hold(
+            Bucket=bucket, Key="versioned.txt", LegalHold={"Status": "ON"}
+        ),
+        "MethodNotAllowed",
+    )
 
 
 def test_legal_hold_versioned_delete(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
-    v1 = s3_client.put_object(Bucket=bucket, Key="held.txt", Body=b"version1")["VersionId"]
+    v1 = s3_client.put_object(Bucket=bucket, Key="held.txt", Body=b"version1")[
+        "VersionId"
+    ]
     s3_client.put_object(Bucket=bucket, Key="other.txt", Body=b"other")
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="held.txt", VersionId=v1, LegalHold={"Status": "ON"})
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="held.txt", VersionId=v1, LegalHold={"Status": "ON"}
+    )
 
     # New versions (put, copy, multipart) and delete markers are allowed
-    v2 = s3_client.put_object(Bucket=bucket, Key="held.txt", Body=b"version2")["VersionId"]
-    s3_client.copy_object(Bucket=bucket, Key="held.txt", CopySource={"Bucket": bucket, "Key": "other.txt"})
-    upload_id = s3_client.create_multipart_upload(Bucket=bucket, Key="held.txt")["UploadId"]
-    part = s3_client.upload_part(Bucket=bucket, Key="held.txt", UploadId=upload_id, PartNumber=1, Body=b"multipart")
-    s3_client.complete_multipart_upload(Bucket=bucket, Key="held.txt", UploadId=upload_id,
-                                        MultipartUpload={"Parts": [{"ETag": part["ETag"], "PartNumber": 1}]})
+    v2 = s3_client.put_object(Bucket=bucket, Key="held.txt", Body=b"version2")[
+        "VersionId"
+    ]
+    s3_client.copy_object(
+        Bucket=bucket, Key="held.txt", CopySource={"Bucket": bucket, "Key": "other.txt"}
+    )
+    upload_id = s3_client.create_multipart_upload(Bucket=bucket, Key="held.txt")[
+        "UploadId"
+    ]
+    part = s3_client.upload_part(
+        Bucket=bucket,
+        Key="held.txt",
+        UploadId=upload_id,
+        PartNumber=1,
+        Body=b"multipart",
+    )
+    s3_client.complete_multipart_upload(
+        Bucket=bucket,
+        Key="held.txt",
+        UploadId=upload_id,
+        MultipartUpload={"Parts": [{"ETag": part["ETag"], "PartNumber": 1}]},
+    )
     s3_client.delete_object(Bucket=bucket, Key="held.txt")
 
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="held.txt", VersionId=v1), "AccessDenied")
+    assert_client_error(
+        lambda: s3_client.delete_object(Bucket=bucket, Key="held.txt", VersionId=v1),
+        "AccessDenied",
+    )
 
-    res = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": "held.txt", "VersionId": v1}, {"Key": "held.txt", "VersionId": v2}]})
+    res = s3_client.delete_objects(
+        Bucket=bucket,
+        Delete={
+            "Objects": [
+                {"Key": "held.txt", "VersionId": v1},
+                {"Key": "held.txt", "VersionId": v2},
+            ]
+        },
+    )
     assert len(res["Errors"]) == 1
     assert res["Errors"][0]["Code"] == "AccessDenied"
     assert len(res["Deleted"]) == 1
 
-    assert s3_client.get_object(Bucket=bucket, Key="held.txt", VersionId=v1)["Body"].read() == b"version1"
+    assert (
+        s3_client.get_object(Bucket=bucket, Key="held.txt", VersionId=v1)["Body"].read()
+        == b"version1"
+    )
 
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="held.txt", VersionId=v1, LegalHold={"Status": "OFF"})
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="held.txt", VersionId=v1, LegalHold={"Status": "OFF"}
+    )
     s3_client.delete_object(Bucket=bucket, Key="held.txt", VersionId=v1)
     with pytest.raises(ClientError):
         s3_client.head_object(Bucket=bucket, Key="held.txt", VersionId=v1)
@@ -1893,18 +2562,30 @@ def test_legal_hold_enforced_at_commit(hs5_no_precheck: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
-    held_data = os.urandom(100*1024)
-    v1 = s3_client.put_object(Bucket=bucket, Key="held.txt", Body=held_data)["VersionId"]
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="held.txt", VersionId=v1, LegalHold={"Status": "ON"})
+    held_data = os.urandom(100 * 1024)
+    v1 = s3_client.put_object(Bucket=bucket, Key="held.txt", Body=held_data)[
+        "VersionId"
+    ]
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="held.txt", VersionId=v1, LegalHold={"Status": "ON"}
+    )
 
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="held.txt", VersionId=v1), "AccessDenied")
-    res = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": "held.txt", "VersionId": v1}]})
+    assert_client_error(
+        lambda: s3_client.delete_object(Bucket=bucket, Key="held.txt", VersionId=v1),
+        "AccessDenied",
+    )
+    res = s3_client.delete_objects(
+        Bucket=bucket, Delete={"Objects": [{"Key": "held.txt", "VersionId": v1}]}
+    )
     assert len(res["Errors"]) == 1 and res["Errors"][0]["Code"] == "AccessDenied"
 
     hs5.restart()
     s3_client = hs5.get_s3_client()
 
-    assert s3_client.get_object(Bucket=bucket, Key="held.txt", VersionId=v1)["Body"].read() == held_data
+    assert (
+        s3_client.get_object(Bucket=bucket, Key="held.txt", VersionId=v1)["Body"].read()
+        == held_data
+    )
 
 
 def test_legal_hold_race_with_delete(hs5_modify_delay: Hs5Runner):
@@ -1915,7 +2596,9 @@ def test_legal_hold_race_with_delete(hs5_modify_delay: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
-    v1 = s3_client.put_object(Bucket=bucket, Key="race.txt", Body=b"original")["VersionId"]
+    v1 = s3_client.put_object(Bucket=bucket, Key="race.txt", Body=b"original")[
+        "VersionId"
+    ]
 
     delete_result: dict = {}
 
@@ -1932,7 +2615,9 @@ def test_legal_hold_race_with_delete(hs5_modify_delay: Hs5Runner):
     time.sleep(1)
 
     try:
-        s3_client.put_object_legal_hold(Bucket=bucket, Key="race.txt", VersionId=v1, LegalHold={"Status": "ON"})
+        s3_client.put_object_legal_hold(
+            Bucket=bucket, Key="race.txt", VersionId=v1, LegalHold={"Status": "ON"}
+        )
         hold_ok = True
     except ClientError as e:
         assert e.response["Error"]["Code"] == "NoSuchKey"
@@ -1944,7 +2629,12 @@ def test_legal_hold_race_with_delete(hs5_modify_delay: Hs5Runner):
         # Delete failed, so the hold must have been applied to the object
         assert delete_result["error"] == "AccessDenied"
         assert hold_ok
-        assert s3_client.get_object(Bucket=bucket, Key="race.txt", VersionId=v1)["Body"].read() == b"original"
+        assert (
+            s3_client.get_object(Bucket=bucket, Key="race.txt", VersionId=v1)[
+                "Body"
+            ].read()
+            == b"original"
+        )
         return
 
     # Delete reported success, so it must have been applied
@@ -1962,8 +2652,12 @@ def test_object_lock_enable_race_with_delete(hs5_protected_check_delay: Hs5Runne
     s3_client = hs5.get_s3_client()
     bucket = hs5.testbucketname()
 
-    s3_client.put_bucket_versioning(Bucket=bucket, VersioningConfiguration={"Status": "Enabled"})
-    v1 = s3_client.put_object(Bucket=bucket, Key="race.txt", Body=b"original")["VersionId"]
+    s3_client.put_bucket_versioning(
+        Bucket=bucket, VersioningConfiguration={"Status": "Enabled"}
+    )
+    v1 = s3_client.put_object(Bucket=bucket, Key="race.txt", Body=b"original")[
+        "VersionId"
+    ]
 
     delete_result: dict = {}
 
@@ -1979,10 +2673,14 @@ def test_object_lock_enable_race_with_delete(hs5_protected_check_delay: Hs5Runne
     # Wait until the delete is sleeping
     time.sleep(1)
 
-    s3_client.put_object_lock_configuration(Bucket=bucket, ObjectLockConfiguration={"ObjectLockEnabled": "Enabled"})
+    s3_client.put_object_lock_configuration(
+        Bucket=bucket, ObjectLockConfiguration={"ObjectLockEnabled": "Enabled"}
+    )
 
     try:
-        s3_client.put_object_legal_hold(Bucket=bucket, Key="race.txt", VersionId=v1, LegalHold={"Status": "ON"})
+        s3_client.put_object_legal_hold(
+            Bucket=bucket, Key="race.txt", VersionId=v1, LegalHold={"Status": "ON"}
+        )
         hold_ok = True
     except ClientError as e:
         assert e.response["Error"]["Code"] == "NoSuchKey"
@@ -1993,7 +2691,12 @@ def test_object_lock_enable_race_with_delete(hs5_protected_check_delay: Hs5Runne
     if "ok" not in delete_result:
         assert delete_result["error"] == "AccessDenied"
         assert hold_ok
-        assert s3_client.get_object(Bucket=bucket, Key="race.txt", VersionId=v1)["Body"].read() == b"original"
+        assert (
+            s3_client.get_object(Bucket=bucket, Key="race.txt", VersionId=v1)[
+                "Body"
+            ].read()
+            == b"original"
+        )
         return
 
     # Delete reported success, so it must have been applied
@@ -2002,7 +2705,9 @@ def test_object_lock_enable_race_with_delete(hs5_protected_check_delay: Hs5Runne
 
 
 def utc_in(seconds: float) -> datetime.datetime:
-    return datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=seconds)
+    return datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+        seconds=seconds
+    )
 
 
 def test_put_object_retention_governance(hs5: Hs5Runner):
@@ -2010,39 +2715,77 @@ def test_put_object_retention_governance(hs5: Hs5Runner):
 
     s3_client.put_object(Bucket=hs5.testbucketname(), Key="ret.txt", Body=b"abc")
     # Retention requires object lock
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=hs5.testbucketname(), Key="ret.txt",
-                                                               Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)}), "InvalidRequest")
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=hs5.testbucketname(),
+            Key="ret.txt",
+            Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)},
+        ),
+        "InvalidRequest",
+    )
 
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
-    v1 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc", Metadata={"foo": "bar"})["VersionId"]
+    v1 = s3_client.put_object(
+        Bucket=bucket, Key="ret.txt", Body=b"abc", Metadata={"foo": "bar"}
+    )["VersionId"]
 
     obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt")
     assert "ObjectLockMode" not in obj_info
 
     # Retain until date has to be in the future
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt",
-                                                               Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(-60)}), "InvalidArgument")
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=bucket,
+            Key="ret.txt",
+            Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(-60)},
+        ),
+        "InvalidArgument",
+    )
 
-    retain_until = utc_in(24*3600).replace(microsecond=0)
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until})
+    retain_until = utc_in(24 * 3600).replace(microsecond=0)
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until},
+    )
 
     obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)
     assert obj_info["ObjectLockMode"] == "GOVERNANCE"
     assert obj_info["ObjectLockRetainUntilDate"] == retain_until
     assert obj_info["Metadata"] == {"foo": "bar"}
 
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1), "AccessDenied")
-    res = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": "ret.txt", "VersionId": v1}]})
+    assert_client_error(
+        lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1),
+        "AccessDenied",
+    )
+    res = s3_client.delete_objects(
+        Bucket=bucket, Delete={"Objects": [{"Key": "ret.txt", "VersionId": v1}]}
+    )
     assert len(res["Errors"]) == 1 and res["Errors"][0]["Code"] == "AccessDenied"
 
     # Shortening or removing requires bypass
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt",
-                                                               Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)}), "AccessDenied")
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={}), "AccessDenied")
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=bucket,
+            Key="ret.txt",
+            Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)},
+        ),
+        "AccessDenied",
+    )
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=bucket, Key="ret.txt", Retention={}
+        ),
+        "AccessDenied",
+    )
 
     # Extending is allowed
-    retain_until = utc_in(2*24*3600).replace(microsecond=0)
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until})
+    retain_until = utc_in(2 * 24 * 3600).replace(microsecond=0)
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until},
+    )
 
     hs5.restart()
     s3_client = hs5.get_s3_client()
@@ -2050,70 +2793,157 @@ def test_put_object_retention_governance(hs5: Hs5Runner):
     obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)
     assert obj_info["ObjectLockMode"] == "GOVERNANCE"
     assert obj_info["ObjectLockRetainUntilDate"] == retain_until
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1), "AccessDenied")
+    assert_client_error(
+        lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1),
+        "AccessDenied",
+    )
 
     # Shortening with bypass
     retain_until = utc_in(3600).replace(microsecond=0)
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until},
-                                   BypassGovernanceRetention=True)
-    assert s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)["ObjectLockRetainUntilDate"] == retain_until
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until},
+        BypassGovernanceRetention=True,
+    )
+    assert (
+        s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)[
+            "ObjectLockRetainUntilDate"
+        ]
+        == retain_until
+    )
 
     # Delete with bypass
-    res = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": "ret.txt", "VersionId": v1}]}, BypassGovernanceRetention=True)
+    res = s3_client.delete_objects(
+        Bucket=bucket,
+        Delete={"Objects": [{"Key": "ret.txt", "VersionId": v1}]},
+        BypassGovernanceRetention=True,
+    )
     assert "Errors" not in res or len(res["Errors"]) == 0
     with pytest.raises(ClientError):
         s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)
 
     # Removing with bypass
     v2 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc")["VersionId"]
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)})
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={}, BypassGovernanceRetention=True)
-    assert "ObjectLockMode" not in s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v2)
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)},
+    )
+    s3_client.put_object_retention(
+        Bucket=bucket, Key="ret.txt", Retention={}, BypassGovernanceRetention=True
+    )
+    assert "ObjectLockMode" not in s3_client.head_object(
+        Bucket=bucket, Key="ret.txt", VersionId=v2
+    )
     s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v2)
 
     # Delete with bypass
     v3 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc")["VersionId"]
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)})
-    s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v3, BypassGovernanceRetention=True)
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)},
+    )
+    s3_client.delete_object(
+        Bucket=bucket, Key="ret.txt", VersionId=v3, BypassGovernanceRetention=True
+    )
 
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="nonexistent.txt",
-                                                               Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)}), "NoSuchKey")
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=bucket,
+            Key="nonexistent.txt",
+            Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)},
+        ),
+        "NoSuchKey",
+    )
 
 
 def test_put_object_retention_compliance(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
-    v1 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"version1")["VersionId"]
-    v2 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"version2")["VersionId"]
+    v1 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"version1")[
+        "VersionId"
+    ]
+    v2 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"version2")[
+        "VersionId"
+    ]
 
-    retain_until = utc_in(24*3600).replace(microsecond=0)
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v1, Retention={"Mode": "COMPLIANCE", "RetainUntilDate": retain_until})
+    retain_until = utc_in(24 * 3600).replace(microsecond=0)
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        VersionId=v1,
+        Retention={"Mode": "COMPLIANCE", "RetainUntilDate": retain_until},
+    )
 
     obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)
     assert obj_info["ObjectLockMode"] == "COMPLIANCE"
     assert obj_info["ObjectLockRetainUntilDate"] == retain_until
-    assert "ObjectLockMode" not in s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v2)
+    assert "ObjectLockMode" not in s3_client.head_object(
+        Bucket=bucket, Key="ret.txt", VersionId=v2
+    )
 
     # Cannot be shortened, removed or changed to governance, even with bypass
     for bypass in [False, True]:
-        assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v1,
-                                                                   Retention={"Mode": "COMPLIANCE", "RetainUntilDate": utc_in(3600)},
-                                                                   BypassGovernanceRetention=bypass), "AccessDenied")
-        assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v1,
-                                                                   Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3*24*3600)},
-                                                                   BypassGovernanceRetention=bypass), "AccessDenied")
-        assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v1, Retention={},
-                                                                   BypassGovernanceRetention=bypass), "AccessDenied")
-        assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1,
-                                                            BypassGovernanceRetention=bypass), "AccessDenied")
-        res = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": "ret.txt", "VersionId": v1}]},
-                                       BypassGovernanceRetention=bypass)
+        assert_client_error(
+            lambda: s3_client.put_object_retention(
+                Bucket=bucket,
+                Key="ret.txt",
+                VersionId=v1,
+                Retention={"Mode": "COMPLIANCE", "RetainUntilDate": utc_in(3600)},
+                BypassGovernanceRetention=bypass,
+            ),
+            "AccessDenied",
+        )
+        assert_client_error(
+            lambda: s3_client.put_object_retention(
+                Bucket=bucket,
+                Key="ret.txt",
+                VersionId=v1,
+                Retention={
+                    "Mode": "GOVERNANCE",
+                    "RetainUntilDate": utc_in(3 * 24 * 3600),
+                },
+                BypassGovernanceRetention=bypass,
+            ),
+            "AccessDenied",
+        )
+        assert_client_error(
+            lambda: s3_client.put_object_retention(
+                Bucket=bucket,
+                Key="ret.txt",
+                VersionId=v1,
+                Retention={},
+                BypassGovernanceRetention=bypass,
+            ),
+            "AccessDenied",
+        )
+        assert_client_error(
+            lambda: s3_client.delete_object(
+                Bucket=bucket,
+                Key="ret.txt",
+                VersionId=v1,
+                BypassGovernanceRetention=bypass,
+            ),
+            "AccessDenied",
+        )
+        res = s3_client.delete_objects(
+            Bucket=bucket,
+            Delete={"Objects": [{"Key": "ret.txt", "VersionId": v1}]},
+            BypassGovernanceRetention=bypass,
+        )
         assert len(res["Errors"]) == 1 and res["Errors"][0]["Code"] == "AccessDenied"
 
     # Extending is allowed
-    retain_until = utc_in(2*24*3600).replace(microsecond=0)
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v1, Retention={"Mode": "COMPLIANCE", "RetainUntilDate": retain_until})
+    retain_until = utc_in(2 * 24 * 3600).replace(microsecond=0)
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        VersionId=v1,
+        Retention={"Mode": "COMPLIANCE", "RetainUntilDate": retain_until},
+    )
 
     # New versions and delete markers are allowed
     s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"version3")
@@ -2123,9 +2953,22 @@ def test_put_object_retention_compliance(hs5: Hs5Runner):
     hs5.restart()
     s3_client = hs5.get_s3_client()
 
-    assert s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)["ObjectLockRetainUntilDate"] == retain_until
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1, BypassGovernanceRetention=True), "AccessDenied")
-    assert s3_client.get_object(Bucket=bucket, Key="ret.txt", VersionId=v1)["Body"].read() == b"version1"
+    assert (
+        s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)[
+            "ObjectLockRetainUntilDate"
+        ]
+        == retain_until
+    )
+    assert_client_error(
+        lambda: s3_client.delete_object(
+            Bucket=bucket, Key="ret.txt", VersionId=v1, BypassGovernanceRetention=True
+        ),
+        "AccessDenied",
+    )
+    assert (
+        s3_client.get_object(Bucket=bucket, Key="ret.txt", VersionId=v1)["Body"].read()
+        == b"version1"
+    )
 
 
 @pytest.mark.slow
@@ -2134,14 +2977,25 @@ def test_put_object_retention_expires(hs5: Hs5Runner):
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
     v1 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc")["VersionId"]
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "COMPLIANCE", "RetainUntilDate": utc_in(3)})
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        Retention={"Mode": "COMPLIANCE", "RetainUntilDate": utc_in(3)},
+    )
 
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1), "AccessDenied")
+    assert_client_error(
+        lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1),
+        "AccessDenied",
+    )
 
     time.sleep(4)
 
     # Expired retention can be changed
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3)})
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3)},
+    )
     time.sleep(4)
     s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1)
 
@@ -2153,12 +3007,28 @@ def test_put_object_retention_event_hold(hs5: Hs5Runner):
     v1 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc")["VersionId"]
 
     # Days or years, not both
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt",
-                                                               Retention={"Mode": "COMPLIANCE", "EventHold": "ON",
-                                                                          "EventHoldDuration": {"Days": 1, "Years": 1}}), "MalformedXML")
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=bucket,
+            Key="ret.txt",
+            Retention={
+                "Mode": "COMPLIANCE",
+                "EventHold": "ON",
+                "EventHoldDuration": {"Days": 1, "Years": 1},
+            },
+        ),
+        "MalformedXML",
+    )
 
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt",
-                                   Retention={"Mode": "COMPLIANCE", "EventHold": "ON", "EventHoldDuration": {"Days": 2}})
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        Retention={
+            "Mode": "COMPLIANCE",
+            "EventHold": "ON",
+            "EventHoldDuration": {"Days": 2},
+        },
+    )
 
     obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt")
     assert obj_info["ObjectLockMode"] == "COMPLIANCE"
@@ -2166,28 +3036,58 @@ def test_put_object_retention_event_hold(hs5: Hs5Runner):
     assert obj_info["ObjectLockEventHoldDurationDays"] == 2
     assert "ObjectLockRetainUntilDate" not in obj_info
 
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1), "AccessDenied")
+    assert_client_error(
+        lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1),
+        "AccessDenied",
+    )
 
     # Duration cannot be shortened
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt",
-                                                               Retention={"Mode": "COMPLIANCE", "EventHold": "ON", "EventHoldDuration": {"Days": 1}}), "AccessDenied")
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=bucket,
+            Key="ret.txt",
+            Retention={
+                "Mode": "COMPLIANCE",
+                "EventHold": "ON",
+                "EventHoldDuration": {"Days": 1},
+            },
+        ),
+        "AccessDenied",
+    )
 
     # Release event hold. Object stays protected for the duration
     before_release = utc_in(0)
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "COMPLIANCE", "EventHold": "OFF"})
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        Retention={"Mode": "COMPLIANCE", "EventHold": "OFF"},
+    )
 
     obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt")
     assert obj_info["ObjectLockMode"] == "COMPLIANCE"
     assert "ObjectLockEventHold" not in obj_info
     retain_until = obj_info["ObjectLockRetainUntilDate"]
-    assert before_release + datetime.timedelta(days=2) - datetime.timedelta(seconds=5) <= retain_until <= utc_in(2*24*3600 + 5)
+    assert (
+        before_release + datetime.timedelta(days=2) - datetime.timedelta(seconds=5)
+        <= retain_until
+        <= utc_in(2 * 24 * 3600 + 5)
+    )
 
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1), "AccessDenied")
+    assert_client_error(
+        lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1),
+        "AccessDenied",
+    )
 
     # Releasing on object without event hold requires retain until date
     v2 = s3_client.put_object(Bucket=bucket, Key="ret2.txt", Body=b"abc")["VersionId"]
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret2.txt",
-                                                               Retention={"Mode": "COMPLIANCE", "EventHold": "OFF"}), "InvalidRequest")
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=bucket,
+            Key="ret2.txt",
+            Retention={"Mode": "COMPLIANCE", "EventHold": "OFF"},
+        ),
+        "InvalidRequest",
+    )
     s3_client.delete_object(Bucket=bucket, Key="ret2.txt", VersionId=v2)
 
 
@@ -2195,19 +3095,36 @@ def test_put_object_retention_multipart(hs5: Hs5Runner, tmp_path: Path):
     s3_client = hs5.get_s3_client()
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
-    fdata = os.urandom(10*1024*1024)
+    fdata = os.urandom(10 * 1024 * 1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
 
-    config = TransferConfig(multipart_chunksize=5*1024*1024)
-    s3_client.upload_file(str(tmp_path / "upload.txt"), bucket, "upload.txt", Config=config,
-                          ExtraArgs={"ContentType": "text/plain", "Metadata": {"foo": "bar"}, "ChecksumAlgorithm": "CRC32"})
+    config = TransferConfig(multipart_chunksize=5 * 1024 * 1024)
+    s3_client.upload_file(
+        str(tmp_path / "upload.txt"),
+        bucket,
+        "upload.txt",
+        Config=config,
+        ExtraArgs={
+            "ContentType": "text/plain",
+            "Metadata": {"foo": "bar"},
+            "ChecksumAlgorithm": "CRC32",
+        },
+    )
     etag = s3_client.head_object(Bucket=bucket, Key="upload.txt")["ETag"]
-    version_id = s3_client.list_object_versions(Bucket=bucket, Prefix="upload.txt")["Versions"][0]["VersionId"]
+    version_id = s3_client.list_object_versions(Bucket=bucket, Prefix="upload.txt")[
+        "Versions"
+    ][0]["VersionId"]
 
     retain_until = utc_in(3600).replace(microsecond=0)
-    s3_client.put_object_retention(Bucket=bucket, Key="upload.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until})
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="upload.txt", LegalHold={"Status": "ON"})
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="upload.txt",
+        Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until},
+    )
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="upload.txt", LegalHold={"Status": "ON"}
+    )
 
     obj = s3_client.get_object(Bucket=bucket, Key="upload.txt", ChecksumMode="ENABLED")
     assert obj["ObjectLockMode"] == "GOVERNANCE"
@@ -2220,9 +3137,18 @@ def test_put_object_retention_multipart(hs5: Hs5Runner, tmp_path: Path):
     assert obj["Body"].read() == fdata
 
     # Legal hold protects even with governance bypass
-    s3_client.put_object_retention(Bucket=bucket, Key="upload.txt", Retention={}, BypassGovernanceRetention=True)
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="upload.txt",
-                                                        VersionId=version_id, BypassGovernanceRetention=True), "AccessDenied")
+    s3_client.put_object_retention(
+        Bucket=bucket, Key="upload.txt", Retention={}, BypassGovernanceRetention=True
+    )
+    assert_client_error(
+        lambda: s3_client.delete_object(
+            Bucket=bucket,
+            Key="upload.txt",
+            VersionId=version_id,
+            BypassGovernanceRetention=True,
+        ),
+        "AccessDenied",
+    )
 
 
 def assert_no_object_lock(obj_info: dict):
@@ -2235,59 +3161,136 @@ def test_legal_hold_with_retention(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
-    v1 = s3_client.put_object(Bucket=bucket, Key="both.txt", Body=b"version1")["VersionId"]
-    s3_client.put_object_retention(Bucket=bucket, Key="both.txt", VersionId=v1, Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3)})
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="both.txt", VersionId=v1, LegalHold={"Status": "ON"})
+    v1 = s3_client.put_object(Bucket=bucket, Key="both.txt", Body=b"version1")[
+        "VersionId"
+    ]
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="both.txt",
+        VersionId=v1,
+        Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3)},
+    )
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="both.txt", VersionId=v1, LegalHold={"Status": "ON"}
+    )
 
     # Bypassing governance does not bypass the legal hold
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="both.txt", VersionId=v1, BypassGovernanceRetention=True), "AccessDenied")
+    assert_client_error(
+        lambda: s3_client.delete_object(
+            Bucket=bucket, Key="both.txt", VersionId=v1, BypassGovernanceRetention=True
+        ),
+        "AccessDenied",
+    )
 
     # Legal hold still protects after retention expired
     time.sleep(4)
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="both.txt", VersionId=v1), "AccessDenied")
-    res = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": "both.txt", "VersionId": v1}]}, BypassGovernanceRetention=True)
+    assert_client_error(
+        lambda: s3_client.delete_object(Bucket=bucket, Key="both.txt", VersionId=v1),
+        "AccessDenied",
+    )
+    res = s3_client.delete_objects(
+        Bucket=bucket,
+        Delete={"Objects": [{"Key": "both.txt", "VersionId": v1}]},
+        BypassGovernanceRetention=True,
+    )
     assert len(res["Errors"]) == 1 and res["Errors"][0]["Code"] == "AccessDenied"
 
     # Retention still protects after legal hold is released
-    v2 = s3_client.put_object(Bucket=bucket, Key="both.txt", Body=b"version2")["VersionId"]
-    s3_client.put_object_retention(Bucket=bucket, Key="both.txt", VersionId=v2, Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)})
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="both.txt", VersionId=v2, LegalHold={"Status": "ON"})
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="both.txt", VersionId=v2, LegalHold={"Status": "OFF"})
+    v2 = s3_client.put_object(Bucket=bucket, Key="both.txt", Body=b"version2")[
+        "VersionId"
+    ]
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="both.txt",
+        VersionId=v2,
+        Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)},
+    )
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="both.txt", VersionId=v2, LegalHold={"Status": "ON"}
+    )
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="both.txt", VersionId=v2, LegalHold={"Status": "OFF"}
+    )
 
     obj_info = s3_client.head_object(Bucket=bucket, Key="both.txt", VersionId=v2)
     assert obj_info["ObjectLockMode"] == "GOVERNANCE"
     assert "ObjectLockLegalHoldStatus" not in obj_info
 
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="both.txt", VersionId=v2), "AccessDenied")
-    s3_client.delete_object(Bucket=bucket, Key="both.txt", VersionId=v2, BypassGovernanceRetention=True)
+    assert_client_error(
+        lambda: s3_client.delete_object(Bucket=bucket, Key="both.txt", VersionId=v2),
+        "AccessDenied",
+    )
+    s3_client.delete_object(
+        Bucket=bucket, Key="both.txt", VersionId=v2, BypassGovernanceRetention=True
+    )
 
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="both.txt", VersionId=v1, LegalHold={"Status": "OFF"})
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="both.txt", VersionId=v1, LegalHold={"Status": "OFF"}
+    )
     s3_client.delete_object(Bucket=bucket, Key="both.txt", VersionId=v1)
-    assert "Versions" not in s3_client.list_object_versions(Bucket=bucket, Prefix="both.txt")
+    assert "Versions" not in s3_client.list_object_versions(
+        Bucket=bucket, Prefix="both.txt"
+    )
 
 
 def test_put_object_retention_mode_change(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
-    v1 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"version1")["VersionId"]
+    v1 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"version1")[
+        "VersionId"
+    ]
     retain_until = utc_in(3600).replace(microsecond=0)
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v1, Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until})
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        VersionId=v1,
+        Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until},
+    )
 
     # Governance can be upgraded to compliance without bypass
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v1, Retention={"Mode": "COMPLIANCE", "RetainUntilDate": retain_until})
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        VersionId=v1,
+        Retention={"Mode": "COMPLIANCE", "RetainUntilDate": retain_until},
+    )
     obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)
     assert obj_info["ObjectLockMode"] == "COMPLIANCE"
     assert obj_info["ObjectLockRetainUntilDate"] == retain_until
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1, BypassGovernanceRetention=True), "AccessDenied")
+    assert_client_error(
+        lambda: s3_client.delete_object(
+            Bucket=bucket, Key="ret.txt", VersionId=v1, BypassGovernanceRetention=True
+        ),
+        "AccessDenied",
+    )
 
     # With bypass, governance can be changed to compliance with an earlier date
-    v2 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"version2")["VersionId"]
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v2, Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(2*24*3600)})
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v2,
-                                                               Retention={"Mode": "COMPLIANCE", "RetainUntilDate": retain_until}), "AccessDenied")
-    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v2, Retention={"Mode": "COMPLIANCE", "RetainUntilDate": retain_until},
-                                   BypassGovernanceRetention=True)
+    v2 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"version2")[
+        "VersionId"
+    ]
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        VersionId=v2,
+        Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(2 * 24 * 3600)},
+    )
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=bucket,
+            Key="ret.txt",
+            VersionId=v2,
+            Retention={"Mode": "COMPLIANCE", "RetainUntilDate": retain_until},
+        ),
+        "AccessDenied",
+    )
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="ret.txt",
+        VersionId=v2,
+        Retention={"Mode": "COMPLIANCE", "RetainUntilDate": retain_until},
+        BypassGovernanceRetention=True,
+    )
     obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v2)
     assert obj_info["ObjectLockMode"] == "COMPLIANCE"
     assert obj_info["ObjectLockRetainUntilDate"] == retain_until
@@ -2299,27 +3302,70 @@ def test_object_lock_invalid_requests(hs5: Hs5Runner):
 
     v1 = s3_client.put_object(Bucket=bucket, Key="obj.txt", Body=b"abc")["VersionId"]
 
-    assert_client_error(lambda: s3_client.put_object_legal_hold(Bucket=bucket, Key="obj.txt", LegalHold={"Status": "MAYBE"}), "MalformedXML")
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="obj.txt",
-                                                               Retention={"Mode": "FOREVER", "RetainUntilDate": utc_in(3600)}), "MalformedXML")
+    assert_client_error(
+        lambda: s3_client.put_object_legal_hold(
+            Bucket=bucket, Key="obj.txt", LegalHold={"Status": "MAYBE"}
+        ),
+        "MalformedXML",
+    )
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=bucket,
+            Key="obj.txt",
+            Retention={"Mode": "FOREVER", "RetainUntilDate": utc_in(3600)},
+        ),
+        "MalformedXML",
+    )
     # Mode is required together with a retain until date
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="obj.txt",
-                                                               Retention={"RetainUntilDate": utc_in(3600)}), "MalformedXML")
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=bucket, Key="obj.txt", Retention={"RetainUntilDate": utc_in(3600)}
+        ),
+        "MalformedXML",
+    )
     # Mode alone is not enough
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="obj.txt",
-                                                               Retention={"Mode": "GOVERNANCE"}), "MalformedXML")
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=bucket, Key="obj.txt", Retention={"Mode": "GOVERNANCE"}
+        ),
+        "MalformedXML",
+    )
     # Event hold duration out of range
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="obj.txt",
-                                                               Retention={"Mode": "COMPLIANCE", "EventHold": "ON",
-                                                                          "EventHoldDuration": {"Days": 0}}), "MalformedXML")
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="obj.txt",
-                                                               Retention={"Mode": "COMPLIANCE", "EventHold": "ON",
-                                                                          "EventHoldDuration": {"Years": 101}}), "MalformedXML")
-    assert_client_error(lambda: s3_client.put_object_lock_configuration(Bucket=bucket,
-                                                                        ObjectLockConfiguration={"ObjectLockEnabled": "Disabled"}), "MalformedXML")
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=bucket,
+            Key="obj.txt",
+            Retention={
+                "Mode": "COMPLIANCE",
+                "EventHold": "ON",
+                "EventHoldDuration": {"Days": 0},
+            },
+        ),
+        "MalformedXML",
+    )
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=bucket,
+            Key="obj.txt",
+            Retention={
+                "Mode": "COMPLIANCE",
+                "EventHold": "ON",
+                "EventHoldDuration": {"Years": 101},
+            },
+        ),
+        "MalformedXML",
+    )
+    assert_client_error(
+        lambda: s3_client.put_object_lock_configuration(
+            Bucket=bucket, ObjectLockConfiguration={"ObjectLockEnabled": "Disabled"}
+        ),
+        "MalformedXML",
+    )
 
     # Nothing was applied, so the object is unprotected
-    assert_no_object_lock(s3_client.head_object(Bucket=bucket, Key="obj.txt", VersionId=v1))
+    assert_no_object_lock(
+        s3_client.head_object(Bucket=bucket, Key="obj.txt", VersionId=v1)
+    )
     s3_client.delete_object(Bucket=bucket, Key="obj.txt", VersionId=v1)
 
 
@@ -2328,18 +3374,39 @@ def test_object_lock_delete_marker(hs5: Hs5Runner):
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
     v1 = s3_client.put_object(Bucket=bucket, Key="held.txt", Body=b"held")["VersionId"]
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="held.txt", VersionId=v1, LegalHold={"Status": "ON"})
-    s3_client.put_object_retention(Bucket=bucket, Key="held.txt", VersionId=v1, Retention={"Mode": "COMPLIANCE", "RetainUntilDate": utc_in(3600)})
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="held.txt", VersionId=v1, LegalHold={"Status": "ON"}
+    )
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="held.txt",
+        VersionId=v1,
+        Retention={"Mode": "COMPLIANCE", "RetainUntilDate": utc_in(3600)},
+    )
 
     s3_client.delete_object(Bucket=bucket, Key="held.txt")
-    delete_markers = s3_client.list_object_versions(Bucket=bucket, Prefix="held.txt")["DeleteMarkers"]
+    delete_markers = s3_client.list_object_versions(Bucket=bucket, Prefix="held.txt")[
+        "DeleteMarkers"
+    ]
     assert len(delete_markers) == 1
     dm = delete_markers[0]["VersionId"]
 
     # Delete markers cannot be locked
-    assert_client_error(lambda: s3_client.put_object_legal_hold(Bucket=bucket, Key="held.txt", VersionId=dm, LegalHold={"Status": "ON"}), "MethodNotAllowed")
-    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="held.txt", VersionId=dm,
-                                                               Retention={"Mode": "COMPLIANCE", "RetainUntilDate": utc_in(3600)}), "MethodNotAllowed")
+    assert_client_error(
+        lambda: s3_client.put_object_legal_hold(
+            Bucket=bucket, Key="held.txt", VersionId=dm, LegalHold={"Status": "ON"}
+        ),
+        "MethodNotAllowed",
+    )
+    assert_client_error(
+        lambda: s3_client.put_object_retention(
+            Bucket=bucket,
+            Key="held.txt",
+            VersionId=dm,
+            Retention={"Mode": "COMPLIANCE", "RetainUntilDate": utc_in(3600)},
+        ),
+        "MethodNotAllowed",
+    )
 
     # Delete markers can be removed even if the version below is protected
     s3_client.delete_object(Bucket=bucket, Key="held.txt", VersionId=dm)
@@ -2355,25 +3422,48 @@ def test_object_lock_delete_objects_mixed(hs5: Hs5Runner):
 
     versions = {}
     for key in ["plain.txt", "governance.txt", "compliance.txt", "held.txt"]:
-        versions[key] = s3_client.put_object(Bucket=bucket, Key=key, Body=key.encode())["VersionId"]
+        versions[key] = s3_client.put_object(Bucket=bucket, Key=key, Body=key.encode())[
+            "VersionId"
+        ]
 
-    s3_client.put_object_retention(Bucket=bucket, Key="governance.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)})
-    s3_client.put_object_retention(Bucket=bucket, Key="compliance.txt", Retention={"Mode": "COMPLIANCE", "RetainUntilDate": utc_in(3600)})
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="held.txt", LegalHold={"Status": "ON"})
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="governance.txt",
+        Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)},
+    )
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="compliance.txt",
+        Retention={"Mode": "COMPLIANCE", "RetainUntilDate": utc_in(3600)},
+    )
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="held.txt", LegalHold={"Status": "ON"}
+    )
 
     objects = [{"Key": key, "VersionId": version} for key, version in versions.items()]
 
     res = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": objects})
     assert sorted(d["Key"] for d in res["Deleted"]) == ["plain.txt"]
-    assert sorted(e["Key"] for e in res["Errors"]) == ["compliance.txt", "governance.txt", "held.txt"]
+    assert sorted(e["Key"] for e in res["Errors"]) == [
+        "compliance.txt",
+        "governance.txt",
+        "held.txt",
+    ]
     assert all(e["Code"] == "AccessDenied" for e in res["Errors"])
 
-    res = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": objects[1:]}, BypassGovernanceRetention=True)
+    res = s3_client.delete_objects(
+        Bucket=bucket, Delete={"Objects": objects[1:]}, BypassGovernanceRetention=True
+    )
     assert sorted(d["Key"] for d in res["Deleted"]) == ["governance.txt"]
     assert sorted(e["Key"] for e in res["Errors"]) == ["compliance.txt", "held.txt"]
 
     for key in ["compliance.txt", "held.txt"]:
-        assert s3_client.get_object(Bucket=bucket, Key=key, VersionId=versions[key])["Body"].read() == key.encode()
+        assert (
+            s3_client.get_object(Bucket=bucket, Key=key, VersionId=versions[key])[
+                "Body"
+            ].read()
+            == key.encode()
+        )
     for key in ["plain.txt", "governance.txt"]:
         with pytest.raises(ClientError):
             s3_client.head_object(Bucket=bucket, Key=key, VersionId=versions[key])
@@ -2384,23 +3474,42 @@ def test_object_lock_copy_does_not_inherit(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
-    s3_client.put_object(Bucket=bucket, Key="src.txt", Body=b"abc", Metadata={"foo": "bar"})
-    s3_client.put_object_retention(Bucket=bucket, Key="src.txt", Retention={"Mode": "COMPLIANCE", "RetainUntilDate": utc_in(3600)})
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="src.txt", LegalHold={"Status": "ON"})
+    s3_client.put_object(
+        Bucket=bucket, Key="src.txt", Body=b"abc", Metadata={"foo": "bar"}
+    )
+    s3_client.put_object_retention(
+        Bucket=bucket,
+        Key="src.txt",
+        Retention={"Mode": "COMPLIANCE", "RetainUntilDate": utc_in(3600)},
+    )
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="src.txt", LegalHold={"Status": "ON"}
+    )
 
     for directive in ["COPY", "REPLACE"]:
         key = f"dst-{directive}.txt"
-        s3_client.copy_object(Bucket=bucket, Key=key, CopySource={"Bucket": bucket, "Key": "src.txt"}, MetadataDirective=directive)
+        s3_client.copy_object(
+            Bucket=bucket,
+            Key=key,
+            CopySource={"Bucket": bucket, "Key": "src.txt"},
+            MetadataDirective=directive,
+        )
         obj_info = s3_client.head_object(Bucket=bucket, Key=key)
         assert_no_object_lock(obj_info)
         if directive == "COPY":
             assert obj_info["Metadata"] == {"foo": "bar"}
-        version_id = s3_client.list_object_versions(Bucket=bucket, Prefix=key)["Versions"][0]["VersionId"]
+        version_id = s3_client.list_object_versions(Bucket=bucket, Prefix=key)[
+            "Versions"
+        ][0]["VersionId"]
         s3_client.delete_object(Bucket=bucket, Key=key, VersionId=version_id)
 
     # Copy into bucket without object lock
     other_bucket = hs5.testbucketname()
-    s3_client.copy_object(Bucket=other_bucket, Key="dst.txt", CopySource={"Bucket": bucket, "Key": "src.txt"})
+    s3_client.copy_object(
+        Bucket=other_bucket,
+        Key="dst.txt",
+        CopySource={"Bucket": bucket, "Key": "src.txt"},
+    )
     obj_info = s3_client.head_object(Bucket=other_bucket, Key="dst.txt")
     assert_no_object_lock(obj_info)
     assert obj_info["Metadata"] == {"foo": "bar"}
@@ -2411,28 +3520,69 @@ def test_object_lock_headers_put_object(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
 
     # Object lock headers require object lock
-    assert_client_error(lambda: s3_client.put_object(Bucket=hs5.testbucketname(), Key="ret.txt", Body=b"abc",
-                                                     ObjectLockLegalHoldStatus="ON"), "InvalidRequest")
+    assert_client_error(
+        lambda: s3_client.put_object(
+            Bucket=hs5.testbucketname(),
+            Key="ret.txt",
+            Body=b"abc",
+            ObjectLockLegalHoldStatus="ON",
+        ),
+        "InvalidRequest",
+    )
 
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
     # Mode and retain until date have to be supplied together
-    assert_client_error(lambda: s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc",
-                                                     ObjectLockMode="GOVERNANCE"), "InvalidArgument")
-    assert_client_error(lambda: s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc",
-                                                     ObjectLockRetainUntilDate=utc_in(3600)), "InvalidArgument")
+    assert_client_error(
+        lambda: s3_client.put_object(
+            Bucket=bucket, Key="ret.txt", Body=b"abc", ObjectLockMode="GOVERNANCE"
+        ),
+        "InvalidArgument",
+    )
+    assert_client_error(
+        lambda: s3_client.put_object(
+            Bucket=bucket,
+            Key="ret.txt",
+            Body=b"abc",
+            ObjectLockRetainUntilDate=utc_in(3600),
+        ),
+        "InvalidArgument",
+    )
     # Retain until date has to be in the future
-    assert_client_error(lambda: s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc",
-                                                     ObjectLockMode="GOVERNANCE", ObjectLockRetainUntilDate=utc_in(-60)), "InvalidArgument")
-    assert "Versions" not in s3_client.list_object_versions(Bucket=bucket, Prefix="ret.txt")
+    assert_client_error(
+        lambda: s3_client.put_object(
+            Bucket=bucket,
+            Key="ret.txt",
+            Body=b"abc",
+            ObjectLockMode="GOVERNANCE",
+            ObjectLockRetainUntilDate=utc_in(-60),
+        ),
+        "InvalidArgument",
+    )
+    assert "Versions" not in s3_client.list_object_versions(
+        Bucket=bucket, Prefix="ret.txt"
+    )
 
     retain_until = utc_in(3600).replace(microsecond=0)
-    v1 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc", Metadata={"foo": "bar"},
-                              ObjectLockMode="COMPLIANCE", ObjectLockRetainUntilDate=retain_until,
-                              ObjectLockLegalHoldStatus="ON")["VersionId"]
-    v2 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"def",
-                              ObjectLockMode="GOVERNANCE", ObjectLockRetainUntilDate=retain_until)["VersionId"]
-    v3 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"ghi", ObjectLockLegalHoldStatus="OFF")["VersionId"]
+    v1 = s3_client.put_object(
+        Bucket=bucket,
+        Key="ret.txt",
+        Body=b"abc",
+        Metadata={"foo": "bar"},
+        ObjectLockMode="COMPLIANCE",
+        ObjectLockRetainUntilDate=retain_until,
+        ObjectLockLegalHoldStatus="ON",
+    )["VersionId"]
+    v2 = s3_client.put_object(
+        Bucket=bucket,
+        Key="ret.txt",
+        Body=b"def",
+        ObjectLockMode="GOVERNANCE",
+        ObjectLockRetainUntilDate=retain_until,
+    )["VersionId"]
+    v3 = s3_client.put_object(
+        Bucket=bucket, Key="ret.txt", Body=b"ghi", ObjectLockLegalHoldStatus="OFF"
+    )["VersionId"]
 
     hs5.restart()
     s3_client = hs5.get_s3_client()
@@ -2448,35 +3598,69 @@ def test_object_lock_headers_put_object(hs5: Hs5Runner):
     assert obj_info["ObjectLockRetainUntilDate"] == retain_until
     assert "ObjectLockLegalHoldStatus" not in obj_info
 
-    assert_no_object_lock(s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v3))
+    assert_no_object_lock(
+        s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v3)
+    )
 
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1,
-                                                        BypassGovernanceRetention=True), "AccessDenied")
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v2), "AccessDenied")
-    s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v2, BypassGovernanceRetention=True)
+    assert_client_error(
+        lambda: s3_client.delete_object(
+            Bucket=bucket, Key="ret.txt", VersionId=v1, BypassGovernanceRetention=True
+        ),
+        "AccessDenied",
+    )
+    assert_client_error(
+        lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v2),
+        "AccessDenied",
+    )
+    s3_client.delete_object(
+        Bucket=bucket, Key="ret.txt", VersionId=v2, BypassGovernanceRetention=True
+    )
     s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v3)
 
 
 def test_object_lock_headers_multipart(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
 
-    assert_client_error(lambda: s3_client.create_multipart_upload(Bucket=hs5.testbucketname(), Key="mp.txt",
-                                                                  ObjectLockLegalHoldStatus="ON"), "InvalidRequest")
+    assert_client_error(
+        lambda: s3_client.create_multipart_upload(
+            Bucket=hs5.testbucketname(), Key="mp.txt", ObjectLockLegalHoldStatus="ON"
+        ),
+        "InvalidRequest",
+    )
 
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
     retain_until = utc_in(3600).replace(microsecond=0)
-    upload_id = s3_client.create_multipart_upload(Bucket=bucket, Key="mp.txt", ContentType="text/plain",
-                                                  ObjectLockMode="GOVERNANCE", ObjectLockRetainUntilDate=retain_until,
-                                                  ObjectLockLegalHoldStatus="ON")["UploadId"]
-    part1 = os.urandom(5*1024*1024)
+    upload_id = s3_client.create_multipart_upload(
+        Bucket=bucket,
+        Key="mp.txt",
+        ContentType="text/plain",
+        ObjectLockMode="GOVERNANCE",
+        ObjectLockRetainUntilDate=retain_until,
+        ObjectLockLegalHoldStatus="ON",
+    )["UploadId"]
+    part1 = os.urandom(5 * 1024 * 1024)
     part2 = os.urandom(1024)
-    etag1 = s3_client.upload_part(Bucket=bucket, Key="mp.txt", UploadId=upload_id, PartNumber=1, Body=part1)["ETag"]
-    etag2 = s3_client.upload_part(Bucket=bucket, Key="mp.txt", UploadId=upload_id, PartNumber=2, Body=part2)["ETag"]
-    s3_client.complete_multipart_upload(Bucket=bucket, Key="mp.txt", UploadId=upload_id,
-                                        MultipartUpload={"Parts": [{"PartNumber": 1, "ETag": etag1},
-                                                                   {"PartNumber": 2, "ETag": etag2}]})
-    version_id = s3_client.list_object_versions(Bucket=bucket, Prefix="mp.txt")["Versions"][0]["VersionId"]
+    etag1 = s3_client.upload_part(
+        Bucket=bucket, Key="mp.txt", UploadId=upload_id, PartNumber=1, Body=part1
+    )["ETag"]
+    etag2 = s3_client.upload_part(
+        Bucket=bucket, Key="mp.txt", UploadId=upload_id, PartNumber=2, Body=part2
+    )["ETag"]
+    s3_client.complete_multipart_upload(
+        Bucket=bucket,
+        Key="mp.txt",
+        UploadId=upload_id,
+        MultipartUpload={
+            "Parts": [
+                {"PartNumber": 1, "ETag": etag1},
+                {"PartNumber": 2, "ETag": etag2},
+            ]
+        },
+    )
+    version_id = s3_client.list_object_versions(Bucket=bucket, Prefix="mp.txt")[
+        "Versions"
+    ][0]["VersionId"]
 
     obj = s3_client.get_object(Bucket=bucket, Key="mp.txt", VersionId=version_id)
     assert obj["ObjectLockMode"] == "GOVERNANCE"
@@ -2485,44 +3669,86 @@ def test_object_lock_headers_multipart(hs5: Hs5Runner):
     assert obj["ContentType"] == "text/plain"
     assert obj["Body"].read() == part1 + part2
 
-    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="mp.txt", VersionId=version_id,
-                                                        BypassGovernanceRetention=True), "AccessDenied")
+    assert_client_error(
+        lambda: s3_client.delete_object(
+            Bucket=bucket,
+            Key="mp.txt",
+            VersionId=version_id,
+            BypassGovernanceRetention=True,
+        ),
+        "AccessDenied",
+    )
 
     # Aborting a multipart upload with object lock headers works
-    upload_id = s3_client.create_multipart_upload(Bucket=bucket, Key="mp2.txt", ObjectLockLegalHoldStatus="ON",
-                                                  ObjectLockMode="COMPLIANCE", ObjectLockRetainUntilDate=retain_until)["UploadId"]
-    s3_client.upload_part(Bucket=bucket, Key="mp2.txt", UploadId=upload_id, PartNumber=1, Body=b"abc")
+    upload_id = s3_client.create_multipart_upload(
+        Bucket=bucket,
+        Key="mp2.txt",
+        ObjectLockLegalHoldStatus="ON",
+        ObjectLockMode="COMPLIANCE",
+        ObjectLockRetainUntilDate=retain_until,
+    )["UploadId"]
+    s3_client.upload_part(
+        Bucket=bucket, Key="mp2.txt", UploadId=upload_id, PartNumber=1, Body=b"abc"
+    )
     s3_client.abort_multipart_upload(Bucket=bucket, Key="mp2.txt", UploadId=upload_id)
     assert "Uploads" not in s3_client.list_multipart_uploads(Bucket=bucket)
-    assert "Versions" not in s3_client.list_object_versions(Bucket=bucket, Prefix="mp2.txt")
+    assert "Versions" not in s3_client.list_object_versions(
+        Bucket=bucket, Prefix="mp2.txt"
+    )
 
 
 def test_object_lock_headers_copy_object(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
-    s3_client.put_object(Bucket=bucket, Key="src.txt", Body=b"abc", Metadata={"foo": "bar"})
+    s3_client.put_object(
+        Bucket=bucket, Key="src.txt", Body=b"abc", Metadata={"foo": "bar"}
+    )
 
     retain_until = utc_in(3600).replace(microsecond=0)
     for directive in ["COPY", "REPLACE"]:
         key = f"dst-{directive}.txt"
-        version_id = s3_client.copy_object(Bucket=bucket, Key=key, CopySource={"Bucket": bucket, "Key": "src.txt"},
-                                           MetadataDirective=directive, ObjectLockMode="GOVERNANCE",
-                                           ObjectLockRetainUntilDate=retain_until, ObjectLockLegalHoldStatus="ON")["VersionId"]
+        version_id = s3_client.copy_object(
+            Bucket=bucket,
+            Key=key,
+            CopySource={"Bucket": bucket, "Key": "src.txt"},
+            MetadataDirective=directive,
+            ObjectLockMode="GOVERNANCE",
+            ObjectLockRetainUntilDate=retain_until,
+            ObjectLockLegalHoldStatus="ON",
+        )["VersionId"]
         obj_info = s3_client.head_object(Bucket=bucket, Key=key, VersionId=version_id)
         assert obj_info["ObjectLockMode"] == "GOVERNANCE"
         assert obj_info["ObjectLockRetainUntilDate"] == retain_until
         assert obj_info["ObjectLockLegalHoldStatus"] == "ON"
         if directive == "COPY":
             assert obj_info["Metadata"] == {"foo": "bar"}
-        assert s3_client.get_object(Bucket=bucket, Key=key, VersionId=version_id)["Body"].read() == b"abc"
-        assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key=key, VersionId=version_id,
-                                                            BypassGovernanceRetention=True), "AccessDenied")
+        assert (
+            s3_client.get_object(Bucket=bucket, Key=key, VersionId=version_id)[
+                "Body"
+            ].read()
+            == b"abc"
+        )
+        assert_client_error(
+            lambda: s3_client.delete_object(
+                Bucket=bucket,
+                Key=key,
+                VersionId=version_id,
+                BypassGovernanceRetention=True,
+            ),
+            "AccessDenied",
+        )
 
     # Copy into bucket without object lock
-    assert_client_error(lambda: s3_client.copy_object(Bucket=hs5.testbucketname(), Key="dst.txt",
-                                                      CopySource={"Bucket": bucket, "Key": "src.txt"},
-                                                      ObjectLockLegalHoldStatus="ON"), "InvalidRequest")
+    assert_client_error(
+        lambda: s3_client.copy_object(
+            Bucket=hs5.testbucketname(),
+            Key="dst.txt",
+            CopySource={"Bucket": bucket, "Key": "src.txt"},
+            ObjectLockLegalHoldStatus="ON",
+        ),
+        "InvalidRequest",
+    )
 
 
 def test_object_lock_delete_bucket(hs5: Hs5Runner):
@@ -2530,16 +3756,23 @@ def test_object_lock_delete_bucket(hs5: Hs5Runner):
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
 
     v1 = s3_client.put_object(Bucket=bucket, Key="held.txt", Body=b"held")["VersionId"]
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="held.txt", VersionId=v1, LegalHold={"Status": "ON"})
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="held.txt", VersionId=v1, LegalHold={"Status": "ON"}
+    )
     s3_client.delete_object(Bucket=bucket, Key="held.txt")
 
     with pytest.raises(ClientError) as exc_info:
         s3_client.delete_bucket(Bucket=bucket)
     assert exc_info.value.response["ResponseMetadata"]["HTTPStatusCode"] == 409
 
-    assert s3_client.get_object(Bucket=bucket, Key="held.txt", VersionId=v1)["Body"].read() == b"held"
+    assert (
+        s3_client.get_object(Bucket=bucket, Key="held.txt", VersionId=v1)["Body"].read()
+        == b"held"
+    )
 
-    s3_client.put_object_legal_hold(Bucket=bucket, Key="held.txt", VersionId=v1, LegalHold={"Status": "OFF"})
+    s3_client.put_object_legal_hold(
+        Bucket=bucket, Key="held.txt", VersionId=v1, LegalHold={"Status": "OFF"}
+    )
     for v in s3_client.list_object_versions(Bucket=bucket)["Versions"]:
         s3_client.delete_object(Bucket=bucket, Key=v["Key"], VersionId=v["VersionId"])
     for dm in s3_client.list_object_versions(Bucket=bucket).get("DeleteMarkers", []):
@@ -2551,19 +3784,27 @@ def test_post_form_upload_public(hs5: Hs5Runner, tmp_path: Path):
     s3_client = hs5.get_s3_client()
 
     # Make public writable bucket
-    hs5.get_api_client_admin().set_bucket_public(set_bucket_public_params=SetBucketPublicParams(bucketName=hs5.testbucketname(), public=["write"]))
+    hs5.get_api_client_admin().set_bucket_public(
+        set_bucket_public_params=SetBucketPublicParams(
+            bucketName=hs5.testbucketname(), public=["write"]
+        )
+    )
 
     fdata = os.urandom(1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
         upload_file.write(fdata)
 
     # Generate presigned POST URL
-    post_fields = s3_client.generate_presigned_post(Bucket=hs5.testbucketname(), Key="upload.txt", ExpiresIn=3600)
+    post_fields = s3_client.generate_presigned_post(
+        Bucket=hs5.testbucketname(), Key="upload.txt", ExpiresIn=3600
+    )
 
     # Use the generated URL and fields to upload the file
     with open(tmp_path / "upload.txt", "rb") as f:
-        files = {'file': ((tmp_path / "upload.txt").name, f)}
-        response = requests.post(post_fields['url'], data=post_fields['fields'], files=files)
+        files = {"file": ((tmp_path / "upload.txt").name, f)}
+        response = requests.post(
+            post_fields["url"], data=post_fields["fields"], files=files
+        )
         response.raise_for_status()
 
     # Verify the file was uploaded correctly
@@ -2571,44 +3812,50 @@ def test_post_form_upload_public(hs5: Hs5Runner, tmp_path: Path):
     s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
     assert filecmp.cmp(tmp_path / "upload.txt", dl_path)
 
+
 def test_put_bucket_cors(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
 
     s3_client.upload_fileobj(io.BytesIO(b"test"), hs5.testbucketname(), "test.txt")
 
-    cors_config : CORSConfigurationTypeDef = {
-        'CORSRules': [
+    cors_config: CORSConfigurationTypeDef = {
+        "CORSRules": [
             {
-                'AllowedOrigins': ['*'],
-                'AllowedMethods': ['GET', 'POST'],
-                'AllowedHeaders': ['*'],
-                'ExposeHeaders': ['ETag'],
-                'MaxAgeSeconds': 3000
+                "AllowedOrigins": ["*"],
+                "AllowedMethods": ["GET", "POST"],
+                "AllowedHeaders": ["*"],
+                "ExposeHeaders": ["ETag"],
+                "MaxAgeSeconds": 3000,
             }
         ]
     }
 
-    s3_client.put_bucket_cors(Bucket=hs5.testbucketname(), CORSConfiguration=cors_config)
+    s3_client.put_bucket_cors(
+        Bucket=hs5.testbucketname(), CORSConfiguration=cors_config
+    )
 
     response = s3_client.get_bucket_cors(Bucket=hs5.testbucketname())
-    assert 'CORSRules' in response
-    assert len(response['CORSRules']) == 1
-    rule = response['CORSRules'][0]
-    assert rule['AllowedOrigins'] == ['*']
-    assert rule['AllowedMethods'] == ['GET', 'POST']
+    assert "CORSRules" in response
+    assert len(response["CORSRules"]) == 1
+    rule = response["CORSRules"][0]
+    assert rule["AllowedOrigins"] == ["*"]
+    assert rule["AllowedMethods"] == ["GET", "POST"]
     assert "AllowedHeaders" in rule
-    assert rule['AllowedHeaders'] == ['*']
+    assert rule["AllowedHeaders"] == ["*"]
     assert "ExposeHeaders" in rule
-    assert rule['ExposeHeaders'] == ['ETag']
+    assert rule["ExposeHeaders"] == ["ETag"]
     assert "MaxAgeSeconds" in rule
-    assert rule['MaxAgeSeconds'] == 3000
+    assert rule["MaxAgeSeconds"] == 3000
 
     hs5_url = hs5.get_url()
-    resp = requests.options(hs5_url + "/" + hs5.testbucketname() + "/test.txt", headers={
-        "Origin": "http://example.com",
-        "Access-Control-Request-Method": "POST",
-        "Access-Control-Request-Headers": "X-Custom-Header"
-    })
+    resp = requests.options(
+        hs5_url + "/" + hs5.testbucketname() + "/test.txt",
+        headers={
+            "Origin": "http://example.com",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "X-Custom-Header",
+        },
+    )
     assert resp.status_code == 200
     assert resp.headers.get("Access-Control-Allow-Origin") == "*"
     assert resp.headers.get("Access-Control-Allow-Methods") == "GET, POST"
@@ -2617,11 +3864,9 @@ def test_put_bucket_cors(hs5: Hs5Runner):
     assert resp.headers.get("Access-Control-Max-Age") == "3000"
 
     def add_origin_header(request, **kwargs):
-        request.headers['Origin'] = 'https://example.com'
+        request.headers["Origin"] = "https://example.com"
 
-    s3_client.meta.events.register('before-sign.s3.GetObject', add_origin_header)
+    s3_client.meta.events.register("before-sign.s3.GetObject", add_origin_header)
 
     obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="test.txt")
     assert obj["ResponseMetadata"]["HTTPHeaders"]["access-control-allow-origin"] == "*"
-
-

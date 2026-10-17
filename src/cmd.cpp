@@ -2,77 +2,77 @@
  * Copyright Martin Raiber. All Rights Reserved.
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
-#include <iostream>
 #include "config.h"
-#include <folly/String.h>
-#include <folly/system/HardwareConcurrency.h>
-#include <map>
-#include <set>
-#include <fstream>
-#include <tclap/CmdLine.h>
-#include <stdlib.h>
 #include "main.h"
 #include "os_functions.h"
+#include <folly/String.h>
+#include <folly/system/HardwareConcurrency.h>
+#include <fstream>
+#include <iostream>
+#include <map>
+#include <set>
+#include <stdlib.h>
+#include <tclap/CmdLine.h>
 
 void showVersion()
 {
-	std::cout << "HS5 v" << PACKAGE_VERSION << std::endl;
-	std::cout << "Copyright (C) 2025 Martin Raiber" << std::endl;
-	std::cout << "This is free software; see the source for copying conditions. There is NO"<< std::endl;
-	std::cout << "warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."<< std::endl;
+    std::cout << "HS5 v" << PACKAGE_VERSION << std::endl;
+    std::cout << "Copyright (C) 2025 Martin Raiber" << std::endl;
+    std::cout << "This is free software; see the source for copying conditions. There is NO" << std::endl;
+    std::cout << "warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE." << std::endl;
 }
 
 std::string_view unquoteValue(std::string_view val)
 {
-	val = folly::trimWhitespace(val);
-    if(val.empty())
+    val = folly::trimWhitespace(val);
+    if (val.empty())
         return val;
 
-	if(val[0]=='"')
-	{
-		size_t last_pos = val.find_last_of('"');
-		if(last_pos!=0)
-		{
-			val=val.substr(1, last_pos-1);
-		}
-	}
-	else if(val[0]=='\'')
-	{
-		size_t last_pos = val.find_last_of('\'');
-		if(last_pos!=0)
-		{
-			val=val.substr(1, last_pos-1);
-		}
-	}
-	return val;
+    if (val[0] == '"')
+    {
+        size_t last_pos = val.find_last_of('"');
+        if (last_pos != 0)
+        {
+            val = val.substr(1, last_pos - 1);
+        }
+    }
+    else if (val[0] == '\'')
+    {
+        size_t last_pos = val.find_last_of('\'');
+        if (last_pos != 0)
+        {
+            val = val.substr(1, last_pos - 1);
+        }
+    }
+    return val;
 }
 
 std::map<std::string_view, std::string_view> readSettings(const std::string_view& data)
 {
     std::map<std::string_view, std::string_view> settings;
     std::string_view::size_type pos = 0;
-    while(pos!=std::string_view::npos)
+    while (pos != std::string_view::npos)
     {
         auto nextPos = data.find('\n', pos);
         const auto lastLine = nextPos == std::string_view::npos;
-        if(lastLine)
+        if (lastLine)
         {
-            nextPos = data.size()+1;
+            nextPos = data.size() + 1;
         }
-        const auto line = data.substr(pos, nextPos-pos);
-        if(line.empty() || line[0]=='#')
+        const auto line = data.substr(pos, nextPos - pos);
+        if (line.empty() || line[0] == '#')
         {
-            pos = lastLine ? std::string_view::npos : nextPos+1;
+            pos = lastLine ? std::string_view::npos : nextPos + 1;
             continue;
         }
         const auto eqPos = line.find('=');
-        if(eqPos!=std::string_view::npos)
+        if (eqPos != std::string_view::npos)
         {
             const auto key = line.substr(0, eqPos);
-            const auto val = line.substr(eqPos+1);
+            const auto val = line.substr(eqPos + 1);
             settings[key] = unquoteValue(val);
         }
-        pos = lastLine ? std::string_view::npos : nextPos+1;
+        pos = lastLine ? std::string_view::npos : nextPos + 1;
     }
     return settings;
 }
@@ -80,9 +80,9 @@ std::map<std::string_view, std::string_view> readSettings(const std::string_view
 std::string readFile(const std::string& fn)
 {
     std::ifstream file(fn);
-    if(!file)
+    if (!file)
     {
-        throw std::runtime_error("Cannot open file "+fn);
+        throw std::runtime_error("Cannot open file " + fn);
     }
     file.exceptions(std::ifstream::badbit);
     std::string data;
@@ -102,20 +102,20 @@ struct ConfigResult
 
 bool parseConfigBool(const std::string_view val)
 {
-    if(val=="true" || val=="yes" || val=="on" || val=="1")
+    if (val == "true" || val == "yes" || val == "on" || val == "1")
         return true;
     return false;
 }
 
 std::string toFollyLoglevel(const std::string_view val)
 {
-    if(val=="debug")
+    if (val == "debug")
         return "DBG0";
-    if(val=="info")
+    if (val == "info")
         return "INFO";
-    if(val=="warn")
+    if (val == "warn")
         return "WARN";
-    if(val=="error")
+    if (val == "error")
         return "ERR";
     return "INFO";
 }
@@ -127,65 +127,65 @@ ConfigResult readConfigFile(const std::string& fn)
     const auto settings = readSettings(data);
 
     const std::map<std::string_view, std::string_view> configMapping = {
-        {"HTTP_PORT", "http_port"},
-        {"SERVER_URL", "server_url"},
-        {"DATA_STORAGE_PATH", "data_path"},
-        {"METADATA_STORAGE_PATH", "index_path"},
-        {"SERVER_IP", "ip"},
-        {"INIT_ROOT_ACCESS_KEY", "init_root_access_key"},
-        {"INIT_ROOT_PASSWORD", "init_root_password"},
-        {"INIT_CREATE_BUCKET", "init_create_bucket"},
-        {"COMMIT_AFTER_MS", "commit_after_ms"},
-        {"WORKER_THREADS", "folly_global_cpu_executor_threads"},
-        {"HTTP_WORKER_THREADS", "http_worker_threads"},
-        {"TRIM_FREESPACE_SIZE", "trim_freespace_size"},
-        {"DB_MAX_DIRTY_MB", "idl_dirty_max"},
-        {"WAL_SIZE_MB", "max_wal_size_mb"},
-        {"WAL_ITEMS", "max_wal_items"}
+        { "HTTP_PORT", "http_port" },
+        { "SERVER_URL", "server_url" },
+        { "DATA_STORAGE_PATH", "data_path" },
+        { "METADATA_STORAGE_PATH", "index_path" },
+        { "SERVER_IP", "ip" },
+        { "INIT_ROOT_ACCESS_KEY", "init_root_access_key" },
+        { "INIT_ROOT_PASSWORD", "init_root_password" },
+        { "INIT_CREATE_BUCKET", "init_create_bucket" },
+        { "COMMIT_AFTER_MS", "commit_after_ms" },
+        { "WORKER_THREADS", "folly_global_cpu_executor_threads" },
+        { "HTTP_WORKER_THREADS", "http_worker_threads" },
+        { "TRIM_FREESPACE_SIZE", "trim_freespace_size" },
+        { "DB_MAX_DIRTY_MB", "idl_dirty_max" },
+        { "WAL_SIZE_MB", "max_wal_size_mb" },
+        { "WAL_ITEMS", "max_wal_items" }
     };
 
-    for(const auto& [key, val]: settings)
+    for (const auto& [key, val] : settings)
     {
-        if(key=="MANUAL_COMMIT")
+        if (key == "MANUAL_COMMIT")
         {
-            if(parseConfigBool(val))
+            if (parseConfigBool(val))
             {
                 res.args.push_back("--manual_commit");
                 res.setArgs.insert("--manual_commit");
             }
             continue;
         }
-        if(key=="MANUAL_COMMIT_LIST_CONSISTENT")
+        if (key == "MANUAL_COMMIT_LIST_CONSISTENT")
         {
-            if(!parseConfigBool(val))
+            if (!parseConfigBool(val))
             {
                 res.args.push_back("--nomanual_commit_list_consistent");
                 res.setArgs.insert("--nomanual_commit_list_consistent");
             }
             continue;
         }
-        if(key=="LOGLEVEL")
+        if (key == "LOGLEVEL")
         {
             res.setArgs.insert("--logging");
             res.args.push_back("--logging");
             res.args.push_back(toFollyLoglevel(val));
             continue;
         }
-        if(key=="STOP_ON_ERROR")
+        if (key == "STOP_ON_ERROR")
         {
-            if(parseConfigBool(val))
+            if (parseConfigBool(val))
             {
                 res.args.push_back("--stop_on_error");
                 res.setArgs.insert("--stop_on_error");
             }
             continue;
-        }       
+        }
 
         const auto it = configMapping.find(key);
-        if(it!=configMapping.end())
+        if (it != configMapping.end())
         {
-            res.args.push_back("--"+std::string(it->second));
-            res.setArgs.insert("--"+std::string(it->second));
+            res.args.push_back("--" + std::string(it->second));
+            res.setArgs.insert("--" + std::string(it->second));
             res.args.push_back(std::string(val));
         }
 
@@ -199,21 +199,21 @@ ConfigResult readConfigEnv()
     ConfigResult res;
 
     const std::map<std::string_view, std::string_view> configMapping = {
-        {"HS5_DB_MAX_DIRTY_MB", "idl_dirty_max"},
-        {"HS5_TRIM_FREESPACE_SIZE", "trim_freespace_size"},
-        {"HS5_WAL_SIZE_MB", "max_wal_size_mb"},
-        {"HS5_WAL_ITEMS", "max_wal_items"}
+        { "HS5_DB_MAX_DIRTY_MB", "idl_dirty_max" },
+        { "HS5_TRIM_FREESPACE_SIZE", "trim_freespace_size" },
+        { "HS5_WAL_SIZE_MB", "max_wal_size_mb" },
+        { "HS5_WAL_ITEMS", "max_wal_items" }
     };
 
-    for(const auto& [envKey, argKey]: configMapping)
+    for (const auto& [envKey, argKey] : configMapping)
     {
-        if(res.setArgs.contains("--"+std::string(argKey)))
+        if (res.setArgs.contains("--" + std::string(argKey)))
             continue;
 
-        if(auto envVal = getenv(envKey.data()); envVal)
+        if (auto envVal = getenv(envKey.data()); envVal)
         {
-            res.args.push_back("--"+std::string(argKey));
-            res.setArgs.insert("--"+std::string(argKey));
+            res.args.push_back("--" + std::string(argKey));
+            res.setArgs.insert("--" + std::string(argKey));
             res.args.push_back(std::string(envVal));
 
             res.configValues[std::string(envKey)] = std::string(envVal);
@@ -226,146 +226,146 @@ ConfigResult readConfigEnv()
 int runRealMain(std::vector<std::string> args)
 {
     char** argv = new char*[args.size()];
-	for(size_t i=0;i<args.size();++i)
-	{
-		argv[i] = const_cast<char*>(args[i].c_str());
-	}
+    for (size_t i = 0; i < args.size(); ++i)
+    {
+        argv[i] = const_cast<char*>(args[i].c_str());
+    }
 
-	int rc = realMain(static_cast<int>(args.size()), argv);
-	delete[] argv;
-	return rc;
+    int rc = realMain(static_cast<int>(args.size()), argv);
+    delete[] argv;
+    return rc;
 }
 
-typedef int(*action_fun)(std::vector<std::string> args);
+typedef int (*action_fun)(std::vector<std::string> args);
 
 int actionRun(std::vector<std::string> args)
 {
     TCLAP::CmdLine cmd("Run HS5", ' ', PACKAGE_VERSION);
 
     std::vector<std::string> loglevels;
-	loglevels.push_back("debug");
-	loglevels.push_back("info");
-	loglevels.push_back("warn");
-	loglevels.push_back("error");
+    loglevels.push_back("debug");
+    loglevels.push_back("info");
+    loglevels.push_back("warn");
+    loglevels.push_back("error");
 
     TCLAP::ValuesConstraint<std::string> loglevelsConstraint(loglevels);
-	TCLAP::ValueArg<std::string> loglevelArg("v", "loglevel",
-		"Specifies the log level (default info)",
-		false, "info", &loglevelsConstraint, cmd);
+    TCLAP::ValueArg<std::string> loglevelArg("v", "loglevel",
+                                             "Specifies the log level (default info)",
+                                             false, "info", &loglevelsConstraint, cmd);
 
     TCLAP::ValueArg<unsigned short> httpPortArg("p", "http-port",
-		"Specifies the port where HS5 will listen for HTTP connections (default 80)",
-		false, 80, "port number", cmd);
+                                                "Specifies the port where HS5 will listen for HTTP connections (default 80)",
+                                                false, 80, "port number", cmd);
 
     TCLAP::ValueArg<std::string> configArg("c", "config",
-		"Read configuration parameters from config file",
-		false, "", "path", cmd);
+                                           "Read configuration parameters from config file",
+                                           false, "", "path", cmd);
 
     TCLAP::ValueArg<std::string> serverUrlArg("u", "server-url",
-		"URL of the server",
-		false, "", "URL", cmd);
+                                              "URL of the server",
+                                              false, "", "URL", cmd);
 
     TCLAP::ValueArg<std::string> storagePathArg("s", "storage-path",
-		"Storage path (default current dir)",
-		false, ".", "path", cmd);
+                                                "Storage path (default current dir)",
+                                                false, ".", "path", cmd);
 
     TCLAP::ValueArg<std::string> dataStoragePathArg("d", "data-storage-path",
-		"Data file storage path (default current dir)",
-		false, ".", "path", cmd);
+                                                    "Data file storage path (default current dir)",
+                                                    false, ".", "path", cmd);
 
     TCLAP::ValueArg<std::string> metadataStoragePathArg("m", "metadata-storage-path",
-		"Metadata database storage path (default current dir)",
-		false, ".", "path", cmd);
+                                                        "Metadata database storage path (default current dir)",
+                                                        false, ".", "path", cmd);
 
     TCLAP::ValueArg<std::string> ipArg("i", "ip",
-		"Server IP/hostname to bind to (default 0.0.0.0)",
-		false, "0.0.0.0", "ip", cmd);
+                                       "Server IP/hostname to bind to (default 0.0.0.0)",
+                                       false, "0.0.0.0", "ip", cmd);
 
     TCLAP::ValueArg<std::string> initRootAccessKeyArg("", "init-root-access-key",
-		"Initial root account access key (instead of default \"root\")",
-		false, "", "string", cmd);
+                                                      "Initial root account access key (instead of default \"root\")",
+                                                      false, "", "string", cmd);
 
     TCLAP::ValueArg<std::string> initRootPasswordArg("", "init-root-password",
-		"Initial root account password",
-		false, "", "string", cmd);
+                                                     "Initial root account password",
+                                                     false, "", "string", cmd);
 
     TCLAP::ValueArg<std::string> initCreateBucketArg("", "init-create-bucket",
-		"Create this bucket on initialization",
-		false, "", "string", cmd);
+                                                     "Create this bucket on initialization",
+                                                     false, "", "string", cmd);
 
     TCLAP::SwitchArg manualCommitArg("", "manual-commit",
-        "Manual commit mode (default false)", cmd);
+                                     "Manual commit mode (default false)", cmd);
 
     TCLAP::ValueArg<int64_t> commitAfterMsArg("", "commit-after-ms",
-        "If manual commit mode is enabled, commit after this time (default 30000ms)",
-        false, 30000, "milliseconds", cmd);
+                                              "If manual commit mode is enabled, commit after this time (default 30000ms)",
+                                              false, 30000, "milliseconds", cmd);
 
     TCLAP::SwitchArg duckDbUi("", "duckdb-ui",
-        "Run DuckDB UI", cmd);
+                              "Run DuckDB UI", cmd);
 
     TCLAP::ValueArg<unsigned short> duckDbUiPort("", "duckdb-http-port",
-		"Specifies on which port DuckDB UI will run (default 4213)",
-		false, 4213, "port number", cmd);
+                                                 "Specifies on which port DuckDB UI will run (default 4213)",
+                                                 false, 4213, "port number", cmd);
 
     TCLAP::SwitchArg stopOnErrorArg("", "stop-on-error",
-        "Stop running on error (e.g., write error)", cmd);
+                                    "Stop running on error (e.g., write error)", cmd);
 
     TCLAP::ValueArg<std::string> walPathArg("", "wal-path",
-        "Path to write performance WAL file to (default same as meta storage path)",
-        false, "", "path", cmd);
+                                            "Path to write performance WAL file to (default same as meta storage path)",
+                                            false, "", "path", cmd);
 
     TCLAP::ValueArg<int64_t> workerThreadsArg("", "worker-threads",
-        "Max number of worker threads to use (default number of CPU cores times two)",
-        false, 0, "threads", cmd);
+                                              "Max number of worker threads to use (default number of CPU cores times two)",
+                                              false, 0, "threads", cmd);
 
     TCLAP::ValueArg<int64_t> httpWorkerThreadsArg("", "http-worker-threads",
-        "Max number of worker threads to use for HTTP server (default number of CPU cores)",
-        false, 0, "threads", cmd);
+                                                  "Max number of worker threads to use for HTTP server (default number of CPU cores)",
+                                                  false, 0, "threads", cmd);
 
     std::vector<std::string> walModes;
     walModes.push_back("disabled");
-	walModes.push_back("metadata-only");
+    walModes.push_back("metadata-only");
     walModes.push_back("data-only");
     walModes.push_back("all-data-only");
-	walModes.push_back("full");
+    walModes.push_back("full");
     walModes.push_back("full-all-data");
 
     TCLAP::ValuesConstraint<std::string> walModesConstraint(walModes);
     TCLAP::ValueArg<std::string> walModeArg("", "wal-mode",
-        "Specifies what to write to performance WAL file (default disabled)",
-        false, "disabled", &walModesConstraint, cmd);
+                                            "Specifies what to write to performance WAL file (default disabled)",
+                                            false, "disabled", &walModesConstraint, cmd);
 
     TCLAP::ValueArg<int64_t> walSmallObjectLimitArg("", "wal-small-object-limit",
-        "Number of bytes below which to log object data to WAL file if wal-mode is full or data-only"
-        " (default 6000 bytes)",
-        false, 6000, "bytes", cmd);
+                                                    "Number of bytes below which to log object data to WAL file if wal-mode is full or data-only"
+                                                    " (default 6000 bytes)",
+                                                    false, 6000, "bytes", cmd);
 
     std::vector<std::string> realArgs;
-	realArgs.push_back(args[0]);
+    realArgs.push_back(args[0]);
 
     cmd.parse(args);
 
     std::set<std::string> alreadySetArgs;
     std::map<std::string, std::string> configValues;
-    if(!configArg.getValue().empty())
-	{
-		const auto configRes = readConfigFile(configArg.getValue());
+    if (!configArg.getValue().empty())
+    {
+        const auto configRes = readConfigFile(configArg.getValue());
         configValues = configRes.configValues;
         args.insert(args.end(), configRes.args.begin(), configRes.args.end());
         alreadySetArgs = configRes.setArgs;
-	}
+    }
     const auto envRes = readConfigEnv();
     args.insert(args.end(), envRes.args.begin(), envRes.args.end());
     alreadySetArgs.insert(envRes.setArgs.begin(), envRes.setArgs.end());
 
-    if(!alreadySetArgs.contains("--http_port"))
+    if (!alreadySetArgs.contains("--http_port"))
     {
-        if(httpPortArg.isSet())
+        if (httpPortArg.isSet())
         {
             realArgs.push_back("--http_port");
             realArgs.push_back(std::to_string(httpPortArg.getValue()));
         }
-        else if(auto httpPortEnv = getenv("HS5_HTTP_PORT"); httpPortEnv)
+        else if (auto httpPortEnv = getenv("HS5_HTTP_PORT"); httpPortEnv)
         {
             realArgs.push_back("--http_port");
             realArgs.push_back(httpPortEnv);
@@ -377,34 +377,34 @@ int actionRun(std::vector<std::string> args)
         }
     }
 
-    if(!alreadySetArgs.contains("--server_url"))
+    if (!alreadySetArgs.contains("--server_url"))
     {
-        if(serverUrlArg.isSet())
+        if (serverUrlArg.isSet())
         {
             realArgs.push_back("--server_url");
             realArgs.push_back(serverUrlArg.getValue());
         }
-        else if(auto serverUrlEnv = getenv("HS5_SERVER_URL"); serverUrlEnv)
+        else if (auto serverUrlEnv = getenv("HS5_SERVER_URL"); serverUrlEnv)
         {
             realArgs.push_back("--server_url");
             realArgs.push_back(serverUrlEnv);
         }
     }
 
-    if(!alreadySetArgs.contains("--data_path"))
+    if (!alreadySetArgs.contains("--data_path"))
     {
-        if( dataStoragePathArg.isSet()  || storagePathArg.isSet()) 
+        if (dataStoragePathArg.isSet() || storagePathArg.isSet())
         {
             const auto dataPath = dataStoragePathArg.isSet() ? dataStoragePathArg.getValue() : storagePathArg.getValue();
             realArgs.push_back("--data_path");
             realArgs.push_back(dataPath);
         }
-        else if(auto dataPath = getenv("HS5_DATA_PATH"); dataPath)
+        else if (auto dataPath = getenv("HS5_DATA_PATH"); dataPath)
         {
             realArgs.push_back("--data_path");
             realArgs.push_back(dataPath);
         }
-        else if(auto dataPath = getenv("HS5_STORAGE_PATH"); dataPath)
+        else if (auto dataPath = getenv("HS5_STORAGE_PATH"); dataPath)
         {
             realArgs.push_back("--data_path");
             realArgs.push_back(dataPath);
@@ -413,9 +413,9 @@ int actionRun(std::vector<std::string> args)
 
     auto metadataStoragePathVal = std::string(".");
 
-    if(!alreadySetArgs.contains("--index_path"))
+    if (!alreadySetArgs.contains("--index_path"))
     {
-        if( metadataStoragePathArg.isSet() || storagePathArg.isSet()) 
+        if (metadataStoragePathArg.isSet() || storagePathArg.isSet())
         {
             metadataStoragePathVal = metadataStoragePathArg.isSet() ? metadataStoragePathArg.getValue() : storagePathArg.getValue();
             realArgs.push_back("--index_path");
@@ -423,7 +423,7 @@ int actionRun(std::vector<std::string> args)
             realArgs.push_back("--db_path");
             realArgs.push_back(metadataStoragePathVal + os_file_sep() + "hs5.db");
         }
-        else if(auto metadataPath = getenv("HS5_METADATA_PATH"); metadataPath)
+        else if (auto metadataPath = getenv("HS5_METADATA_PATH"); metadataPath)
         {
             realArgs.push_back("--index_path");
             realArgs.push_back(metadataPath);
@@ -431,7 +431,7 @@ int actionRun(std::vector<std::string> args)
             realArgs.push_back(metadataPath + os_file_sep() + "hs5.db");
             metadataStoragePathVal = metadataPath;
         }
-        else if(auto metadataPath = getenv("HS5_STORAGE_PATH"); metadataPath)
+        else if (auto metadataPath = getenv("HS5_STORAGE_PATH"); metadataPath)
         {
             realArgs.push_back("--index_path");
             realArgs.push_back(metadataPath);
@@ -441,14 +441,14 @@ int actionRun(std::vector<std::string> args)
         }
     }
 
-    if(!alreadySetArgs.contains("--ip"))
+    if (!alreadySetArgs.contains("--ip"))
     {
-        if(ipArg.isSet())
+        if (ipArg.isSet())
         {
             realArgs.push_back("--ip");
             realArgs.push_back(ipArg.getValue());
         }
-        else if(auto ipEnv = getenv("HS5_SERVER_IP"); ipEnv)
+        else if (auto ipEnv = getenv("HS5_SERVER_IP"); ipEnv)
         {
             realArgs.push_back("--ip");
             realArgs.push_back(ipEnv);
@@ -460,44 +460,44 @@ int actionRun(std::vector<std::string> args)
         }
     }
 
-     if(!alreadySetArgs.contains("--init_root_access_key") &&
+    if (!alreadySetArgs.contains("--init_root_access_key") &&
         initRootAccessKeyArg.isSet())
     {
         realArgs.push_back("--init_root_access_key");
         realArgs.push_back(initRootAccessKeyArg.getValue());
     }
 
-    if(!alreadySetArgs.contains("--init_root_password") &&
+    if (!alreadySetArgs.contains("--init_root_password") &&
         initRootPasswordArg.isSet())
     {
         realArgs.push_back("--init_root_password");
         realArgs.push_back(initRootPasswordArg.getValue());
     }
 
-    if(!alreadySetArgs.contains("--init_create_bucket") &&
+    if (!alreadySetArgs.contains("--init_create_bucket") &&
         initCreateBucketArg.isSet())
     {
         realArgs.push_back("--init_create_bucket");
         realArgs.push_back(initCreateBucketArg.getValue());
     }
 
-    if(!alreadySetArgs.contains("--manual_commit"))
+    if (!alreadySetArgs.contains("--manual_commit"))
     {
-        if(manualCommitArg.getValue())
+        if (manualCommitArg.getValue())
             realArgs.push_back("--manual_commit");
-        else if(auto manualCommitEnv = getenv("HS5_MANUAL_COMMIT");
-                manualCommitEnv && parseConfigBool(manualCommitEnv))
+        else if (auto manualCommitEnv = getenv("HS5_MANUAL_COMMIT");
+                 manualCommitEnv && parseConfigBool(manualCommitEnv))
             realArgs.push_back("--manual_commit");
     }
 
-    if(!alreadySetArgs.contains("--commit_after_ms"))
+    if (!alreadySetArgs.contains("--commit_after_ms"))
     {
-        if(commitAfterMsArg.isSet())
+        if (commitAfterMsArg.isSet())
         {
             realArgs.push_back("--commit_after_ms");
             realArgs.push_back(std::to_string(commitAfterMsArg.getValue()));
         }
-        else if(auto commitAfterMsEnv = getenv("HS5_COMMIT_AFTER_MS"); commitAfterMsEnv)
+        else if (auto commitAfterMsEnv = getenv("HS5_COMMIT_AFTER_MS"); commitAfterMsEnv)
         {
             realArgs.push_back("--commit_after_ms");
             realArgs.push_back(commitAfterMsEnv);
@@ -509,123 +509,124 @@ int actionRun(std::vector<std::string> args)
         }
     }
 
-    if(!alreadySetArgs.contains("--logging"))
+    if (!alreadySetArgs.contains("--logging"))
     {
         realArgs.push_back("--logging");
         realArgs.push_back(toFollyLoglevel(loglevelArg.getValue()));
     }
 
-    if(duckDbUi.getValue())
+    if (duckDbUi.getValue())
     {
         realArgs.push_back("--run_duckdb");
         realArgs.push_back("--duckdb_port");
         realArgs.push_back(std::to_string(duckDbUiPort.getValue()));
     }
 
-    if(!alreadySetArgs.contains("--stop_on_error"))
+    if (!alreadySetArgs.contains("--stop_on_error"))
     {
-        if(auto stopOnErrorEnv = getenv("HS5_STOP_ON_ERROR"); stopOnErrorEnv && parseConfigBool(stopOnErrorEnv))
+        if (auto stopOnErrorEnv = getenv("HS5_STOP_ON_ERROR"); stopOnErrorEnv && parseConfigBool(stopOnErrorEnv))
             realArgs.push_back("--stop_on_error");
-        else if(stopOnErrorArg.isSet() && stopOnErrorArg.getValue())
+        else if (stopOnErrorArg.isSet() && stopOnErrorArg.getValue())
             realArgs.push_back("--stop_on_error");
     }
 
     std::string walMode;
-    if(auto walModeIt = configValues.find("WAL_MODE"); walModeIt!=configValues.end())
+    if (auto walModeIt = configValues.find("WAL_MODE"); walModeIt != configValues.end())
     {
         walMode = walModeIt->second;
     }
-    else if(walModeArg.isSet())
+    else if (walModeArg.isSet())
     {
         walMode = walModeArg.getValue();
     }
-    else if(auto walModeEnv = getenv("HS5_WAL_MODE"); walModeEnv)
+    else if (auto walModeEnv = getenv("HS5_WAL_MODE"); walModeEnv)
     {
         walMode = walModeEnv;
     }
 
     unsigned int walSmallObjectLimit = walSmallObjectLimitArg.getValue();
 
-    if(auto walSmallObjectLimitIt = configValues.find("WAL_SMALL_OBJECT_LIMIT");
-        walSmallObjectLimitIt!=configValues.end())
+    if (auto walSmallObjectLimitIt = configValues.find("WAL_SMALL_OBJECT_LIMIT");
+        walSmallObjectLimitIt != configValues.end())
     {
         try
         {
             walSmallObjectLimit = std::stoul(walSmallObjectLimitIt->second);
         }
-        catch(const std::exception& ex)
+        catch (const std::exception& ex)
         {
             std::cerr << "Invalid value for WAL_SMALL_OBJECT_LIMIT in config file, using default" << std::endl;
         }
     }
-    else if(!walSmallObjectLimitArg.isSet())
+    else if (!walSmallObjectLimitArg.isSet())
     {
-        if(auto walSmallObjectLimitEnv = getenv("HS5_WAL_SMALL_OBJECT_LIMIT"); walSmallObjectLimitEnv)
+        if (auto walSmallObjectLimitEnv = getenv("HS5_WAL_SMALL_OBJECT_LIMIT"); walSmallObjectLimitEnv)
         {
             try
             {
                 walSmallObjectLimit = std::stoul(walSmallObjectLimitEnv);
             }
-            catch(const std::exception& ex)
+            catch (const std::exception& ex)
             {
                 std::cerr << "Invalid value for HS5_WAL_SMALL_OBJECT_LIMIT "
-                    "environment variable, using default" << std::endl;
+                             "environment variable, using default"
+                          << std::endl;
             }
         }
     }
 
     std::string walPath;
-    if(auto walPathIt = configValues.find("WAL_PATH"); walPathIt!=configValues.end())
+    if (auto walPathIt = configValues.find("WAL_PATH"); walPathIt != configValues.end())
         walPath = walPathIt->second;
-    else if(walPathArg.isSet())
+    else if (walPathArg.isSet())
         walPath = walPathArg.getValue();
-    else if(auto walPathEnv = getenv("HS5_WAL_PATH"); walPathEnv)
+    else if (auto walPathEnv = getenv("HS5_WAL_PATH"); walPathEnv)
         walPath = walPathEnv;
     else
         walPath = metadataStoragePathVal;
 
-    if(!walMode.empty() && walMode != "disabled")
+    if (!walMode.empty() && walMode != "disabled")
     {
         walSmallObjectLimit = walSmallObjectLimit > 0 ? walSmallObjectLimit : -1;
-        if(!alreadySetArgs.contains("--index_wal_path"))
+        if (!alreadySetArgs.contains("--index_wal_path"))
         {
             // Setting index_wal_path enables WAL (metadata-only)
             realArgs.push_back("--index_wal_path");
             realArgs.push_back(walPath);
         }
 
-        if(walMode=="full")
+        if (walMode == "full")
         {
             realArgs.push_back("--wal_write_data");
             realArgs.push_back(std::to_string(walSmallObjectLimit));
         }
-        else if(walMode=="data-only")
+        else if (walMode == "data-only")
         {
             realArgs.push_back("--nowal_write_meta");
             realArgs.push_back("--wal_write_data");
             realArgs.push_back(std::to_string(walSmallObjectLimit));
         }
-        else if(walMode=="all-data-only")
+        else if (walMode == "all-data-only")
         {
             realArgs.push_back("--nowal_write_meta");
             realArgs.push_back("--wal_write_data");
             realArgs.push_back("-1");
         }
-        else if(walMode=="full-all-data")
+        else if (walMode == "full-all-data")
         {
             realArgs.push_back("--wal_write_data");
             realArgs.push_back("-1");
         }
     }
 
-    if(!alreadySetArgs.contains("--folly_global_cpu_executor_threads"))
+    if (!alreadySetArgs.contains("--folly_global_cpu_executor_threads"))
     {
-        if(workerThreadsArg.isSet())
+        if (workerThreadsArg.isSet())
         {
             realArgs.push_back("--folly_global_cpu_executor_threads");
             realArgs.push_back(std::to_string(workerThreadsArg.getValue()));
         }
-        else if(auto workerThreadsEnv = getenv("HS5_WORKER_THREADS"); workerThreadsEnv)
+        else if (auto workerThreadsEnv = getenv("HS5_WORKER_THREADS"); workerThreadsEnv)
         {
             realArgs.push_back("--folly_global_cpu_executor_threads");
             realArgs.push_back(workerThreadsEnv);
@@ -638,14 +639,14 @@ int actionRun(std::vector<std::string> args)
         }
     }
 
-    if(!alreadySetArgs.contains("--http_worker_threads"))
+    if (!alreadySetArgs.contains("--http_worker_threads"))
     {
-        if(httpWorkerThreadsArg.isSet())
+        if (httpWorkerThreadsArg.isSet())
         {
             realArgs.push_back("--http_worker_threads");
             realArgs.push_back(std::to_string(httpWorkerThreadsArg.getValue()));
         }
-        else if(auto workerThreadsEnv = getenv("HS5_HTTP_WORKER_THREADS"); workerThreadsEnv)
+        else if (auto workerThreadsEnv = getenv("HS5_HTTP_WORKER_THREADS"); workerThreadsEnv)
         {
             realArgs.push_back("--http_worker_threads");
             realArgs.push_back(workerThreadsEnv);
@@ -657,72 +658,74 @@ int actionRun(std::vector<std::string> args)
 
 int actionHelp(std::vector<std::string> args)
 {
-	std::cout << std::endl;
-	std::cout << "USAGE:" << std::endl;
-	std::cout << std::endl;
-	std::cout << "\t" << args[0] << " [--help] [--version] <command> [<args>]" << std::endl;
-	std::cout << std::endl;
-	std::cout << "Get specific command help with " << args[0] << " <command> --help" << std::endl;
-	std::cout << std::endl;
-	std::cout << "\t" << args[0] << " run" << std::endl;
-	std::cout << "\t\t" "Run HS5" << std::endl;
+    std::cout << std::endl;
+    std::cout << "USAGE:" << std::endl;
+    std::cout << std::endl;
+    std::cout << "\t" << args[0] << " [--help] [--version] <command> [<args>]" << std::endl;
+    std::cout << std::endl;
+    std::cout << "Get specific command help with " << args[0] << " <command> --help" << std::endl;
+    std::cout << std::endl;
+    std::cout << "\t" << args[0] << " run" << std::endl;
+    std::cout << "\t\t"
+                 "Run HS5"
+              << std::endl;
     return 0;
 }
 
 int actionInternal(std::vector<std::string> args)
 {
-	return runRealMain(args);
+    return runRealMain(args);
 }
 
 const std::map<std::string, action_fun> cmdlineActions = {
-        {"run", actionRun},
-        {"help", actionHelp},
-        {"internal", actionInternal}
-    };
+    { "run", actionRun },
+    { "help", actionHelp },
+    { "internal", actionInternal }
+};
 
 int main(int argc, char* argv[])
 {
-	if(argc==0)
-	{
-		std::cout << "Not enough arguments (zero arguments) -- no program name" << std::endl;
-		return 1;
-	}
+    if (argc == 0)
+    {
+        std::cout << "Not enough arguments (zero arguments) -- no program name" << std::endl;
+        return 1;
+    }
 
-    bool hasHelp=false;
-	bool hasVersion=false;
+    bool hasHelp = false;
+    bool hasVersion = false;
     action_fun action = nullptr;
     std::string actionName;
 
     std::vector<std::string> args;
-	args.push_back(argv[0]);
+    args.push_back(argv[0]);
 
-    for(int i=1;i<argc;++i)
-	{
-		const std::string arg = argv[i];
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string arg = argv[i];
 
-		if(arg=="--help" || arg=="-h")
-		{
-			hasHelp=true;
-		}
+        if (arg == "--help" || arg == "-h")
+        {
+            hasHelp = true;
+        }
 
-		if(arg=="--version")
-		{
-			hasVersion=true;
-		}
+        if (arg == "--version")
+        {
+            hasVersion = true;
+        }
 
-        if(!arg.empty() && arg[0]=='-')
-		{
-			args.push_back(arg);
-			continue;
-		}
+        if (!arg.empty() && arg[0] == '-')
+        {
+            args.push_back(arg);
+            continue;
+        }
 
         const auto actionIt = cmdlineActions.find(arg);
-        if(actionIt != cmdlineActions.end())
+        if (actionIt != cmdlineActions.end())
         {
-            if(action!=nullptr)
+            if (action != nullptr)
             {
                 actionHelp(args);
-				exit(1);
+                exit(1);
             }
             action = actionIt->second;
             actionName = arg;
@@ -734,32 +737,31 @@ int main(int argc, char* argv[])
         }
     }
 
-    if(action==nullptr)
+    if (action == nullptr)
     {
-        if(hasHelp)
-		{
-			actionHelp(args);
-			exit(1);
-		}
-        if(hasVersion)
-		{
-			showVersion();
-			exit(1);
-		}
+        if (hasHelp)
+        {
+            actionHelp(args);
+            exit(1);
+        }
+        if (hasVersion)
+        {
+            showVersion();
+            exit(1);
+        }
         actionHelp(args);
-		exit(1);
+        exit(1);
     }
 
     try
-	{
-		args[0]+=" "+actionName;
-		int rc = action(args);
-		return rc;
-	}
-	catch (TCLAP::ArgException &e)
-	{
-		std::cerr << "error: " << e.error() << " for arg " << e.argId() << std::endl;
-		return 1;
-	}
+    {
+        args[0] += " " + actionName;
+        int rc = action(args);
+        return rc;
+    }
+    catch (TCLAP::ArgException& e)
+    {
+        std::cerr << "error: " << e.error() << " for arg " << e.argId() << std::endl;
+        return 1;
+    }
 }
-

@@ -1,16 +1,17 @@
 #pragma once
-#include <string>
-#include <stdexcept>
-#include <vector>
-#include "s3handler.h"
 #include "Action.h"
+#include "s3handler.h"
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 class PolicyParseError : public std::runtime_error
 {
 public:
     PolicyParseError(std::string msg)
-     : std::runtime_error(std::move(msg))
-     {}
+        : std::runtime_error(std::move(msg))
+    {
+    }
 };
 
 struct Statement
@@ -41,7 +42,7 @@ public:
         Deny,
         Allow,
         NoMatch
-    };    
+    };
 
     AccessCheckResult checkAccess(const Action action, const std::string_view resource) const;
 
@@ -49,7 +50,6 @@ public:
 
 private:
     static bool resourceMatch(const std::string_view policyResource, const std::string_view resource);
-    
+
     static std::vector<Action> expandAction(const std::string_view actionStr);
 };
-

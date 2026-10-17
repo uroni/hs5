@@ -4,9 +4,9 @@
  */
 #include "WalFile.h"
 #include "data.h"
-#include <folly/system/MemoryMapping.h>
-#include <folly/hash/Checksum.h>
 #include <folly/Random.h>
+#include <folly/hash/Checksum.h>
+#include <folly/system/MemoryMapping.h>
 #include <folly/system/ThreadName.h>
 
 const char walFileInitString[] = "WALFILE_INIT";
@@ -22,317 +22,315 @@ const char matchInfoFlagBypassGovernance = 1 << 2;
 const char matchInfoFlagWithProtectedCheckTime = 1 << 3;
 
 const int64_t waitBlockSize = 64 * 1024;
-const int64_t dirtyBlockSize = 64*1024;
-
+const int64_t dirtyBlockSize = 64 * 1024;
 
 DEFINE_bool(wal_write_delay, false, "Delay WAL writes for testing");
-
 
 namespace
 {
 
-void setChecksumAndSize(CWData& data)
-{
-    const auto dsize = static_cast<unsigned int>(data.getDataSize());
-    memcpy(data.getDataPtr() + sizeof(dsize), &dsize, sizeof(dsize));
-    const auto crc = folly::crc32c(reinterpret_cast<uint8_t*>(data.getDataPtr() + sizeof(dsize)), dsize - sizeof(dsize));    
-    static_assert(sizeof(crc) == sizeof(unsigned int));
-    memcpy(data.getDataPtr(), &crc, sizeof(crc));
-}
-
-void writeDataHeader(CWData& data, char type, int64_t seqNo)
-{
-    data.addUInt(0); // checksum
-    data.addUInt(0); // size
-    data.addChar(type); // version & type
-    data.addVarInt(seqNo);
-}
-
-bool serializeCommitInfo(const WalFile::CommitInfo& commitInfo, CWData& data)
-{
-    data.addVarInt(commitInfo.data_file_max_size);
-    data.addVarInt(commitInfo.curr_write_ext_start);
-    data.addVarInt(commitInfo.curr_write_ext_end);
-    data.addVarInt(commitInfo.data_file_free);
-    data.addVarInt(commitInfo.curr_transid);
-    data.addVarInt(commitInfo.local_curr_partid);
-    data.addVarInt(commitInfo.local_curr_version);
-    data.addVarInt(commitInfo.reserved_extents.size());
-    for (const auto& ext : commitInfo.reserved_extents)
+    void setChecksumAndSize(CWData& data)
     {
-        data.addVarInt(ext.offset);
-        data.addVarInt(ext.len);
-    }
-    return true;
-}
-
-bool deserializeCommitInfo(CRData& data, WalFile::CommitInfo& commitInfo)
-{
-    bool b = true;
-    b &= data.getVarInt(&commitInfo.data_file_max_size);
-    b &= data.getVarInt(&commitInfo.curr_write_ext_start);
-    b &= data.getVarInt(&commitInfo.curr_write_ext_end);
-    b &= data.getVarInt(&commitInfo.data_file_free);
-    b &= data.getVarInt(&commitInfo.curr_transid);
-    b &= data.getVarInt(&commitInfo.local_curr_partid);
-    b &= data.getVarInt(&commitInfo.local_curr_version);
-    int64_t reserved_extents_size = 0;
-    b &= data.getVarInt(&reserved_extents_size);
-    commitInfo.reserved_extents.resize(reserved_extents_size);
-    for (auto& ext : commitInfo.reserved_extents)
-    {
-        b &= data.getVarInt(&ext.offset);
-        b &= data.getVarInt(&ext.len);
-    }
-    return b;
-}
-
-bool serializeMatchInfo(const SingleFileStorage::MatchInfo& matchInfo, CWData& data)
-{
-    if(matchInfo.readFn)
-    {
-        data.addChar(1);
-        data.addString2(*matchInfo.readFn);
-    }
-    else
-    {
-        data.addChar(0);
-    }
-    char flags = 0;
-    if(matchInfo.readNewest)
-        flags |= matchInfoFlagReadNewest;
-    if(matchInfo.checkProtected)
-        flags |= matchInfoFlagCheckProtected;
-    if(matchInfo.bypassGovernance)
-        flags |= matchInfoFlagBypassGovernance;
-    if(matchInfo.protectedCheckTime != 0)
-        flags |= matchInfoFlagWithProtectedCheckTime;
-    data.addChar(flags);
-    if(matchInfo.protectedCheckTime != 0)
-        data.addVarInt(matchInfo.protectedCheckTime);
-    data.addVarInt(matchInfo.ifMatch.size());
-    for(const auto& s : matchInfo.ifMatch)
-        data.addString2(s);
-    data.addVarInt(matchInfo.ifNoneMatch.size());
-    for(const auto& s : matchInfo.ifNoneMatch)
-        data.addString2(s);
-    if(matchInfo.ifModifiedSince)
-    {
-        data.addChar(1);
-        data.addVarInt(*matchInfo.ifModifiedSince);
-    }
-    else
-    {
-        data.addChar(0);
-    }
-    if(matchInfo.ifUnmodifiedSince)
-    {
-        data.addChar(1);
-        data.addVarInt(*matchInfo.ifUnmodifiedSince);
-    }
-    else
-    {
-        data.addChar(0);
-    }
-    return true;
-}
-
-bool deserializeMatchInfo(CRData& data, SingleFileStorage::MatchInfo& matchInfo)
-{
-    bool b = true;
-    char hasReadFn;
-    b &= data.getChar(&hasReadFn);
-    if(hasReadFn)
-    {
-        std::string readFn;
-        b &= data.getStr2(&readFn);
-        matchInfo.readFn = readFn;
-    }
-    char flags;
-    b &= data.getChar(&flags);
-    matchInfo.readNewest = (flags & matchInfoFlagReadNewest) != 0;
-    matchInfo.checkProtected = (flags & matchInfoFlagCheckProtected) != 0;
-    matchInfo.bypassGovernance = (flags & matchInfoFlagBypassGovernance) != 0;
-    if(flags & matchInfoFlagWithProtectedCheckTime)
-        b &= data.getVarInt(&matchInfo.protectedCheckTime);
-    int64_t ifMatchSize = 0;
-    b &= data.getVarInt(&ifMatchSize);
-    for(size_t i = 0; i < ifMatchSize; ++i)
-    {
-        std::string s;
-        b &= data.getStr2(&s);
-        matchInfo.ifMatch.push_back(s);
-    }
-    int64_t ifNoneMatchSize = 0;
-    b &= data.getVarInt(&ifNoneMatchSize);
-    for(size_t i = 0; i < ifNoneMatchSize; ++i)
-    {
-        std::string s;
-        b &= data.getStr2(&s);
-        matchInfo.ifNoneMatch.push_back(s);
-    }
-    char hasIfModifiedSince;
-    b &= data.getChar(&hasIfModifiedSince);
-    if(hasIfModifiedSince)
-    {
-        int64_t ifModifiedSince;
-        b &= data.getVarInt(&ifModifiedSince);
-        matchInfo.ifModifiedSince = ifModifiedSince;
-    }
-    char hasIfUnmodifiedSince;
-    b &= data.getChar(&hasIfUnmodifiedSince);
-    if(hasIfUnmodifiedSince)
-    {
-        int64_t ifUnmodifiedSince;
-        b &= data.getVarInt(&ifUnmodifiedSince);
-        matchInfo.ifUnmodifiedSince = ifUnmodifiedSince;
-    }
-    
-    return b;
-}
-
-bool serializeFragInfo(const SingleFileStorage::SFragInfo& info, CWData& data)
-{
-    data.addUChar(static_cast<unsigned char>(info.action));
-    data.addString2(info.fn);
-    data.addVarInt(info.offset);
-    data.addVarInt(info.len);
-    data.addVarInt(info.last_modified);
-    data.addString2(info.md5sum);
-    data.addVarInt(info.extra_exts.size());
-    for (const auto& ext : info.extra_exts)
-    {
-        data.addVarInt(ext.offset);
-        data.addVarInt(ext.len);
+        const auto dsize = static_cast<unsigned int>(data.getDataSize());
+        memcpy(data.getDataPtr() + sizeof(dsize), &dsize, sizeof(dsize));
+        const auto crc = folly::crc32c(reinterpret_cast<uint8_t*>(data.getDataPtr() + sizeof(dsize)), dsize - sizeof(dsize));
+        static_assert(sizeof(crc) == sizeof(unsigned int));
+        memcpy(data.getDataPtr(), &crc, sizeof(crc));
     }
 
-    if(info.commit_info &&
-        info.commit_info->match_info)
+    void writeDataHeader(CWData& data, char type, int64_t seqNo)
     {
-        data.addChar(1);
-        if(!serializeMatchInfo(*info.commit_info->match_info, data))
-            return false;
-    }
-    else
-    {
-        data.addChar(0);
+        data.addUInt(0);    // checksum
+        data.addUInt(0);    // size
+        data.addChar(type); // version & type
+        data.addVarInt(seqNo);
     }
 
-    if(info.linked)
+    bool serializeCommitInfo(const WalFile::CommitInfo& commitInfo, CWData& data)
     {
-        data.addChar(1);
-        if(!serializeFragInfo(*info.linked, data))
-            return false;
-    }
-    else
-    {
-        data.addChar(0);
-    }
-
-    return true;
-}
-
-bool deserializeFragInfo(CRData& data, SingleFileStorage::SFragInfo& info, std::unique_ptr<SingleFileStorage::SCommitInfo>* commitInfo, std::unique_ptr<SingleFileStorage::MatchInfo>* matchInfo)
-{
-    unsigned char action;
-    bool b = true;
-    b &= data.getUChar(&action);
-    info.action = static_cast<SingleFileStorage::FragAction>(action);
-    b &= data.getStr2(&info.fn);
-    b &= data.getVarInt(&info.offset);
-    b &= data.getVarInt(&info.len);
-    b &= data.getVarInt(&info.last_modified);
-    b &= data.getStr2(&info.md5sum);
-    
-    int64_t extra_exts_size = 0;
-    b &= data.getVarInt(&extra_exts_size);
-    
-    for(size_t i = 0; i < extra_exts_size; ++i)
-    {
-        SingleFileStorage::SPunchItem ext;
-        b &= data.getVarInt(&ext.offset);
-        b &= data.getVarInt(&ext.len);
-        info.extra_exts.push_back(ext);
-    }
-
-    char hasMatchInfo;
-    b &= data.getChar(&hasMatchInfo);
-    if(hasMatchInfo)
-    {
-        if(!commitInfo || !matchInfo)
+        data.addVarInt(commitInfo.data_file_max_size);
+        data.addVarInt(commitInfo.curr_write_ext_start);
+        data.addVarInt(commitInfo.curr_write_ext_end);
+        data.addVarInt(commitInfo.data_file_free);
+        data.addVarInt(commitInfo.curr_transid);
+        data.addVarInt(commitInfo.local_curr_partid);
+        data.addVarInt(commitInfo.local_curr_version);
+        data.addVarInt(commitInfo.reserved_extents.size());
+        for (const auto& ext : commitInfo.reserved_extents)
         {
-            XLOGF(ERR, "FragInfo has match info but commitInfo or matchInfo is null (matchInfo on linked is not supported)");
-            abort();
-            return false;
+            data.addVarInt(ext.offset);
+            data.addVarInt(ext.len);
+        }
+        return true;
+    }
+
+    bool deserializeCommitInfo(CRData& data, WalFile::CommitInfo& commitInfo)
+    {
+        bool b = true;
+        b &= data.getVarInt(&commitInfo.data_file_max_size);
+        b &= data.getVarInt(&commitInfo.curr_write_ext_start);
+        b &= data.getVarInt(&commitInfo.curr_write_ext_end);
+        b &= data.getVarInt(&commitInfo.data_file_free);
+        b &= data.getVarInt(&commitInfo.curr_transid);
+        b &= data.getVarInt(&commitInfo.local_curr_partid);
+        b &= data.getVarInt(&commitInfo.local_curr_version);
+        int64_t reserved_extents_size = 0;
+        b &= data.getVarInt(&reserved_extents_size);
+        commitInfo.reserved_extents.resize(reserved_extents_size);
+        for (auto& ext : commitInfo.reserved_extents)
+        {
+            b &= data.getVarInt(&ext.offset);
+            b &= data.getVarInt(&ext.len);
+        }
+        return b;
+    }
+
+    bool serializeMatchInfo(const SingleFileStorage::MatchInfo& matchInfo, CWData& data)
+    {
+        if (matchInfo.readFn)
+        {
+            data.addChar(1);
+            data.addString2(*matchInfo.readFn);
+        }
+        else
+        {
+            data.addChar(0);
+        }
+        char flags = 0;
+        if (matchInfo.readNewest)
+            flags |= matchInfoFlagReadNewest;
+        if (matchInfo.checkProtected)
+            flags |= matchInfoFlagCheckProtected;
+        if (matchInfo.bypassGovernance)
+            flags |= matchInfoFlagBypassGovernance;
+        if (matchInfo.protectedCheckTime != 0)
+            flags |= matchInfoFlagWithProtectedCheckTime;
+        data.addChar(flags);
+        if (matchInfo.protectedCheckTime != 0)
+            data.addVarInt(matchInfo.protectedCheckTime);
+        data.addVarInt(matchInfo.ifMatch.size());
+        for (const auto& s : matchInfo.ifMatch)
+            data.addString2(s);
+        data.addVarInt(matchInfo.ifNoneMatch.size());
+        for (const auto& s : matchInfo.ifNoneMatch)
+            data.addString2(s);
+        if (matchInfo.ifModifiedSince)
+        {
+            data.addChar(1);
+            data.addVarInt(*matchInfo.ifModifiedSince);
+        }
+        else
+        {
+            data.addChar(0);
+        }
+        if (matchInfo.ifUnmodifiedSince)
+        {
+            data.addChar(1);
+            data.addVarInt(*matchInfo.ifUnmodifiedSince);
+        }
+        else
+        {
+            data.addChar(0);
+        }
+        return true;
+    }
+
+    bool deserializeMatchInfo(CRData& data, SingleFileStorage::MatchInfo& matchInfo)
+    {
+        bool b = true;
+        char hasReadFn;
+        b &= data.getChar(&hasReadFn);
+        if (hasReadFn)
+        {
+            std::string readFn;
+            b &= data.getStr2(&readFn);
+            matchInfo.readFn = readFn;
+        }
+        char flags;
+        b &= data.getChar(&flags);
+        matchInfo.readNewest = (flags & matchInfoFlagReadNewest) != 0;
+        matchInfo.checkProtected = (flags & matchInfoFlagCheckProtected) != 0;
+        matchInfo.bypassGovernance = (flags & matchInfoFlagBypassGovernance) != 0;
+        if (flags & matchInfoFlagWithProtectedCheckTime)
+            b &= data.getVarInt(&matchInfo.protectedCheckTime);
+        int64_t ifMatchSize = 0;
+        b &= data.getVarInt(&ifMatchSize);
+        for (size_t i = 0; i < ifMatchSize; ++i)
+        {
+            std::string s;
+            b &= data.getStr2(&s);
+            matchInfo.ifMatch.push_back(s);
+        }
+        int64_t ifNoneMatchSize = 0;
+        b &= data.getVarInt(&ifNoneMatchSize);
+        for (size_t i = 0; i < ifNoneMatchSize; ++i)
+        {
+            std::string s;
+            b &= data.getStr2(&s);
+            matchInfo.ifNoneMatch.push_back(s);
+        }
+        char hasIfModifiedSince;
+        b &= data.getChar(&hasIfModifiedSince);
+        if (hasIfModifiedSince)
+        {
+            int64_t ifModifiedSince;
+            b &= data.getVarInt(&ifModifiedSince);
+            matchInfo.ifModifiedSince = ifModifiedSince;
+        }
+        char hasIfUnmodifiedSince;
+        b &= data.getChar(&hasIfUnmodifiedSince);
+        if (hasIfUnmodifiedSince)
+        {
+            int64_t ifUnmodifiedSince;
+            b &= data.getVarInt(&ifUnmodifiedSince);
+            matchInfo.ifUnmodifiedSince = ifUnmodifiedSince;
         }
 
-        *commitInfo = std::make_unique<SingleFileStorage::SCommitInfo>();
-        info.commit_info = commitInfo->get();
-        *matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
-        info.commit_info->match_info = matchInfo->get();
-        b &= deserializeMatchInfo(data, *info.commit_info->match_info);
+        return b;
     }
 
-    char hasLinked;
-    b &= data.getChar(&hasLinked);
-    if(hasLinked)
+    bool serializeFragInfo(const SingleFileStorage::SFragInfo& info, CWData& data)
     {
-        info.linked = std::make_unique<SingleFileStorage::SFragInfo>();
-        b &= deserializeFragInfo(data, *info.linked, nullptr, nullptr);
-    } 
+        data.addUChar(static_cast<unsigned char>(info.action));
+        data.addString2(info.fn);
+        data.addVarInt(info.offset);
+        data.addVarInt(info.len);
+        data.addVarInt(info.last_modified);
+        data.addString2(info.md5sum);
+        data.addVarInt(info.extra_exts.size());
+        for (const auto& ext : info.extra_exts)
+        {
+            data.addVarInt(ext.offset);
+            data.addVarInt(ext.len);
+        }
 
-    return b;
-}
+        if (info.commit_info &&
+            info.commit_info->match_info)
+        {
+            data.addChar(1);
+            if (!serializeMatchInfo(*info.commit_info->match_info, data))
+                return false;
+        }
+        else
+        {
+            data.addChar(0);
+        }
 
-bool forEachDataItem(const int64_t off, const size_t dataSize, auto fn)
-{
-    auto startOff = (off / waitBlockSize) * waitBlockSize;
-    for(auto i = startOff; i < off + dataSize; i += waitBlockSize)
-    {
-        const auto block = i / waitBlockSize;
-        if(fn(block))
-            return true;
+        if (info.linked)
+        {
+            data.addChar(1);
+            if (!serializeFragInfo(*info.linked, data))
+                return false;
+        }
+        else
+        {
+            data.addChar(0);
+        }
+
+        return true;
     }
-    return false;
-}
+
+    bool deserializeFragInfo(CRData& data, SingleFileStorage::SFragInfo& info, std::unique_ptr<SingleFileStorage::SCommitInfo>* commitInfo, std::unique_ptr<SingleFileStorage::MatchInfo>* matchInfo)
+    {
+        unsigned char action;
+        bool b = true;
+        b &= data.getUChar(&action);
+        info.action = static_cast<SingleFileStorage::FragAction>(action);
+        b &= data.getStr2(&info.fn);
+        b &= data.getVarInt(&info.offset);
+        b &= data.getVarInt(&info.len);
+        b &= data.getVarInt(&info.last_modified);
+        b &= data.getStr2(&info.md5sum);
+
+        int64_t extra_exts_size = 0;
+        b &= data.getVarInt(&extra_exts_size);
+
+        for (size_t i = 0; i < extra_exts_size; ++i)
+        {
+            SingleFileStorage::SPunchItem ext;
+            b &= data.getVarInt(&ext.offset);
+            b &= data.getVarInt(&ext.len);
+            info.extra_exts.push_back(ext);
+        }
+
+        char hasMatchInfo;
+        b &= data.getChar(&hasMatchInfo);
+        if (hasMatchInfo)
+        {
+            if (!commitInfo || !matchInfo)
+            {
+                XLOGF(ERR, "FragInfo has match info but commitInfo or matchInfo is null (matchInfo on linked is not supported)");
+                abort();
+                return false;
+            }
+
+            *commitInfo = std::make_unique<SingleFileStorage::SCommitInfo>();
+            info.commit_info = commitInfo->get();
+            *matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
+            info.commit_info->match_info = matchInfo->get();
+            b &= deserializeMatchInfo(data, *info.commit_info->match_info);
+        }
+
+        char hasLinked;
+        b &= data.getChar(&hasLinked);
+        if (hasLinked)
+        {
+            info.linked = std::make_unique<SingleFileStorage::SFragInfo>();
+            b &= deserializeFragInfo(data, *info.linked, nullptr, nullptr);
+        }
+
+        return b;
+    }
+
+    bool forEachDataItem(const int64_t off, const size_t dataSize, auto fn)
+    {
+        auto startOff = (off / waitBlockSize) * waitBlockSize;
+        for (auto i = startOff; i < off + dataSize; i += waitBlockSize)
+        {
+            const auto block = i / waitBlockSize;
+            if (fn(block))
+                return true;
+        }
+        return false;
+    }
 
 } // namespace
 
-WalFile::WalFile(const std::string &path, const std::string_view walUuid, MultiFile& dataFile, const bool trackDirtyBlocks, const bool noSync)
-    : primaryFile(path+"1", O_RDWR | O_CREAT | O_APPEND, 0644), 
-    altFile(path+"2", O_RDWR | O_CREAT | O_APPEND, 0644),
-    dataFile(dataFile),
-    walUuid(walUuid),
-    trackDirtyBlocks(trackDirtyBlocks),
-    noSync(noSync)
+WalFile::WalFile(const std::string& path, const std::string_view walUuid, MultiFile& dataFile, const bool trackDirtyBlocks, const bool noSync)
+    : primaryFile(path + "1", O_RDWR | O_CREAT | O_APPEND, 0644),
+      altFile(path + "2", O_RDWR | O_CREAT | O_APPEND, 0644),
+      dataFile(dataFile),
+      walUuid(walUuid),
+      trackDirtyBlocks(trackDirtyBlocks),
+      noSync(noSync)
 {
     seqNo = 1;
 
     int64_t primaryFileSeqNo = 0;
-    if(primaryFile.size() > 0 )
+    if (primaryFile.size() > 0)
     {
         read(0, nullptr, true, false);
         primaryFileSeqNo = seqNo;
     }
     int64_t altFileSeqNo = 0;
-    if(altFile.size() > 0 )
+    if (altFile.size() > 0)
     {
         read(0, nullptr, true, true);
         altFileSeqNo = seqNo;
-        if(altFileSeqNo > primaryFileSeqNo)
+        if (altFileSeqNo > primaryFileSeqNo)
             useAltFile = true;
     }
 
-    XLOGF(INFO, "WalFile initialized. Using {} file. primaryFileSeqNo={}, altFileSeqNo={}", 
-        useAltFile ? "alt" : "primary", primaryFileSeqNo, altFileSeqNo);
+    XLOGF(INFO, "WalFile initialized. Using {} file. primaryFileSeqNo={}, altFileSeqNo={}",
+          useAltFile ? "alt" : "primary", primaryFileSeqNo, altFileSeqNo);
 
-    if(primaryFileSeqNo!=0 && primaryFileSeqNo == altFileSeqNo)
+    if (primaryFileSeqNo != 0 && primaryFileSeqNo == altFileSeqNo)
     {
         XLOGF(ERR, "WalFile: Both WAL files have same seqNo {}.", primaryFileSeqNo);
         abort();
     }
 
-    if(currentFile().size() == 0)
+    if (currentFile().size() == 0)
     {
         WalFile::ResetPrep prep(nullptr);
         reset(prep, false, std::nullopt);
@@ -341,7 +339,7 @@ WalFile::WalFile(const std::string &path, const std::string_view walUuid, MultiF
 
 bool WalFile::needsWrite(const SingleFileStorage::SFragInfo& info)
 {
-    switch(info.action)
+    switch (info.action)
     {
         case SingleFileStorage::FragAction::Add:
         case SingleFileStorage::FragAction::Del:
@@ -354,15 +352,15 @@ bool WalFile::needsWrite(const SingleFileStorage::SFragInfo& info)
         case SingleFileStorage::FragAction::DelFreemapWal:
         case SingleFileStorage::FragAction::AddFreemapWal:
         case SingleFileStorage::FragAction::ModifyMetadata:
-        return true;
+            return true;
         default:
-        return false;
+            return false;
     }
 }
 
 bool WalFile::write(const int64_t transid, const SingleFileStorage::SFragInfo& info)
 {
-    if(!needsWrite(info))
+    if (!needsWrite(info))
     {
         return true;
     }
@@ -371,7 +369,7 @@ bool WalFile::write(const int64_t transid, const SingleFileStorage::SFragInfo& i
     writeDataHeader(data, dataTypeFragInfo, seqNo);
     data.addVarInt(transid);
 
-    if(!serializeFragInfo(info, data))
+    if (!serializeFragInfo(info, data))
         return false;
 
     return writeData(data);
@@ -401,13 +399,13 @@ bool WalFile::writeData(CWData& data, DataItem* dataItem)
 
     std::scoped_lock lock(mutex);
 
-    const auto typeOff = 2*sizeof(unsigned int);
-    const auto seqNoOff =  typeOff +  sizeof(char);
+    const auto typeOff = 2 * sizeof(unsigned int);
+    const auto seqNoOff = typeOff + sizeof(char);
     CRData checkData(data.getDataPtr() + seqNoOff, data.getDataSize() - seqNoOff);
     int64_t msgSeqNo;
-    if(!checkData.getVarInt(&msgSeqNo))
+    if (!checkData.getVarInt(&msgSeqNo))
         abort();
-    if(msgSeqNo != seqNo)
+    if (msgSeqNo != seqNo)
     {
         XLOGF(DBG, "WalFile: writeData: seqNo changed from {} to {} -- rewriting data", msgSeqNo, seqNo);
         const auto type = data.getDataPtr()[typeOff];
@@ -416,31 +414,32 @@ bool WalFile::writeData(CWData& data, DataItem* dataItem)
         data2.addBuffer(checkData.getCurrDataPtr(), checkData.getLeft());
         setChecksumAndSize(data2);
 
-        if(currentFile().pwriteFull(data2.getDataPtr(), data2.getDataSize(), offset) != data2.getDataSize())
+        if (currentFile().pwriteFull(data2.getDataPtr(), data2.getDataSize(), offset) != data2.getDataSize())
         {
             return false;
-        }    
+        }
         offset += data2.getDataSize();
     }
     else
     {
-        if(currentFile().pwriteFull(data.getDataPtr(), data.getDataSize(), offset) != data.getDataSize())
+        if (currentFile().pwriteFull(data.getDataPtr(), data.getDataSize(), offset) != data.getDataSize())
         {
             return false;
-        }    
+        }
         offset += data.getDataSize();
     }
 
-    ++_items;    
+    ++_items;
 
-    if(dataItem == nullptr)
+    if (dataItem == nullptr)
         return true;
 
     auto& item = *dataItem;
 
-    item.isAlt = useAltFile;   
+    item.isAlt = useAltFile;
 
-    const auto off = item.dataOff;;
+    const auto off = item.dataOff;
+    ;
     const auto dataSize = item.data.size();
 
     XLOGF(DBG0, "WalFile: queueing data {} write to data file at offset {} size {}", folly::crc32c(reinterpret_cast<const uint8_t*>(item.data.data()), item.data.size()), off, dataSize);
@@ -452,17 +451,16 @@ bool WalFile::writeData(CWData& data, DataItem* dataItem)
 
     incrPendingData();
 
-    if(trackDirtyBlocks)
+    if (trackDirtyBlocks)
     {
         forEachDataItem(off, dataSize, [&](const int64_t block)
-        {
+                        {
             dirtyBlocks().insert(block);
-            return false;
-        });
+            return false; });
     }
 
     forEachDataItem(off, dataSize, [&](const int64_t block)
-    {
+                    {
         auto it = dataItems.find(block);
         if(it != dataItems.end())
         {
@@ -472,8 +470,7 @@ bool WalFile::writeData(CWData& data, DataItem* dataItem)
         {
             dataItems.insert({block, {.refs = 1}});
         }
-        return false;
-    });
+        return false; });
 
     return true;
 }
@@ -493,17 +490,17 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
     bool hasInit = false;
 
     WalFile::ReadResult ret;
-    while(off + sizeof(unsigned int)*2 < allData.size())
+    while (off + sizeof(unsigned int) * 2 < allData.size())
     {
         unsigned int dsize;
         unsigned int crc;
         memcpy(&crc, allData.data() + off, sizeof(crc));
         memcpy(&dsize, allData.data() + off + sizeof(crc), sizeof(dsize));
-        if(off + dsize > allData.size())
+        if (off + dsize > allData.size())
         {
             break;
         }
-        if(crc != folly::crc32c(allData.data() + off + sizeof(crc), dsize - sizeof(crc)))
+        if (crc != folly::crc32c(allData.data() + off + sizeof(crc), dsize - sizeof(crc)))
         {
             break;
         }
@@ -513,47 +510,47 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
         off += dsize;
 
         char type;
-        if(!data.getChar(&type))
+        if (!data.getChar(&type))
             throw std::runtime_error("WalFile: read: failed to read type");
 
         int64_t msgSeqNo;
 
-        if(!data.getVarInt(&msgSeqNo))
+        if (!data.getVarInt(&msgSeqNo))
             throw std::runtime_error("WalFile: read: failed to read seqNo");
 
-        if(!hasInit && type != dataTypeInit)
+        if (!hasInit && type != dataTypeInit)
         {
             throw std::runtime_error("WalFile: read: missing WAL file header. Found type " + std::to_string(static_cast<int>(type)) + " instead. readFromAltFile=" + (readFromAltFile ? "true" : "false"));
-        }        
-        else if(type == dataTypeInit)
+        }
+        else if (type == dataTypeInit)
         {
-            if(hasInit)
+            if (hasInit)
                 throw std::runtime_error("WalFile: read: multiple WAL file headers found");
 
             hasInit = true;
             seqNo = msgSeqNo;
 
             std::string initStr;
-            if(!data.getStr2(&initStr))
+            if (!data.getStr2(&initStr))
                 throw std::runtime_error("WalFile: read: failed to read init string");
 
-            if(initStr != walFileInitString)
+            if (initStr != walFileInitString)
                 throw std::runtime_error("WalFile: read: invalid WAL file header magic string: " + initStr);
 
             std::string initWalUuid;
-            if(!data.getStr2(&initWalUuid))
+            if (!data.getStr2(&initWalUuid))
                 throw std::runtime_error("WalFile: read: failed to read WAL UUID");
-                
-            if(initWalUuid != walUuid)
+
+            if (initWalUuid != walUuid)
                 throw std::runtime_error("WalFile: read: WAL UUID mismatch: " + folly::hexlify(walUuid) + " != " + folly::hexlify(initWalUuid));
 
-            if(initOnly)
+            if (initOnly)
                 return ret;
 
             continue;
         }
 
-        if(seqNo != msgSeqNo)
+        if (seqNo != msgSeqNo)
         {
             XLOGF(WARN, "WalFile: read: seqNo mismatch, expected {}, got {} -- readFromAltFile={}", seqNo, msgSeqNo, readFromAltFile);
             // TODO: Remove abort. This might occurr for some file systems on power fail
@@ -561,13 +558,13 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
             break;
         }
 
-        if(type == dataTypeFragInfo)
-        {            
+        if (type == dataTypeFragInfo)
+        {
             int64_t ctransid;
             bool b = true;
-            b &= data.getVarInt(&ctransid);            
-            if(ctransid != transid)
-            {            
+            b &= data.getVarInt(&ctransid);
+            if (ctransid != transid)
+            {
                 XLOGF(INFO, "WalFile: read: skipping entry for transid {}, looking for transid {}", ctransid, transid);
                 continue;
             }
@@ -576,12 +573,12 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
             std::unique_ptr<SingleFileStorage::MatchInfo> matchInfo;
             b &= deserializeFragInfo(data, info, &commitInfo, &matchInfo);
 
-            if(commitInfo)
+            if (commitInfo)
                 ret.itemCommitInfos.push_back(std::move(commitInfo));
-            if(matchInfo)
+            if (matchInfo)
                 ret.itemMatchInfos.push_back(std::move(matchInfo));
 
-            if(!b)
+            if (!b)
             {
                 throw std::runtime_error("WalFile: read: failed to read data");
             }
@@ -590,7 +587,7 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
 
             ret.items.push_back(std::move(info));
         }
-        else if(type==dataTypeDataFileData)
+        else if (type == dataTypeDataFileData)
         {
             int64_t data_off;
             data.getVarInt(&data_off);
@@ -598,29 +595,28 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
             const size_t data_size = data.getLeft();
             const char* data_ptr = data.getCurrDataPtr();
 
-            if(trackDirtyBlocks)
+            if (trackDirtyBlocks)
             {
                 forEachDataItem(data_off, data_size, [&](const int64_t block)
-                {
+                                {
                     currDirtyBlocks.insert(block);
-                    return false;
-                });
+                    return false; });
             }
 
             XLOGF(INFO, "WalFile: recovery: writing data {} to data file at offset {} size {}", folly::crc32c(reinterpret_cast<const uint8_t*>(data_ptr), data_size), data_off, data_size);
 
-            if(!data_file)
+            if (!data_file)
                 throw std::runtime_error("WalFile: read: data file is null");
 
-            if(data_file->pwriteFull(data_ptr, data_size, data_off) != data_size)
+            if (data_file->pwriteFull(data_ptr, data_size, data_off) != data_size)
             {
                 throw std::runtime_error("WalFile: read: failed to write data to data file: " + folly::errnoStr(errno));
             }
         }
-        else if(type == dataTypeSync)
+        else if (type == dataTypeSync)
         {
             CommitInfo commitInfo;
-            if(!deserializeCommitInfo(data, commitInfo))
+            if (!deserializeCommitInfo(data, commitInfo))
                 throw std::runtime_error("WalFile: read: failed to read commit info");
             ret.commit_info = commitInfo;
         }
@@ -639,7 +635,7 @@ bool WalFile::sync(const CommitInfo& commitInfo)
     writeDataHeader(data, dataTypeSync, seqNo);
     serializeCommitInfo(commitInfo, data);
 
-    if(!writeData(data))
+    if (!writeData(data))
         return false;
 
     return fsyncFile(currentFile()) == 0;
@@ -653,7 +649,7 @@ bool WalFile::fsync()
 bool WalFile::switchFiles()
 {
     std::scoped_lock lock(mutex);
-    if(fsyncFile(currentFile()) != 0)
+    if (fsyncFile(currentFile()) != 0)
     {
         XLOGF(ERR, "WalFile: switchFiles: failed to sync WAL file: {}", folly::errnoStr(errno));
         return false;
@@ -677,7 +673,7 @@ bool WalFile::switchFiles()
 void WalFile::reset(ResetPrep& prep, const bool sync, const std::optional<bool> useAltFileManual)
 {
     const bool writeHeader = !useAltFileManual;
-    if(writeHeader)
+    if (writeHeader)
     {
         offset = 0;
         _items = 0;
@@ -689,7 +685,7 @@ void WalFile::reset(ResetPrep& prep, const bool sync, const std::optional<bool> 
 
     file.truncate(0);
 
-    if(writeHeader)
+    if (writeHeader)
     {
         CWData data;
         writeDataHeader(data, dataTypeInit, seqNo);
@@ -699,8 +695,7 @@ void WalFile::reset(ResetPrep& prep, const bool sync, const std::optional<bool> 
 
         setChecksumAndSize(data);
 
-
-        if(file.pwriteFull(data.getDataPtr(), data.getDataSize(), 0) != data.getDataSize())
+        if (file.pwriteFull(data.getDataPtr(), data.getDataSize(), 0) != data.getDataSize())
         {
             XLOGF(ERR, "WalFile: failed to write initial data after reset: {}", folly::errnoStr(errno));
             abort();
@@ -709,9 +704,9 @@ void WalFile::reset(ResetPrep& prep, const bool sync, const std::optional<bool> 
         offset += data.getDataSize();
     }
 
-    if(sync)
+    if (sync)
     {
-        if(fsyncFile(file) != 0)
+        if (fsyncFile(file) != 0)
         {
             XLOGF(ERR, "WalFile: reset: failed to sync WAL file: {}", folly::errnoStr(errno));
             abort();
@@ -732,28 +727,28 @@ bool WalFile::writeData(const int64_t off, const char* data, const size_t dataSi
     wdata.addVarInt(off);
     wdata.addBuffer(data, dataSize);
 
-    if(useThreadWrite)
+    if (useThreadWrite)
     {
         DataItem item;
         item.dataOff = off;
         item.data.assign(data, data + dataSize);
 
-        if(!writeData(wdata, &item))
+        if (!writeData(wdata, &item))
             return false;
     }
     else
     {
-        if(!writeData(wdata))
+        if (!writeData(wdata))
             return false;
     }
-    
+
     return true;
 }
 
 void WalFile::waitForWrites()
 {
     std::unique_lock lock(mutex);
-    while(altPendingData())
+    while (altPendingData())
     {
         pendingDataCond.wait(lock);
     }
@@ -765,14 +760,14 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
 
     std::unique_lock lock(mutex);
 
-    while(true)
+    while (true)
     {
-        while(dataWriteQueue.empty() && !stopToken.stop_requested())
+        while (dataWriteQueue.empty() && !stopToken.stop_requested())
         {
             dataWriteCond.wait(lock);
         }
 
-        if(stopToken.stop_requested())
+        if (stopToken.stop_requested())
             break;
 
         auto item = std::move(dataWriteQueue.front());
@@ -782,7 +777,7 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
 
         lock.unlock();
 
-        if(wasEmpty && FLAGS_wal_write_delay)
+        if (wasEmpty && FLAGS_wal_write_delay)
         {
             // Introduce artificial delay for testing
             const auto delayMs = folly::Random::rand32(50, 150);
@@ -792,7 +787,7 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
 
         XLOGF(DBG0, "WalFile: dataWriteThread: writing data {} to data file at offset {} size {}", folly::crc32c(reinterpret_cast<const uint8_t*>(item.data.data()), item.data.size()), item.dataOff, item.data.size());
 
-        if(!item.data.empty() &&
+        if (!item.data.empty() &&
             dataFile.pwriteFull(item.data.data(), item.data.size(), item.dataOff) != item.data.size())
         {
             XLOGF(ERR, "WalFile: dataWriteThread: failed to write data to data file: {}", folly::errnoStr(errno));
@@ -801,10 +796,10 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
 
         lock.lock();
 
-        if(!item.data.empty())
+        if (!item.data.empty())
         {
             forEachDataItem(item.dataOff, item.data.size(), [&](const int64_t block)
-            {
+                            {
                 auto it = dataItems.find(block);
                 assert(it != dataItems.end());
                 if(it!=dataItems.end() &&
@@ -812,22 +807,21 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
                 {
                     dataItems.erase(it);
                 }
-                return false;
-            });
+                return false; });
 
             writeDoneCond.notify_all();
-        }        
+        }
 
-        if(lastPendingData(item.isAlt))
+        if (lastPendingData(item.isAlt))
         {
-            if(pendingReset)
+            if (pendingReset)
             {
                 assert(item.dataOff == 0 && item.data.empty());
                 lock.unlock();
 
                 XLOGF(INFO, "WalFile: dataWriteThread: syncing data file");
 
-                if(fsyncFile(dataFile) != 0)
+                if (fsyncFile(dataFile) != 0)
                 {
                     XLOGF(ERR, "WalFile: dataWriteThread: failed to sync data file: {}", folly::errnoStr(errno));
                     abort();
@@ -849,26 +843,25 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
 
             pendingDataCond.notify_all();
         }
-        else if(item.dataOff == 0 && item.data.empty() && pendingReset)
+        else if (item.dataOff == 0 && item.data.empty() && pendingReset)
         {
             assert(false);
             decrPendingData(item.isAlt);
         }
         else
-        {            
+        {
             decrPendingData(item.isAlt);
         }
     }
-
 }
 
 void WalFile::waitForWriteout(const int64_t off, const size_t dataSize)
 {
     std::unique_lock lock(mutex);
-    while(true)
+    while (true)
     {
         auto wait = forEachDataItem(off, dataSize, [&](const int64_t block)
-        {
+                                    {
             auto it = dataItems.find(block);
             if(it!=dataItems.end())
             {
@@ -876,10 +869,9 @@ void WalFile::waitForWriteout(const int64_t off, const size_t dataSize)
                 return true;
             }
 
-            return false;
-        });
-        
-        if(wait)
+            return false; });
+
+        if (wait)
         {
             writeDoneCond.wait(lock);
             continue;
@@ -894,14 +886,13 @@ bool WalFile::isDirty(const int64_t off, const size_t dataSize) const
     bool ret = false;
     std::scoped_lock lock(mutex);
     return forEachDataItem(off, dataSize, [&](const int64_t block)
-    {
+                           {
         if(dirtyBlocks().contains(block) || altDirtyBlocks().contains(block))
         {
            ret=true;
            return true;
         }
-        return false;
-    });
+        return false; });
 
     return ret;
 }

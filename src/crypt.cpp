@@ -2,15 +2,15 @@
  * Copyright Martin Raiber. All Rights Reserved.
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
+#include "crypt.h"
+#include <assert.h>
+#include <cstring>
 #include <folly/String.h>
 #include <folly/base64.h>
-#include <string>
-#include <assert.h>
-#include <sodium.h>
 #include <openssl/evp.h>
-#include <cstring>
 #include <optional>
-#include "crypt.h"
+#include <sodium.h>
+#include <string>
 
 namespace
 {
@@ -40,18 +40,18 @@ namespace
         AesCtx& aesCtx = encrypt ? encCtx : decCtx;
 
         // Key memory is owned by SingleFileStorage and does not change
-        if(aesCtx.ctx!=nullptr && aesCtx.key==key)
+        if (aesCtx.ctx != nullptr && aesCtx.key == key)
             return aesCtx.ctx;
 
-        if(aesCtx.ctx==nullptr)
+        if (aesCtx.ctx == nullptr)
         {
             aesCtx.ctx = EVP_CIPHER_CTX_new();
-            if(aesCtx.ctx==nullptr)
+            if (aesCtx.ctx == nullptr)
                 return nullptr;
         }
 
-        if(EVP_CipherInit_ex(aesCtx.ctx, EVP_aes_256_ecb(), nullptr, key, nullptr, encrypt ? 1 : 0)!=1 ||
-            EVP_CIPHER_CTX_set_padding(aesCtx.ctx, 0)!=1)
+        if (EVP_CipherInit_ex(aesCtx.ctx, EVP_aes_256_ecb(), nullptr, key, nullptr, encrypt ? 1 : 0) != 1 ||
+            EVP_CIPHER_CTX_set_padding(aesCtx.ctx, 0) != 1)
         {
             EVP_CIPHER_CTX_free(aesCtx.ctx);
             aesCtx.ctx = nullptr;
@@ -67,12 +67,12 @@ namespace
     bool aesBlock(const unsigned char* in, unsigned char* out, const unsigned char* key, bool encrypt)
     {
         EVP_CIPHER_CTX* ctx = getAesCtx(key, encrypt);
-        if(ctx==nullptr)
+        if (ctx == nullptr)
             return false;
 
         int outl = 0;
-        return EVP_CipherUpdate(ctx, out, &outl, in, aesBlockSize)==1 &&
-            outl==static_cast<int>(aesBlockSize);
+        return EVP_CipherUpdate(ctx, out, &outl, in, aesBlockSize) == 1 &&
+               outl == static_cast<int>(aesBlockSize);
     }
 
     bool encryptIdBlock(int64_t id, unsigned char* out, const unsigned char* key)
@@ -85,11 +85,11 @@ namespace
     int64_t decryptIdBlock(const unsigned char* in, const unsigned char* key)
     {
         unsigned char plain[aesBlockSize];
-        if(!aesBlock(in, plain, key, false))
+        if (!aesBlock(in, plain, key, false))
             return -1;
 
         static const unsigned char zeros[aesBlockSize - sizeof(int64_t)] = {};
-        if(sodium_memcmp(plain + sizeof(int64_t), zeros, sizeof(zeros))!=0)
+        if (sodium_memcmp(plain + sizeof(int64_t), zeros, sizeof(zeros)) != 0)
             return -1;
 
         int64_t ret;
@@ -103,17 +103,17 @@ namespace
         {
             return folly::base64URLDecode(data);
         }
-        catch(folly::base64_decode_error&)
+        catch (folly::base64_decode_error&)
         {
             return std::nullopt;
         }
     }
-}
+} // namespace
 
 std::string cryptId(int64_t id, unsigned char* key)
 {
     unsigned char enc[aesBlockSize];
-    if(!encryptIdBlock(id, enc, key))
+    if (!encryptIdBlock(id, enc, key))
         return std::string();
 
     return folly::base64URLEncode(std::string_view(reinterpret_cast<char*>(enc), sizeof(enc)));
@@ -122,7 +122,7 @@ std::string cryptId(int64_t id, unsigned char* key)
 int64_t decryptId(const std::string& encryptedId, unsigned char* key)
 {
     const auto binEncId = decodeBase64URL(encryptedId);
-    if(!binEncId || binEncId->size()!=aesBlockSize)
+    if (!binEncId || binEncId->size() != aesBlockSize)
         return -1;
 
     return decryptIdBlock(reinterpret_cast<const unsigned char*>(binEncId->data()), key);

@@ -1,10 +1,15 @@
 #pragma once
 
-#include "SingleFileStorage.h"
-#include "Buckets.h"
-#include "Policy.h"
 #include "Action.h"
+#include "ApiHandler.h"
+#include "Buckets.h"
+#include "ObjMetadata.h"
+#include "PayloadHash.h"
+#include "Policy.h"
+#include "SingleFileStorage.h"
+#include "data.h"
 #include <condition_variable>
+#include <expat.h>
 #include <folly/io/IOBuf.h>
 #include <memory>
 #include <proxygen/httpserver/HTTPServer.h>
@@ -15,32 +20,27 @@
 #include <proxygen/lib/http/HTTPMessage.h>
 #include <proxygen/lib/http/ProxygenErrorEnum.h>
 #include <proxygen/lib/http/experimental/RFC1867.h>
-#include <vector>
 #include <thread>
-#include <expat.h>
-#include "data.h"
-#include "PayloadHash.h"
-#include "ObjMetadata.h"
-#include "ApiHandler.h"
-
+#include <vector>
 
 class ExpatXmlParser
 {
 public:
     XML_Parser parser = nullptr;
 
-    void init() {
+    void init()
+    {
         parser = XML_ParserCreate("UTF-8");
     }
 
     ~ExpatXmlParser()
     {
-        if(parser!=nullptr)
+        if (parser != nullptr)
             XML_ParserFree(parser);
     }
 };
 
-int	mdb_cmp_s3key(const MDB_val *a, const MDB_val *b);
+int mdb_cmp_s3key(const MDB_val* a, const MDB_val* b);
 std::string s3key_common_prefix(const std::string_view key);
 size_t s3key_common_prefix_hash(const std::string_view key);
 
@@ -105,7 +105,8 @@ struct PostObjectData
 {
     PostObjectData(const std::string& boundary)
         : rfc1867Codec(boundary)
-    {}
+    {
+    }
 
     std::unique_ptr<folly::IOBuf> bodyBuf;
     proxygen::RFC1867Codec rfc1867Codec;
@@ -126,36 +127,34 @@ KeyInfoView extractKeyInfoView(const std::string_view key);
 const int64_t metadata_object = 0;
 const int64_t metadata_multipart_object = 1;
 const int64_t metadata_tombstone = 2;
-const int64_t metadata_flag_with_content_type = 1<<2;
-const int64_t metadata_flag_with_meta = 1<<3;
-const int64_t metadata_flag_with_checksum = 1<<4;
-const int64_t metadata_flag_with_cache_control = 1<<6;
-const int64_t metadata_flag_with_encoding = 1<<7;
-const int64_t metadata_flag_with_expires = 1<<8;
-const int64_t metadata_flag_with_language = 1<<9;
-const int64_t metadata_flag_with_disposition = 1<<10;
-const int64_t metadata_flag_with_lock_info = 1<<11;
-const int64_t metadata_flag_with_legal_hold = 1<<12;
-const int64_t metadata_flag_has_obj_metadata = metadata_flag_with_content_type | metadata_flag_with_meta | 
-    metadata_flag_with_disposition | metadata_flag_with_cache_control | 
-    metadata_flag_with_encoding | metadata_flag_with_language | metadata_flag_with_expires |
-    metadata_flag_with_lock_info | metadata_flag_with_legal_hold;
+const int64_t metadata_flag_with_content_type = 1 << 2;
+const int64_t metadata_flag_with_meta = 1 << 3;
+const int64_t metadata_flag_with_checksum = 1 << 4;
+const int64_t metadata_flag_with_cache_control = 1 << 6;
+const int64_t metadata_flag_with_encoding = 1 << 7;
+const int64_t metadata_flag_with_expires = 1 << 8;
+const int64_t metadata_flag_with_language = 1 << 9;
+const int64_t metadata_flag_with_disposition = 1 << 10;
+const int64_t metadata_flag_with_lock_info = 1 << 11;
+const int64_t metadata_flag_with_legal_hold = 1 << 12;
+const int64_t metadata_flag_has_obj_metadata = metadata_flag_with_content_type | metadata_flag_with_meta |
+                                               metadata_flag_with_disposition | metadata_flag_with_cache_control |
+                                               metadata_flag_with_encoding | metadata_flag_with_language | metadata_flag_with_expires |
+                                               metadata_flag_with_lock_info | metadata_flag_with_legal_hold;
 const int64_t metadata_known_flags = metadata_flag_with_content_type | metadata_flag_with_meta |
-     metadata_flag_with_disposition | metadata_flag_with_cache_control | 
-     metadata_flag_with_encoding | metadata_flag_with_language | 
-     metadata_flag_with_expires | metadata_flag_with_checksum |
-     metadata_flag_with_lock_info | metadata_flag_with_legal_hold;
+                                     metadata_flag_with_disposition | metadata_flag_with_cache_control |
+                                     metadata_flag_with_encoding | metadata_flag_with_language |
+                                     metadata_flag_with_expires | metadata_flag_with_checksum |
+                                     metadata_flag_with_lock_info | metadata_flag_with_legal_hold;
 
 // Modification types for SingleFileStorage::modify_metadata
 const char metadata_modify_legal_hold = 1;
 const char metadata_modify_retention = 2;
 
-
 class S3Handler : public proxygen::RequestHandler, public proxygen::RFC1867Codec::Callback
 {
 public:
-    S3Handler(SingleFileStorage &sfs, const std::string& serverUrl) : 
-        _sfs(sfs), self(this), serverUrl(serverUrl) {}
+    S3Handler(SingleFileStorage& sfs, const std::string& serverUrl) : _sfs(sfs), self(this), serverUrl(serverUrl) {}
 
     void
     onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexcept override;
@@ -198,7 +197,7 @@ public:
         ParseState parseState = ParseState::Init;
         UploadIdDec uploadId;
         std::string partNumBuf;
-        
+
         struct PartData
         {
             std::string etag;
@@ -313,17 +312,17 @@ public:
         std::vector<buckets::BucketCorsRule> rules;
     };
 
-    static bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, 
-            std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, std::unique_ptr<ObjMetadata>* objMetadata, std::unique_ptr<PayloadHashBase>* sdkChecksumHash);
+    static bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen,
+                                   std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, std::unique_ptr<ObjMetadata>* objMetadata, std::unique_ptr<PayloadHashBase>* sdkChecksumHash);
     static std::string getEtag(const std::string& md5sum);
-    
+
     static int seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
-    static int seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData, 
-            std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen, std::unique_ptr<PayloadHashBase>& partHash, int64_t* partSize);
+    static int seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData,
+                             std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen, std::unique_ptr<PayloadHashBase>& partHash, int64_t* partSize);
     static int readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, const bool addReading,
-         MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string* etag, std::unique_ptr<PayloadHashBase>* partHash, int64_t* partSize);
-    static int readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, 
-        std::string* etag, std::unique_ptr<PayloadHashBase>* partHash, int64_t* partSize);
+                                MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string* etag, std::unique_ptr<PayloadHashBase>* partHash, int64_t* partSize);
+    static int readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents,
+                                    std::string* etag, std::unique_ptr<PayloadHashBase>* partHash, int64_t* partSize);
     static int finalizeMultiPart(SingleFileStorage& sfs, const std::string& fn, const int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
 
     static std::vector<SingleFileStorage::SFragInfo> onDeleteCallback(const std::string& fn, const std::string& md5sum);
@@ -340,7 +339,7 @@ public:
 
     void sigCheckOk();
     void sigCheckFailed();
-    
+
     // multipart/form-data parsing callbacks
     virtual int onFieldStart(const std::string& name,
                              folly::Optional<std::string> filename,
@@ -353,14 +352,14 @@ public:
     virtual void onError() override;
 
 private:
-    void readFile(folly::EventBase *evb);
-    void readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> self, int64_t offset);
+    void readFile(folly::EventBase* evb);
+    void readObject(folly::EventBase* evb, std::shared_ptr<S3Handler> self, int64_t offset);
     void onBodyChunked(std::unique_ptr<folly::IOBuf> body);
-	void onBodyCPU(folly::EventBase *evb, int64_t offs, std::unique_ptr<folly::IOBuf> body);
+    void onBodyCPU(folly::EventBase* evb, int64_t offs, std::unique_ptr<folly::IOBuf> body);
     void listObjects(proxygen::HTTPMessage& headers, const std::string& bucket);
     void listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId);
     void listBuckets(proxygen::HTTPMessage& headers, std::string accessKey);
-    void listBuckets(folly::EventBase *evb, std::shared_ptr<S3Handler> self, std::string accessKey);
+    void listBuckets(folly::EventBase* evb, std::shared_ptr<S3Handler> self, std::string accessKey);
     void getBucketLocation(proxygen::HTTPMessage& headers, const std::string& bucket);
     void getBucketVersioning(proxygen::HTTPMessage& headers, const std::string& bucket);
     void getBucketCors(proxygen::HTTPMessage& headers, const std::string& bucket);
@@ -391,9 +390,9 @@ private:
     void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const buckets::BucketInfo& bucketInfo);
     bool commit();
 
-    void listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& continuationToken, 
-        const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter, const std::string& delimiter, const int64_t bucket,
-        const bool listV2, const std::string& bucketName, const std::string& markerVersionStr, const bool urlEncode);
+    void listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> self, const std::string& continuationToken,
+                     const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter, const std::string& delimiter, const int64_t bucket,
+                     const bool listV2, const std::string& bucketName, const std::string& markerVersionStr, const bool urlEncode);
     void createMultipartUpload(proxygen::HTTPMessage& headers);
     void finalizeMultipartUpload();
     void finalizeCreateBucket();
@@ -403,9 +402,9 @@ private:
     void finalizePutObjectLockConfiguration();
     void finalizePutObjectRetention();
     std::string getEtagParsedMultipart(const std::string& md5sum);
-    
-    void readBodyThread(folly::EventBase *evb);
-    void startReadBodyThread(folly::EventBase *evb);
+
+    void readBodyThread(folly::EventBase* evb);
+    void startReadBodyThread(folly::EventBase* evb);
     bool usesBodyThread() const;
     void setFinished();
     bool setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::string_view path, const std::string* versionId, const bool setCorsHeader);
@@ -427,8 +426,8 @@ private:
     // Only if object lock is enabled for the bucket. Call right before queueing the overwrite/delete.
     void addProtectedCheck(const bool bypassGovernance);
     int checkMatchInfo();
-    void finalizePutObject(folly::EventBase *evb, const int64_t lastModified);
-    
+    void finalizePutObject(folly::EventBase* evb, const int64_t lastModified);
+
     bool serializeMetadataValues(CWData& wdata);
     bool unserializeMetadataValues(CRData& rdata);
 
@@ -450,17 +449,17 @@ private:
 
     proxygen::ResponseBuilder responseBuilderWithCors(uint16_t code, const std::string& message);
 
-	std::shared_ptr<S3Handler> self;
-	Action request_action = Action::Unknown;
+    std::shared_ptr<S3Handler> self;
+    Action request_action = Action::Unknown;
 
     KeyInfo keyInfo;
     std::atomic<bool> paused_{ false };
     int64_t done_bytes = 0;
-	bool running = false;
+    bool running = false;
     // Written on IO thread. For actions using onBodyCPU (see usesBodyThread) write via setFinished()
     // as onBodyCPU reads it with extents_mutex held on a CPU thread
     bool finished_ = false;
-	std::atomic<int64_t> put_remaining = -1;
+    std::atomic<int64_t> put_remaining = -1;
     ExpatXmlParser xmlBody;
     std::string bodyData;
 
@@ -476,10 +475,10 @@ private:
     std::unique_ptr<PutObjectLockConfigurationData> putObjectLockConfigurationData;
     std::unique_ptr<PutObjectRetentionData> putObjectRetentionData;
 
-	std::mutex extents_mutex;
-	std::condition_variable extents_cond;
+    std::mutex extents_mutex;
+    std::condition_variable extents_cond;
 
-	std::vector<SingleFileStorage::Ext> extents;
+    std::vector<SingleFileStorage::Ext> extents;
     bool extentsInitialized = false;
     EvpMdCtx evpMdCtx;
     std::string contentMd5;
@@ -514,7 +513,7 @@ private:
         bool isSigned = false;
         std::string header;
         State state = State::SizeCr;
-        size_t chunkSize = 0;     
+        size_t chunkSize = 0;
         EvpMdCtx evpMdCtx;
         std::string stringToSignHeader;
         std::string signingKey;
@@ -535,11 +534,10 @@ private:
     static std::mutex readingMultipartObjectsMutex;
     static std::unordered_map<std::string, ReadingMultipartObject> readingMultipartObjects;
 
-    
+    SingleFileStorage& _sfs;
 
-    SingleFileStorage &_sfs;
-
-    SingleFileStorage& sfs() {
+    SingleFileStorage& sfs()
+    {
 #ifndef NDEBUG
         sfsWasUsed = true;
 #endif
@@ -556,7 +554,7 @@ private:
 
     SigCheckResult sigChecked = SigCheckResult::NotChecked;
     bool sfsWasUsed = false;
-#endif 
+#endif
 
     std::string corsAllowOrigin;
 };

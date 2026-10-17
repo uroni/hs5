@@ -2,7 +2,7 @@
  * Copyright Martin Raiber. All Rights Reserved.
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
- #include "DbDao.h"
+#include "DbDao.h"
 #include <Database.h>
 #include <assert.h>
 #include <gflags/gflags.h>
@@ -14,7 +14,7 @@ typedef void(upgrade_func_t)(sqlgen::Database&);
 
 void upgrade0_1(sqlgen::Database& db)
 {
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE users (id INTEGER PRIMARY KEY,
 		name TEXT NOT NULL, 
 		password_state INTEGER NOT NULL,
@@ -25,7 +25,7 @@ void upgrade0_1(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE access_keys(
 			id INTEGER PRIMARY KEY,
 			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -37,7 +37,7 @@ void upgrade0_1(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE roles (
 			id INTEGER PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -46,7 +46,7 @@ void upgrade0_1(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE policies (
 			id INTEGER PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -59,7 +59,7 @@ void upgrade0_1(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE user_roles (
 			id INTEGER PRIMARY KEY,
 			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -70,7 +70,7 @@ void upgrade0_1(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE role_policies (
 			id INTEGER PRIMARY KEY,
 			role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
@@ -81,7 +81,7 @@ void upgrade0_1(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE buckets (
 			id INTEGER PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -92,7 +92,7 @@ void upgrade0_1(sqlgen::Database& db)
 
 void upgrade1_2(sqlgen::Database& db)
 {
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE policy_statements (
 			id INTEGER PRIMARY KEY,
 			policy_id INTEGER NOT NULL REFERENCES policies(id) ON DELETE CASCADE,
@@ -101,7 +101,7 @@ void upgrade1_2(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE policy_statement_actions (
 			id INTEGER PRIMARY KEY,
 			statement_id INTEGER NOT NULL REFERENCES policy_statements(id) ON DELETE CASCADE,
@@ -109,8 +109,8 @@ void upgrade1_2(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	// TODO: Rename policy_resources => policy_statement_resources
-	db.write(R"""(
+    // TODO: Rename policy_resources => policy_statement_resources
+    db.write(R"""(
 		CREATE TABLE policy_resources (
 			id INTEGER PRIMARY KEY,
 			statement_id INTEGER NOT NULL REFERENCES policy_statements(id) ON DELETE CASCADE,
@@ -118,7 +118,7 @@ void upgrade1_2(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE groups (
 			id INTEGER PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -126,7 +126,7 @@ void upgrade1_2(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE user_groups (
 			id INTEGER PRIMARY KEY,
 			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -136,7 +136,7 @@ void upgrade1_2(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE group_policies (
 			id INTEGER PRIMARY KEY,
 			group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
@@ -149,7 +149,7 @@ void upgrade1_2(sqlgen::Database& db)
 
 void upgrade2_3(sqlgen::Database& db)
 {
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE bucket_permissions (
 			id INTEGER PRIMARY KEY,
 			bucket_id INTEGER NOT NULL REFERENCES buckets(id) ON DELETE CASCADE,
@@ -162,21 +162,21 @@ void upgrade2_3(sqlgen::Database& db)
 
 void upgrade3_4(sqlgen::Database& db)
 {
-	db.write(R"""(
+    db.write(R"""(
 		ALTER TABLE buckets ADD publicPerms INTEGER DEFAULT 0;
 	)""");
 }
 
 void upgrade4_5(sqlgen::Database& db)
 {
-	db.write(R"""(
+    db.write(R"""(
 		ALTER TABLE buckets ADD versioning INTEGER DEFAULT 0;
 	)""");
 }
 
 void upgrade5_6(sqlgen::Database& db)
 {
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE bucket_cors (
 			id INTEGER PRIMARY KEY,
 			bucket_id INTEGER NOT NULL REFERENCES buckets(id) ON DELETE CASCADE,
@@ -185,7 +185,7 @@ void upgrade5_6(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE bucket_cors_allowed_origins (
 			id INTEGER PRIMARY KEY,
 			bucket_cors_id INTEGER NOT NULL REFERENCES bucket_cors(id) ON DELETE CASCADE,
@@ -193,7 +193,7 @@ void upgrade5_6(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE bucket_cors_allowed_methods (
 			id INTEGER PRIMARY KEY,
 			bucket_cors_id INTEGER NOT NULL REFERENCES bucket_cors(id) ON DELETE CASCADE,
@@ -201,7 +201,7 @@ void upgrade5_6(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE bucket_cors_allowed_headers (
 			id INTEGER PRIMARY KEY,
 			bucket_cors_id INTEGER NOT NULL REFERENCES bucket_cors(id) ON DELETE CASCADE,
@@ -209,7 +209,7 @@ void upgrade5_6(sqlgen::Database& db)
 		) STRICT;
 	)""");
 
-	db.write(R"""(
+    db.write(R"""(
 		CREATE TABLE bucket_cors_expose_headers (
 			id INTEGER PRIMARY KEY,
 			bucket_cors_id INTEGER NOT NULL REFERENCES bucket_cors(id) ON DELETE CASCADE,
@@ -220,1628 +220,1624 @@ void upgrade5_6(sqlgen::Database& db)
 
 void upgrade6_7(sqlgen::Database& db)
 {
-	db.write(R"""(
+    db.write(R"""(
 		ALTER TABLE buckets ADD objectLockEnabled INTEGER DEFAULT 0;
 	)""");
 }
 
-const std::map<int64_t, upgrade_func_t*> upgrade_funcs {
-	{0, upgrade0_1},
-	{1, upgrade1_2},
-	{2, upgrade2_3},
-	{3, upgrade3_4},
-	{4, upgrade4_5},
-	{5, upgrade5_6},
-	{6, upgrade6_7}
+const std::map<int64_t, upgrade_func_t*> upgrade_funcs{
+    { 0, upgrade0_1 },
+    { 1, upgrade1_2 },
+    { 2, upgrade2_3 },
+    { 3, upgrade3_4 },
+    { 4, upgrade4_5 },
+    { 5, upgrade5_6 },
+    { 6, upgrade6_7 }
 };
 
 sqlgen::Database& DbDao::getStaticDb()
 {
-	static thread_local sqlgen::Database db = [] {
-		sqlgen::Database ret(FLAGS_db_path);
-		if(FLAGS_test_db_no_sync)
-			ret.write("PRAGMA synchronous=OFF");
-		return ret;
-	}();
-	return db;
+    static thread_local sqlgen::Database db = []
+    {
+        sqlgen::Database ret(FLAGS_db_path);
+        if (FLAGS_test_db_no_sync)
+            ret.write("PRAGMA synchronous=OFF");
+        return ret;
+    }();
+    return db;
 }
 
 void DbDao::init()
 {
-	DbDao dao;
-	sqlgen::ScopedManualCommitWriteTransaction trans;
-	auto ver = dao.getUserVersion();
-	const auto initVer = ver;
-	for(auto it=upgrade_funcs.find(ver);it!=upgrade_funcs.end();it = upgrade_funcs.find(ver))
-	{
-		if(ver==initVer)
-			trans.reset(&dao.getDb());
+    DbDao dao;
+    sqlgen::ScopedManualCommitWriteTransaction trans;
+    auto ver = dao.getUserVersion();
+    const auto initVer = ver;
+    for (auto it = upgrade_funcs.find(ver); it != upgrade_funcs.end(); it = upgrade_funcs.find(ver))
+    {
+        if (ver == initVer)
+            trans.reset(&dao.getDb());
 
-		it->second(dao.getDb());
-		++ver;
+        it->second(dao.getDb());
+        ++ver;
 
-		dao.setUserVersion(ver);
-	}
+        dao.setUserVersion(ver);
+    }
 
-	trans.commit();
+    trans.commit();
 }
 
 int64_t DbDao::getUserVersion()
 {
-	auto res = db.read("PRAGMA user_version");
-	if(res.empty() || res.begin()->empty())
-		return 0;
+    auto res = db.read("PRAGMA user_version");
+    if (res.empty() || res.begin()->empty())
+        return 0;
 
-	return std::atoll(res.begin()->begin()->second.c_str());
+    return std::atoll(res.begin()->begin()->second.c_str());
 }
 
 void DbDao::setUserVersion(int64_t newVersion)
 {
-	db.write("PRAGMA user_version = "+std::to_string(newVersion));
+    db.write("PRAGMA user_version = " + std::to_string(newVersion));
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<User> DbDao::getUsers
-* @return int64 id, string name, int password_state, string password, int system
-* @sql
-*      SELECT id, name, password_state, password, system FROM users
-*/
+ * @-SQLGenAccess
+ * @func vector<User> DbDao::getUsers
+ * @return int64 id, string name, int password_state, string password, int system
+ * @sql
+ *      SELECT id, name, password_state, password, system FROM users
+ */
 std::vector<DbDao::User> DbDao::getUsers()
 {
-	if(!_getUsers.prepared())
-	{
-		_getUsers=db.prepare("SELECT id, name, password_state, password, system FROM users");
-	}
-	auto& cursor=_getUsers.cursor();
-	std::vector<DbDao::User> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::User& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.name);
-		cursor.get(2, obj.password_state);
-		cursor.get(3, obj.password);
-		cursor.get(4, obj.system);
-	}
-	cursor.shutdown();
-	return ret;
+    if (!_getUsers.prepared())
+    {
+        _getUsers = db.prepare("SELECT id, name, password_state, password, system FROM users");
+    }
+    auto& cursor = _getUsers.cursor();
+    std::vector<DbDao::User> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::User& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.name);
+        cursor.get(2, obj.password_state);
+        cursor.get(3, obj.password);
+        cursor.get(4, obj.system);
+    }
+    cursor.shutdown();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<User> DbDao::getUserById
-* @return int64 id, string name, int password_state, string password, int system
-* @sql
-*      SELECT id, name, password_state, password, system FROM users WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func optional<User> DbDao::getUserById
+ * @return int64 id, string name, int password_state, string password, int system
+ * @sql
+ *      SELECT id, name, password_state, password, system FROM users WHERE id=:id(int64)
+ */
 std::optional<DbDao::User> DbDao::getUserById(int64_t id)
 {
-	if(!_getUserById.prepared())
-	{
-		_getUserById=db.prepare("SELECT id, name, password_state, password, system FROM users WHERE id=?");
-	}
-	_getUserById.bind(id);
-	auto& cursor=_getUserById.cursor();
-	if(cursor.next())
-	{
-		User ret;
-		cursor.get(0, ret.id);
-		cursor.get(1, ret.name);
-		cursor.get(2, ret.password_state);
-		cursor.get(3, ret.password);
-		cursor.get(4, ret.system);
-		_getUserById.reset();
-		return ret;
-	}
-	_getUserById.reset();
-	return {};
+    if (!_getUserById.prepared())
+    {
+        _getUserById = db.prepare("SELECT id, name, password_state, password, system FROM users WHERE id=?");
+    }
+    _getUserById.bind(id);
+    auto& cursor = _getUserById.cursor();
+    if (cursor.next())
+    {
+        User ret;
+        cursor.get(0, ret.id);
+        cursor.get(1, ret.name);
+        cursor.get(2, ret.password_state);
+        cursor.get(3, ret.password);
+        cursor.get(4, ret.system);
+        _getUserById.reset();
+        return ret;
+    }
+    _getUserById.reset();
+    return {};
 }
 
 /**
-* @-SQLGenAccess
-* @func User DbDao::getUserByName
-* @return int64 id, string name, int password_state, string password, int system
-* @sql
-*      SELECT id, name, password_state, password, system FROM users WHERE name=:name(string)
-*/
+ * @-SQLGenAccess
+ * @func User DbDao::getUserByName
+ * @return int64 id, string name, int password_state, string password, int system
+ * @sql
+ *      SELECT id, name, password_state, password, system FROM users WHERE name=:name(string)
+ */
 DbDao::User DbDao::getUserByName(const std::string& name)
 {
-	if(!_getUserByName.prepared())
-	{
-		_getUserByName=db.prepare("SELECT id, name, password_state, password, system FROM users WHERE name=?");
-	}
-	_getUserByName.bind(name);
-	auto& cursor=_getUserByName.cursor();
-	DbDao::User ret = { false, 0, "", 0, "", 0 };
-	if(cursor.next())
-	{
-		ret.exists=true;
-		cursor.get(0, ret.id);
-		cursor.get(1, ret.name);
-		cursor.get(2, ret.password_state);
-		cursor.get(3, ret.password);
-		cursor.get(4, ret.system);
-	}
-	_getUserByName.reset();
-	return ret;
+    if (!_getUserByName.prepared())
+    {
+        _getUserByName = db.prepare("SELECT id, name, password_state, password, system FROM users WHERE name=?");
+    }
+    _getUserByName.bind(name);
+    auto& cursor = _getUserByName.cursor();
+    DbDao::User ret = { false, 0, "", 0, "", 0 };
+    if (cursor.next())
+    {
+        ret.exists = true;
+        cursor.get(0, ret.id);
+        cursor.get(1, ret.name);
+        cursor.get(2, ret.password_state);
+        cursor.get(3, ret.password);
+        cursor.get(4, ret.system);
+    }
+    _getUserByName.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<int64_t> DbDao::addUser
-* @return int64_raw id
-* @sql
-*      INSERT INTO users (name, password_state, password, system) VALUES (:name(string), :password_state(int), :password(string), :system(int)) RETURNING id
-*/
+ * @-SQLGenAccess
+ * @func optional<int64_t> DbDao::addUser
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO users (name, password_state, password, system) VALUES (:name(string), :password_state(int), :password(string), :system(int)) RETURNING id
+ */
 std::optional<int64_t> DbDao::addUser(const std::string& name, int password_state, const std::string& password, int system)
 {
-	if(!_addUser.prepared())
-	{
-		_addUser=db.prepare("INSERT INTO users (name, password_state, password, system) VALUES (?, ?, ?, ?) RETURNING id");
-	}
-	_addUser.bind(name);
-	_addUser.bind(password_state);
-	_addUser.bind(password);
-	_addUser.bind(system);
-	auto& cursor=_addUser.cursor();
-	if(!cursor.next())
-	{
-		_addUser.reset();
-		return {};
-	}
-	int64_t ret;
-	cursor.get(0, ret);
-	_addUser.reset();
-	return ret;
+    if (!_addUser.prepared())
+    {
+        _addUser = db.prepare("INSERT INTO users (name, password_state, password, system) VALUES (?, ?, ?, ?) RETURNING id");
+    }
+    _addUser.bind(name);
+    _addUser.bind(password_state);
+    _addUser.bind(password);
+    _addUser.bind(system);
+    auto& cursor = _addUser.cursor();
+    if (!cursor.next())
+    {
+        _addUser.reset();
+        return {};
+    }
+    int64_t ret;
+    cursor.get(0, ret);
+    _addUser.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::removeUser
-* @sql
-*      DELETE FROM users WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::removeUser
+ * @sql
+ *      DELETE FROM users WHERE id=:id(int64)
+ */
 void DbDao::removeUser(int64_t id)
 {
-	if(!_removeUser.prepared())
-	{
-		_removeUser=db.prepare("DELETE FROM users WHERE id=?");
-	}
-	_removeUser.bind(id);
-	_removeUser.write();
-	_removeUser.reset();
+    if (!_removeUser.prepared())
+    {
+        _removeUser = db.prepare("DELETE FROM users WHERE id=?");
+    }
+    _removeUser.bind(id);
+    _removeUser.write();
+    _removeUser.reset();
 }
 
-
 /**
-* @-SQLGenAccess
-* @func optional<int64> DbDao::hasUser
-* @return int64 id
-* @sql
-*	SELECT id FROM users LIMIT 1;
-*/
+ * @-SQLGenAccess
+ * @func optional<int64> DbDao::hasUser
+ * @return int64 id
+ * @sql
+ *	SELECT id FROM users LIMIT 1;
+ */
 std::optional<int64_t> DbDao::hasUser()
 {
-	if(!_hasUser.prepared())
-	{
-		_hasUser=db.prepare("SELECT id FROM users LIMIT 1;");
-	}
-	auto& cursor=_hasUser.cursor();
-	if(!cursor.next())
-	{
-		cursor.shutdown();
-		return {};
-	}
-	int64_t ret;
-	cursor.get(0, ret);
-	cursor.shutdown();
-	return ret;
+    if (!_hasUser.prepared())
+    {
+        _hasUser = db.prepare("SELECT id FROM users LIMIT 1;");
+    }
+    auto& cursor = _hasUser.cursor();
+    if (!cursor.next())
+    {
+        cursor.shutdown();
+        return {};
+    }
+    int64_t ret;
+    cursor.get(0, ret);
+    cursor.shutdown();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func int64_t DbDao::addAccessKey
-* @return int64_raw id
-* @sql
-*      INSERT INTO access_keys (user_id, description, key, secret_key, system) VALUES (:user_id(int64), :description(string), :key(string), :secret_key(string), :system(int)) RETURNING id
-*/
+ * @-SQLGenAccess
+ * @func int64_t DbDao::addAccessKey
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO access_keys (user_id, description, key, secret_key, system) VALUES (:user_id(int64), :description(string), :key(string), :secret_key(string), :system(int)) RETURNING id
+ */
 int64_t DbDao::addAccessKey(int64_t user_id, const std::string& description, const std::string& key, const std::string& secret_key, int system)
 {
-	if(!_addAccessKey.prepared())
-	{
-		_addAccessKey=db.prepare("INSERT INTO access_keys (user_id, description, key, secret_key, system) VALUES (?, ?, ?, ?, ?) RETURNING id");
-	}
-	_addAccessKey.bind(user_id);
-	_addAccessKey.bind(description);
-	_addAccessKey.bind(key);
-	_addAccessKey.bind(secret_key);
-	_addAccessKey.bind(system);
-	auto& cursor=_addAccessKey.cursor();
-	const auto hasNext = cursor.next();
-	assert(hasNext);
-	int64_t ret;
-	cursor.get(0, ret);
-	_addAccessKey.reset();
-	return ret;
+    if (!_addAccessKey.prepared())
+    {
+        _addAccessKey = db.prepare("INSERT INTO access_keys (user_id, description, key, secret_key, system) VALUES (?, ?, ?, ?, ?) RETURNING id");
+    }
+    _addAccessKey.bind(user_id);
+    _addAccessKey.bind(description);
+    _addAccessKey.bind(key);
+    _addAccessKey.bind(secret_key);
+    _addAccessKey.bind(system);
+    auto& cursor = _addAccessKey.cursor();
+    const auto hasNext = cursor.next();
+    assert(hasNext);
+    int64_t ret;
+    cursor.get(0, ret);
+    _addAccessKey.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<int64_t> DbDao::addRole
-* @return int64_raw id
-* @sql
-*      INSERT INTO roles (name, system) VALUES (:name(string), :system(int)) RETURNING id
-*/
+ * @-SQLGenAccess
+ * @func optional<int64_t> DbDao::addRole
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO roles (name, system) VALUES (:name(string), :system(int)) RETURNING id
+ */
 std::optional<int64_t> DbDao::addRole(const std::string& name, int system)
 {
-	if(!_addRole.prepared())
-	{
-		_addRole=db.prepare("INSERT INTO roles (name, system) VALUES (?, ?) RETURNING id");
-	}
-	_addRole.bind(name);
-	_addRole.bind(system);
-	auto& cursor=_addRole.cursor();
-	if(!cursor.next())
-	{
-		_addRole.reset();
-		return {};
-	}
-	int64_t ret;
-	cursor.get(0, ret);
-	_addRole.reset();
-	return ret;
+    if (!_addRole.prepared())
+    {
+        _addRole = db.prepare("INSERT INTO roles (name, system) VALUES (?, ?) RETURNING id");
+    }
+    _addRole.bind(name);
+    _addRole.bind(system);
+    auto& cursor = _addRole.cursor();
+    if (!cursor.next())
+    {
+        _addRole.reset();
+        return {};
+    }
+    int64_t ret;
+    cursor.get(0, ret);
+    _addRole.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::removeRole
-* @sql
-*      DELETE FROM roles WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::removeRole
+ * @sql
+ *      DELETE FROM roles WHERE id=:id(int64)
+ */
 void DbDao::removeRole(int64_t id)
 {
-	if(!_removeRole.prepared())
-	{
-		_removeRole=db.prepare("DELETE FROM roles WHERE id=?");
-	}
-	_removeRole.bind(id);
-	_removeRole.write();
-	_removeRole.reset();
+    if (!_removeRole.prepared())
+    {
+        _removeRole = db.prepare("DELETE FROM roles WHERE id=?");
+    }
+    _removeRole.bind(id);
+    _removeRole.write();
+    _removeRole.reset();
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<int64_t> DbDao::addPolicy
-* @return int64_raw id
-* @sql
-*      INSERT INTO policies (name, description, ver, data, system) VALUES (:name(string), :description(string), :ver(int), :data(string), :system(int)) RETURNING id
-*/
+ * @-SQLGenAccess
+ * @func optional<int64_t> DbDao::addPolicy
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO policies (name, description, ver, data, system) VALUES (:name(string), :description(string), :ver(int), :data(string), :system(int)) RETURNING id
+ */
 std::optional<int64_t> DbDao::addPolicy(const std::string& name, const std::string& description, int ver, const std::string& data, int system)
 {
-	if(!_addPolicy.prepared())
-	{
-		_addPolicy=db.prepare("INSERT INTO policies (name, description, ver, data, system) VALUES (?, ?, ?, ?, ?) RETURNING id");
-	}
-	_addPolicy.bind(name);
-	_addPolicy.bind(description);
-	_addPolicy.bind(ver);
-	_addPolicy.bind(data);
-	_addPolicy.bind(system);
-	auto& cursor=_addPolicy.cursor();
-	if(!cursor.next())
-	{
-		_addPolicy.reset();
-		return {};
-	}
-	int64_t ret;
-	cursor.get(0, ret);
-	_addPolicy.reset();
-	return ret;
+    if (!_addPolicy.prepared())
+    {
+        _addPolicy = db.prepare("INSERT INTO policies (name, description, ver, data, system) VALUES (?, ?, ?, ?, ?) RETURNING id");
+    }
+    _addPolicy.bind(name);
+    _addPolicy.bind(description);
+    _addPolicy.bind(ver);
+    _addPolicy.bind(data);
+    _addPolicy.bind(system);
+    auto& cursor = _addPolicy.cursor();
+    if (!cursor.next())
+    {
+        _addPolicy.reset();
+        return {};
+    }
+    int64_t ret;
+    cursor.get(0, ret);
+    _addPolicy.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::removePolicy
-* @sql
-*      DELETE FROM policies WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::removePolicy
+ * @sql
+ *      DELETE FROM policies WHERE id=:id(int64)
+ */
 void DbDao::removePolicy(int64_t id)
 {
-	if(!_removePolicy.prepared())
-	{
-		_removePolicy=db.prepare("DELETE FROM policies WHERE id=?");
-	}
-	_removePolicy.bind(id);
-	_removePolicy.write();
-	_removePolicy.reset();
+    if (!_removePolicy.prepared())
+    {
+        _removePolicy = db.prepare("DELETE FROM policies WHERE id=?");
+    }
+    _removePolicy.bind(id);
+    _removePolicy.write();
+    _removePolicy.reset();
 }
 
-
 /**
-* @-SQLGenAccess
-* @func int64_t DbDao::addUserRole
-* @return int64_raw id
-* @sql
-*      INSERT INTO user_roles (user_id, role_id, system) VALUES (:user_id(int64), :role_id(int64), :system(int)) RETURNING id
-*/
+ * @-SQLGenAccess
+ * @func int64_t DbDao::addUserRole
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO user_roles (user_id, role_id, system) VALUES (:user_id(int64), :role_id(int64), :system(int)) RETURNING id
+ */
 int64_t DbDao::addUserRole(int64_t user_id, int64_t role_id, int system)
 {
-	if(!_addUserRole.prepared())
-	{
-		_addUserRole=db.prepare("INSERT INTO user_roles (user_id, role_id, system) VALUES (?, ?, ?) RETURNING id");
-	}
-	_addUserRole.bind(user_id);
-	_addUserRole.bind(role_id);
-	_addUserRole.bind(system);
-	auto& cursor=_addUserRole.cursor();
-	const auto hasNext = cursor.next();
-	assert(hasNext);
-	int64_t ret;
-	cursor.get(0, ret);
-	_addUserRole.reset();
-	return ret;
+    if (!_addUserRole.prepared())
+    {
+        _addUserRole = db.prepare("INSERT INTO user_roles (user_id, role_id, system) VALUES (?, ?, ?) RETURNING id");
+    }
+    _addUserRole.bind(user_id);
+    _addUserRole.bind(role_id);
+    _addUserRole.bind(system);
+    auto& cursor = _addUserRole.cursor();
+    const auto hasNext = cursor.next();
+    assert(hasNext);
+    int64_t ret;
+    cursor.get(0, ret);
+    _addUserRole.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::removeUserRole
-* @sql
-*      DELETE FROM user_roles WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::removeUserRole
+ * @sql
+ *      DELETE FROM user_roles WHERE id=:id(int64)
+ */
 void DbDao::removeUserRole(int64_t id)
 {
-	if(!_removeUserRole.prepared())
-	{
-		_removeUserRole=db.prepare("DELETE FROM user_roles WHERE id=?");
-	}
-	_removeUserRole.bind(id);
-	_removeUserRole.write();
-	_removeUserRole.reset();
+    if (!_removeUserRole.prepared())
+    {
+        _removeUserRole = db.prepare("DELETE FROM user_roles WHERE id=?");
+    }
+    _removeUserRole.bind(id);
+    _removeUserRole.write();
+    _removeUserRole.reset();
 }
 
 /**
-* @-SQLGenAccess
-* @func int64_t DbDao::addRolePolicy
-* @return int64_raw id
-* @sql
-*      INSERT INTO role_policies (role_id, policy_id, system) VALUES (:role_id(int64), :policy_id(int64), :system(int)) RETURNING id
-*/
+ * @-SQLGenAccess
+ * @func int64_t DbDao::addRolePolicy
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO role_policies (role_id, policy_id, system) VALUES (:role_id(int64), :policy_id(int64), :system(int)) RETURNING id
+ */
 int64_t DbDao::addRolePolicy(int64_t role_id, int64_t policy_id, int system)
 {
-	if(!_addRolePolicy.prepared())
-	{
-		_addRolePolicy=db.prepare("INSERT INTO role_policies (role_id, policy_id, system) VALUES (?, ?, ?) RETURNING id");
-	}
-	_addRolePolicy.bind(role_id);
-	_addRolePolicy.bind(policy_id);
-	_addRolePolicy.bind(system);
-	auto& cursor=_addRolePolicy.cursor();
-	const auto hasNext = cursor.next();
-	assert(hasNext);
-	int64_t ret;
-	cursor.get(0, ret);
-	_addRolePolicy.reset();
-	return ret;
+    if (!_addRolePolicy.prepared())
+    {
+        _addRolePolicy = db.prepare("INSERT INTO role_policies (role_id, policy_id, system) VALUES (?, ?, ?) RETURNING id");
+    }
+    _addRolePolicy.bind(role_id);
+    _addRolePolicy.bind(policy_id);
+    _addRolePolicy.bind(system);
+    auto& cursor = _addRolePolicy.cursor();
+    const auto hasNext = cursor.next();
+    assert(hasNext);
+    int64_t ret;
+    cursor.get(0, ret);
+    _addRolePolicy.reset();
+    return ret;
 }
 
-
 /**
-* @-SQLGenAccess
-* @func void DbDao::removeRolePolicy
-* @sql
-*      DELETE FROM role_policies WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::removeRolePolicy
+ * @sql
+ *      DELETE FROM role_policies WHERE id=:id(int64)
+ */
 void DbDao::removeRolePolicy(int64_t id)
 {
-	if(!_removeRolePolicy.prepared())
-	{
-		_removeRolePolicy=db.prepare("DELETE FROM role_policies WHERE id=?");
-	}
-	_removeRolePolicy.bind(id);
-	_removeRolePolicy.write();
-	_removeRolePolicy.reset();
+    if (!_removeRolePolicy.prepared())
+    {
+        _removeRolePolicy = db.prepare("DELETE FROM role_policies WHERE id=?");
+    }
+    _removeRolePolicy.bind(id);
+    _removeRolePolicy.write();
+    _removeRolePolicy.reset();
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::deleteUser
-* @sql
-*      DELETE FROM users WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::deleteUser
+ * @sql
+ *      DELETE FROM users WHERE id=:id(int64)
+ */
 void DbDao::deleteUser(int64_t id)
 {
-	if(!_deleteUser.prepared())
-	{
-		_deleteUser=db.prepare("DELETE FROM users WHERE id=?");
-	}
-	_deleteUser.bind(id);
-	_deleteUser.write();
-	_deleteUser.reset();
+    if (!_deleteUser.prepared())
+    {
+        _deleteUser = db.prepare("DELETE FROM users WHERE id=?");
+    }
+    _deleteUser.bind(id);
+    _deleteUser.write();
+    _deleteUser.reset();
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<AccessKey> DbDao::getAccessKey
-* @return int64 id, int64 user_id, int64 created, string description, string key, string secret_key
-* @sql
-*      SELECT id, user_id, created, description, key, secret_key FROM access_keys WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func optional<AccessKey> DbDao::getAccessKey
+ * @return int64 id, int64 user_id, int64 created, string description, string key, string secret_key
+ * @sql
+ *      SELECT id, user_id, created, description, key, secret_key FROM access_keys WHERE id=:id(int64)
+ */
 std::optional<DbDao::AccessKey> DbDao::getAccessKey(int64_t id)
 {
-	if(!_getAccessKey.prepared())
-	{
-		_getAccessKey=db.prepare("SELECT id, user_id, created, description, key, secret_key FROM access_keys WHERE id=?");
-	}
-	_getAccessKey.bind(id);
-	auto& cursor=_getAccessKey.cursor();
-	if(cursor.next())
-	{
-		AccessKey ret;
-		cursor.get(0, ret.id);
-		cursor.get(1, ret.user_id);
-		cursor.get(2, ret.created);
-		cursor.get(3, ret.description);
-		cursor.get(4, ret.key);
-		cursor.get(5, ret.secret_key);
-		_getAccessKey.reset();
-		return ret;
-	}
-	_getAccessKey.reset();
-	return {};
+    if (!_getAccessKey.prepared())
+    {
+        _getAccessKey = db.prepare("SELECT id, user_id, created, description, key, secret_key FROM access_keys WHERE id=?");
+    }
+    _getAccessKey.bind(id);
+    auto& cursor = _getAccessKey.cursor();
+    if (cursor.next())
+    {
+        AccessKey ret;
+        cursor.get(0, ret.id);
+        cursor.get(1, ret.user_id);
+        cursor.get(2, ret.created);
+        cursor.get(3, ret.description);
+        cursor.get(4, ret.key);
+        cursor.get(5, ret.secret_key);
+        _getAccessKey.reset();
+        return ret;
+    }
+    _getAccessKey.reset();
+    return {};
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<AccessKey> DbDao::getAccessKeys
-* @return int64 id, int64 user_id, int64 created, string description, string key, string secret_key
-* @sql
-*      SELECT id, user_id, created, description, key, secret_key FROM access_keys
-*/
+ * @-SQLGenAccess
+ * @func vector<AccessKey> DbDao::getAccessKeys
+ * @return int64 id, int64 user_id, int64 created, string description, string key, string secret_key
+ * @sql
+ *      SELECT id, user_id, created, description, key, secret_key FROM access_keys
+ */
 std::vector<DbDao::AccessKey> DbDao::getAccessKeys()
 {
-	if(!_getAccessKeys.prepared())
-	{
-		_getAccessKeys=db.prepare("SELECT id, user_id, created, description, key, secret_key FROM access_keys");
-	}
-	auto& cursor=_getAccessKeys.cursor();
-	std::vector<DbDao::AccessKey> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::AccessKey& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.user_id);
-		cursor.get(2, obj.created);
-		cursor.get(3, obj.description);
-		cursor.get(4, obj.key);
-		cursor.get(5, obj.secret_key);
-	}
-	cursor.shutdown();
-	return ret;
+    if (!_getAccessKeys.prepared())
+    {
+        _getAccessKeys = db.prepare("SELECT id, user_id, created, description, key, secret_key FROM access_keys");
+    }
+    auto& cursor = _getAccessKeys.cursor();
+    std::vector<DbDao::AccessKey> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::AccessKey& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.user_id);
+        cursor.get(2, obj.created);
+        cursor.get(3, obj.description);
+        cursor.get(4, obj.key);
+        cursor.get(5, obj.secret_key);
+    }
+    cursor.shutdown();
+    return ret;
 }
 
-
-
 /**
-* @-SQLGenAccess
-* @func vector<AccessKey> DbDao::getAccessKeysOfUser
-* @return int64 id, int64 user_id, int64 created, string description, string key, string secret_key
-* @sql
-*      SELECT id, user_id, created, description, key, secret_key FROM access_keys WHERE user_id=:user_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<AccessKey> DbDao::getAccessKeysOfUser
+ * @return int64 id, int64 user_id, int64 created, string description, string key, string secret_key
+ * @sql
+ *      SELECT id, user_id, created, description, key, secret_key FROM access_keys WHERE user_id=:user_id(int64)
+ */
 std::vector<DbDao::AccessKey> DbDao::getAccessKeysOfUser(int64_t user_id)
 {
-	if(!_getAccessKeysOfUser.prepared())
-	{
-		_getAccessKeysOfUser=db.prepare("SELECT id, user_id, created, description, key, secret_key FROM access_keys WHERE user_id=?");
-	}
-	_getAccessKeysOfUser.bind(user_id);
-	auto& cursor=_getAccessKeysOfUser.cursor();
-	std::vector<DbDao::AccessKey> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::AccessKey& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.user_id);
-		cursor.get(2, obj.created);
-		cursor.get(3, obj.description);
-		cursor.get(4, obj.key);
-		cursor.get(5, obj.secret_key);
-	}
-	_getAccessKeysOfUser.reset();
-	return ret;
+    if (!_getAccessKeysOfUser.prepared())
+    {
+        _getAccessKeysOfUser = db.prepare("SELECT id, user_id, created, description, key, secret_key FROM access_keys WHERE user_id=?");
+    }
+    _getAccessKeysOfUser.bind(user_id);
+    auto& cursor = _getAccessKeysOfUser.cursor();
+    std::vector<DbDao::AccessKey> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::AccessKey& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.user_id);
+        cursor.get(2, obj.created);
+        cursor.get(3, obj.description);
+        cursor.get(4, obj.key);
+        cursor.get(5, obj.secret_key);
+    }
+    _getAccessKeysOfUser.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::removeAccessKey
-* @sql
-*      DELETE FROM access_keys WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::removeAccessKey
+ * @sql
+ *      DELETE FROM access_keys WHERE id=:id(int64)
+ */
 void DbDao::removeAccessKey(int64_t id)
 {
-	if(!_removeAccessKey.prepared())
-	{
-		_removeAccessKey=db.prepare("DELETE FROM access_keys WHERE id=?");
-	}
-	_removeAccessKey.bind(id);
-	_removeAccessKey.write();
-	_removeAccessKey.reset();
+    if (!_removeAccessKey.prepared())
+    {
+        _removeAccessKey = db.prepare("DELETE FROM access_keys WHERE id=?");
+    }
+    _removeAccessKey.bind(id);
+    _removeAccessKey.write();
+    _removeAccessKey.reset();
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<Bucket> DbDao::getBuckets
-* @return int64 id, string name, int64 created, int publicPerms, int versioning, int objectLockEnabled
-* @sql
-*      SELECT id, name, created, publicPerms, versioning, objectLockEnabled FROM buckets
-*/
+ * @-SQLGenAccess
+ * @func vector<Bucket> DbDao::getBuckets
+ * @return int64 id, string name, int64 created, int publicPerms, int versioning, int objectLockEnabled
+ * @sql
+ *      SELECT id, name, created, publicPerms, versioning, objectLockEnabled FROM buckets
+ */
 std::vector<DbDao::Bucket> DbDao::getBuckets()
 {
-	if(!_getBuckets.prepared())
-	{
-		_getBuckets=db.prepare("SELECT id, name, created, publicPerms, versioning, objectLockEnabled FROM buckets");
-	}
-	auto& cursor=_getBuckets.cursor();
-	std::vector<DbDao::Bucket> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::Bucket& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.name);
-		cursor.get(2, obj.created);
-		cursor.get(3, obj.publicPerms);
-		cursor.get(4, obj.versioning);
-		cursor.get(5, obj.objectLockEnabled);
-	}
-	cursor.shutdown();
-	return ret;
+    if (!_getBuckets.prepared())
+    {
+        _getBuckets = db.prepare("SELECT id, name, created, publicPerms, versioning, objectLockEnabled FROM buckets");
+    }
+    auto& cursor = _getBuckets.cursor();
+    std::vector<DbDao::Bucket> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::Bucket& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.name);
+        cursor.get(2, obj.created);
+        cursor.get(3, obj.publicPerms);
+        cursor.get(4, obj.versioning);
+        cursor.get(5, obj.objectLockEnabled);
+    }
+    cursor.shutdown();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::addBucket
-* @sql
-*      INSERT INTO buckets (id, name, created, versioning, objectLockEnabled) VALUES (:id(int64), :name(string), :created(int64), :versioning(int), :objectLockEnabled(int))
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::addBucket
+ * @sql
+ *      INSERT INTO buckets (id, name, created, versioning, objectLockEnabled) VALUES (:id(int64), :name(string), :created(int64), :versioning(int), :objectLockEnabled(int))
+ */
 void DbDao::addBucket(int64_t id, const std::string& name, int64_t created, int versioning, int objectLockEnabled)
 {
-	if(!_addBucket.prepared())
-	{
-		_addBucket=db.prepare("INSERT INTO buckets (id, name, created, versioning, objectLockEnabled) VALUES (?, ?, ?, ?, ?)");
-	}
-	_addBucket.bind(id);
-	_addBucket.bind(name);
-	_addBucket.bind(created);
-	_addBucket.bind(versioning);
-	_addBucket.bind(objectLockEnabled);
-	_addBucket.write();
-	_addBucket.reset();
+    if (!_addBucket.prepared())
+    {
+        _addBucket = db.prepare("INSERT INTO buckets (id, name, created, versioning, objectLockEnabled) VALUES (?, ?, ?, ?, ?)");
+    }
+    _addBucket.bind(id);
+    _addBucket.bind(name);
+    _addBucket.bind(created);
+    _addBucket.bind(versioning);
+    _addBucket.bind(objectLockEnabled);
+    _addBucket.write();
+    _addBucket.reset();
 }
 
 /**
-* @-SQLGenAccess
-* @func int64_t DbDao::getMaxBucketId
-* @return int64_raw id
-* @sql
-*      SELECT MAX(id) AS id FROM buckets
-*/
+ * @-SQLGenAccess
+ * @func int64_t DbDao::getMaxBucketId
+ * @return int64_raw id
+ * @sql
+ *      SELECT MAX(id) AS id FROM buckets
+ */
 int64_t DbDao::getMaxBucketId()
 {
-	if(!_getMaxBucketId.prepared())
-	{
-		_getMaxBucketId=db.prepare("SELECT MAX(id) AS id FROM buckets");
-	}
-	auto& cursor=_getMaxBucketId.cursor();
-	const auto hasNext = cursor.next();
-	assert(hasNext);
-	int64_t ret;
-	cursor.get(0, ret);
-	cursor.shutdown();
-	return ret;
+    if (!_getMaxBucketId.prepared())
+    {
+        _getMaxBucketId = db.prepare("SELECT MAX(id) AS id FROM buckets");
+    }
+    auto& cursor = _getMaxBucketId.cursor();
+    const auto hasNext = cursor.next();
+    assert(hasNext);
+    int64_t ret;
+    cursor.get(0, ret);
+    cursor.shutdown();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::deleteBucket
-* @sql
-*      DELETE FROM buckets WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::deleteBucket
+ * @sql
+ *      DELETE FROM buckets WHERE id=:id(int64)
+ */
 void DbDao::deleteBucket(int64_t id)
 {
-	if(!_deleteBucket.prepared())
-	{
-		_deleteBucket=db.prepare("DELETE FROM buckets WHERE id=?");
-	}
-	_deleteBucket.bind(id);
-	_deleteBucket.write();
-	_deleteBucket.reset();
+    if (!_deleteBucket.prepared())
+    {
+        _deleteBucket = db.prepare("DELETE FROM buckets WHERE id=?");
+    }
+    _deleteBucket.bind(id);
+    _deleteBucket.write();
+    _deleteBucket.reset();
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<PolicyStatement> DbDao::getPolicyStatements
-* @return int64 id, string sid, int effect
-* @sql
-*      SELECT id, sid, effect FROM policy_statements WHERE policy_id=:policy_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<PolicyStatement> DbDao::getPolicyStatements
+ * @return int64 id, string sid, int effect
+ * @sql
+ *      SELECT id, sid, effect FROM policy_statements WHERE policy_id=:policy_id(int64)
+ */
 std::vector<DbDao::PolicyStatement> DbDao::getPolicyStatements(int64_t policy_id)
 {
-	if(!_getPolicyStatements.prepared())
-	{
-		_getPolicyStatements=db.prepare("SELECT id, sid, effect FROM policy_statements WHERE policy_id=?");
-	}
-	_getPolicyStatements.bind(policy_id);
-	auto& cursor=_getPolicyStatements.cursor();
-	std::vector<DbDao::PolicyStatement> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::PolicyStatement& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.sid);
-		cursor.get(2, obj.effect);
-	}
-	_getPolicyStatements.reset();
-	return ret;
+    if (!_getPolicyStatements.prepared())
+    {
+        _getPolicyStatements = db.prepare("SELECT id, sid, effect FROM policy_statements WHERE policy_id=?");
+    }
+    _getPolicyStatements.bind(policy_id);
+    auto& cursor = _getPolicyStatements.cursor();
+    std::vector<DbDao::PolicyStatement> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::PolicyStatement& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.sid);
+        cursor.get(2, obj.effect);
+    }
+    _getPolicyStatements.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<int> DbDao::getPolicyStatementActions
-* @return int action
-* @sql
-*      SELECT action FROM policy_statement_actions WHERE statement_id=:statement_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<int> DbDao::getPolicyStatementActions
+ * @return int action
+ * @sql
+ *      SELECT action FROM policy_statement_actions WHERE statement_id=:statement_id(int64)
+ */
 std::vector<int> DbDao::getPolicyStatementActions(int64_t statement_id)
 {
-	if(!_getPolicyStatementActions.prepared())
-	{
-		_getPolicyStatementActions=db.prepare("SELECT action FROM policy_statement_actions WHERE statement_id=?");
-	}
-	_getPolicyStatementActions.bind(statement_id);
-	auto& cursor=_getPolicyStatementActions.cursor();
-	std::vector<int> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		cursor.get(0, ret.back());
-	}
-	_getPolicyStatementActions.reset();
-	return ret;
+    if (!_getPolicyStatementActions.prepared())
+    {
+        _getPolicyStatementActions = db.prepare("SELECT action FROM policy_statement_actions WHERE statement_id=?");
+    }
+    _getPolicyStatementActions.bind(statement_id);
+    auto& cursor = _getPolicyStatementActions.cursor();
+    std::vector<int> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        cursor.get(0, ret.back());
+    }
+    _getPolicyStatementActions.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<string> DbDao::getPolicyStatementResources
-* @return string resource
-* @sql
-*      SELECT resource FROM policy_resources WHERE statement_id=:statement_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<string> DbDao::getPolicyStatementResources
+ * @return string resource
+ * @sql
+ *      SELECT resource FROM policy_resources WHERE statement_id=:statement_id(int64)
+ */
 std::vector<std::string> DbDao::getPolicyStatementResources(int64_t statement_id)
 {
-	if(!_getPolicyStatementResources.prepared())
-	{
-		_getPolicyStatementResources=db.prepare("SELECT resource FROM policy_resources WHERE statement_id=?");
-	}
-	_getPolicyStatementResources.bind(statement_id);
-	auto& cursor=_getPolicyStatementResources.cursor();
-	std::vector<std::string> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		cursor.get(0, ret.back());
-	}
-	_getPolicyStatementResources.reset();
-	return ret;
+    if (!_getPolicyStatementResources.prepared())
+    {
+        _getPolicyStatementResources = db.prepare("SELECT resource FROM policy_resources WHERE statement_id=?");
+    }
+    _getPolicyStatementResources.bind(statement_id);
+    auto& cursor = _getPolicyStatementResources.cursor();
+    std::vector<std::string> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        cursor.get(0, ret.back());
+    }
+    _getPolicyStatementResources.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<Policy> DbDao::getPolicies
-* @return int64 id, string name, string description, int64 created, int64 modified, int ver, string data, int system
-* @sql
-*      SELECT id, name, description, created, modified, ver, data, system FROM policies
-*/
+ * @-SQLGenAccess
+ * @func vector<Policy> DbDao::getPolicies
+ * @return int64 id, string name, string description, int64 created, int64 modified, int ver, string data, int system
+ * @sql
+ *      SELECT id, name, description, created, modified, ver, data, system FROM policies
+ */
 std::vector<DbDao::Policy> DbDao::getPolicies()
 {
-	if(!_getPolicies.prepared())
-	{
-		_getPolicies=db.prepare("SELECT id, name, description, created, modified, ver, data, system FROM policies");
-	}
-	auto& cursor=_getPolicies.cursor();
-	std::vector<DbDao::Policy> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::Policy& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.name);
-		cursor.get(2, obj.description);
-		cursor.get(3, obj.created);
-		cursor.get(4, obj.modified);
-		cursor.get(5, obj.ver);
-		cursor.get(6, obj.data);
-		cursor.get(7, obj.system);
-	}
-	cursor.shutdown();
-	return ret;
+    if (!_getPolicies.prepared())
+    {
+        _getPolicies = db.prepare("SELECT id, name, description, created, modified, ver, data, system FROM policies");
+    }
+    auto& cursor = _getPolicies.cursor();
+    std::vector<DbDao::Policy> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::Policy& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.name);
+        cursor.get(2, obj.description);
+        cursor.get(3, obj.created);
+        cursor.get(4, obj.modified);
+        cursor.get(5, obj.ver);
+        cursor.get(6, obj.data);
+        cursor.get(7, obj.system);
+    }
+    cursor.shutdown();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::changePolicy
-* @sql
-*      UPDATE policies SET data=:data(string), modified=(unixepoch()) WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::changePolicy
+ * @sql
+ *      UPDATE policies SET data=:data(string), modified=(unixepoch()) WHERE id=:id(int64)
+ */
 void DbDao::changePolicy(const std::string& data, int64_t id)
 {
-	if(!_changePolicy.prepared())
-	{
-		_changePolicy=db.prepare("UPDATE policies SET data=?, modified=(unixepoch()) WHERE id=?");
-	}
-	_changePolicy.bind(data);
-	_changePolicy.bind(id);
-	_changePolicy.write();
-	_changePolicy.reset();
+    if (!_changePolicy.prepared())
+    {
+        _changePolicy = db.prepare("UPDATE policies SET data=?, modified=(unixepoch()) WHERE id=?");
+    }
+    _changePolicy.bind(data);
+    _changePolicy.bind(id);
+    _changePolicy.write();
+    _changePolicy.reset();
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::deletePolicyStatements
-* @sql
-*      DELETE FROM policy_statements WHERE policy_id=:policy_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::deletePolicyStatements
+ * @sql
+ *      DELETE FROM policy_statements WHERE policy_id=:policy_id(int64)
+ */
 void DbDao::deletePolicyStatements(int64_t policy_id)
 {
-	if(!_deletePolicyStatements.prepared())
-	{
-		_deletePolicyStatements=db.prepare("DELETE FROM policy_statements WHERE policy_id=?");
-	}
-	_deletePolicyStatements.bind(policy_id);
-	_deletePolicyStatements.write();
-	_deletePolicyStatements.reset();
+    if (!_deletePolicyStatements.prepared())
+    {
+        _deletePolicyStatements = db.prepare("DELETE FROM policy_statements WHERE policy_id=?");
+    }
+    _deletePolicyStatements.bind(policy_id);
+    _deletePolicyStatements.write();
+    _deletePolicyStatements.reset();
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<PolicyOfRole> DbDao::getPoliciesOfRole
-* @return int64 id, int64 policy_id, string name, string description, int64 created, int64 modified, int ver, string data, int system
-* @sql
-*      SELECT rp.id AS id, p.id AS policy_id, name, description, p.created AS created, modified, ver, data, p.system AS system
-*		FROM (policies p INNER JOIN role_policies rp ON p.id=rp.policy_id)
-*		WHERE rp.role_id=:role_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<PolicyOfRole> DbDao::getPoliciesOfRole
+ * @return int64 id, int64 policy_id, string name, string description, int64 created, int64 modified, int ver, string data, int system
+ * @sql
+ *      SELECT rp.id AS id, p.id AS policy_id, name, description, p.created AS created, modified, ver, data, p.system AS system
+ *		FROM (policies p INNER JOIN role_policies rp ON p.id=rp.policy_id)
+ *		WHERE rp.role_id=:role_id(int64)
+ */
 std::vector<DbDao::PolicyOfRole> DbDao::getPoliciesOfRole(int64_t role_id)
 {
-	if(!_getPoliciesOfRole.prepared())
-	{
-		_getPoliciesOfRole=db.prepare("SELECT rp.id AS id, p.id AS policy_id, name, description, p.created AS created, modified, ver, data, p.system AS system FROM (policies p INNER JOIN role_policies rp ON p.id=rp.policy_id) WHERE rp.role_id=?");
-	}
-	_getPoliciesOfRole.bind(role_id);
-	auto& cursor=_getPoliciesOfRole.cursor();
-	std::vector<DbDao::PolicyOfRole> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::PolicyOfRole& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.policy_id);
-		cursor.get(2, obj.name);
-		cursor.get(3, obj.description);
-		cursor.get(4, obj.created);
-		cursor.get(5, obj.modified);
-		cursor.get(6, obj.ver);
-		cursor.get(7, obj.data);
-		cursor.get(8, obj.system);
-	}
-	_getPoliciesOfRole.reset();
-	return ret;
+    if (!_getPoliciesOfRole.prepared())
+    {
+        _getPoliciesOfRole = db.prepare("SELECT rp.id AS id, p.id AS policy_id, name, description, p.created AS created, modified, ver, data, p.system AS system FROM (policies p INNER JOIN role_policies rp ON p.id=rp.policy_id) WHERE rp.role_id=?");
+    }
+    _getPoliciesOfRole.bind(role_id);
+    auto& cursor = _getPoliciesOfRole.cursor();
+    std::vector<DbDao::PolicyOfRole> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::PolicyOfRole& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.policy_id);
+        cursor.get(2, obj.name);
+        cursor.get(3, obj.description);
+        cursor.get(4, obj.created);
+        cursor.get(5, obj.modified);
+        cursor.get(6, obj.ver);
+        cursor.get(7, obj.data);
+        cursor.get(8, obj.system);
+    }
+    _getPoliciesOfRole.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<Policy> DbDao::getPolicy
-* @return int64 id, string name, string description, int64 created, int64 modified, int ver, string data
-* @sql
-*      SELECT id, name, description, created, modified, ver, data FROM policies WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func optional<Policy> DbDao::getPolicy
+ * @return int64 id, string name, string description, int64 created, int64 modified, int ver, string data
+ * @sql
+ *      SELECT id, name, description, created, modified, ver, data FROM policies WHERE id=:id(int64)
+ */
 std::optional<DbDao::Policy> DbDao::getPolicy(int64_t id)
 {
-	if(!_getPolicy.prepared())
-	{
-		_getPolicy=db.prepare("SELECT id, name, description, created, modified, ver, data FROM policies WHERE id=?");
-	}
-	_getPolicy.bind(id);
-	auto& cursor=_getPolicy.cursor();
-	if(cursor.next())
-	{
-		Policy ret;
-		cursor.get(0, ret.id);
-		cursor.get(1, ret.name);
-		cursor.get(2, ret.description);
-		cursor.get(3, ret.created);
-		cursor.get(4, ret.modified);
-		cursor.get(5, ret.ver);
-		cursor.get(6, ret.data);
-		_getPolicy.reset();
-		return ret;
-	}
-	_getPolicy.reset();
-	return {};
+    if (!_getPolicy.prepared())
+    {
+        _getPolicy = db.prepare("SELECT id, name, description, created, modified, ver, data FROM policies WHERE id=?");
+    }
+    _getPolicy.bind(id);
+    auto& cursor = _getPolicy.cursor();
+    if (cursor.next())
+    {
+        Policy ret;
+        cursor.get(0, ret.id);
+        cursor.get(1, ret.name);
+        cursor.get(2, ret.description);
+        cursor.get(3, ret.created);
+        cursor.get(4, ret.modified);
+        cursor.get(5, ret.ver);
+        cursor.get(6, ret.data);
+        _getPolicy.reset();
+        return ret;
+    }
+    _getPolicy.reset();
+    return {};
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<Role> DbDao::getRoles
-* @return int64 id, string name, int system
-* @sql
-*      SELECT id, name, system FROM roles
-*/
+ * @-SQLGenAccess
+ * @func vector<Role> DbDao::getRoles
+ * @return int64 id, string name, int system
+ * @sql
+ *      SELECT id, name, system FROM roles
+ */
 std::vector<DbDao::Role> DbDao::getRoles()
 {
-	if(!_getRoles.prepared())
-	{
-		_getRoles=db.prepare("SELECT id, name, system FROM roles");
-	}
-	auto& cursor=_getRoles.cursor();
-	std::vector<DbDao::Role> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::Role& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.name);
-		cursor.get(2, obj.system);
-	}
-	cursor.shutdown();
-	return ret;
+    if (!_getRoles.prepared())
+    {
+        _getRoles = db.prepare("SELECT id, name, system FROM roles");
+    }
+    auto& cursor = _getRoles.cursor();
+    std::vector<DbDao::Role> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::Role& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.name);
+        cursor.get(2, obj.system);
+    }
+    cursor.shutdown();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<UserRole> DbDao::getRolesByUserId
-* @return int64 id, int64 role_id, string name, int system
-* @sql
-*      SELECT ur.id AS id, r.id AS role_id, name, ur.system AS system 
-*		FROM (roles r INNER JOIN user_roles ur ON r.id=ur.role_id) WHERE ur.user_id=:user_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<UserRole> DbDao::getRolesByUserId
+ * @return int64 id, int64 role_id, string name, int system
+ * @sql
+ *      SELECT ur.id AS id, r.id AS role_id, name, ur.system AS system
+ *		FROM (roles r INNER JOIN user_roles ur ON r.id=ur.role_id) WHERE ur.user_id=:user_id(int64)
+ */
 std::vector<DbDao::UserRole> DbDao::getRolesByUserId(int64_t user_id)
 {
-	if(!_getRolesByUserId.prepared())
-	{
-		_getRolesByUserId=db.prepare("SELECT ur.id AS id, r.id AS role_id, name, ur.system AS system  FROM (roles r INNER JOIN user_roles ur ON r.id=ur.role_id) WHERE ur.user_id=?");
-	}
-	_getRolesByUserId.bind(user_id);
-	auto& cursor=_getRolesByUserId.cursor();
-	std::vector<DbDao::UserRole> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::UserRole& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.role_id);
-		cursor.get(2, obj.name);
-		cursor.get(3, obj.system);
-	}
-	_getRolesByUserId.reset();
-	return ret;
+    if (!_getRolesByUserId.prepared())
+    {
+        _getRolesByUserId = db.prepare("SELECT ur.id AS id, r.id AS role_id, name, ur.system AS system  FROM (roles r INNER JOIN user_roles ur ON r.id=ur.role_id) WHERE ur.user_id=?");
+    }
+    _getRolesByUserId.bind(user_id);
+    auto& cursor = _getRolesByUserId.cursor();
+    std::vector<DbDao::UserRole> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::UserRole& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.role_id);
+        cursor.get(2, obj.name);
+        cursor.get(3, obj.system);
+    }
+    _getRolesByUserId.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<Role> DbDao::getRole
-* @return int64 id, string name, int system
-* @sql
-*      SELECT id, name, system FROM roles WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func optional<Role> DbDao::getRole
+ * @return int64 id, string name, int system
+ * @sql
+ *      SELECT id, name, system FROM roles WHERE id=:id(int64)
+ */
 std::optional<DbDao::Role> DbDao::getRole(int64_t id)
 {
-	if(!_getRole.prepared())
-	{
-		_getRole=db.prepare("SELECT id, name, system FROM roles WHERE id=?");
-	}
-	_getRole.bind(id);
-	auto& cursor=_getRole.cursor();
-	if(cursor.next())
-	{
-		Role ret;
-		cursor.get(0, ret.id);
-		cursor.get(1, ret.name);
-		cursor.get(2, ret.system);
-		_getRole.reset();
-		return ret;
-	}
-	_getRole.reset();
-	return {};
+    if (!_getRole.prepared())
+    {
+        _getRole = db.prepare("SELECT id, name, system FROM roles WHERE id=?");
+    }
+    _getRole.bind(id);
+    auto& cursor = _getRole.cursor();
+    if (cursor.next())
+    {
+        Role ret;
+        cursor.get(0, ret.id);
+        cursor.get(1, ret.name);
+        cursor.get(2, ret.system);
+        _getRole.reset();
+        return ret;
+    }
+    _getRole.reset();
+    return {};
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<RolePolicy> DbDao::getRolePolicies
-* @return int64 id, int64 policy_id, int64 role_id, int system
-* @sql
-*      SELECT id, policy_id, role_id, system FROM role_policies WHERE role_id=:role_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<RolePolicy> DbDao::getRolePolicies
+ * @return int64 id, int64 policy_id, int64 role_id, int system
+ * @sql
+ *      SELECT id, policy_id, role_id, system FROM role_policies WHERE role_id=:role_id(int64)
+ */
 std::vector<DbDao::RolePolicy> DbDao::getRolePolicies(int64_t role_id)
 {
-	if(!_getRolePolicies.prepared())
-	{
-		_getRolePolicies=db.prepare("SELECT id, policy_id, role_id, system FROM role_policies WHERE role_id=?");
-	}
-	_getRolePolicies.bind(role_id);
-	auto& cursor=_getRolePolicies.cursor();
-	std::vector<DbDao::RolePolicy> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::RolePolicy& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.policy_id);
-		cursor.get(2, obj.role_id);
-		cursor.get(3, obj.system);
-	}
-	_getRolePolicies.reset();
-	return ret;
+    if (!_getRolePolicies.prepared())
+    {
+        _getRolePolicies = db.prepare("SELECT id, policy_id, role_id, system FROM role_policies WHERE role_id=?");
+    }
+    _getRolePolicies.bind(role_id);
+    auto& cursor = _getRolePolicies.cursor();
+    std::vector<DbDao::RolePolicy> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::RolePolicy& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.policy_id);
+        cursor.get(2, obj.role_id);
+        cursor.get(3, obj.system);
+    }
+    _getRolePolicies.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<RolePolicy> DbDao::getRolePolicyById
-* @return int64 id, int64 policy_id, int64 role_id, int system
-* @sql
-*      SELECT id, policy_id, role_id, system FROM role_policies WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func optional<RolePolicy> DbDao::getRolePolicyById
+ * @return int64 id, int64 policy_id, int64 role_id, int system
+ * @sql
+ *      SELECT id, policy_id, role_id, system FROM role_policies WHERE id=:id(int64)
+ */
 std::optional<DbDao::RolePolicy> DbDao::getRolePolicyById(int64_t id)
 {
-	if(!_getRolePolicyById.prepared())
-	{
-		_getRolePolicyById=db.prepare("SELECT id, policy_id, role_id, system FROM role_policies WHERE id=?");
-	}
-	_getRolePolicyById.bind(id);
-	auto& cursor=_getRolePolicyById.cursor();
-	if(cursor.next())
-	{
-		RolePolicy ret;
-		cursor.get(0, ret.id);
-		cursor.get(1, ret.policy_id);
-		cursor.get(2, ret.role_id);
-		cursor.get(3, ret.system);
-		_getRolePolicyById.reset();
-		return ret;
-	}
-	_getRolePolicyById.reset();
-	return {};
+    if (!_getRolePolicyById.prepared())
+    {
+        _getRolePolicyById = db.prepare("SELECT id, policy_id, role_id, system FROM role_policies WHERE id=?");
+    }
+    _getRolePolicyById.bind(id);
+    auto& cursor = _getRolePolicyById.cursor();
+    if (cursor.next())
+    {
+        RolePolicy ret;
+        cursor.get(0, ret.id);
+        cursor.get(1, ret.policy_id);
+        cursor.get(2, ret.role_id);
+        cursor.get(3, ret.system);
+        _getRolePolicyById.reset();
+        return ret;
+    }
+    _getRolePolicyById.reset();
+    return {};
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<UserRole> DbDao::getUserRoles
-* @return int64 role_id, int system
-* @sql
-*      SELECT role_id, system FROM user_roles WHERE user_id=:user_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<UserRole> DbDao::getUserRoles
+ * @return int64 role_id, int system
+ * @sql
+ *      SELECT role_id, system FROM user_roles WHERE user_id=:user_id(int64)
+ */
 std::vector<DbDao::UserRole> DbDao::getUserRoles(int64_t user_id)
 {
-	if(!_getUserRoles.prepared())
-	{
-		_getUserRoles=db.prepare("SELECT role_id, system FROM user_roles WHERE user_id=?");
-	}
-	_getUserRoles.bind(user_id);
-	auto& cursor=_getUserRoles.cursor();
-	std::vector<DbDao::UserRole> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::UserRole& obj=ret.back();
-		cursor.get(0, obj.role_id);
-		cursor.get(1, obj.system);
-	}
-	_getUserRoles.reset();
-	return ret;
+    if (!_getUserRoles.prepared())
+    {
+        _getUserRoles = db.prepare("SELECT role_id, system FROM user_roles WHERE user_id=?");
+    }
+    _getUserRoles.bind(user_id);
+    auto& cursor = _getUserRoles.cursor();
+    std::vector<DbDao::UserRole> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::UserRole& obj = ret.back();
+        cursor.get(0, obj.role_id);
+        cursor.get(1, obj.system);
+    }
+    _getUserRoles.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<UserRole> DbDao::getUserRole
-* @return int64 role_id, int system
-* @sql
-*      SELECT role_id, system FROM user_roles WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func optional<UserRole> DbDao::getUserRole
+ * @return int64 role_id, int system
+ * @sql
+ *      SELECT role_id, system FROM user_roles WHERE id=:id(int64)
+ */
 std::optional<DbDao::UserRole> DbDao::getUserRole(int64_t id)
 {
-	if(!_getUserRole.prepared())
-	{
-		_getUserRole=db.prepare("SELECT role_id, system FROM user_roles WHERE id=?");
-	}
-	_getUserRole.bind(id);
-	auto& cursor=_getUserRole.cursor();
-	if(cursor.next())
-	{
-		UserRole ret;
-		cursor.get(0, ret.role_id);
-		cursor.get(1, ret.system);
-		_getUserRole.reset();
-		return ret;
-	}
-	_getUserRole.reset();
-	return {};
+    if (!_getUserRole.prepared())
+    {
+        _getUserRole = db.prepare("SELECT role_id, system FROM user_roles WHERE id=?");
+    }
+    _getUserRole.bind(id);
+    auto& cursor = _getUserRole.cursor();
+    if (cursor.next())
+    {
+        UserRole ret;
+        cursor.get(0, ret.role_id);
+        cursor.get(1, ret.system);
+        _getUserRole.reset();
+        return ret;
+    }
+    _getUserRole.reset();
+    return {};
 }
 
 /**
-* @-SQLGenAccess
-* @func int64_t DbDao::addPolicyStatement
-* @return int64_raw id
-* @sql
-*      INSERT INTO policy_statements (policy_id, sid, effect) VALUES (:policy_id(int64), :sid(string), :effect(int)) RETURNING id
-*/
+ * @-SQLGenAccess
+ * @func int64_t DbDao::addPolicyStatement
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO policy_statements (policy_id, sid, effect) VALUES (:policy_id(int64), :sid(string), :effect(int)) RETURNING id
+ */
 int64_t DbDao::addPolicyStatement(int64_t policy_id, const std::string& sid, int effect)
 {
-	if(!_addPolicyStatement.prepared())
-	{
-		_addPolicyStatement=db.prepare("INSERT INTO policy_statements (policy_id, sid, effect) VALUES (?, ?, ?) RETURNING id");
-	}
-	_addPolicyStatement.bind(policy_id);
-	_addPolicyStatement.bind(sid);
-	_addPolicyStatement.bind(effect);
-	auto& cursor=_addPolicyStatement.cursor();
-	const auto hasNext = cursor.next();
-	assert(hasNext);
-	int64_t ret;
-	cursor.get(0, ret);
-	_addPolicyStatement.reset();
-	return ret;
+    if (!_addPolicyStatement.prepared())
+    {
+        _addPolicyStatement = db.prepare("INSERT INTO policy_statements (policy_id, sid, effect) VALUES (?, ?, ?) RETURNING id");
+    }
+    _addPolicyStatement.bind(policy_id);
+    _addPolicyStatement.bind(sid);
+    _addPolicyStatement.bind(effect);
+    auto& cursor = _addPolicyStatement.cursor();
+    const auto hasNext = cursor.next();
+    assert(hasNext);
+    int64_t ret;
+    cursor.get(0, ret);
+    _addPolicyStatement.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func int64_t DbDao::addPolicyStatementAction
-* @return int64_raw id
-* @sql
-*      INSERT INTO policy_statement_actions (statement_id, action) VALUES (:statement_id(int64), :action(int)) RETURNING id
-*/
+ * @-SQLGenAccess
+ * @func int64_t DbDao::addPolicyStatementAction
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO policy_statement_actions (statement_id, action) VALUES (:statement_id(int64), :action(int)) RETURNING id
+ */
 int64_t DbDao::addPolicyStatementAction(int64_t statement_id, int action)
 {
-	if(!_addPolicyStatementAction.prepared())
-	{
-		_addPolicyStatementAction=db.prepare("INSERT INTO policy_statement_actions (statement_id, action) VALUES (?, ?) RETURNING id");
-	}
-	_addPolicyStatementAction.bind(statement_id);
-	_addPolicyStatementAction.bind(action);
-	auto& cursor=_addPolicyStatementAction.cursor();
-	const auto hasNext = cursor.next();
-	assert(hasNext);
-	int64_t ret;
-	cursor.get(0, ret);
-	_addPolicyStatementAction.reset();
-	return ret;
+    if (!_addPolicyStatementAction.prepared())
+    {
+        _addPolicyStatementAction = db.prepare("INSERT INTO policy_statement_actions (statement_id, action) VALUES (?, ?) RETURNING id");
+    }
+    _addPolicyStatementAction.bind(statement_id);
+    _addPolicyStatementAction.bind(action);
+    auto& cursor = _addPolicyStatementAction.cursor();
+    const auto hasNext = cursor.next();
+    assert(hasNext);
+    int64_t ret;
+    cursor.get(0, ret);
+    _addPolicyStatementAction.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func int64_t DbDao::addPolicyStatementResource
-* @return int64_raw id
-* @sql
-*      INSERT INTO policy_resources (statement_id, resource) VALUES (:statement_id(int64), :resource(string)) RETURNING id
-*/
+ * @-SQLGenAccess
+ * @func int64_t DbDao::addPolicyStatementResource
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO policy_resources (statement_id, resource) VALUES (:statement_id(int64), :resource(string)) RETURNING id
+ */
 int64_t DbDao::addPolicyStatementResource(int64_t statement_id, const std::string& resource)
 {
-	if(!_addPolicyStatementResource.prepared())
-	{
-		_addPolicyStatementResource=db.prepare("INSERT INTO policy_resources (statement_id, resource) VALUES (?, ?) RETURNING id");
-	}
-	_addPolicyStatementResource.bind(statement_id);
-	_addPolicyStatementResource.bind(resource);
-	auto& cursor=_addPolicyStatementResource.cursor();
-	const auto hasNext = cursor.next();
-	assert(hasNext);
-	int64_t ret;
-	cursor.get(0, ret);
-	_addPolicyStatementResource.reset();
-	return ret;
+    if (!_addPolicyStatementResource.prepared())
+    {
+        _addPolicyStatementResource = db.prepare("INSERT INTO policy_resources (statement_id, resource) VALUES (?, ?) RETURNING id");
+    }
+    _addPolicyStatementResource.bind(statement_id);
+    _addPolicyStatementResource.bind(resource);
+    auto& cursor = _addPolicyStatementResource.cursor();
+    const auto hasNext = cursor.next();
+    assert(hasNext);
+    int64_t ret;
+    cursor.get(0, ret);
+    _addPolicyStatementResource.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::changeUserPassword
-* @sql
-*      UPDATE users SET password_state=:password_state(int), password=:password(string) WHERE id=:user_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::changeUserPassword
+ * @sql
+ *      UPDATE users SET password_state=:password_state(int), password=:password(string) WHERE id=:user_id(int64)
+ */
 void DbDao::changeUserPassword(int password_state, const std::string& password, int64_t user_id)
 {
-	if(!_changeUserPassword.prepared())
-	{
-		_changeUserPassword=db.prepare("UPDATE users SET password_state=?, password=? WHERE id=?");
-	}
-	_changeUserPassword.bind(password_state);
-	_changeUserPassword.bind(password);
-	_changeUserPassword.bind(user_id);
-	_changeUserPassword.write();
-	_changeUserPassword.reset();
+    if (!_changeUserPassword.prepared())
+    {
+        _changeUserPassword = db.prepare("UPDATE users SET password_state=?, password=? WHERE id=?");
+    }
+    _changeUserPassword.bind(password_state);
+    _changeUserPassword.bind(password);
+    _changeUserPassword.bind(user_id);
+    _changeUserPassword.write();
+    _changeUserPassword.reset();
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<BucketPermissionWithUsername> DbDao::getBucketPermissionsWithUsername
-* @return int64 id, int64 bucket_id, int64 user_id, int permissions, string username
-* @sql
-*      SELECT bucket_permissions.id AS id, bucket_id, user_id, permissions, name AS username FROM 
-*		(bucket_permissions INNER JOIN users ON bucket_permissions.user_id = users.id)
-*	WHERE bucket_id=:bucket_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<BucketPermissionWithUsername> DbDao::getBucketPermissionsWithUsername
+ * @return int64 id, int64 bucket_id, int64 user_id, int permissions, string username
+ * @sql
+ *      SELECT bucket_permissions.id AS id, bucket_id, user_id, permissions, name AS username FROM
+ *		(bucket_permissions INNER JOIN users ON bucket_permissions.user_id = users.id)
+ *	WHERE bucket_id=:bucket_id(int64)
+ */
 std::vector<DbDao::BucketPermissionWithUsername> DbDao::getBucketPermissionsWithUsername(int64_t bucket_id)
 {
-	if(!_getBucketPermissionsWithUsername.prepared())
-	{
-		_getBucketPermissionsWithUsername=db.prepare("SELECT bucket_permissions.id AS id, bucket_id, user_id, permissions, name AS username FROM  (bucket_permissions INNER JOIN users ON bucket_permissions.user_id = users.id) WHERE bucket_id=?");
-	}
-	_getBucketPermissionsWithUsername.bind(bucket_id);
-	auto& cursor=_getBucketPermissionsWithUsername.cursor();
-	std::vector<DbDao::BucketPermissionWithUsername> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::BucketPermissionWithUsername& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.bucket_id);
-		cursor.get(2, obj.user_id);
-		cursor.get(3, obj.permissions);
-		cursor.get(4, obj.username);
-	}
-	_getBucketPermissionsWithUsername.reset();
-	return ret;
+    if (!_getBucketPermissionsWithUsername.prepared())
+    {
+        _getBucketPermissionsWithUsername = db.prepare("SELECT bucket_permissions.id AS id, bucket_id, user_id, permissions, name AS username FROM  (bucket_permissions INNER JOIN users ON bucket_permissions.user_id = users.id) WHERE bucket_id=?");
+    }
+    _getBucketPermissionsWithUsername.bind(bucket_id);
+    auto& cursor = _getBucketPermissionsWithUsername.cursor();
+    std::vector<DbDao::BucketPermissionWithUsername> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::BucketPermissionWithUsername& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.bucket_id);
+        cursor.get(2, obj.user_id);
+        cursor.get(3, obj.permissions);
+        cursor.get(4, obj.username);
+    }
+    _getBucketPermissionsWithUsername.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<BucketPermissionWithUsername> DbDao::getBucketPermissionsOfUser
-* @return int64 id, int64 bucket_id, int permissions
-* @sql
-*      SELECT id, bucket_id,  permissions FROM 
-*		bucket_permissions
-*	WHERE user_id=:user_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<BucketPermissionWithUsername> DbDao::getBucketPermissionsOfUser
+ * @return int64 id, int64 bucket_id, int permissions
+ * @sql
+ *      SELECT id, bucket_id,  permissions FROM
+ *		bucket_permissions
+ *	WHERE user_id=:user_id(int64)
+ */
 std::vector<DbDao::BucketPermissionWithUsername> DbDao::getBucketPermissionsOfUser(int64_t user_id)
 {
-	if(!_getBucketPermissionsOfUser.prepared())
-	{
-		_getBucketPermissionsOfUser=db.prepare("SELECT id, bucket_id,  permissions FROM  bucket_permissions WHERE user_id=?");
-	}
-	_getBucketPermissionsOfUser.bind(user_id);
-	auto& cursor=_getBucketPermissionsOfUser.cursor();
-	std::vector<DbDao::BucketPermissionWithUsername> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::BucketPermissionWithUsername& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.bucket_id);
-		cursor.get(2, obj.permissions);
-	}
-	_getBucketPermissionsOfUser.reset();
-	return ret;
+    if (!_getBucketPermissionsOfUser.prepared())
+    {
+        _getBucketPermissionsOfUser = db.prepare("SELECT id, bucket_id,  permissions FROM  bucket_permissions WHERE user_id=?");
+    }
+    _getBucketPermissionsOfUser.bind(user_id);
+    auto& cursor = _getBucketPermissionsOfUser.cursor();
+    std::vector<DbDao::BucketPermissionWithUsername> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::BucketPermissionWithUsername& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.bucket_id);
+        cursor.get(2, obj.permissions);
+    }
+    _getBucketPermissionsOfUser.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<int64_t> DbDao::addBucketPermission
-* @return int64_raw id
-* @sql
-*      INSERT INTO bucket_permissions (bucket_id, user_id, permissions) VALUES (:bucket_id(int64), :user_id(int64), :permissions(int)) RETURNING id
-*/
+ * @-SQLGenAccess
+ * @func optional<int64_t> DbDao::addBucketPermission
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO bucket_permissions (bucket_id, user_id, permissions) VALUES (:bucket_id(int64), :user_id(int64), :permissions(int)) RETURNING id
+ */
 std::optional<int64_t> DbDao::addBucketPermission(int64_t bucket_id, int64_t user_id, int permissions)
 {
-	if(!_addBucketPermission.prepared())
-	{
-		_addBucketPermission=db.prepare("INSERT INTO bucket_permissions (bucket_id, user_id, permissions) VALUES (?, ?, ?) RETURNING id");
-	}
-	_addBucketPermission.bind(bucket_id);
-	_addBucketPermission.bind(user_id);
-	_addBucketPermission.bind(permissions);
-	auto& cursor=_addBucketPermission.cursor();
-	if(!cursor.next())
-	{
-		_addBucketPermission.reset();
-		return {};
-	}
-	int64_t ret;
-	cursor.get(0, ret);
-	_addBucketPermission.reset();
-	return ret;
+    if (!_addBucketPermission.prepared())
+    {
+        _addBucketPermission = db.prepare("INSERT INTO bucket_permissions (bucket_id, user_id, permissions) VALUES (?, ?, ?) RETURNING id");
+    }
+    _addBucketPermission.bind(bucket_id);
+    _addBucketPermission.bind(user_id);
+    _addBucketPermission.bind(permissions);
+    auto& cursor = _addBucketPermission.cursor();
+    if (!cursor.next())
+    {
+        _addBucketPermission.reset();
+        return {};
+    }
+    int64_t ret;
+    cursor.get(0, ret);
+    _addBucketPermission.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::removeBucketPermission
-* @sql
-*      DELETE FROM bucket_permissions WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::removeBucketPermission
+ * @sql
+ *      DELETE FROM bucket_permissions WHERE id=:id(int64)
+ */
 void DbDao::removeBucketPermission(int64_t id)
 {
-	if(!_removeBucketPermission.prepared())
-	{
-		_removeBucketPermission=db.prepare("DELETE FROM bucket_permissions WHERE id=?");
-	}
-	_removeBucketPermission.bind(id);
-	_removeBucketPermission.write();
-	_removeBucketPermission.reset();
+    if (!_removeBucketPermission.prepared())
+    {
+        _removeBucketPermission = db.prepare("DELETE FROM bucket_permissions WHERE id=?");
+    }
+    _removeBucketPermission.bind(id);
+    _removeBucketPermission.write();
+    _removeBucketPermission.reset();
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<BucketPermission> DbDao::getBucketPermission
-* @return int64 id, int64 bucket_id, int64 user_id, int permissions
-* @sql
-*      SELECT id, bucket_id, user_id, permissions FROM bucket_permissions WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func optional<BucketPermission> DbDao::getBucketPermission
+ * @return int64 id, int64 bucket_id, int64 user_id, int permissions
+ * @sql
+ *      SELECT id, bucket_id, user_id, permissions FROM bucket_permissions WHERE id=:id(int64)
+ */
 std::optional<DbDao::BucketPermission> DbDao::getBucketPermission(int64_t id)
 {
-	if(!_getBucketPermission.prepared())
-	{
-		_getBucketPermission=db.prepare("SELECT id, bucket_id, user_id, permissions FROM bucket_permissions WHERE id=?");
-	}
-	_getBucketPermission.bind(id);
-	auto& cursor=_getBucketPermission.cursor();
-	if(cursor.next())
-	{
-		BucketPermission ret;
-		cursor.get(0, ret.id);
-		cursor.get(1, ret.bucket_id);
-		cursor.get(2, ret.user_id);
-		cursor.get(3, ret.permissions);
-		_getBucketPermission.reset();
-		return ret;
-	}
-	_getBucketPermission.reset();
-	return {};
+    if (!_getBucketPermission.prepared())
+    {
+        _getBucketPermission = db.prepare("SELECT id, bucket_id, user_id, permissions FROM bucket_permissions WHERE id=?");
+    }
+    _getBucketPermission.bind(id);
+    auto& cursor = _getBucketPermission.cursor();
+    if (cursor.next())
+    {
+        BucketPermission ret;
+        cursor.get(0, ret.id);
+        cursor.get(1, ret.bucket_id);
+        cursor.get(2, ret.user_id);
+        cursor.get(3, ret.permissions);
+        _getBucketPermission.reset();
+        return ret;
+    }
+    _getBucketPermission.reset();
+    return {};
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::setBucketPublicPerms
-* @sql
-*      UPDATE buckets SET publicPerms=:publicPerms(int) WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::setBucketPublicPerms
+ * @sql
+ *      UPDATE buckets SET publicPerms=:publicPerms(int) WHERE id=:id(int64)
+ */
 void DbDao::setBucketPublicPerms(int publicPerms, int64_t id)
 {
-	if(!_setBucketPublicPerms.prepared())
-	{
-		_setBucketPublicPerms=db.prepare("UPDATE buckets SET publicPerms=? WHERE id=?");
-	}
-	_setBucketPublicPerms.bind(publicPerms);
-	_setBucketPublicPerms.bind(id);
-	_setBucketPublicPerms.write();
-	_setBucketPublicPerms.reset();
+    if (!_setBucketPublicPerms.prepared())
+    {
+        _setBucketPublicPerms = db.prepare("UPDATE buckets SET publicPerms=? WHERE id=?");
+    }
+    _setBucketPublicPerms.bind(publicPerms);
+    _setBucketPublicPerms.bind(id);
+    _setBucketPublicPerms.write();
+    _setBucketPublicPerms.reset();
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::setBucketVersioning
-* @sql
-*      UPDATE buckets SET versioning=:versioning(int) WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::setBucketVersioning
+ * @sql
+ *      UPDATE buckets SET versioning=:versioning(int) WHERE id=:id(int64)
+ */
 void DbDao::setBucketVersioning(int versioning, int64_t id)
 {
-	if(!_setBucketVersioning.prepared())
-	{
-		_setBucketVersioning=db.prepare("UPDATE buckets SET versioning=? WHERE id=?");
-	}
-	_setBucketVersioning.bind(versioning);
-	_setBucketVersioning.bind(id);
-	_setBucketVersioning.write();
-	_setBucketVersioning.reset();
+    if (!_setBucketVersioning.prepared())
+    {
+        _setBucketVersioning = db.prepare("UPDATE buckets SET versioning=? WHERE id=?");
+    }
+    _setBucketVersioning.bind(versioning);
+    _setBucketVersioning.bind(id);
+    _setBucketVersioning.write();
+    _setBucketVersioning.reset();
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::setBucketObjectLockEnabled
-* @sql
-*      UPDATE buckets SET objectLockEnabled=:objectLockEnabled(int) WHERE id=:id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::setBucketObjectLockEnabled
+ * @sql
+ *      UPDATE buckets SET objectLockEnabled=:objectLockEnabled(int) WHERE id=:id(int64)
+ */
 void DbDao::setBucketObjectLockEnabled(int objectLockEnabled, int64_t id)
 {
-	if(!_setBucketObjectLockEnabled.prepared())
-	{
-		_setBucketObjectLockEnabled=db.prepare("UPDATE buckets SET objectLockEnabled=? WHERE id=?");
-	}
-	_setBucketObjectLockEnabled.bind(objectLockEnabled);
-	_setBucketObjectLockEnabled.bind(id);
-	_setBucketObjectLockEnabled.write();
-	_setBucketObjectLockEnabled.reset();
+    if (!_setBucketObjectLockEnabled.prepared())
+    {
+        _setBucketObjectLockEnabled = db.prepare("UPDATE buckets SET objectLockEnabled=? WHERE id=?");
+    }
+    _setBucketObjectLockEnabled.bind(objectLockEnabled);
+    _setBucketObjectLockEnabled.bind(id);
+    _setBucketObjectLockEnabled.write();
+    _setBucketObjectLockEnabled.reset();
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<int64_t> DbDao::addCorsRule
-* @return int64_raw id
-* @sql
-*      INSERT INTO bucket_cors (bucket_id, max_age_seconds, cors_id) VALUES (:bucket_id(int64), :max_age_seconds(int), :cors_id(string)) RETURNING id
-*/
+ * @-SQLGenAccess
+ * @func optional<int64_t> DbDao::addCorsRule
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO bucket_cors (bucket_id, max_age_seconds, cors_id) VALUES (:bucket_id(int64), :max_age_seconds(int), :cors_id(string)) RETURNING id
+ */
 std::optional<int64_t> DbDao::addCorsRule(int64_t bucket_id, int max_age_seconds, const std::string& cors_id)
 {
-	if(!_addCorsRule.prepared())
-	{
-		_addCorsRule=db.prepare("INSERT INTO bucket_cors (bucket_id, max_age_seconds, cors_id) VALUES (?, ?, ?) RETURNING id");
-	}
-	_addCorsRule.bind(bucket_id);
-	_addCorsRule.bind(max_age_seconds);
-	_addCorsRule.bind(cors_id);
-	auto& cursor=_addCorsRule.cursor();
-	if(!cursor.next())
-	{
-		_addCorsRule.reset();
-		return {};
-	}
-	int64_t ret;
-	cursor.get(0, ret);
-	_addCorsRule.reset();
-	return ret;
+    if (!_addCorsRule.prepared())
+    {
+        _addCorsRule = db.prepare("INSERT INTO bucket_cors (bucket_id, max_age_seconds, cors_id) VALUES (?, ?, ?) RETURNING id");
+    }
+    _addCorsRule.bind(bucket_id);
+    _addCorsRule.bind(max_age_seconds);
+    _addCorsRule.bind(cors_id);
+    auto& cursor = _addCorsRule.cursor();
+    if (!cursor.next())
+    {
+        _addCorsRule.reset();
+        return {};
+    }
+    int64_t ret;
+    cursor.get(0, ret);
+    _addCorsRule.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<int64_t> DbDao::addCorsAllowedOrigin
-* @return int64_raw id
-* @sql
-*      INSERT INTO bucket_cors_allowed_origins (bucket_cors_id, allowed_origin) VALUES (:bucket_cors_id(int64), :allowed_origin(string))
-*/
+ * @-SQLGenAccess
+ * @func optional<int64_t> DbDao::addCorsAllowedOrigin
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO bucket_cors_allowed_origins (bucket_cors_id, allowed_origin) VALUES (:bucket_cors_id(int64), :allowed_origin(string))
+ */
 std::optional<int64_t> DbDao::addCorsAllowedOrigin(int64_t bucket_cors_id, const std::string& allowed_origin)
 {
-	if(!_addCorsAllowedOrigin.prepared())
-	{
-		_addCorsAllowedOrigin=db.prepare("INSERT INTO bucket_cors_allowed_origins (bucket_cors_id, allowed_origin) VALUES (?, ?)");
-	}
-	_addCorsAllowedOrigin.bind(bucket_cors_id);
-	_addCorsAllowedOrigin.bind(allowed_origin);
-	auto& cursor=_addCorsAllowedOrigin.cursor();
-	if(!cursor.next())
-	{
-		_addCorsAllowedOrigin.reset();
-		return {};
-	}
-	int64_t ret;
-	cursor.get("id", ret);
-	_addCorsAllowedOrigin.reset();
-	return ret;
+    if (!_addCorsAllowedOrigin.prepared())
+    {
+        _addCorsAllowedOrigin = db.prepare("INSERT INTO bucket_cors_allowed_origins (bucket_cors_id, allowed_origin) VALUES (?, ?)");
+    }
+    _addCorsAllowedOrigin.bind(bucket_cors_id);
+    _addCorsAllowedOrigin.bind(allowed_origin);
+    auto& cursor = _addCorsAllowedOrigin.cursor();
+    if (!cursor.next())
+    {
+        _addCorsAllowedOrigin.reset();
+        return {};
+    }
+    int64_t ret;
+    cursor.get("id", ret);
+    _addCorsAllowedOrigin.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<int64_t> DbDao::addCorsAllowedMethod
-* @return int64_raw id
-* @sql
-*      INSERT INTO bucket_cors_allowed_methods (bucket_cors_id, allowed_method) VALUES (:bucket_cors_id(int64), :allowed_method(string))
-*/
+ * @-SQLGenAccess
+ * @func optional<int64_t> DbDao::addCorsAllowedMethod
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO bucket_cors_allowed_methods (bucket_cors_id, allowed_method) VALUES (:bucket_cors_id(int64), :allowed_method(string))
+ */
 std::optional<int64_t> DbDao::addCorsAllowedMethod(int64_t bucket_cors_id, const std::string& allowed_method)
 {
-	if(!_addCorsAllowedMethod.prepared())
-	{
-		_addCorsAllowedMethod=db.prepare("INSERT INTO bucket_cors_allowed_methods (bucket_cors_id, allowed_method) VALUES (?, ?)");
-	}
-	_addCorsAllowedMethod.bind(bucket_cors_id);
-	_addCorsAllowedMethod.bind(allowed_method);
-	auto& cursor=_addCorsAllowedMethod.cursor();
-	if(!cursor.next())
-	{
-		_addCorsAllowedMethod.reset();
-		return {};
-	}
-	int64_t ret;
-	cursor.get("id", ret);
-	_addCorsAllowedMethod.reset();
-	return ret;
+    if (!_addCorsAllowedMethod.prepared())
+    {
+        _addCorsAllowedMethod = db.prepare("INSERT INTO bucket_cors_allowed_methods (bucket_cors_id, allowed_method) VALUES (?, ?)");
+    }
+    _addCorsAllowedMethod.bind(bucket_cors_id);
+    _addCorsAllowedMethod.bind(allowed_method);
+    auto& cursor = _addCorsAllowedMethod.cursor();
+    if (!cursor.next())
+    {
+        _addCorsAllowedMethod.reset();
+        return {};
+    }
+    int64_t ret;
+    cursor.get("id", ret);
+    _addCorsAllowedMethod.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<int64_t> DbDao::addCorsExposeHeader
-* @return int64_raw id
-* @sql
-*      INSERT INTO bucket_cors_expose_headers (bucket_cors_id, expose_header) VALUES (:bucket_cors_id(int64), :expose_header(string))
-*/
+ * @-SQLGenAccess
+ * @func optional<int64_t> DbDao::addCorsExposeHeader
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO bucket_cors_expose_headers (bucket_cors_id, expose_header) VALUES (:bucket_cors_id(int64), :expose_header(string))
+ */
 std::optional<int64_t> DbDao::addCorsExposeHeader(int64_t bucket_cors_id, const std::string& expose_header)
 {
-	if(!_addCorsExposeHeader.prepared())
-	{
-		_addCorsExposeHeader=db.prepare("INSERT INTO bucket_cors_expose_headers (bucket_cors_id, expose_header) VALUES (?, ?)");
-	}
-	_addCorsExposeHeader.bind(bucket_cors_id);
-	_addCorsExposeHeader.bind(expose_header);
-	auto& cursor=_addCorsExposeHeader.cursor();
-	if(!cursor.next())
-	{
-		_addCorsExposeHeader.reset();
-		return {};
-	}
-	int64_t ret;
-	cursor.get("id", ret);
-	_addCorsExposeHeader.reset();
-	return ret;
+    if (!_addCorsExposeHeader.prepared())
+    {
+        _addCorsExposeHeader = db.prepare("INSERT INTO bucket_cors_expose_headers (bucket_cors_id, expose_header) VALUES (?, ?)");
+    }
+    _addCorsExposeHeader.bind(bucket_cors_id);
+    _addCorsExposeHeader.bind(expose_header);
+    auto& cursor = _addCorsExposeHeader.cursor();
+    if (!cursor.next())
+    {
+        _addCorsExposeHeader.reset();
+        return {};
+    }
+    int64_t ret;
+    cursor.get("id", ret);
+    _addCorsExposeHeader.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func optional<int64_t> DbDao::addCorsAllowedHeader
-* @return int64_raw id
-* @sql
-*      INSERT INTO bucket_cors_allowed_headers (bucket_cors_id, allowed_header) VALUES (:bucket_cors_id(int64), :allowed_header(string))
-*/
+ * @-SQLGenAccess
+ * @func optional<int64_t> DbDao::addCorsAllowedHeader
+ * @return int64_raw id
+ * @sql
+ *      INSERT INTO bucket_cors_allowed_headers (bucket_cors_id, allowed_header) VALUES (:bucket_cors_id(int64), :allowed_header(string))
+ */
 std::optional<int64_t> DbDao::addCorsAllowedHeader(int64_t bucket_cors_id, const std::string& allowed_header)
 {
-	if(!_addCorsAllowedHeader.prepared())
-	{
-		_addCorsAllowedHeader=db.prepare("INSERT INTO bucket_cors_allowed_headers (bucket_cors_id, allowed_header) VALUES (?, ?)");
-	}
-	_addCorsAllowedHeader.bind(bucket_cors_id);
-	_addCorsAllowedHeader.bind(allowed_header);
-	auto& cursor=_addCorsAllowedHeader.cursor();
-	if(!cursor.next())
-	{
-		_addCorsAllowedHeader.reset();
-		return {};
-	}
-	int64_t ret;
-	cursor.get("id", ret);
-	_addCorsAllowedHeader.reset();
-	return ret;
+    if (!_addCorsAllowedHeader.prepared())
+    {
+        _addCorsAllowedHeader = db.prepare("INSERT INTO bucket_cors_allowed_headers (bucket_cors_id, allowed_header) VALUES (?, ?)");
+    }
+    _addCorsAllowedHeader.bind(bucket_cors_id);
+    _addCorsAllowedHeader.bind(allowed_header);
+    auto& cursor = _addCorsAllowedHeader.cursor();
+    if (!cursor.next())
+    {
+        _addCorsAllowedHeader.reset();
+        return {};
+    }
+    int64_t ret;
+    cursor.get("id", ret);
+    _addCorsAllowedHeader.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<CorsRule> DbDao::getCorsRules
-* @return int64 id, int64 bucket_id, int max_age_seconds, string cors_id
-* @sql
-*	  SELECT id, bucket_id, max_age_seconds, cors_id FROM bucket_cors WHERE bucket_id=:bucket_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<CorsRule> DbDao::getCorsRules
+ * @return int64 id, int64 bucket_id, int max_age_seconds, string cors_id
+ * @sql
+ *	  SELECT id, bucket_id, max_age_seconds, cors_id FROM bucket_cors WHERE bucket_id=:bucket_id(int64)
+ */
 std::vector<DbDao::CorsRule> DbDao::getCorsRules(int64_t bucket_id)
 {
-	if(!_getCorsRules.prepared())
-	{
-		_getCorsRules=db.prepare("SELECT id, bucket_id, max_age_seconds, cors_id FROM bucket_cors WHERE bucket_id=?");
-	}
-	_getCorsRules.bind(bucket_id);
-	auto& cursor=_getCorsRules.cursor();
-	std::vector<DbDao::CorsRule> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::CorsRule& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.bucket_id);
-		cursor.get(2, obj.max_age_seconds);
-		cursor.get(3, obj.cors_id);
-	}
-	_getCorsRules.reset();
-	return ret;
+    if (!_getCorsRules.prepared())
+    {
+        _getCorsRules = db.prepare("SELECT id, bucket_id, max_age_seconds, cors_id FROM bucket_cors WHERE bucket_id=?");
+    }
+    _getCorsRules.bind(bucket_id);
+    auto& cursor = _getCorsRules.cursor();
+    std::vector<DbDao::CorsRule> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::CorsRule& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.bucket_id);
+        cursor.get(2, obj.max_age_seconds);
+        cursor.get(3, obj.cors_id);
+    }
+    _getCorsRules.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<AllowedOrigin> DbDao::getCorsRuleAllowedOrigins
-* @return int64 id, string allowed_origin
-* @sql
-*	  SELECT id, allowed_origin FROM bucket_cors_allowed_origins WHERE bucket_cors_id=:bucket_cors_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<AllowedOrigin> DbDao::getCorsRuleAllowedOrigins
+ * @return int64 id, string allowed_origin
+ * @sql
+ *	  SELECT id, allowed_origin FROM bucket_cors_allowed_origins WHERE bucket_cors_id=:bucket_cors_id(int64)
+ */
 std::vector<DbDao::AllowedOrigin> DbDao::getCorsRuleAllowedOrigins(int64_t bucket_cors_id)
 {
-	if(!_getCorsRuleAllowedOrigins.prepared())
-	{
-		_getCorsRuleAllowedOrigins=db.prepare("SELECT id, allowed_origin FROM bucket_cors_allowed_origins WHERE bucket_cors_id=?");
-	}
-	_getCorsRuleAllowedOrigins.bind(bucket_cors_id);
-	auto& cursor=_getCorsRuleAllowedOrigins.cursor();
-	std::vector<DbDao::AllowedOrigin> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::AllowedOrigin& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.allowed_origin);
-	}
-	_getCorsRuleAllowedOrigins.reset();
-	return ret;
+    if (!_getCorsRuleAllowedOrigins.prepared())
+    {
+        _getCorsRuleAllowedOrigins = db.prepare("SELECT id, allowed_origin FROM bucket_cors_allowed_origins WHERE bucket_cors_id=?");
+    }
+    _getCorsRuleAllowedOrigins.bind(bucket_cors_id);
+    auto& cursor = _getCorsRuleAllowedOrigins.cursor();
+    std::vector<DbDao::AllowedOrigin> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::AllowedOrigin& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.allowed_origin);
+    }
+    _getCorsRuleAllowedOrigins.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<AllowedMethod> DbDao::getCorsRuleAllowedMethods
-* @return int64 id, string allowed_method
-* @sql
-*	  SELECT id, allowed_method FROM bucket_cors_allowed_methods WHERE bucket_cors_id=:bucket_cors_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<AllowedMethod> DbDao::getCorsRuleAllowedMethods
+ * @return int64 id, string allowed_method
+ * @sql
+ *	  SELECT id, allowed_method FROM bucket_cors_allowed_methods WHERE bucket_cors_id=:bucket_cors_id(int64)
+ */
 std::vector<DbDao::AllowedMethod> DbDao::getCorsRuleAllowedMethods(int64_t bucket_cors_id)
 {
-	if(!_getCorsRuleAllowedMethods.prepared())
-	{
-		_getCorsRuleAllowedMethods=db.prepare("SELECT id, allowed_method FROM bucket_cors_allowed_methods WHERE bucket_cors_id=?");
-	}
-	_getCorsRuleAllowedMethods.bind(bucket_cors_id);
-	auto& cursor=_getCorsRuleAllowedMethods.cursor();
-	std::vector<DbDao::AllowedMethod> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::AllowedMethod& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.allowed_method);
-	}
-	_getCorsRuleAllowedMethods.reset();
-	return ret;
+    if (!_getCorsRuleAllowedMethods.prepared())
+    {
+        _getCorsRuleAllowedMethods = db.prepare("SELECT id, allowed_method FROM bucket_cors_allowed_methods WHERE bucket_cors_id=?");
+    }
+    _getCorsRuleAllowedMethods.bind(bucket_cors_id);
+    auto& cursor = _getCorsRuleAllowedMethods.cursor();
+    std::vector<DbDao::AllowedMethod> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::AllowedMethod& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.allowed_method);
+    }
+    _getCorsRuleAllowedMethods.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<AllowedHeader> DbDao::getCorsRuleAllowedHeaders
-* @return int64 id, string allowed_header
-* @sql
-*	  SELECT id, allowed_header FROM bucket_cors_allowed_headers WHERE bucket_cors_id=:bucket_cors_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<AllowedHeader> DbDao::getCorsRuleAllowedHeaders
+ * @return int64 id, string allowed_header
+ * @sql
+ *	  SELECT id, allowed_header FROM bucket_cors_allowed_headers WHERE bucket_cors_id=:bucket_cors_id(int64)
+ */
 std::vector<DbDao::AllowedHeader> DbDao::getCorsRuleAllowedHeaders(int64_t bucket_cors_id)
 {
-	if(!_getCorsRuleAllowedHeaders.prepared())
-	{
-		_getCorsRuleAllowedHeaders=db.prepare("SELECT id, allowed_header FROM bucket_cors_allowed_headers WHERE bucket_cors_id=?");
-	}
-	_getCorsRuleAllowedHeaders.bind(bucket_cors_id);
-	auto& cursor=_getCorsRuleAllowedHeaders.cursor();
-	std::vector<DbDao::AllowedHeader> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::AllowedHeader& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.allowed_header);
-	}
-	_getCorsRuleAllowedHeaders.reset();
-	return ret;
+    if (!_getCorsRuleAllowedHeaders.prepared())
+    {
+        _getCorsRuleAllowedHeaders = db.prepare("SELECT id, allowed_header FROM bucket_cors_allowed_headers WHERE bucket_cors_id=?");
+    }
+    _getCorsRuleAllowedHeaders.bind(bucket_cors_id);
+    auto& cursor = _getCorsRuleAllowedHeaders.cursor();
+    std::vector<DbDao::AllowedHeader> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::AllowedHeader& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.allowed_header);
+    }
+    _getCorsRuleAllowedHeaders.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func vector<ExposeHeader> DbDao::getCorsRuleExposeHeaders
-* @return int64 id, string expose_header
-* @sql
-*	  SELECT id, expose_header FROM bucket_cors_expose_headers WHERE bucket_cors_id=:bucket_cors_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func vector<ExposeHeader> DbDao::getCorsRuleExposeHeaders
+ * @return int64 id, string expose_header
+ * @sql
+ *	  SELECT id, expose_header FROM bucket_cors_expose_headers WHERE bucket_cors_id=:bucket_cors_id(int64)
+ */
 std::vector<DbDao::ExposeHeader> DbDao::getCorsRuleExposeHeaders(int64_t bucket_cors_id)
 {
-	if(!_getCorsRuleExposeHeaders.prepared())
-	{
-		_getCorsRuleExposeHeaders=db.prepare("SELECT id, expose_header FROM bucket_cors_expose_headers WHERE bucket_cors_id=?");
-	}
-	_getCorsRuleExposeHeaders.bind(bucket_cors_id);
-	auto& cursor=_getCorsRuleExposeHeaders.cursor();
-	std::vector<DbDao::ExposeHeader> ret;
-	while(cursor.next())
-	{
-		ret.emplace_back();
-		DbDao::ExposeHeader& obj=ret.back();
-		cursor.get(0, obj.id);
-		cursor.get(1, obj.expose_header);
-	}
-	_getCorsRuleExposeHeaders.reset();
-	return ret;
+    if (!_getCorsRuleExposeHeaders.prepared())
+    {
+        _getCorsRuleExposeHeaders = db.prepare("SELECT id, expose_header FROM bucket_cors_expose_headers WHERE bucket_cors_id=?");
+    }
+    _getCorsRuleExposeHeaders.bind(bucket_cors_id);
+    auto& cursor = _getCorsRuleExposeHeaders.cursor();
+    std::vector<DbDao::ExposeHeader> ret;
+    while (cursor.next())
+    {
+        ret.emplace_back();
+        DbDao::ExposeHeader& obj = ret.back();
+        cursor.get(0, obj.id);
+        cursor.get(1, obj.expose_header);
+    }
+    _getCorsRuleExposeHeaders.reset();
+    return ret;
 }
 
 /**
-* @-SQLGenAccess
-* @func void DbDao::deleteCorsRules
-* @sql
-*	  DELETE FROM bucket_cors WHERE bucket_id=:bucket_id(int64)
-*/
+ * @-SQLGenAccess
+ * @func void DbDao::deleteCorsRules
+ * @sql
+ *	  DELETE FROM bucket_cors WHERE bucket_id=:bucket_id(int64)
+ */
 void DbDao::deleteCorsRules(int64_t bucket_id)
 {
-	if(!_deleteCorsRules.prepared())
-	{
-		_deleteCorsRules=db.prepare("DELETE FROM bucket_cors WHERE bucket_id=?");
-	}
-	_deleteCorsRules.bind(bucket_id);
-	_deleteCorsRules.write();
-	_deleteCorsRules.reset();
+    if (!_deleteCorsRules.prepared())
+    {
+        _deleteCorsRules = db.prepare("DELETE FROM bucket_cors WHERE bucket_id=?");
+    }
+    _deleteCorsRules.bind(bucket_id);
+    _deleteCorsRules.write();
+    _deleteCorsRules.reset();
 }
 
-//eof
+// eof

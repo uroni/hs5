@@ -1,9 +1,9 @@
 #pragma once
-#include <string>
+#include "data.h"
+#include <assert.h>
 #include <memory>
 #include <openssl/evp.h>
-#include <assert.h>
-#include "data.h"
+#include <string>
 
 enum class AwsHashType
 {
@@ -23,17 +23,19 @@ class EvpMdCtx
 public:
     EVP_MD_CTX* ctx = nullptr;
 
-    bool init(const EVP_MD *type) {
-        assert(ctx==nullptr);
+    bool init(const EVP_MD* type)
+    {
+        assert(ctx == nullptr);
         ctx = EVP_MD_CTX_new();
-        if(ctx==nullptr)
+        if (ctx == nullptr)
             return false;
-        
-        return EVP_DigestInit(ctx, type)==1;
+
+        return EVP_DigestInit(ctx, type) == 1;
     }
-    
-    ~EvpMdCtx() {
-        if(ctx != nullptr)
+
+    ~EvpMdCtx()
+    {
+        if (ctx != nullptr)
             EVP_MD_CTX_free(ctx);
     }
 };
@@ -45,7 +47,7 @@ protected:
 
 public:
     virtual ~PayloadHashBase() = default;
-    
+
     void setExpectedHash(const std::string_view hash)
     {
         expectedHash = hash;
@@ -56,7 +58,8 @@ public:
         return expectedHash;
     }
 
-    virtual bool checkSize() const {
+    virtual bool checkSize() const
+    {
         return expectedHash.size() == getSize();
     }
     virtual void update(const unsigned char* data, const size_t len) = 0;
@@ -65,7 +68,8 @@ public:
     virtual std::string_view getHeaderKey() const = 0;
     virtual size_t getSize() const = 0;
 
-    virtual void combine(const PayloadHashBase& other, const uint64_t len) {
+    virtual void combine(const PayloadHashBase& other, const uint64_t len)
+    {
         const auto otherHash = other.getExpectedHash();
         update(reinterpret_cast<const unsigned char*>(otherHash.data()), otherHash.size());
     }
@@ -95,35 +99,37 @@ public:
 
 class PayloadHashSha256 : public PayloadHashBase
 {
-     EvpMdCtx evpMdCtx;
-public:
-        uint32_t crc32Value;
+    EvpMdCtx evpMdCtx;
 
-    public:
-        bool init();
-        std::string final() override;
-        void update(const unsigned char* data, const size_t len) override;  
-        AwsHashType getHashType() const override { return AwsHashType::Sha256; }
-        std::string_view getHeaderKey() const override { return "x-amz-checksum-sha256"; }
-        size_t getSize() const override;
-        virtual std::string getHashTypeStr() const override { return "SHA256"; }
-    };
+public:
+    uint32_t crc32Value;
+
+public:
+    bool init();
+    std::string final() override;
+    void update(const unsigned char* data, const size_t len) override;
+    AwsHashType getHashType() const override { return AwsHashType::Sha256; }
+    std::string_view getHeaderKey() const override { return "x-amz-checksum-sha256"; }
+    size_t getSize() const override;
+    virtual std::string getHashTypeStr() const override { return "SHA256"; }
+};
 
 class PayloadHashSha1 : public PayloadHashBase
 {
-     EvpMdCtx evpMdCtx;
-public:
-        uint32_t crc32Value;
+    EvpMdCtx evpMdCtx;
 
-    public:
-        bool init();
-        std::string final() override;
-        void update(const unsigned char* data, const size_t len) override;
-        AwsHashType getHashType() const override { return AwsHashType::Sha1; }
-        std::string_view getHeaderKey() const override { return "x-amz-checksum-sha1"; }
-        size_t getSize() const override;
-        virtual std::string getHashTypeStr() const override { return "SHA1"; }
-    };
+public:
+    uint32_t crc32Value;
+
+public:
+    bool init();
+    std::string final() override;
+    void update(const unsigned char* data, const size_t len) override;
+    AwsHashType getHashType() const override { return AwsHashType::Sha1; }
+    std::string_view getHeaderKey() const override { return "x-amz-checksum-sha1"; }
+    size_t getSize() const override;
+    virtual std::string getHashTypeStr() const override { return "SHA1"; }
+};
 
 class PayloadHashCrc32 : public PayloadHashBase
 {
@@ -139,7 +145,7 @@ public:
     virtual std::string getHashTypeStr() const override { return "CRC32"; }
 };
 
-class PayloadHashCrc32Full: public PayloadHashCrc32
+class PayloadHashCrc32Full : public PayloadHashCrc32
 {
 public:
     AwsHashType getHashType() const override { return AwsHashType::Crc32Full; }

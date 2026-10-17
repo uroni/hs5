@@ -2,16 +2,15 @@
 
 #include "ContentType.h"
 #include "UserMetadata.h"
+#include "data.h"
+#include <chrono>
+#include <memory>
 #include <optional>
 #include <string>
-#include <memory>
-#include <chrono>
-#include "data.h"
 
 const uint32_t lockinfo_flag_lock_mode_compliance = 1 << 0;
-const uint32_t lockinfo_flag_retain_until= 1 << 1;
+const uint32_t lockinfo_flag_retain_until = 1 << 1;
 const uint32_t lockinfo_flag_event_hold = 1 << 2;
-
 
 class ObjMetadata
 {
@@ -31,33 +30,36 @@ public:
         unsigned int eventDurationDays = 0;
         unsigned short eventDurationYears = 0;
 
-
-        bool complianceMode() const {
+        bool complianceMode() const
+        {
             return flags & lockinfo_flag_lock_mode_compliance;
         }
-        
-        bool retainUntilSet() const {
+
+        bool retainUntilSet() const
+        {
             return flags & lockinfo_flag_retain_until;
         }
 
-        bool eventHold() const {
+        bool eventHold() const
+        {
             return flags & lockinfo_flag_event_hold;
         }
 
         // How long the object stays protected after the event hold is released
-        std::chrono::seconds eventHoldDuration() const {
+        std::chrono::seconds eventHoldDuration() const
+        {
             return std::chrono::days(eventDurationDays) + std::chrono::years(eventDurationYears);
         }
 
         // Object is protected from deletion at time 'now'
-        bool isActive(const std::chrono::system_clock::time_point now) const {
+        bool isActive(const std::chrono::system_clock::time_point now) const
+        {
             return eventHold() || (retainUntilSet() && retainUntil > now);
         }
     };
 
     std::optional<LockInfo> lockInfo;
     bool legalHold = false;
-
 
     static std::unique_ptr<ObjMetadata> fromHeaders(proxygen::HTTPMessage& headers, bool& invalid);
 

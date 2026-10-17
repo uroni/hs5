@@ -4,3 +4,5 @@ testpaths = ["test"]
 markers = [
     "slow: slow test that only runs if the CI environment variable is set (set automatically by GitHub Actions)",
 ]
+[tool.black]
+extend-exclude = "^/test/hs5_api_client/"

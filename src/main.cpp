@@ -2,43 +2,42 @@
  * Copyright Martin Raiber. All Rights Reserved.
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
+#include <aws/checksums/checksums.h>
+#include <aws/common/allocator.h>
 #include <exception>
-#include <sys/time.h>
-#include <sys/resource.h>
-#include <folly/String.h>
-#include <gflags/gflags.h>
-#include <iostream>
-#include <folly/experimental/coro/Task.h>
-#include <folly/experimental/coro/BlockingWait.h>
-#include <folly/init/Init.h>
 #include <folly/Memory.h>
+#include <folly/Random.h>
+#include <folly/String.h>
 #include <folly/executors/CPUThreadPoolExecutor.h>
 #include <folly/executors/GlobalExecutor.h>
+#include <folly/experimental/coro/BlockingWait.h>
+#include <folly/experimental/coro/Task.h>
 #include <folly/init/Init.h>
 #include <folly/io/async/EventBaseManager.h>
+#include <folly/logging/xlog.h>
+#include <folly/memory/MallctlHelper.h>
 #include <folly/portability/GFlags.h>
 #include <folly/portability/Unistd.h>
-#include <folly/Random.h>
-#include <folly/logging/xlog.h>
 #include <folly/system/ThreadName.h>
-#include <folly/memory/MallctlHelper.h>
+#include <gflags/gflags.h>
+#include <iostream>
 #include <proxygen/httpserver/HTTPServer.h>
 #include <proxygen/httpserver/RequestHandlerFactory.h>
 #include <proxygen/lib/http/session/HTTPSessionBase.h>
-#include <aws/checksums/checksums.h>
-#include <aws/common/allocator.h>
+#include <sys/resource.h>
+#include <sys/time.h>
 #ifdef HS5_WITH_DUCKDB
 #include <duckdb.hpp>
 #endif
-#include "Auth.h"
-#include "s3handler.h"
-#include "SingleFileStorage.h"
-#include <chrono>
-#include "DbDao.h"
 #include "ApiHandler.h"
+#include "Auth.h"
 #include "Buckets.h"
-#include "config.h"
+#include "DbDao.h"
+#include "SingleFileStorage.h"
 #include "StaticHandler.h"
+#include "config.h"
+#include "s3handler.h"
+#include <chrono>
 #ifdef HS5_WITH_DUCKDB
 #include "DuckDbFs.h"
 
@@ -57,7 +56,7 @@ DEFINE_int32(http_port, 11000, "Port to listen on with HTTP protocol");
 DEFINE_int32(h2_port, -1, "Port to listen on with HTTP/2 protocol (-1 if disabled)");
 DEFINE_string(ip, "localhost", "IP/Hostname to bind to");
 DEFINE_int64(data_file_size_limit_mb, 0, "Max data file size (0 for unlimited)");
-DEFINE_int64(data_file_alloc_chunk_size, 512*1024*1024, "Data file chunk allocation size");
+DEFINE_int64(data_file_alloc_chunk_size, 512 * 1024 * 1024, "Data file chunk allocation size");
 DEFINE_double(alloc_use_free_space_percent, 10, "If this amount of free space percentage is available in the data file, use free space in data file instead of extending data file. Use >100% to disable");
 DEFINE_int32(http_worker_threads,
              0,
@@ -77,105 +76,111 @@ DEFINE_bool(run_duckdb, false, "Run DuckDB UI");
 DEFINE_int32(duckdb_port, 4213, "Port to listen on with DuckDB UI protocol");
 DEFINE_bool(enable_core_dumps, false, "Enable core dumps on crashes");
 DECLARE_bool(test_db_no_sync);
-DEFINE_int32(max_put_buffer_size, 1*1024*1024, "Max read buffer size for HTTP sessions (for PUT)");
+DEFINE_int32(max_put_buffer_size, 1 * 1024 * 1024, "Max read buffer size for HTTP sessions (for PUT)");
 
-namespace {
-  std::unique_ptr<proxygen::HTTPServer> server;
+namespace
+{
+    std::unique_ptr<proxygen::HTTPServer> server;
 
-class S3HandlerFactory : public proxygen::RequestHandlerFactory {
-   SingleFileStorage& sfs;
- public:
-  S3HandlerFactory(SingleFileStorage& sfs)
-   : sfs(sfs)
-  {
-    sfs.start_thread(sfs.get_transid() + 1);
-    sfs.wait_for_wal_startup_finished();
-  }
+    class S3HandlerFactory : public proxygen::RequestHandlerFactory
+    {
+        SingleFileStorage& sfs;
 
-  void onServerStart(folly::EventBase* /*evb*/) noexcept override {
-  }
+    public:
+        S3HandlerFactory(SingleFileStorage& sfs)
+            : sfs(sfs)
+        {
+            sfs.start_thread(sfs.get_transid() + 1);
+            sfs.wait_for_wal_startup_finished();
+        }
 
-  void onServerStop() noexcept override {
-  }
+        void onServerStart(folly::EventBase* /*evb*/) noexcept override
+        {
+        }
 
-  bool isApiCall(const std::string_view path)
-  {
-    if(path.empty())
-      return false;
-    
-    const auto bucketEnd = path.find_first_of('/', 1);
-    if(bucketEnd == std::string::npos)
-        return false;
-    const auto bucketName = path.substr(1, bucketEnd);
+        void onServerStop() noexcept override
+        {
+        }
 
-    if(bucketName!="api-v1-b64be512-4b03-4028-a589-13931942e205/")
-        return false;
+        bool isApiCall(const std::string_view path)
+        {
+            if (path.empty())
+                return false;
 
-    return true;
-  }
+            const auto bucketEnd = path.find_first_of('/', 1);
+            if (bucketEnd == std::string::npos)
+                return false;
+            const auto bucketName = path.substr(1, bucketEnd);
 
-  bool isStaticFile(const std::string_view path)
-  {
-    if(path.empty())
-      return true;
-    
-    if(path.size() == 1 && path[0]=='/')
-      return true;
+            if (bucketName != "api-v1-b64be512-4b03-4028-a589-13931942e205/")
+                return false;
 
-    const auto bucketEnd = path.find_first_of('/', 1);
-    if(bucketEnd == std::string::npos)
-        return path=="/index.html";
+            return true;
+        }
 
-    const auto bucketName = path.substr(1, bucketEnd);
+        bool isStaticFile(const std::string_view path)
+        {
+            if (path.empty())
+                return true;
 
-    if(bucketName=="admin-b64be5124b034028a58913931942e205/")
-        return true;
-    else if(bucketName == "explorer-87652e131c4b45bd851a74de6518889e/")
-        return true;
-    else if(bucketName == "favicon-45ea1ea9212449f78613105e96c05997/")
-        return true;
+            if (path.size() == 1 && path[0] == '/')
+                return true;
 
-    return false;
-  }
+            const auto bucketEnd = path.find_first_of('/', 1);
+            if (bucketEnd == std::string::npos)
+                return path == "/index.html";
 
-  proxygen::RequestHandler* onRequest(proxygen::RequestHandler*, proxygen::HTTPMessage* message) noexcept override
-  {
-    const std::string_view path(message->getPathAsStringPiece());
-    
-    if(message->getMethod() == proxygen::HTTPMethod::POST &&
-       isApiCall(path))
-      return new ApiHandler(sfs);
-    if(message->getMethod() == proxygen::HTTPMethod::GET &&
-        message->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_AUTHORIZATION).empty() &&
-        isStaticFile(path))
-      return new StaticHandler();
+            const auto bucketName = path.substr(1, bucketEnd);
 
-    return new S3Handler(sfs, FLAGS_server_url);
-  }
+            if (bucketName == "admin-b64be5124b034028a58913931942e205/")
+                return true;
+            else if (bucketName == "explorer-87652e131c4b45bd851a74de6518889e/")
+                return true;
+            else if (bucketName == "favicon-45ea1ea9212449f78613105e96c05997/")
+                return true;
 
-  SingleFileStorage& getSfs()
-  {
-    return sfs;
-  }
-};
-}
+            return false;
+        }
+
+        proxygen::RequestHandler* onRequest(proxygen::RequestHandler*, proxygen::HTTPMessage* message) noexcept override
+        {
+            const std::string_view path(message->getPathAsStringPiece());
+
+            if (message->getMethod() == proxygen::HTTPMethod::POST &&
+                isApiCall(path))
+                return new ApiHandler(sfs);
+            if (message->getMethod() == proxygen::HTTPMethod::GET &&
+                message->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_AUTHORIZATION).empty() &&
+                isStaticFile(path))
+                return new StaticHandler();
+
+            return new S3Handler(sfs, FLAGS_server_url);
+        }
+
+        SingleFileStorage& getSfs()
+        {
+            return sfs;
+        }
+    };
+} // namespace
 
 void stopServer()
 {
-  server->stop();
+    server->stop();
 }
 
 int realMain(int argc, char* argv[])
 {
-  auto internalArgs = [&]() {
-      std::string ret;
-      for(int i=1;i<argc;++i)
-      {
-        if(i>1)
-          ret += " ";
-        ret += std::string(argv[i]);
-      }
-      return ret;
+    auto internalArgs = [&]()
+    {
+        std::string ret;
+        for (int i = 1; i < argc; ++i)
+        {
+            if (i > 1)
+                ret += " ";
+            ret += std::string(argv[i]);
+        }
+        return ret;
     };
 
     auto internalArgsStr = internalArgs();
@@ -185,71 +190,74 @@ int realMain(int argc, char* argv[])
     XLOGF(INFO, "HS5 {} rev {}", PACKAGE_VERSION, GIT_REVISION);
 
 #ifndef HS5_WITH_DUCKDB
-    if(FLAGS_run_duckdb)
+    if (FLAGS_run_duckdb)
     {
-      XLOGF(ERR, "DuckDB UI requested, but hs5 was built without DuckDB support");
-      return 1;
+        XLOGF(ERR, "DuckDB UI requested, but hs5 was built without DuckDB support");
+        return 1;
     }
 #endif
 
-    try {
-      bool background_thread = true;
-      folly::mallctlWrite("background_thread", background_thread);
-    } catch (const std::exception& e) {
-      XLOGF(WARN, "Failed to enable jemalloc background thread: {}", e.what());
+    try
+    {
+        bool background_thread = true;
+        folly::mallctlWrite("background_thread", background_thread);
+    }
+    catch (const std::exception& e)
+    {
+        XLOGF(WARN, "Failed to enable jemalloc background thread: {}", e.what());
     }
 
     XLOGF(DBG0, "Internal command line: {}", internalArgsStr);
 
-    if(FLAGS_enable_core_dumps)
+    if (FLAGS_enable_core_dumps)
     {
-      // Enable core dumps
-      struct rlimit rl = {};
-      rl.rlim_cur = RLIM_INFINITY;
-      rl.rlim_max = RLIM_INFINITY;
-      if(setrlimit(RLIMIT_CORE, &rl) != 0)
-      {
-        XLOGF(ERR, "Failed to enable core dumps: {}", folly::errnoStr(errno));
-      }
-      else
-      {
-        XLOGF(INFO, "Core dumps enabled");
-      }
+        // Enable core dumps
+        struct rlimit rl = {};
+        rl.rlim_cur = RLIM_INFINITY;
+        rl.rlim_max = RLIM_INFINITY;
+        if (setrlimit(RLIMIT_CORE, &rl) != 0)
+        {
+            XLOGF(ERR, "Failed to enable core dumps: {}", folly::errnoStr(errno));
+        }
+        else
+        {
+            XLOGF(INFO, "Core dumps enabled");
+        }
     }
 
     SingleFileStorage::init_mutex();
     aws_checksums_library_init(aws_default_allocator());
     try
     {
-      DbDao::init();
-      ApiHandler::init();
-      refreshAuthCache();
-      buckets::refreshBucketCache();
+        DbDao::init();
+        ApiHandler::init();
+        refreshAuthCache();
+        buckets::refreshBucketCache();
     }
-    catch(const std::exception& e)
+    catch (const std::exception& e)
     {
-      XLOGF(ERR, "Error during initialization {}: {}", typeid(e).name(), e.what());
-      return 1;
+        XLOGF(ERR, "Error during initialization {}: {}", typeid(e).name(), e.what());
+        return 1;
     }
 
     std::vector<proxygen::HTTPServer::IPConfig> IPs = {
-        {folly::SocketAddress(FLAGS_ip, FLAGS_http_port, true), proxygen::HTTPServer::Protocol::HTTP},
+        { folly::SocketAddress(FLAGS_ip, FLAGS_http_port, true), proxygen::HTTPServer::Protocol::HTTP },
     };
 
-    if(FLAGS_h2_port!=-1)
+    if (FLAGS_h2_port != -1)
     {
-      IPs.push_back({folly::SocketAddress(FLAGS_ip, FLAGS_h2_port, true), proxygen::HTTPServer::Protocol::HTTP2});
+        IPs.push_back({ folly::SocketAddress(FLAGS_ip, FLAGS_h2_port, true), proxygen::HTTPServer::Protocol::HTTP2 });
     }
 
-    if(FLAGS_server_url.empty())
-      FLAGS_server_url = fmt::format("http://{}:{}", FLAGS_ip, FLAGS_http_port);
+    if (FLAGS_server_url.empty())
+        FLAGS_server_url = fmt::format("http://{}:{}", FLAGS_ip, FLAGS_http_port);
 
     SingleFileStorage::SFSOptions sfsoptions;
     sfsoptions.data_path = FLAGS_data_path;
     sfsoptions.db_path = FLAGS_index_path;
     sfsoptions.data_file_size_limit_mb = FLAGS_data_file_size_limit_mb;
     sfsoptions.alloc_chunk_size = FLAGS_data_file_alloc_chunk_size;
-    sfsoptions.alloc_use_free_space_percent = FLAGS_alloc_use_free_space_percent/100.f;
+    sfsoptions.alloc_use_free_space_percent = FLAGS_alloc_use_free_space_percent / 100.f;
     std::vector<unsigned char> runtime_id(32);
     folly::Random::secureRandom(runtime_id.data(), runtime_id.size());
     sfsoptions.runtime_id = folly::hexlify<std::string>(folly::ByteRange(runtime_id.data(), runtime_id.size()));
@@ -261,39 +269,44 @@ int realMain(int argc, char* argv[])
     sfsoptions.common_prefix_func = s3key_common_prefix;
     sfsoptions.common_prefix_hash_func = s3key_common_prefix_hash;
     sfsoptions.wal_file_path = FLAGS_index_wal_path.empty() ? FLAGS_index_wal_path : (FLAGS_index_wal_path + os_file_sep() + "index.wal");
-    sfsoptions.on_delete_callback = [](const std::string& fn, const std::string& md5sum) -> std::vector<SingleFileStorage::SFragInfo> {
-      return S3Handler::onDeleteCallback(fn, md5sum);
+    sfsoptions.on_delete_callback = [](const std::string& fn, const std::string& md5sum) -> std::vector<SingleFileStorage::SFragInfo>
+    {
+        return S3Handler::onDeleteCallback(fn, md5sum);
     };
-    sfsoptions.modify_data_callback = [](const std::string& fn, std::string md5sum, std::string md5sumParam) -> std::optional<std::string> {
-      return S3Handler::onModifyCallback(fn, md5sum, md5sumParam);
+    sfsoptions.modify_data_callback = [](const std::string& fn, std::string md5sum, std::string md5sumParam) -> std::optional<std::string>
+    {
+        return S3Handler::onModifyCallback(fn, md5sum, md5sumParam);
     };
-    sfsoptions.modify_metadata_callback = [](const std::string& fn, const std::string& md5sum, const std::string& param) -> nonstd::expected<std::string, int> {
-      return S3Handler::onModifyMetadataCallback(fn, md5sum, param);
+    sfsoptions.modify_metadata_callback = [](const std::string& fn, const std::string& md5sum, const std::string& param) -> nonstd::expected<std::string, int>
+    {
+        return S3Handler::onModifyMetadataCallback(fn, md5sum, param);
     };
-    sfsoptions.match_callback = [](SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo) {
-      S3Handler::onMatchCallback(matchInfo, fragInfo, {});
+    sfsoptions.match_callback = [](SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo)
+    {
+        S3Handler::onMatchCallback(matchInfo, fragInfo, {});
     };
-    sfsoptions.add_reading_callback = [](const std::string_view fn, const SingleFileStorage::SFragInfo& fragInfo) {
-      S3Handler::onAddReadingCallback(fn, fragInfo);
+    sfsoptions.add_reading_callback = [](const std::string_view fn, const SingleFileStorage::SFragInfo& fragInfo)
+    {
+        S3Handler::onAddReadingCallback(fn, fragInfo);
     };
     sfsoptions.wal_write_meta = FLAGS_wal_write_meta;
     sfsoptions.wal_write_data = FLAGS_wal_write_data;
-    sfsoptions.no_sync = FLAGS_test_db_no_sync;    
+    sfsoptions.no_sync = FLAGS_test_db_no_sync;
 
-    if(!FLAGS_wal_write_meta && FLAGS_wal_write_data==0)
+    if (!FLAGS_wal_write_meta && FLAGS_wal_write_data == 0)
     {
-      XLOGF(ERR, "Either writing metadata or data to WAL file must be enabled");
-      return 1;
+        XLOGF(ERR, "Either writing metadata or data to WAL file must be enabled");
+        return 1;
     }
 
     proxygen::HTTPSessionBase::setMaxReadBufferSize(FLAGS_max_put_buffer_size);
 
     SingleFileStorage sfs(sfsoptions);
-  
+
     proxygen::HTTPServerOptions options;
     options.threads = static_cast<size_t>(FLAGS_http_worker_threads);
     options.idleTimeout = 60s;
-    options.shutdownOn = {SIGINT, SIGTERM};
+    options.shutdownOn = { SIGINT, SIGTERM };
     options.enableContentCompression = false;
     options.handlerFactories =
         proxygen::RequestHandlerChain().addThen<S3HandlerFactory>(sfs).build();
@@ -301,54 +314,52 @@ int realMain(int argc, char* argv[])
     server = std::make_unique<proxygen::HTTPServer>(std::move(options));
     server->bind(IPs);
 
-    for(const auto& ip: IPs)
+    for (const auto& ip : IPs)
     {
-      XLOGF(INFO, "Listening on {}", ip.address.describe());
+        XLOGF(INFO, "Listening on {}", ip.address.describe());
     }
 
     XLOGF(INFO, "Config: Punch holes: {}, Stop on error: {}, Manual commit: {}", FLAGS_punch_holes, FLAGS_stop_on_error, FLAGS_manual_commit);
 
-    std::thread t([&]() {
+    std::thread t([&]()
+                  {
       folly::setThreadName("http srv main");
       server->start();
-      server.reset();
-      });
+      server.reset(); });
 
 #ifdef HS5_WITH_DUCKDB
-    if(FLAGS_run_duckdb)
+    if (FLAGS_run_duckdb)
     {
-      XLOGF(INFO, "Starting DuckDB...");
+        XLOGF(INFO, "Starting DuckDB...");
 
-      duckdb::Connection con(getDuckDb());
+        duckdb::Connection con(getDuckDb());
 
-      auto& fs =(getDuckDb().instance)->GetFileSystem();
-      fs.RegisterSubSystem(duckdb::make_uniq<DuckDbFs>(sfs));
+        auto& fs = (getDuckDb().instance)->GetFileSystem();
+        fs.RegisterSubSystem(duckdb::make_uniq<DuckDbFs>(sfs));
 
-      auto res = con.Query("SET ui_local_port = "+std::to_string(FLAGS_duckdb_port));
-      if(res->HasError())
-      {
-        XLOGF(ERR, "Failed setting duckdb port: {}", res->GetError());
-        return 1;
-      }
+        auto res = con.Query("SET ui_local_port = " + std::to_string(FLAGS_duckdb_port));
+        if (res->HasError())
+        {
+            XLOGF(ERR, "Failed setting duckdb port: {}", res->GetError());
+            return 1;
+        }
 
-      res = con.Query("CALL start_ui_server()");
-      if(res->HasError())
-      {
-        XLOGF(ERR, "Failed to start UI server: {}", res->GetError());
-        return 1;
-      }
-      else
-      {
-        if(res->RowCount()==1)
-          XLOGF(INFO, "DuckDB UI server started successfully {}", res->GetValue(0, 0).ToString());  
+        res = con.Query("CALL start_ui_server()");
+        if (res->HasError())
+        {
+            XLOGF(ERR, "Failed to start UI server: {}", res->GetError());
+            return 1;
+        }
         else
-          XLOGF(INFO, "DuckDB UI server started successfully {}", res->ToString());
-      }
+        {
+            if (res->RowCount() == 1)
+                XLOGF(INFO, "DuckDB UI server started successfully {}", res->GetValue(0, 0).ToString());
+            else
+                XLOGF(INFO, "DuckDB UI server started successfully {}", res->ToString());
+        }
     }
 #endif
-    
+
     t.join();
     return 0;
 }
-
-

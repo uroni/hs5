@@ -7,10 +7,10 @@
 #include <folly/FileUtil.h>
 #include <folly/executors/GlobalExecutor.h>
 #include <folly/io/async/EventBaseManager.h>
+#include <folly/logging/xlog.h>
 #include <proxygen/httpserver/RequestHandler.h>
 #include <proxygen/httpserver/ResponseBuilder.h>
 #include <proxygen/lib/utils/CompressionFilterUtils.h>
-#include <folly/logging/xlog.h>
 
 using namespace proxygen;
 
@@ -54,7 +54,7 @@ void StaticHandler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
     const auto ifNoneMatch = headers->getHeaders().getSingleOrEmpty(HTTP_HEADER_IF_NONE_MATCH);
 
-    if(ifNoneMatch == etag)
+    if (ifNoneMatch == etag)
     {
         ResponseBuilder(downstream_)
             .status(304, "Not modified")
@@ -62,19 +62,19 @@ void StaticHandler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         return;
     }
 
-    _file.set(std::string_view(reinterpret_cast<const char *>(itFile->second.data), itFile->second.len));
+    _file.set(std::string_view(reinterpret_cast<const char*>(itFile->second.data), itFile->second.len));
 
     ResponseBuilder resp(downstream_);
     resp.status(200, "Ok")
         .header(HTTP_HEADER_ETAG, etag)
         .header(HTTP_HEADER_CONTENT_TYPE, itFile->second.contentType);
 
-    if(itFile->second.immutable)
+    if (itFile->second.immutable)
         resp.header(HTTP_HEADER_CACHE_CONTROL, "Cache-Control: max-age=31536000, immutable");
 
-    if(!_decompressor)
+    if (!_decompressor)
     {
-        resp.header(HTTP_HEADER_CONTENT_ENCODING, "gzip"); 
+        resp.header(HTTP_HEADER_CONTENT_ENCODING, "gzip");
         resp.header(HTTP_HEADER_CONTENT_LENGTH, std::to_string(itFile->second.len));
     }
     else
@@ -95,13 +95,13 @@ void StaticHandler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         });
 }
 
-void StaticHandler::readFile(folly::EventBase *evb)
+void StaticHandler::readFile(folly::EventBase* evb)
 {
     folly::IOBufQueue buf;
     while (!_file.done() && !_paused)
     {
         auto data = buf.preallocate(4000, 4000);
-        const auto rc = _file.read(reinterpret_cast<char *>(data.first), data.second);
+        const auto rc = _file.read(reinterpret_cast<char*>(data.first), data.second);
         if (rc == 0)
         {
             XLOGF(DBG0, "Read EOF");
@@ -110,8 +110,7 @@ void StaticHandler::readFile(folly::EventBase *evb)
                                       {
                 if (!_error) {
                 ResponseBuilder(downstream_).sendWithEOM();
-                }
-            });
+                } });
             break;
         }
         else
@@ -127,8 +126,7 @@ void StaticHandler::readFile(folly::EventBase *evb)
                                           {
                     if (!_error) {
                         ResponseBuilder(downstream_).body(std::move(body)).send();
-                    } 
-                });
+                    } });
             }
             else
             {
@@ -136,8 +134,7 @@ void StaticHandler::readFile(folly::EventBase *evb)
                                           {
                 if (!_error) {
                     ResponseBuilder(downstream_).body(std::move(body)).send();
-                } 
-                });
+                } });
             }
         }
     }

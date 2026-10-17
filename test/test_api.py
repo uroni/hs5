@@ -15,15 +15,15 @@ class LoginData:
     access_key: str
     secret_access_key: str
 
+
 def get_session(hs5: Hs5Runner) -> LoginData:
     url = hs5.get_api_url()
 
     ses = requests.session()
 
-    response = ses.post(url+"login", json={
-        "username": "root",
-        "password": hs5.get_root_key()
-    })
+    response = ses.post(
+        url + "login", json={"username": "root", "password": hs5.get_root_key()}
+    )
 
     assert response.status_code == 200
     resp = response.json()
@@ -35,7 +35,7 @@ def get_session(hs5: Hs5Runner) -> LoginData:
     return LoginData(
         req=ses,
         access_key=resp.get("accessKey", ""),
-        secret_access_key=resp.get("secretAccessKey", "")
+        secret_access_key=resp.get("secretAccessKey", ""),
     )
 
 
@@ -44,70 +44,64 @@ class UserData:
     id: str
     name: str
 
+
 def get_user_data(hs5: Hs5Runner, login_data: LoginData, username: str) -> UserData:
     url = hs5.get_api_url()
 
-    response = login_data.req.post(url+"listUsers", json={})
+    response = login_data.req.post(url + "listUsers", json={})
     assert response.status_code == 200
     users = response.json()
     user = list(filter(lambda u: u["username"] == username, users["users"]))[0]
-    return UserData(
-        id=user["id"],
-        name=user["username"]
-    )
+    return UserData(id=user["id"], name=user["username"])
+
 
 @dataclass
 class Role:
     id: str
     name: str
 
+
 def get_role_data(hs5: Hs5Runner, login_data: LoginData, role_name: str) -> Role:
     url = hs5.get_api_url()
 
-    response = login_data.req.post(url+"listRoles", json={})
+    response = login_data.req.post(url + "listRoles", json={})
     assert response.status_code == 200
     roles = response.json()
     role = list(filter(lambda r: r["roleName"] == role_name, roles["roles"]))[0]
-    return Role(
-        id=role["id"],
-        name=role["roleName"]
-    )
+    return Role(id=role["id"], name=role["roleName"])
+
 
 def test_login(hs5: Hs5Runner):
     get_session(hs5)
+
 
 def test_adduser(hs5: Hs5Runner):
     url = hs5.get_api_url()
 
     ses1 = requests.session()
 
-    response = ses1.post(url+"addUser", json={
-        "username": "test",
-        "password": "test"
-    })
+    response = ses1.post(url + "addUser", json={"username": "test", "password": "test"})
 
     assert response.status_code == 401
 
     login_data = get_session(hs5)
 
-    response = login_data.req.post(url+"addUser", json={
-        "username": "test",
-        "password": "test"
-    })
+    response = login_data.req.post(
+        url + "addUser", json={"username": "test", "password": "test"}
+    )
 
     assert response.status_code == 200
 
     ses2 = requests.session()
 
-    response = ses2.post(url+"login", json={
-        "username": "test",
-        "password": "test"
-    })
+    response = ses2.post(url + "login", json={"username": "test", "password": "test"})
 
     assert response.status_code == 200
 
+
 def test_stats(hs5: Hs5Runner):
     hs5.get_stats()
+
 
 def test_add_access_key(hs5: Hs5Runner):
     url = hs5.get_api_url()
@@ -123,19 +117,14 @@ def test_add_access_key(hs5: Hs5Runner):
         endpoint_url=hs5.get_url(),
         aws_access_key_id=login_data.access_key,
         aws_secret_access_key=login_data.secret_access_key,
-        config=Config(signature_version="s3v4")
+        config=Config(signature_version="s3v4"),
     )
     # Try to list buckets (should succeed)
     resp = s3_ses.list_buckets()
     assert "Buckets" in resp
 
     # Add an access key for the root user
-    response = login_data.req.post(
-        url + "addAccessKey",
-        json={
-            "userId": root_user.id
-        }
-    )
+    response = login_data.req.post(url + "addAccessKey", json={"userId": root_user.id})
     assert response.status_code == 200
     data = response.json()
     assert "accessKey" in data
@@ -144,14 +133,13 @@ def test_add_access_key(hs5: Hs5Runner):
     assert data["secretKey"]
 
     # Now test S3 request with the new access key
-    
 
     s3 = boto3.client(
         "s3",
         endpoint_url=hs5.get_url(),
         aws_access_key_id=data["accessKey"],
         aws_secret_access_key=data["secretKey"],
-        config=Config(signature_version="s3v4")
+        config=Config(signature_version="s3v4"),
     )
     # Try to list buckets (should succeed)
     resp = s3.list_buckets()
@@ -170,20 +158,16 @@ def test_add_new_root_user(hs5: Hs5Runner):
     url = hs5.get_api_url()
     login_data = get_session(hs5)
 
-    response = login_data.req.post(url+"addUser", json={
-        "username": "newroot",
-        "password": "newroot"
-    })
+    response = login_data.req.post(
+        url + "addUser", json={"username": "newroot", "password": "newroot"}
+    )
 
     assert response.status_code == 200
 
     newroot_user = get_user_data(hs5, login_data, "newroot")
 
     response = login_data.req.post(
-        url + "addAccessKey",
-        json={
-            "userId": newroot_user.id
-        }
+        url + "addAccessKey", json={"userId": newroot_user.id}
     )
     assert response.status_code == 200
     data = response.json()
@@ -198,11 +182,7 @@ def test_add_new_root_user(hs5: Hs5Runner):
     rootRole = get_role_data(hs5, login_data, "root")
 
     response = login_data.req.post(
-        url + "addUserRole",
-        json={
-            "userId": newroot_user.id,
-            "roleId": rootRole.id
-        }
+        url + "addUserRole", json={"userId": newroot_user.id, "roleId": rootRole.id}
     )
     assert response.status_code == 200
 
@@ -211,7 +191,7 @@ def test_add_new_root_user(hs5: Hs5Runner):
         endpoint_url=hs5.get_url(),
         aws_access_key_id=newroot_access_key,
         aws_secret_access_key=newroot_secret_key,
-        config=Config(signature_version="s3v4")
+        config=Config(signature_version="s3v4"),
     )
     # Try to list buckets (should succeed)
     resp = s3.list_buckets()
@@ -230,20 +210,19 @@ def test_delete_bucket_via_api(hs5: Hs5Runner, tmp_path: Path):
     assert bucket_info["ResponseMetadata"]["HTTPStatusCode"] == 200
 
     from test_basic import add_objects
-    add_objects(tmp_path, hs5, num_objects=10, object_data=b"abc", bucketname=bucketname)
+
+    add_objects(
+        tmp_path, hs5, num_objects=10, object_data=b"abc", bucketname=bucketname
+    )
 
     objs = s3_client.list_objects_v2(Bucket=bucketname)
     assert "Contents" in objs
     assert len(objs["Contents"]) == 10
 
-
     url = hs5.get_api_url()
     login_data = get_session(hs5)
     response = login_data.req.post(
-        url + "deleteBucket",
-        json={
-            "bucketName": bucketname
-        }
+        url + "deleteBucket", json={"bucketName": bucketname}
     )
     assert response.status_code == 200
 
@@ -268,25 +247,37 @@ def test_delete_bucket_via_api(hs5: Hs5Runner, tmp_path: Path):
         pass
 
 
-@pytest.mark.parametrize("action", ['"*"', '"s3:*"', '["s3:ListBuckets", "s3:ListObjects", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]',
-                                    '["s3:ListBuckets", "s3:ListObjects", "s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:PutBucketCORS", "s3:Get*"]'])
+@pytest.mark.parametrize(
+    "action",
+    [
+        '"*"',
+        '"s3:*"',
+        '["s3:ListBuckets", "s3:ListObjects", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]',
+        '["s3:ListBuckets", "s3:ListObjects", "s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:PutBucketCORS", "s3:Get*"]',
+    ],
+)
 def test_add_user_for_bucket(hs5: Hs5Runner, action: str):
     admin_client = hs5.get_api_client_admin()
 
     admin_client.add_bucket(hs5_models.AddBucketParams(bucketName="accessbucket"))
 
-    user_resp = admin_client.add_user(hs5_models.AddUserParams(username="bucketuser", password="bucketuser"))
+    user_resp = admin_client.add_user(
+        hs5_models.AddUserParams(username="bucketuser", password="bucketuser")
+    )
 
     user_id = user_resp.id
- 
-    access_key_resp = admin_client.add_access_key(hs5_models.AddAccessKeyParams(userId=user_id))
+
+    access_key_resp = admin_client.add_access_key(
+        hs5_models.AddAccessKeyParams(userId=user_id)
+    )
 
     bucketuser_access_key = access_key_resp.access_key
     bucketuser_secret_key = access_key_resp.secret_key
 
-    policy_resp = admin_client.add_policy(hs5_models.AddPolicyParams(
-        policyName="bucketuser-policy",
-        policyDocument=f"""
+    policy_resp = admin_client.add_policy(
+        hs5_models.AddPolicyParams(
+            policyName="bucketuser-policy",
+            policyDocument=f"""
             {{
                 "Version": "2012-10-17",
                 "Statement": [
@@ -297,33 +288,32 @@ def test_add_user_for_bucket(hs5: Hs5Runner, action: str):
                     }}
                 ]
             }}
-            """
-    ))
+            """,
+        )
+    )
 
     policy_id = policy_resp.id
 
-    role_resp = admin_client.add_role(hs5_models.AddRoleParams(
-         roleName="bucketuser-role"))
+    role_resp = admin_client.add_role(
+        hs5_models.AddRoleParams(roleName="bucketuser-role")
+    )
 
     role_id = role_resp.id
 
-    admin_client.add_role_policy(hs5_models.AddRolePolicyParams(
-        roleId=role_id,
-        policyId=policy_id
-    ))
+    admin_client.add_role_policy(
+        hs5_models.AddRolePolicyParams(roleId=role_id, policyId=policy_id)
+    )
 
-    admin_client.add_user_role(hs5_models.AddUserRoleParams(
-        userId=user_id,
-        roleId=role_id
-    ))
-
+    admin_client.add_user_role(
+        hs5_models.AddUserRoleParams(userId=user_id, roleId=role_id)
+    )
 
     s3 = boto3.client(
         "s3",
         endpoint_url=hs5.get_url(),
         aws_access_key_id=bucketuser_access_key,
         aws_secret_access_key=bucketuser_secret_key,
-        config=Config(signature_version="s3v4")
+        config=Config(signature_version="s3v4"),
     )
 
     # Try to list buckets (should succeed)
@@ -367,11 +357,15 @@ def test_simple_permissions(hs5: Hs5Runner, perms: str):
     admin_s3 = hs5.get_s3_client()
     admin_s3.put_object(Bucket="perm-bucket", Key="existingkey", Body=b"testdata")
 
-    user_resp = admin_client.add_user(hs5_models.AddUserParams(username="permuser", password="permuser"))
+    user_resp = admin_client.add_user(
+        hs5_models.AddUserParams(username="permuser", password="permuser")
+    )
 
     user_id = user_resp.id
- 
-    access_key_resp = admin_client.add_access_key(hs5_models.AddAccessKeyParams(userId=user_id))
+
+    access_key_resp = admin_client.add_access_key(
+        hs5_models.AddAccessKeyParams(userId=user_id)
+    )
 
     perms_str = list[str]()
 
@@ -382,11 +376,11 @@ def test_simple_permissions(hs5: Hs5Runner, perms: str):
     if "d" in perms:
         perms_str.append("delete")
 
-    admin_client.add_bucket_permission(hs5_models.AddBucketPermissionParams(
-        bucketName="perm-bucket",
-        addBucketPermissions=perms_str,
-        userId=user_id
-    ))
+    admin_client.add_bucket_permission(
+        hs5_models.AddBucketPermissionParams(
+            bucketName="perm-bucket", addBucketPermissions=perms_str, userId=user_id
+        )
+    )
 
     permuser_access_key = access_key_resp.access_key
     permuser_secret_key = access_key_resp.secret_key
@@ -396,7 +390,7 @@ def test_simple_permissions(hs5: Hs5Runner, perms: str):
         endpoint_url=hs5.get_url(),
         aws_access_key_id=permuser_access_key,
         aws_secret_access_key=permuser_secret_key,
-        config=Config(signature_version="s3v4")
+        config=Config(signature_version="s3v4"),
     )
 
     if "r" in perms:
@@ -436,7 +430,6 @@ def test_simple_permissions(hs5: Hs5Runner, perms: str):
             assert "Message" in e.response["Error"]
             assert e.response["Error"]["Message"] == "Access Denied"
             pass
-    
 
     if "w" in perms:
         # Try to upload an object (should succeed)
@@ -466,6 +459,7 @@ def test_simple_permissions(hs5: Hs5Runner, perms: str):
             assert e.response["Error"]["Message"] == "Access Denied"
             pass
 
+
 @pytest.mark.parametrize("perms", ["", "r", "w", "d", "rw", "rd", "wd", "rwd"])
 def test_set_bucket_public(hs5: Hs5Runner, perms: str):
     admin_client = hs5.get_api_client_admin()
@@ -485,40 +479,35 @@ def test_set_bucket_public(hs5: Hs5Runner, perms: str):
     if "d" in perms:
         perms_str.append("delete")
 
-    admin_client.set_bucket_public(hs5_models.SetBucketPublicParams(
-        bucketName="public-bucket",
-        public=perms_str
-    ))
+    admin_client.set_bucket_public(
+        hs5_models.SetBucketPublicParams(bucketName="public-bucket", public=perms_str)
+    )
 
     if "r" in perms:
-        resp = requests.get(url+"/public-bucket/existingkey")
+        resp = requests.get(url + "/public-bucket/existingkey")
         resp.raise_for_status()
         assert resp.content == b"testdata"
     else:
-        resp = requests.get(url+"/public-bucket/existingkey")
+        resp = requests.get(url + "/public-bucket/existingkey")
         assert resp.status_code == 403
-    
+
     if "w" in perms:
-        resp = requests.put(url+"/public-bucket/testkey", data=b"testdata2")
+        resp = requests.put(url + "/public-bucket/testkey", data=b"testdata2")
         assert resp.status_code == 200
-        
+
         obj = admin_s3.get_object(Bucket="public-bucket", Key="testkey")
         data = obj["Body"].read()
         assert data == b"testdata2"
     else:
-        resp = requests.put(url+"/public-bucket/testkey", data=b"testdata2")
+        resp = requests.put(url + "/public-bucket/testkey", data=b"testdata2")
         assert resp.status_code == 403
-    
+
     if "d" in perms:
-        resp = requests.delete(url+"/public-bucket/existingkey")
+        resp = requests.delete(url + "/public-bucket/existingkey")
         assert resp.status_code == 204
 
         with pytest.raises(ClientError):
             admin_s3.head_object(Bucket="public-bucket", Key="existingkey")
     else:
-        resp = requests.delete(url+"/public-bucket/existingkey")
+        resp = requests.delete(url + "/public-bucket/existingkey")
         assert resp.status_code == 403
-
-
-
-

@@ -1,8 +1,8 @@
 #pragma once
-#include <string>
 #include "data.h"
-#include <proxygen/lib/http/HTTPMessage.h>
 #include <proxygen/httpserver/ResponseBuilder.h>
+#include <proxygen/lib/http/HTTPMessage.h>
+#include <string>
 
 struct UserMetadata
 {
@@ -21,4 +21,3 @@ struct UserMetadata
 
     void addRespHeaders(proxygen::ResponseBuilder& resp);
 };
-

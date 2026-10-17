@@ -4,8 +4,8 @@
  */
 #include "File.h"
 
-char *zeroBuf()
+char* zeroBuf()
 {
-    static char *zeroes = static_cast<char *>(calloc(fillPageSize, 1));
+    static char* zeroes = static_cast<char*>(calloc(fillPageSize, 1));
     return zeroes;
 }

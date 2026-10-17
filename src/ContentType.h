@@ -1,7 +1,7 @@
 #pragma once
+#include "data.h"
 #include <string>
 #include <string_view>
-#include "data.h"
 
 struct ContentType
 {

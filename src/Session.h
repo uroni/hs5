@@ -1,9 +1,9 @@
 #pragma once
 
-#include <string>
 #include <chrono>
-#include <utility>
 #include <optional>
+#include <string>
+#include <utility>
 
 struct ApiSessionStorage
 {
@@ -31,7 +31,7 @@ public:
         : storage(storage) {}
     ~SessionScope()
     {
-        if(storage!=nullptr)
+        if (storage != nullptr)
             unlockSession(*storage);
     }
 
@@ -52,10 +52,10 @@ public:
     }
     operator bool() const
     {
-        return storage!=nullptr;
+        return storage != nullptr;
     }
 
-    ApiSessionStorage& operator ->() const
+    ApiSessionStorage& operator->() const
     {
         return storage->apiStorage;
     }
@@ -67,7 +67,7 @@ public:
 
     void unlock()
     {
-        if(storage!=nullptr)
+        if (storage != nullptr)
         {
             unlockSession(*storage);
             storage = nullptr;
@@ -82,5 +82,3 @@ bool invalidateSession(const std::string_view jsSes, const std::string_view cook
 bool hasSession(const std::string_view accessKey);
 
 std::optional<int64_t> getSessionUserId(const std::string_view accessKey);
-
-

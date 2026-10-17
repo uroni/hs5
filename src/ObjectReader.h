@@ -1,22 +1,24 @@
 #pragma once
 
+#include "ObjMetadata.h"
+#include "PayloadHash.h"
+#include "SingleFileStorage.h"
 #include <ctime>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include "SingleFileStorage.h"
-#include "ObjMetadata.h"
-#include "PayloadHash.h"
 
 struct MultiPartDownloadData;
 
-class ObjectReadError : public std::runtime_error {
+class ObjectReadError : public std::runtime_error
+{
 public:
     ObjectReadError(const std::string& msg, bool notFound = false)
-     : std::runtime_error(msg), notFound_(notFound) {}
+        : std::runtime_error(msg), notFound_(notFound) {}
 
-    bool notFound() const {
+    bool notFound() const
+    {
         return notFound_;
     }
 
@@ -25,7 +27,8 @@ private:
 };
 
 // Reads the newest version of an object (single or multipart). Throws ObjectReadError on failure
-class ObjectReader {
+class ObjectReader
+{
 public:
     ObjectReader(SingleFileStorage& sfs, const std::string& bucket, const std::string& key);
 
@@ -38,25 +41,29 @@ public:
 
     void Read(char* buffer, int64_t bsize, int64_t offset);
 
-    int64_t Read(char *buffer, int64_t bsize);
+    int64_t Read(char* buffer, int64_t bsize);
 
-    int64_t FileSize() const {
+    int64_t FileSize() const
+    {
         return fsize;
     }
 
     time_t LastModifiedTime() const;
 
-    int64_t LastModifiedTimeNs() const {
+    int64_t LastModifiedTimeNs() const
+    {
         return lastModified;
     }
 
     std::string ETag() const;
 
-    ObjMetadata* GetObjMetadata() {
+    ObjMetadata* GetObjMetadata()
+    {
         return objMetadata.get();
     }
 
-    PayloadHashBase* GetSdkChecksumHash() {
+    PayloadHashBase* GetSdkChecksumHash()
+    {
         return sdkChecksumHash.get();
     }
 

@@ -1,71 +1,70 @@
 #pragma once
 
-#include <string>
-#include <stdint.h>
-#include <folly/String.h>
 #include <chrono>
+#include <folly/String.h>
 #include <optional>
+#include <stdint.h>
+#include <string>
 #include <string_view>
 
-static bool next(const std::string &pData, const size_t & doff, const std::string &pStr)
+static bool next(const std::string& pData, const size_t& doff, const std::string& pStr)
 {
-        for(size_t i=0;i<pStr.size();++i)
-        {
-                if( i+doff>=pData.size() )
-                        return false;
-                if( pData[doff+i]!=pStr[i] )
-                        return false;
-        }
-        return true;
+    for (size_t i = 0; i < pStr.size(); ++i)
+    {
+        if (i + doff >= pData.size())
+            return false;
+        if (pData[doff + i] != pStr[i])
+            return false;
+    }
+    return true;
 }
 
-static std::string getafter(const std::string &str,const std::string &data)
+static std::string getafter(const std::string& str, const std::string& data)
 {
-    size_t pos=data.find(str);
-	if(pos!=std::string::npos)
-	{
-		return data.substr(pos + str.size());
-	}
-	else
-	{
-		return std::string();
-	}
+    size_t pos = data.find(str);
+    if (pos != std::string::npos)
+    {
+        return data.substr(pos + str.size());
+    }
+    else
+    {
+        return std::string();
+    }
 }
 
 static std::string getuntil(const std::string& str, const std::string& data)
 {
-	size_t off=data.find(str);
-	if(off==std::string::npos)
-		return std::string();
-	return data.substr(0,off);
+    size_t off = data.find(str);
+    if (off == std::string::npos)
+        return std::string();
+    return data.substr(0, off);
 }
 
-static bool isHex(const std::string &str)
+static bool isHex(const std::string& str)
 {
-	if (str.size() % 2 != 0)
-	{
-		return false;
-	}
+    if (str.size() % 2 != 0)
+    {
+        return false;
+    }
 
-	for(size_t i=0;i<str.size();++i)
-	{
-		char ch = str[i];
-		if (ch >= '0'
-			&& ch <= '9')
-		{
-		}
-		else if (ch >= 'a' && ch <= 'f')
-		{			
-		}
-		else if (ch >= 'A' && ch <= 'F')
-		{			
-		}
-		else
-		{
-			return false;
-		}
-	}
-	return true;
+    for (size_t i = 0; i < str.size(); ++i)
+    {
+        char ch = str[i];
+        if (ch >= '0' && ch <= '9')
+        {
+        }
+        else if (ch >= 'a' && ch <= 'f')
+        {
+        }
+        else if (ch >= 'A' && ch <= 'F')
+        {
+        }
+        else
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 std::string random_uuid();
@@ -82,47 +81,55 @@ std::string asciiToLower(std::string str);
 
 std::string asciiToLower(const std::string_view str);
 
-// Escape using upper case hex values. Copied & adjusted folly::uriEscape() 
+// Escape using upper case hex values. Copied & adjusted folly::uriEscape()
 template <class String>
-void uriEscapeUpper(folly::StringPiece str, String& out, folly::UriEscapeMode mode) {
-  static const char hexValues[] = "0123456789ABCDEF";
-  char esc[3];
-  esc[0] = '%';
-  // Preallocate assuming that 25% of the input string will be escaped
-  folly::grow_capacity_by(out, str.size() + 3 * (str.size() / 4));
-  auto p = str.begin();
-  auto last = p; // last regular character
-  // We advance over runs of passthrough characters and copy them in one go;
-  // this is faster than calling push_back repeatedly.
-  unsigned char minEncode = static_cast<unsigned char>(mode);
-  while (p != str.end()) {
-    char c = *p;
-    unsigned char v = static_cast<unsigned char>(c);
-    unsigned char discriminator = folly::detail::uriEscapeTable[v];
-    if (FOLLY_LIKELY(discriminator <= minEncode)) {
-      ++p;
-    } else if (mode == folly::UriEscapeMode::QUERY && discriminator == 3) {
-      out.append(&*last, size_t(p - last));
-      out.push_back('+');
-      ++p;
-      last = p;
-    } else {
-      out.append(&*last, size_t(p - last));
-      esc[1] = hexValues[v >> 4];
-      esc[2] = hexValues[v & 0x0f];
-      out.append(esc, 3);
-      ++p;
-      last = p;
+void uriEscapeUpper(folly::StringPiece str, String& out, folly::UriEscapeMode mode)
+{
+    static const char hexValues[] = "0123456789ABCDEF";
+    char esc[3];
+    esc[0] = '%';
+    // Preallocate assuming that 25% of the input string will be escaped
+    folly::grow_capacity_by(out, str.size() + 3 * (str.size() / 4));
+    auto p = str.begin();
+    auto last = p; // last regular character
+    // We advance over runs of passthrough characters and copy them in one go;
+    // this is faster than calling push_back repeatedly.
+    unsigned char minEncode = static_cast<unsigned char>(mode);
+    while (p != str.end())
+    {
+        char c = *p;
+        unsigned char v = static_cast<unsigned char>(c);
+        unsigned char discriminator = folly::detail::uriEscapeTable[v];
+        if (FOLLY_LIKELY(discriminator <= minEncode))
+        {
+            ++p;
+        }
+        else if (mode == folly::UriEscapeMode::QUERY && discriminator == 3)
+        {
+            out.append(&*last, size_t(p - last));
+            out.push_back('+');
+            ++p;
+            last = p;
+        }
+        else
+        {
+            out.append(&*last, size_t(p - last));
+            esc[1] = hexValues[v >> 4];
+            esc[2] = hexValues[v & 0x0f];
+            out.append(esc, 3);
+            ++p;
+            last = p;
+        }
     }
-  }
-  out.append(&*last, size_t(p - last));
+    out.append(&*last, size_t(p - last));
 }
 
 template <class String>
-String uriEscapeUpper(folly::StringPiece str, folly::UriEscapeMode mode = folly::UriEscapeMode::ALL) {
-  String out;
-  uriEscapeUpper(str, out, mode);
-  return out;
+String uriEscapeUpper(folly::StringPiece str, folly::UriEscapeMode mode = folly::UriEscapeMode::ALL)
+{
+    String out;
+    uriEscapeUpper(str, out, mode);
+    return out;
 }
 
 std::string format_last_modified(const int64_t lastModified);

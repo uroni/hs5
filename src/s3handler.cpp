@@ -4,9 +4,15 @@
  */
 #include "s3handler.h"
 #include "ApiHandler.h"
+#include "Auth.h"
+#include "Buckets.h"
+#include "ObjectReader.h"
 #include "PayloadHash.h"
 #include "SingleFileStorage.h"
 #include "crypt.h"
+#include "data.h"
+#include "main.h"
+#include "utils.h"
 #include <algorithm>
 #include <asm-generic/errno-base.h>
 #include <asm-generic/errno.h>
@@ -16,42 +22,36 @@
 #include <expat.h>
 #include <fmt/format.h>
 #include <folly/Format.h>
+#include <folly/Random.h>
 #include <folly/Range.h>
 #include <folly/ScopeGuard.h>
 #include <folly/String.h>
+#include <folly/Uri.h>
+#include <folly/base64.h>
 #include <folly/executors/GlobalExecutor.h>
+#include <folly/hash/Checksum.h>
+#include <folly/hash/Hash.h>
 #include <folly/io/IOBuf.h>
 #include <folly/io/IOBufQueue.h>
+#include <folly/lang/Bits.h>
 #include <folly/logging/LogLevel.h>
 #include <folly/logging/LogStreamProcessor.h>
 #include <folly/logging/xlog.h>
-#include <folly/Uri.h>
-#include <folly/lang/Bits.h>
-#include <folly/hash/Hash.h>
-#include <folly/hash/Checksum.h>
-#include <folly/base64.h>
-#include <folly/Random.h>
+#include <limits.h>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <openssl/hmac.h>
-#include <openssl/sha.h>
 #include <openssl/md5.h>
+#include <openssl/sha.h>
 #include <openssl/types.h>
 #include <optional>
 #include <proxygen/lib/http/HTTPCommonHeaders.h>
 #include <proxygen/lib/http/HTTPMethod.h>
 #include <proxygen/lib/utils/HTTPTime.h>
-#include "data.h"
-#include "utils.h"
-#include <limits.h>
 #include <string>
 #include <string_view>
 #include <vector>
-#include "Auth.h"
-#include "main.h"
-#include "Buckets.h"
-#include "ObjectReader.h"
 
 using namespace proxygen;
 
@@ -71,12 +71,12 @@ DEFINE_int64(commit_after_ms, 30000, "If manual commit is enabled, wait this amo
 DEFINE_bool(check_conditional_headers_before_upload, true, "Check conditional HTTP headers like If-Match before upload on PUT (for testing)");
 DEFINE_int32(test_delay_before_modify_ms, 0, "Sleep before queueing an object overwrite/delete (for testing)");
 DEFINE_int32(test_delay_after_protected_check_ms, 0, "Sleep after deciding if an object overwrite/delete needs a protected check and before queueing it (for testing)");
-DEFINE_int32(get_buffer_size, 1*1024*1024, "Buffer size to use for reading objects for GET requests");
+DEFINE_int32(get_buffer_size, 1 * 1024 * 1024, "Buffer size to use for reading objects for GET requests");
 
 std::string hashSha256Hex(const std::string_view payload)
 {
     unsigned char md[SHA256_DIGEST_LENGTH];
-    SHA256(reinterpret_cast<const unsigned char *>(payload.data()),
+    SHA256(reinterpret_cast<const unsigned char*>(payload.data()),
            payload.size(), md);
     return folly::hexlify<std::string>(
         folly::ByteRange(md, SHA256_DIGEST_LENGTH));
@@ -84,15 +84,15 @@ std::string hashSha256Hex(const std::string_view payload)
 
 const std::string emptyPayloadHash = hashSha256Hex("");
 
-std::string hmacSha256Binary(const std::string &key,
-                             const std::string &payload)
+std::string hmacSha256Binary(const std::string& key,
+                             const std::string& payload)
 {
     std::string ret;
     ret.resize(SHA256_DIGEST_LENGTH);
     unsigned int len = SHA256_DIGEST_LENGTH;
     HMAC(EVP_sha256(), key.data(), key.size(),
-         reinterpret_cast<const unsigned char *>(payload.data()), payload.size(),
-         reinterpret_cast<unsigned char *>(&ret[0]), &len);
+         reinterpret_cast<const unsigned char*>(payload.data()), payload.size(),
+         reinterpret_cast<unsigned char*>(&ret[0]), &len);
     assert(len == SHA256_DIGEST_LENGTH);
     return ret;
 }
@@ -100,15 +100,15 @@ std::string hmacSha256Binary(const std::string &key,
 const size_t SHA1_DIGEST_LENGTH = 20;
 constexpr size_t uploadIdNonceSize = 8;
 
-std::string hmacSha1Binary(const std::string &key,
-                             const std::string &payload)
+std::string hmacSha1Binary(const std::string& key,
+                           const std::string& payload)
 {
     std::string ret;
     ret.resize(SHA1_DIGEST_LENGTH);
     unsigned int len = SHA1_DIGEST_LENGTH;
     HMAC(EVP_sha1(), key.data(), key.size(),
-         reinterpret_cast<const unsigned char *>(payload.data()), payload.size(),
-         reinterpret_cast<unsigned char *>(&ret[0]), &len);
+         reinterpret_cast<const unsigned char*>(payload.data()), payload.size(),
+         reinterpret_cast<unsigned char*>(&ret[0]), &len);
     assert(len == SHA1_DIGEST_LENGTH);
     return ret;
 }
@@ -120,58 +120,57 @@ std::string getDate(const std::tm& final_tm)
     return buffer.data();
 }
 
-
 std::string uploadIdToStr(int64_t uploadId)
 {
     std::string key;
-	if(uploadId<UCHAR_MAX)
-	{
-		key.resize(sizeof(unsigned char)+1);
-		unsigned char bnum = folly::Endian::big(static_cast<unsigned char>(uploadId));
-		memcpy(&key[1], &bnum, sizeof(bnum));
-	}
-	else if(uploadId<USHRT_MAX)
-	{
-		key.resize(sizeof(unsigned short)+1);
-		unsigned short bnum = folly::Endian::big(static_cast<unsigned short>(uploadId));
-		memcpy(&key[1], &bnum, sizeof(bnum));
-	}
-	else if(uploadId<UINT_MAX)
-	{
-		key.resize(sizeof(unsigned int)+1);
-		unsigned int bnum = folly::Endian::big(static_cast<unsigned int>(uploadId));
-		memcpy(&key[1], &bnum, sizeof(bnum));
-	}
-	else
-	{
-		key.resize(sizeof(int64_t)+1);	
+    if (uploadId < UCHAR_MAX)
+    {
+        key.resize(sizeof(unsigned char) + 1);
+        unsigned char bnum = folly::Endian::big(static_cast<unsigned char>(uploadId));
+        memcpy(&key[1], &bnum, sizeof(bnum));
+    }
+    else if (uploadId < USHRT_MAX)
+    {
+        key.resize(sizeof(unsigned short) + 1);
+        unsigned short bnum = folly::Endian::big(static_cast<unsigned short>(uploadId));
+        memcpy(&key[1], &bnum, sizeof(bnum));
+    }
+    else if (uploadId < UINT_MAX)
+    {
+        key.resize(sizeof(unsigned int) + 1);
+        unsigned int bnum = folly::Endian::big(static_cast<unsigned int>(uploadId));
+        memcpy(&key[1], &bnum, sizeof(bnum));
+    }
+    else
+    {
+        key.resize(sizeof(int64_t) + 1);
         uploadId = folly::Endian::big(uploadId);
-		memcpy(&key[1], &uploadId, sizeof(uploadId));
-	}
-	return key;
+        memcpy(&key[1], &uploadId, sizeof(uploadId));
+    }
+    return key;
 }
 
 int64_t uploadIdFromStr(const std::string& key)
 {
-    if(key.size()==sizeof(unsigned char)+1)
+    if (key.size() == sizeof(unsigned char) + 1)
     {
         unsigned char bnum;
         memcpy(&bnum, &key[1], sizeof(bnum));
         return folly::Endian::big(bnum);
     }
-    else if(key.size()==sizeof(unsigned short)+1)
+    else if (key.size() == sizeof(unsigned short) + 1)
     {
         unsigned short bnum;
         memcpy(&bnum, &key[1], sizeof(bnum));
         return folly::Endian::big(bnum);
     }
-    else if(key.size()==sizeof(unsigned int)+1)
+    else if (key.size() == sizeof(unsigned int) + 1)
     {
         unsigned int bnum;
         memcpy(&bnum, &key[1], sizeof(bnum));
         return folly::Endian::big(bnum);
     }
-    else if(key.size()==sizeof(int64_t)+1)
+    else if (key.size() == sizeof(int64_t) + 1)
     {
         int64_t bnum;
         memcpy(&bnum, &key[1], sizeof(bnum));
@@ -184,13 +183,13 @@ int64_t uploadIdFromStr(const std::string& key)
 std::pair<int64_t, int64_t> uploadIdFromStrDot(const std::string& key)
 {
     const auto dotPos = key.find(".");
-    if(dotPos==std::string::npos)
-        return {-1, -1};
+    if (dotPos == std::string::npos)
+        return { -1, -1 };
 
     const auto uploadId1 = key.substr(0, dotPos);
-    const auto uploadId2 = key.substr(dotPos+1);
+    const auto uploadId2 = key.substr(dotPos + 1);
 
-    return {uploadIdFromStr(uploadId1), uploadIdFromStr(uploadId2)};
+    return { uploadIdFromStr(uploadId1), uploadIdFromStr(uploadId2) };
 }
 
 std::string encodeUriAws(const std::string_view str)
@@ -199,18 +198,18 @@ std::string encodeUriAws(const std::string_view str)
 
     std::string ret;
     ret.reserve(str.size());
-    for(const auto& ch: str)
+    for (const auto& ch : str)
     {
-        if((ch>='A' && ch<='Z') ||
-            (ch>='a' && ch<='z') ||
-            (ch>='0' && ch<='9') ||
-            ch=='-' || ch=='.' || ch=='_' || ch=='~')
+        if ((ch >= 'A' && ch <= 'Z') ||
+            (ch >= 'a' && ch <= 'z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '-' || ch == '.' || ch == '_' || ch == '~')
         {
-            ret+=ch;   
+            ret += ch;
         }
         else
         {
-            ret+='%';
+            ret += '%';
             ret += hexValues[(ch >> 4) & 0xf];
             ret += hexValues[ch & 0xf];
         }
@@ -221,13 +220,13 @@ std::string encodeUriAws(const std::string_view str)
 std::string getCanonicalizedAmzHeaders(const HTTPHeaders& headers)
 {
     std::map<std::string, std::string> amzHeaders;
-    headers.forEach([&](const std::string& header, const std::string& val) {
+    headers.forEach([&](const std::string& header, const std::string& val)
+                    {
         const auto& headerLower = asciiToLower(header);
         if (headerLower.find("x-amz-") == 0)
         {
             amzHeaders[headerLower] = val;
-        }
-    });
+        } });
 
     std::string canonicalizedAmzHeaders;
 
@@ -245,16 +244,16 @@ std::string getCanonicalizedResource(const HTTPMessage& headers)
     canonicalizedResource += headers.getPathAsStringPiece();
     const auto& queryParams = headers.getQueryParams();
 
-    const static std::vector<std::string> resources = {"acl", "lifecycle", "location", "logging", "notification", "partNumber", "policy", 
-        "requestPayment", "uploadId", "uploads", "versionId", "versioning", "versions", "website"};
+    const static std::vector<std::string> resources = { "acl", "lifecycle", "location", "logging", "notification", "partNumber", "policy",
+                                                        "requestPayment", "uploadId", "uploads", "versionId", "versioning", "versions", "website" };
 
     bool hasResource = false;
-    for(const auto& resource: resources)    
+    for (const auto& resource : resources)
     {
         auto it = queryParams.find(resource);
-        if(it!=queryParams.end())
+        if (it != queryParams.end())
         {
-            if(!hasResource)
+            if (!hasResource)
             {
                 canonicalizedResource += "?";
                 hasResource = true;
@@ -264,19 +263,19 @@ std::string getCanonicalizedResource(const HTTPMessage& headers)
                 canonicalizedResource += "&";
             }
             canonicalizedResource += resource;
-            if(!it->second.empty())
+            if (!it->second.empty())
                 canonicalizedResource += "=" + it->second;
         }
     }
 
     // Include  response-content-type, response-content-language, response-expires, response-cache-control, response-content-disposition, and response-content-encoding.
-    const static std::vector<std::string> responseParams = {"response-content-type", "response-content-language", "response-expires", "response-cache-control", "response-content-disposition", "response-content-encoding"};
-    for(const auto& responseParam: responseParams)
+    const static std::vector<std::string> responseParams = { "response-content-type", "response-content-language", "response-expires", "response-cache-control", "response-content-disposition", "response-content-encoding" };
+    for (const auto& responseParam : responseParams)
     {
         auto it = queryParams.find(responseParam);
-        if(it!=queryParams.end())
+        if (it != queryParams.end())
         {
-            if(!hasResource)
+            if (!hasResource)
             {
                 canonicalizedResource += "?";
                 hasResource = true;
@@ -291,9 +290,9 @@ std::string getCanonicalizedResource(const HTTPMessage& headers)
 
     // Include delete param
     auto it = queryParams.find("delete");
-    if(it!=queryParams.end())
+    if (it != queryParams.end())
     {
-        if(!hasResource)
+        if (!hasResource)
         {
             canonicalizedResource += "?";
             hasResource = true;
@@ -307,49 +306,50 @@ std::string getCanonicalizedResource(const HTTPMessage& headers)
     return canonicalizedResource;
 }
 
-std::optional<std::string> checkSigQueryStringV2(S3Handler* s3handler, HTTPMessage &headers, const std::string_view ressource,
-              const Action action)
+std::optional<std::string> checkSigQueryStringV2(S3Handler* s3handler, HTTPMessage& headers, const std::string_view ressource,
+                                                 const Action action)
 {
 #ifndef NDEBUG
     bool sigCheckOk = false;
-    SCOPE_EXIT {
-        if(s3handler)
+    SCOPE_EXIT
+    {
+        if (s3handler)
         {
-            if(sigCheckOk)
+            if (sigCheckOk)
                 s3handler->sigCheckOk();
             else
                 s3handler->sigCheckFailed();
         }
     };
 #endif
-    const auto httpVerb = headers.getMethodString(); 
+    const auto httpVerb = headers.getMethodString();
 
     const auto& queryParams = headers.getQueryParams();
     const auto itAccessKey = queryParams.find("AWSAccessKeyId");
-    if(itAccessKey==queryParams.end())
+    if (itAccessKey == queryParams.end())
         return std::nullopt;
 
     const auto& accessKey = itAccessKey->second;
 
     const auto& secretKey = getSecretKey(accessKey);
 
-    if(secretKey.empty())
+    if (secretKey.empty())
         return std::nullopt;
 
-    if(!ressource.empty() && !isAuthorized(ressource, action, accessKey))
+    if (!ressource.empty() && !isAuthorized(ressource, action, accessKey))
         return std::nullopt;
 
     const auto itExpires = queryParams.find("Expires");
-    if(itExpires==queryParams.end())
+    if (itExpires == queryParams.end())
         return std::nullopt;
 
     const auto expires = std::stoll(itExpires->second);
 
-    if(expires < std::time(nullptr))
+    if (expires < std::time(nullptr))
         return std::nullopt;
 
     const auto itSignature = queryParams.find("Signature");
-    if(itSignature==queryParams.end())
+    if (itSignature == queryParams.end())
         return std::nullopt;
 
     const auto signature = itSignature->second;
@@ -367,10 +367,10 @@ std::optional<std::string> checkSigQueryStringV2(S3Handler* s3handler, HTTPMessa
 
     try
     {
-        if(urlSig != folly::uriUnescape<std::string>(signature))
+        if (urlSig != folly::uriUnescape<std::string>(signature))
             return std::nullopt;
     }
-    catch(std::invalid_argument&)
+    catch (std::invalid_argument&)
     {
         return std::nullopt;
     }
@@ -378,28 +378,29 @@ std::optional<std::string> checkSigQueryStringV2(S3Handler* s3handler, HTTPMessa
 #ifndef NDEBUG
     sigCheckOk = true;
 #endif
-    
+
     return itAccessKey->second;
 }
 
 std::optional<std::string> checkSig(
-              S3Handler* s3handler,
-              HTTPMessage &headers,
-              const std::string_view payload,
-              const std::string_view ressource,
-              const Action action,
-              const bool allowPresigned,
-              std::string* sha256Output = nullptr,
-              std::string* stringToSignHeaderOutput = nullptr,
-              std::string* signingKeyOutput = nullptr)
+    S3Handler* s3handler,
+    HTTPMessage& headers,
+    const std::string_view payload,
+    const std::string_view ressource,
+    const Action action,
+    const bool allowPresigned,
+    std::string* sha256Output = nullptr,
+    std::string* stringToSignHeaderOutput = nullptr,
+    std::string* signingKeyOutput = nullptr)
 {
 #ifndef NDEBUG
     bool sigCheckOk = false;
     bool sigCheckSet = true;
-    SCOPE_EXIT {
-        if(s3handler && sigCheckSet)
+    SCOPE_EXIT
+    {
+        if (s3handler && sigCheckSet)
         {
-            if(sigCheckOk)
+            if (sigCheckOk)
                 s3handler->sigCheckOk();
             else
                 s3handler->sigCheckFailed();
@@ -412,9 +413,9 @@ std::optional<std::string> checkSig(
 
     const auto& authorization = headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_AUTHORIZATION);
 
-    if(authorization.empty())
+    if (authorization.empty())
     {
-        if(isAuthorized(ressource, action, ""))
+        if (isAuthorized(ressource, action, ""))
         {
             // public access, no signature check needed
 #ifndef NDEBUG
@@ -424,13 +425,15 @@ std::optional<std::string> checkSig(
         }
     }
 
-    std::map<std::string, std::string> unescapedParams;   
-    for(auto& param:  headers.getQueryParams())
+    std::map<std::string, std::string> unescapedParams;
+    for (auto& param : headers.getQueryParams())
     {
         try
         {
             unescapedParams[param.first] = folly::uriUnescape<std::string>(param.second, folly::UriEscapeMode::QUERY);
-        } catch (const std::invalid_argument& ex) {
+        }
+        catch (const std::invalid_argument& ex)
+        {
             XLOGF(WARN, "Invalid escaped query param: {}", folly::exceptionStr(ex));
         }
     }
@@ -441,14 +444,14 @@ std::optional<std::string> checkSig(
     folly::StringPiece signedHeaders;
     std::string requestDateTime;
     long long expires = 0;
-    
+
     const bool presignedRequest = authorization.empty() && allowPresigned;
     if (presignedRequest)
     {
         const auto itAlg = unescapedParams.find("X-Amz-Algorithm");
-        if(itAlg==unescapedParams.end() || itAlg->second != alg_name)
+        if (itAlg == unescapedParams.end() || itAlg->second != alg_name)
         {
-            if(!FLAGS_allow_sig_v2)
+            if (!FLAGS_allow_sig_v2)
                 return std::nullopt;
 
 #ifndef NDEBUG
@@ -459,34 +462,34 @@ std::optional<std::string> checkSig(
         }
 
         const auto itCredential = unescapedParams.find("X-Amz-Credential");
-        if(itCredential==unescapedParams.end())
+        if (itCredential == unescapedParams.end())
             return std::nullopt;
 
         folly::split('/', itCredential->second, credentialScopeToks);
 
         const auto itDate = unescapedParams.find("X-Amz-Date");
-        if(itDate==unescapedParams.end())
+        if (itDate == unescapedParams.end())
             return std::nullopt;
-        
+
         requestDateTime = itDate->second;
 
         const auto itExpires = unescapedParams.find("X-Amz-Expires");
-        if(itExpires==unescapedParams.end())
+        if (itExpires == unescapedParams.end())
             return std::nullopt;
 
         expires = std::stoll(itExpires->second);
-        if(expires<1 || expires>604800)
+        if (expires < 1 || expires > 604800)
             return std::nullopt;
 
         const auto itSignedHeaders = unescapedParams.find("X-Amz-SignedHeaders");
-        if(itSignedHeaders==unescapedParams.end())
+        if (itSignedHeaders == unescapedParams.end())
             return std::nullopt;
 
         signedHeaders = itSignedHeaders->second;
         folly::split(';', signedHeaders, signedHeadersVec);
 
         const auto itSignature = unescapedParams.find("X-Amz-Signature");
-        if(itSignature==unescapedParams.end())
+        if (itSignature == unescapedParams.end())
             return std::nullopt;
 
         requestSignature = itSignature->second;
@@ -531,7 +534,7 @@ std::optional<std::string> checkSig(
         if (itSignature == authorizationMap.end())
             return std::nullopt;
 
-        requestSignature = itSignature->second;        
+        requestSignature = itSignature->second;
     }
 
     if (credentialScopeToks.size() != 5)
@@ -542,14 +545,14 @@ std::optional<std::string> checkSig(
     // TODO: get from credentialScopeToks[0]
     const auto& secretKey = getSecretKey(accessKey);
 
-    if(secretKey.empty())
+    if (secretKey.empty())
         return std::nullopt;
 
-    if(!ressource.empty() && !isAuthorized(ressource, action, accessKey))
+    if (!ressource.empty() && !isAuthorized(ressource, action, accessKey))
         return std::nullopt;
 
     std::string canonicalHeaders;
-    std::optional<folly::Range<const char *> > prevSignedHeader;
+    std::optional<folly::Range<const char*>> prevSignedHeader;
     bool hasHost = false;
     std::string usedHost;
     for (auto signedHeader : signedHeadersVec)
@@ -563,9 +566,9 @@ std::optional<std::string> checkSig(
         if (signedHeader == "host" && !val.empty())
         {
             hasHost = true;
-            if(!FLAGS_host_override.empty())
+            if (!FLAGS_host_override.empty())
                 val = FLAGS_host_override;
-            usedHost = val;            
+            usedHost = val;
         }
         canonicalHeaders += folly::sformat("{}:{}\n", signedHeader, val);
         prevSignedHeader = signedHeader;
@@ -573,21 +576,23 @@ std::optional<std::string> checkSig(
 
     if (!hasHost)
         return std::nullopt;
-    
+
     std::vector<std::string> encodedParams;
     encodedParams.reserve(unescapedParams.size());
-    size_t paramsStrLen=0;
+    size_t paramsStrLen = 0;
     for (auto param : unescapedParams)
-    {   
-        if(presignedRequest && param.first == "X-Amz-Signature")
+    {
+        if (presignedRequest && param.first == "X-Amz-Signature")
             continue;
 
         try
         {
             encodedParams.emplace_back(encodeUriAws(param.first) + "=" +
-                             encodeUriAws(param.second));
-            paramsStrLen+=encodedParams.back().size()+1;
-        } catch (const std::invalid_argument& ex) {
+                                       encodeUriAws(param.second));
+            paramsStrLen += encodedParams.back().size() + 1;
+        }
+        catch (const std::invalid_argument& ex)
+        {
             XLOGF(WARN, "Invalid escaped query param: {}", folly::exceptionStr(ex));
         }
     }
@@ -596,21 +601,21 @@ std::optional<std::string> checkSig(
 
     std::string canonicalParamStr;
     canonicalParamStr.reserve(paramsStrLen);
-    for(const auto param: encodedParams)
+    for (const auto param : encodedParams)
     {
         if (!canonicalParamStr.empty())
             canonicalParamStr += "&";
-        
+
         canonicalParamStr += param;
     }
 
     std::string emptyPayload;
-    if(payload.empty())
+    if (payload.empty())
     {
         // We expect an empty payload, but we also don't read the body, so don't care if this is wrong
         emptyPayload = headers.getHeaders().getSingleOrEmpty("x-amz-content-sha256");
-    
-        if(!emptyPayload.empty() &&
+
+        if (!emptyPayload.empty() &&
             emptyPayload != unsigned_payload &&
             emptyPayload != emptyPayloadHash)
         {
@@ -621,22 +626,21 @@ std::optional<std::string> checkSig(
     const auto canonicalRequest = folly::sformat(
         "{}\n{}\n{}\n{}\n{}\n{}", headers.getMethodString(),
         headers.getPathAsStringPiece(), canonicalParamStr, canonicalHeaders,
-        signedHeaders, presignedRequest ? unsigned_payload : (payload.empty() ? 
-            (emptyPayload.empty() ? unsigned_payload : emptyPayload) : payload ));
+        signedHeaders, presignedRequest ? unsigned_payload : (payload.empty() ? (emptyPayload.empty() ? unsigned_payload : emptyPayload) : payload));
 
     const auto hashedCanonicalRequest = hashSha256Hex(canonicalRequest);
-    if(requestDateTime.empty())
+    if (requestDateTime.empty())
     {
         requestDateTime =
             headers.getHeaders().getSingleOrEmpty("X-Amz-Date");
 
-        if(requestDateTime.empty())
+        if (requestDateTime.empty())
         {
             requestDateTime = headers.getHeaders().getSingleOrEmpty(HTTP_HEADER_DATE);
         }
     }
-    
-    if(requestDateTime.empty())
+
+    if (requestDateTime.empty())
         return std::nullopt;
 
     std::tm t = {};
@@ -645,23 +649,23 @@ std::optional<std::string> checkSig(
     struct tm tm = t;
     const auto requestTime = timegm(&tm);
     const auto currTime = std::time(nullptr);
-    
-    if(presignedRequest)
+
+    if (presignedRequest)
     {
-        if(expires==0)
+        if (expires == 0)
             return std::nullopt;
 
-        if(requestTime + expires < currTime)
+        if (requestTime + expires < currTime)
             return std::nullopt;
     }
     else
     {
-        if(expires!=0)
+        if (expires != 0)
             return std::nullopt;
 
-        const auto timeDist = requestTime > currTime ? (requestTime - currTime ) : (currTime - requestTime);
+        const auto timeDist = requestTime > currTime ? (requestTime - currTime) : (currTime - requestTime);
 
-        if(timeDist > 8*60)
+        if (timeDist > 8 * 60)
             return std::nullopt;
     }
 
@@ -670,7 +674,7 @@ std::optional<std::string> checkSig(
         credentialScopeToks[1], credentialScopeToks[2], credentialScopeToks[3],
         credentialScopeToks[4], hashedCanonicalRequest);
 
-    if(stringToSignHeaderOutput)
+    if (stringToSignHeaderOutput)
     {
         *stringToSignHeaderOutput = folly::sformat(
             "{}\n{}/{}/{}/{}\n", requestDateTime,
@@ -683,13 +687,13 @@ std::optional<std::string> checkSig(
     const auto dateRegionServiceKey = hmacSha256Binary(dateRegionKey, credentialScopeToks[3].toString());
     const auto signingKey = hmacSha256Binary(dateRegionServiceKey, "aws4_request");
 
-    if(signingKeyOutput)
+    if (signingKeyOutput)
     {
         *signingKeyOutput = signingKey;
     }
 
     std::string calculatedSignature;
-    if(sha256Output)
+    if (sha256Output)
     {
         *sha256Output = hmacSha256Binary(signingKey, stringToSign);
         calculatedSignature = folly::hexlify(*sha256Output);
@@ -699,10 +703,10 @@ std::optional<std::string> checkSig(
         calculatedSignature = folly::hexlify(hmacSha256Binary(signingKey, stringToSign));
     }
 
-    if(calculatedSignature != requestSignature)
+    if (calculatedSignature != requestSignature)
     {
         XLOGF(INFO, "Signature mismatch for {}?{} method {} access key {} resource {} action {} payload hash {} expected {} got {} used host={}", headers.getPathAsStringPiece(),
-             headers.getQueryStringAsStringPiece(), headers.getMethodString(), accessKey, ressource, static_cast<int>(action), payload, calculatedSignature, requestSignature, usedHost);
+              headers.getQueryStringAsStringPiece(), headers.getMethodString(), accessKey, ressource, static_cast<int>(action), payload, calculatedSignature, requestSignature, usedHost);
         return std::nullopt;
     }
 
@@ -711,61 +715,58 @@ std::optional<std::string> checkSig(
 #endif
 
     XLOGF(INFO, "Signature OK for {}?{} method {} access key {} resource {} action {} payload hash {}", headers.getPathAsStringPiece(), headers.getQueryStringAsStringPiece(),
-         headers.getMethodString(), accessKey, ressource, static_cast<int>(action), payload);
+          headers.getMethodString(), accessKey, ressource, static_cast<int>(action), payload);
 
     return std::string(accessKey);
 }
-
-
-
 
 KeyInfoView extractKeyInfoView(const std::string_view key)
 {
     CRData rdata(key.data(), key.size());
     unsigned char version;
-    if(!rdata.getUChar(&version))
+    if (!rdata.getUChar(&version))
     {
         assert(false);
         XLOGF(ERR, "Corrupted key {}. Version not found", key);
-        return {.key=key, .version=0, .bucketId=0};
+        return { .key = key, .version = 0, .bucketId = 0 };
     }
 
     int64_t bucketId;
-    if(!rdata.getVarInt(&bucketId))
+    if (!rdata.getVarInt(&bucketId))
     {
         assert(false);
         XLOGF(ERR, "Corrupted key {}. Bucket id not found", key);
-        return {.key=key, .version=0, .bucketId=0};
+        return { .key = key, .version = 0, .bucketId = 0 };
     }
 
-    if(version==0)
-        return {.key=std::string_view(rdata.getCurrDataPtr(), rdata.getLeft()), .version=0, .bucketId=bucketId};
+    if (version == 0)
+        return { .key = std::string_view(rdata.getCurrDataPtr(), rdata.getLeft()), .version = 0, .bucketId = bucketId };
 
-    assert(version==1);
-    if(version!=1)
+    assert(version == 1);
+    if (version != 1)
     {
         XLOGF(ERR, "Corrupted key {}. Unknown version {}", key, version);
-        return {.key=key, .version=0, .bucketId=0};
+        return { .key = key, .version = 0, .bucketId = 0 };
     }
 
     int64_t objectVersion;
-    if(!rdata.getVarInt(&objectVersion))
+    if (!rdata.getVarInt(&objectVersion))
     {
         assert(false);
         XLOGF(ERR, "Corrupted key {}. Object version not found", key);
-        return {.key=key, .version=0, .bucketId=0};
+        return { .key = key, .version = 0, .bucketId = 0 };
     }
 
-    return {.key=std::string_view(rdata.getCurrDataPtr(), rdata.getLeft()), .version=objectVersion, .bucketId=bucketId};
+    return { .key = std::string_view(rdata.getCurrDataPtr(), rdata.getLeft()), .version = objectVersion, .bucketId = bucketId };
 }
 
 KeyInfo extractKeyInfo(const std::string_view key)
 {
     auto tmp = extractKeyInfoView(key);
-    return {.key=std::string(tmp.key), .version=tmp.version, .bucketId=tmp.bucketId};
+    return { .key = std::string(tmp.key), .version = tmp.version, .bucketId = tmp.bucketId };
 }
 
-int	mdb_cmp_s3key(const MDB_val *a, const MDB_val *b)
+int mdb_cmp_s3key(const MDB_val* a, const MDB_val* b)
 {
     std::string_view keyA(reinterpret_cast<const char*>(a->mv_data), a->mv_size);
     std::string_view keyB(reinterpret_cast<const char*>(b->mv_data), b->mv_size);
@@ -773,16 +774,16 @@ int	mdb_cmp_s3key(const MDB_val *a, const MDB_val *b)
     const auto keyInfoA = extractKeyInfoView(keyA);
     const auto keyInfoB = extractKeyInfoView(keyB);
 
-    if(keyInfoA.bucketId != keyInfoB.bucketId)
+    if (keyInfoA.bucketId != keyInfoB.bucketId)
         return keyInfoA.bucketId < keyInfoB.bucketId ? 1 : -1;
 
     int cmp = keyInfoA.key.compare(keyInfoB.key);
-    if(cmp!=0)
+    if (cmp != 0)
         return cmp;
 
-    if(keyInfoA.version<keyInfoB.version)
+    if (keyInfoA.version < keyInfoB.version)
         return 1;
-    else if(keyInfoA.version>keyInfoB.version)
+    else if (keyInfoA.version > keyInfoB.version)
         return -1;
     else
         return 0;
@@ -791,9 +792,9 @@ int	mdb_cmp_s3key(const MDB_val *a, const MDB_val *b)
 std::string make_key(const std::string_view key, const int64_t bucketId, const int64_t version)
 {
     CWData wdata;
-    wdata.addChar(version==0 ? 0 : 1);
+    wdata.addChar(version == 0 ? 0 : 1);
     wdata.addVarInt(bucketId);
-    if(version!=0)
+    if (version != 0)
         wdata.addVarInt(version);
     wdata.addBuffer(key.data(), key.size());
     return wdata.releaseData();
@@ -816,24 +817,25 @@ size_t s3key_common_prefix_hash(const std::string_view key)
     return folly::hash::hash_combine(keyInfo.bucketId, keyInfo.key);
 }
 
-static void multiPartUploadXmlElementStart(void *userData,
-                                               const XML_Char *name,
-                                               const XML_Char **atts)
+static void multiPartUploadXmlElementStart(void* userData,
+                                           const XML_Char* name,
+                                           const XML_Char** atts)
 {
     auto multiPartData = reinterpret_cast<S3Handler::MultiPartUploadData*>(userData);
 
-    switch(multiPartData->parseState)
+    switch (multiPartData->parseState)
     {
-    case S3Handler::MultiPartUploadData::ParseState::Init:
+        case S3Handler::MultiPartUploadData::ParseState::Init:
         {
-            if(strcmp(name, "CompleteMultipartUpload")==0)
+            if (strcmp(name, "CompleteMultipartUpload") == 0)
                 multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InRoot;
             else
                 multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::Unknown;
-        } break;
-    case S3Handler::MultiPartUploadData::ParseState::InRoot:
+        }
+        break;
+        case S3Handler::MultiPartUploadData::ParseState::InRoot:
         {
-            if(strcmp(name, "Part")==0)
+            if (strcmp(name, "Part") == 0)
             {
                 multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InPart;
                 multiPartData->parts.push_back(S3Handler::MultiPartUploadData::PartData());
@@ -842,185 +844,199 @@ static void multiPartUploadXmlElementStart(void *userData,
             {
                 multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::Unknown;
             }
-        } break;
-    case S3Handler::MultiPartUploadData::ParseState::InPart:
+        }
+        break;
+        case S3Handler::MultiPartUploadData::ParseState::InPart:
         {
-            if(strcmp(name, "PartNumber")==0)
+            if (strcmp(name, "PartNumber") == 0)
                 multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InPartNumber;
-            else if(strcmp(name, "ETag")==0)
+            else if (strcmp(name, "ETag") == 0)
                 multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InEtag;
             else
                 multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InUnknownPartAttr;
-        } break;
-    default:
+        }
         break;
+        default:
+            break;
     }
 }
 
-static void multiPartUploadXmlElementEnd(void *userData,
-                                               const XML_Char *name)
+static void multiPartUploadXmlElementEnd(void* userData,
+                                         const XML_Char* name)
 {
     auto multiPartData = reinterpret_cast<S3Handler::MultiPartUploadData*>(userData);
 
-    switch(multiPartData->parseState)
+    switch (multiPartData->parseState)
     {
-    case S3Handler::MultiPartUploadData::ParseState::InRoot:
+        case S3Handler::MultiPartUploadData::ParseState::InRoot:
         {
-            if(strcmp(name, "CompleteMultipartUpload")==0)
+            if (strcmp(name, "CompleteMultipartUpload") == 0)
                 multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::Finished;
             else
                 multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::Unknown;
-        } break;
-    case S3Handler::MultiPartUploadData::ParseState::InPart:
+        }
+        break;
+        case S3Handler::MultiPartUploadData::ParseState::InPart:
         {
-            if(strcmp(name, "Part")==0)
+            if (strcmp(name, "Part") == 0)
                 multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InRoot;
             else
                 multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::Unknown;
-        } break;
-    case S3Handler::MultiPartUploadData::ParseState::InPartNumber:
+        }
+        break;
+        case S3Handler::MultiPartUploadData::ParseState::InPartNumber:
         {
             multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InPart;
-            if(!multiPartData->partNumBuf.empty())
+            if (!multiPartData->partNumBuf.empty())
             {
                 int partNum = 0;
                 try
                 {
                     partNum = std::stoi(multiPartData->partNumBuf);
                 }
-                catch(std::invalid_argument&)
-                {}
-                catch(std::out_of_range&)
-                {}
+                catch (std::invalid_argument&)
+                {
+                }
+                catch (std::out_of_range&)
+                {
+                }
 
                 multiPartData->partNumBuf.clear();
 
-                if(multiPartData->parts.size()>1)
+                if (multiPartData->parts.size() > 1)
                 {
-                    auto& prevPart = multiPartData->parts[multiPartData->parts.size()-2];
-                    if(partNum<=prevPart.partNumber)
+                    auto& prevPart = multiPartData->parts[multiPartData->parts.size() - 2];
+                    if (partNum <= prevPart.partNumber)
                         multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InvalidPartOrder;
                 }
 
                 multiPartData->parts.back().partNumber = partNum;
             }
-        } break;
-    case S3Handler::MultiPartUploadData::ParseState::InEtag:
-    case S3Handler::MultiPartUploadData::ParseState::InUnknownPartAttr:
+        }
+        break;
+        case S3Handler::MultiPartUploadData::ParseState::InEtag:
+        case S3Handler::MultiPartUploadData::ParseState::InUnknownPartAttr:
         {
             multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InPart;
-        } break;
-    default:
+        }
         break;
+        default:
+            break;
     }
 }
 
-static void multiPartUploadXmlCharData(void *userData,
-                                               const XML_Char *s, int len)
+static void multiPartUploadXmlCharData(void* userData,
+                                       const XML_Char* s, int len)
 {
     auto multiPartData = reinterpret_cast<S3Handler::MultiPartUploadData*>(userData);
 
-    if(multiPartData->parseState == S3Handler::MultiPartUploadData::ParseState::InPartNumber &&
+    if (multiPartData->parseState == S3Handler::MultiPartUploadData::ParseState::InPartNumber &&
         !multiPartData->parts.empty())
     {
         std::string data(s, len);
-        if(multiPartData->partNumBuf.size() < 100)
+        if (multiPartData->partNumBuf.size() < 100)
             multiPartData->partNumBuf += data;
     }
-    else if(multiPartData->parseState == S3Handler::MultiPartUploadData::ParseState::InEtag &&
-        !multiPartData->parts.empty())
+    else if (multiPartData->parseState == S3Handler::MultiPartUploadData::ParseState::InEtag &&
+             !multiPartData->parts.empty())
     {
         std::string data(s, len);
-        if(multiPartData->parts.back().etag.size() < 100)
+        if (multiPartData->parts.back().etag.size() < 100)
             multiPartData->parts.back().etag += data;
     }
 }
 
-static void deleteObjectsXmlElementStart(void *userData,
-                                                const XML_Char *name,
-                                                const XML_Char **atts)
+static void deleteObjectsXmlElementStart(void* userData,
+                                         const XML_Char* name,
+                                         const XML_Char** atts)
 {
     auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
 
-    switch(deleteObjectsData->parseState)
+    switch (deleteObjectsData->parseState)
     {
-    case S3Handler::DeleteObjectsData::ParseState::Init:
+        case S3Handler::DeleteObjectsData::ParseState::Init:
         {
-            if(strcmp(name, "Delete")==0)
+            if (strcmp(name, "Delete") == 0)
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
             else
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-        } break;
-    case S3Handler::DeleteObjectsData::ParseState::InRoot:
-    {
-        if(strcmp(name, "Object")==0)
-        {
-            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InObject;
-            deleteObjectsData->objects.push_back({});
         }
-        else if(strcmp(name, "Quiet") == 0)
-            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InQuiet;
-        else
-            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-    } break;
-    case S3Handler::DeleteObjectsData::ParseState::InObject:
-    {
-        if(strcmp(name, "ETag") == 0)
-            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InEtag;
-        else if(strcmp(name, "Key") == 0)
-            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InKey;
-        else if(strcmp(name, "LastModifiedTime") == 0)
-            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InLastModified;
-        else if(strcmp(name, "Size") == 0)
-            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InSize;
-        else if(strcmp(name, "VersionId") == 0)
-            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InVersionId;
-        else
-            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InUnknownObjectAttr;
-    } break;
-    default:
         break;
+        case S3Handler::DeleteObjectsData::ParseState::InRoot:
+        {
+            if (strcmp(name, "Object") == 0)
+            {
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InObject;
+                deleteObjectsData->objects.push_back({});
+            }
+            else if (strcmp(name, "Quiet") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InQuiet;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        }
+        break;
+        case S3Handler::DeleteObjectsData::ParseState::InObject:
+        {
+            if (strcmp(name, "ETag") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InEtag;
+            else if (strcmp(name, "Key") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InKey;
+            else if (strcmp(name, "LastModifiedTime") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InLastModified;
+            else if (strcmp(name, "Size") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InSize;
+            else if (strcmp(name, "VersionId") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InVersionId;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InUnknownObjectAttr;
+        }
+        break;
+        default:
+            break;
     }
 }
 
-static void deleteObjectsXmlElementEnd(void *userData,
-                                               const XML_Char *name)
+static void deleteObjectsXmlElementEnd(void* userData,
+                                       const XML_Char* name)
 {
     auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
 
-    switch(deleteObjectsData->parseState)
+    switch (deleteObjectsData->parseState)
     {
-    case S3Handler::DeleteObjectsData::ParseState::InRoot:
+        case S3Handler::DeleteObjectsData::ParseState::InRoot:
         {
-            if(strcmp(name, "Delete")==0)
+            if (strcmp(name, "Delete") == 0)
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Finished;
             else
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-        } break;
-    case S3Handler::DeleteObjectsData::ParseState::InObject:
+        }
+        break;
+        case S3Handler::DeleteObjectsData::ParseState::InObject:
         {
-            if(strcmp(name, "Object")==0)
+            if (strcmp(name, "Object") == 0)
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
             else
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-        } break;
-    case S3Handler::DeleteObjectsData::ParseState::InEtag:
-    case S3Handler::DeleteObjectsData::ParseState::InKey:
-    case S3Handler::DeleteObjectsData::ParseState::InLastModified:
-    case S3Handler::DeleteObjectsData::ParseState::InSize:
-    case S3Handler::DeleteObjectsData::ParseState::InVersionId:
-    case S3Handler::DeleteObjectsData::ParseState::InUnknownObjectAttr:
+        }
+        break;
+        case S3Handler::DeleteObjectsData::ParseState::InEtag:
+        case S3Handler::DeleteObjectsData::ParseState::InKey:
+        case S3Handler::DeleteObjectsData::ParseState::InLastModified:
+        case S3Handler::DeleteObjectsData::ParseState::InSize:
+        case S3Handler::DeleteObjectsData::ParseState::InVersionId:
+        case S3Handler::DeleteObjectsData::ParseState::InUnknownObjectAttr:
         {
             deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InObject;
-        } break;
-    case S3Handler::DeleteObjectsData::ParseState::InQuiet:
+        }
+        break;
+        case S3Handler::DeleteObjectsData::ParseState::InQuiet:
         {
             const auto quietStr = folly::trimWhitespace(deleteObjectsData->buf);
-            if(quietStr == "true")
+            if (quietStr == "true")
             {
                 deleteObjectsData->quiet = true;
             }
-            else if(quietStr != "false")
+            else if (quietStr != "false")
             {
                 XLOGF(WARN, "Invalid quiet parameter for delete: {}", deleteObjectsData->buf);
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Invalid;
@@ -1028,567 +1044,635 @@ static void deleteObjectsXmlElementEnd(void *userData,
 
             deleteObjectsData->buf.clear();
 
-            if(strcmp(name, "Quiet") == 0)
+            if (strcmp(name, "Quiet") == 0)
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
             else
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-        } break;
-    default:
+        }
         break;
+        default:
+            break;
     }
 }
 
-static void deleteObjectsXmlCharData(void *userData,
-                                               const XML_Char *s, int len)
+static void deleteObjectsXmlCharData(void* userData,
+                                     const XML_Char* s, int len)
 {
     auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
 
     std::string_view data(s, len);
 
-    switch(deleteObjectsData->parseState)
+    switch (deleteObjectsData->parseState)
     {
         case S3Handler::DeleteObjectsData::ParseState::InKey:
         {
             auto& obj = deleteObjectsData->objects.back();
-            if(obj.key.size() < 2000)
+            if (obj.key.size() < 2000)
                 obj.key += std::string(data);
-        } break;
+        }
+        break;
         case S3Handler::DeleteObjectsData::ParseState::InEtag:
         {
             auto& obj = deleteObjectsData->objects.back();
-            if(obj.etag.size() < 100)
+            if (obj.etag.size() < 100)
                 obj.etag += std::string(data);
-        } break;
+        }
+        break;
         case S3Handler::DeleteObjectsData::ParseState::InLastModified:
         {
             auto& obj = deleteObjectsData->objects.back();
-            if(obj.lastModified.size() < 100)
+            if (obj.lastModified.size() < 100)
                 obj.lastModified += std::string(data);
-        } break;
+        }
+        break;
         case S3Handler::DeleteObjectsData::ParseState::InSize:
         {
             auto& obj = deleteObjectsData->objects.back();
-            if(obj.size.size() < 100)
+            if (obj.size.size() < 100)
                 obj.size += std::string(data);
-        } break;
+        }
+        break;
         case S3Handler::DeleteObjectsData::ParseState::InVersionId:
         {
             auto& obj = deleteObjectsData->objects.back();
-            if(obj.versionId.size() < 100)
+            if (obj.versionId.size() < 100)
                 obj.versionId += std::string(data);
-        } break;
+        }
+        break;
         case S3Handler::DeleteObjectsData::ParseState::InQuiet:
         {
-            if(deleteObjectsData->buf.size() < 100)
+            if (deleteObjectsData->buf.size() < 100)
                 deleteObjectsData->buf += std::string(data);
-        } break;
+        }
+        break;
         default:
             break;
     }
 }
 
-static void putBucketVersioningXmlElementStart(void *userData,
-                                                const XML_Char *name,
-                                                const XML_Char **atts)
+static void putBucketVersioningXmlElementStart(void* userData,
+                                               const XML_Char* name,
+                                               const XML_Char** atts)
 {
     auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
 
-    switch(deleteObjectsData->parseState)
+    switch (deleteObjectsData->parseState)
     {
-    case S3Handler::DeleteObjectsData::ParseState::Init:
+        case S3Handler::DeleteObjectsData::ParseState::Init:
         {
-            if(strcmp(name, "VersioningConfiguration")==0)
+            if (strcmp(name, "VersioningConfiguration") == 0)
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
             else
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-        } break;
-    case S3Handler::DeleteObjectsData::ParseState::InRoot:
-    {
-        if(strcmp(name, "Status")==0)
-            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InQuiet;
-        else if(strcmp(name, "MfaDelete") == 0)
-            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InVersionId;
-        else
-            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-    } break;
-    default:
+        }
         break;
-    }
-}
-
-static void putBucketVersioningXmlElementEnd(void *userData,
-                                               const XML_Char *name)
-{
-    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
-
-    switch(deleteObjectsData->parseState)
-    {
-    case S3Handler::DeleteObjectsData::ParseState::InRoot:
+        case S3Handler::DeleteObjectsData::ParseState::InRoot:
         {
-            if(strcmp(name, "VersioningConfiguration")==0)
-                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Finished;
+            if (strcmp(name, "Status") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InQuiet;
+            else if (strcmp(name, "MfaDelete") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InVersionId;
             else
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-        } break;
-    case S3Handler::DeleteObjectsData::ParseState::InQuiet:
-        {
-            if(strcmp(name, "Status") == 0)
-                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
-            else
-                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-        } break;
-    case S3Handler::DeleteObjectsData::ParseState::InVersionId:
-        {
-            if(strcmp(name, "MfaDelete") == 0)
-                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
-            else
-                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-        } break;
-    default:
+        }
         break;
-    }
-}
-
-static void putBucketVersioningXmlCharData(void *userData,
-                                               const XML_Char *s, int len)
-{
-    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
-
-    std::string_view data(s, len);
-
-    switch(deleteObjectsData->parseState)
-    {
-        case S3Handler::DeleteObjectsData::ParseState::InQuiet:
-        {
-            if(deleteObjectsData->buf.size() < 100)
-                deleteObjectsData->buf += std::string(data);
-        } break;
         default:
             break;
     }
 }
 
-static void putObjectLegalHoldXmlElementStart(void *userData,
-                                                const XML_Char *name,
-                                                const XML_Char **atts)
+static void putBucketVersioningXmlElementEnd(void* userData,
+                                             const XML_Char* name)
 {
     auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
 
-    switch(deleteObjectsData->parseState)
+    switch (deleteObjectsData->parseState)
     {
-    case S3Handler::DeleteObjectsData::ParseState::Init:
+        case S3Handler::DeleteObjectsData::ParseState::InRoot:
         {
-            if(strcmp(name, "LegalHold")==0)
-                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
-            else
-                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-        } break;
-    case S3Handler::DeleteObjectsData::ParseState::InRoot:
-    {
-        if(strcmp(name, "Status")==0)
-            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InStatus;
-        else
-            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-    } break;
-    default:
-        break;
-    }
-}
-
-static void putObjectLegalHoldXmlElementEnd(void *userData,
-                                               const XML_Char *name)
-{
-    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
-
-    switch(deleteObjectsData->parseState)
-    {
-    case S3Handler::DeleteObjectsData::ParseState::InRoot:
-        {
-            if(strcmp(name, "LegalHold")==0)
+            if (strcmp(name, "VersioningConfiguration") == 0)
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Finished;
             else
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-        } break;
-    case S3Handler::DeleteObjectsData::ParseState::InStatus:
+        }
+        break;
+        case S3Handler::DeleteObjectsData::ParseState::InQuiet:
         {
-            if(strcmp(name, "Status") == 0)
+            if (strcmp(name, "Status") == 0)
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
             else
                 deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
-        } break;
-    default:
+        }
         break;
+        case S3Handler::DeleteObjectsData::ParseState::InVersionId:
+        {
+            if (strcmp(name, "MfaDelete") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        }
+        break;
+        default:
+            break;
     }
 }
 
-static void putObjectLegalHoldXmlCharData(void *userData,
-                                               const XML_Char *s, int len)
+static void putBucketVersioningXmlCharData(void* userData,
+                                           const XML_Char* s, int len)
 {
     auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
 
     std::string_view data(s, len);
 
-    switch(deleteObjectsData->parseState)
+    switch (deleteObjectsData->parseState)
+    {
+        case S3Handler::DeleteObjectsData::ParseState::InQuiet:
+        {
+            if (deleteObjectsData->buf.size() < 100)
+                deleteObjectsData->buf += std::string(data);
+        }
+        break;
+        default:
+            break;
+    }
+}
+
+static void putObjectLegalHoldXmlElementStart(void* userData,
+                                              const XML_Char* name,
+                                              const XML_Char** atts)
+{
+    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
+
+    switch (deleteObjectsData->parseState)
+    {
+        case S3Handler::DeleteObjectsData::ParseState::Init:
+        {
+            if (strcmp(name, "LegalHold") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        }
+        break;
+        case S3Handler::DeleteObjectsData::ParseState::InRoot:
+        {
+            if (strcmp(name, "Status") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InStatus;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        }
+        break;
+        default:
+            break;
+    }
+}
+
+static void putObjectLegalHoldXmlElementEnd(void* userData,
+                                            const XML_Char* name)
+{
+    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
+
+    switch (deleteObjectsData->parseState)
+    {
+        case S3Handler::DeleteObjectsData::ParseState::InRoot:
+        {
+            if (strcmp(name, "LegalHold") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Finished;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        }
+        break;
+        case S3Handler::DeleteObjectsData::ParseState::InStatus:
+        {
+            if (strcmp(name, "Status") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        }
+        break;
+        default:
+            break;
+    }
+}
+
+static void putObjectLegalHoldXmlCharData(void* userData,
+                                          const XML_Char* s, int len)
+{
+    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
+
+    std::string_view data(s, len);
+
+    switch (deleteObjectsData->parseState)
     {
         case S3Handler::DeleteObjectsData::ParseState::InStatus:
         {
-            if(deleteObjectsData->buf.size() < 100)
+            if (deleteObjectsData->buf.size() < 100)
                 deleteObjectsData->buf += std::string(data);
-        } break;
+        }
+        break;
         default:
             break;
     }
 }
 
-static void putObjectRetentionXmlElementStart(void *userData,
-                                                const XML_Char *name,
-                                                const XML_Char **atts)
+static void putObjectRetentionXmlElementStart(void* userData,
+                                              const XML_Char* name,
+                                              const XML_Char** atts)
 {
     using ParseState = S3Handler::PutObjectRetentionData::ParseState;
     auto data = reinterpret_cast<S3Handler::PutObjectRetentionData*>(userData);
 
-    switch(data->parseState)
+    switch (data->parseState)
     {
-    case ParseState::Init:
+        case ParseState::Init:
         {
-            if(strcmp(name, "Retention")==0)
+            if (strcmp(name, "Retention") == 0)
                 data->parseState = ParseState::InRoot;
             else
                 data->parseState = ParseState::Unknown;
-        } break;
-    case ParseState::InRoot:
+        }
+        break;
+        case ParseState::InRoot:
         {
-            if(strcmp(name, "Mode")==0)
+            if (strcmp(name, "Mode") == 0)
                 data->parseState = ParseState::InMode;
-            else if(strcmp(name, "RetainUntilDate")==0)
+            else if (strcmp(name, "RetainUntilDate") == 0)
                 data->parseState = ParseState::InRetainUntilDate;
-            else if(strcmp(name, "EventHold")==0)
+            else if (strcmp(name, "EventHold") == 0)
                 data->parseState = ParseState::InEventHold;
-            else if(strcmp(name, "EventHoldDuration")==0)
+            else if (strcmp(name, "EventHoldDuration") == 0)
             {
                 data->hasEventHoldDuration = true;
                 data->parseState = ParseState::InEventHoldDuration;
             }
             else
                 data->parseState = ParseState::Unknown;
-        } break;
-    case ParseState::InEventHoldDuration:
+        }
+        break;
+        case ParseState::InEventHoldDuration:
         {
-            if(strcmp(name, "Days")==0)
+            if (strcmp(name, "Days") == 0)
                 data->parseState = ParseState::InDays;
-            else if(strcmp(name, "Years")==0)
+            else if (strcmp(name, "Years") == 0)
                 data->parseState = ParseState::InYears;
             else
                 data->parseState = ParseState::Unknown;
-        } break;
-    case ParseState::Unknown:
-    case ParseState::Finished:
+        }
         break;
-    default:
-        data->parseState = ParseState::Unknown;
-        break;
+        case ParseState::Unknown:
+        case ParseState::Finished:
+            break;
+        default:
+            data->parseState = ParseState::Unknown;
+            break;
     }
 }
 
-static void putObjectRetentionXmlElementEnd(void *userData,
-                                               const XML_Char *name)
+static void putObjectRetentionXmlElementEnd(void* userData,
+                                            const XML_Char* name)
 {
     using ParseState = S3Handler::PutObjectRetentionData::ParseState;
     auto data = reinterpret_cast<S3Handler::PutObjectRetentionData*>(userData);
 
     const auto endElement = [&](const char* expectedName, const ParseState nextState)
     {
-        if(strcmp(name, expectedName)==0)
+        if (strcmp(name, expectedName) == 0)
             data->parseState = nextState;
         else
             data->parseState = ParseState::Unknown;
     };
 
-    switch(data->parseState)
+    switch (data->parseState)
     {
-    case ParseState::InRoot: endElement("Retention", ParseState::Finished); break;
-    case ParseState::InMode: endElement("Mode", ParseState::InRoot); break;
-    case ParseState::InRetainUntilDate: endElement("RetainUntilDate", ParseState::InRoot); break;
-    case ParseState::InEventHold: endElement("EventHold", ParseState::InRoot); break;
-    case ParseState::InEventHoldDuration: endElement("EventHoldDuration", ParseState::InRoot); break;
-    case ParseState::InDays: endElement("Days", ParseState::InEventHoldDuration); break;
-    case ParseState::InYears: endElement("Years", ParseState::InEventHoldDuration); break;
-    default:
-        break;
+        case ParseState::InRoot:
+            endElement("Retention", ParseState::Finished);
+            break;
+        case ParseState::InMode:
+            endElement("Mode", ParseState::InRoot);
+            break;
+        case ParseState::InRetainUntilDate:
+            endElement("RetainUntilDate", ParseState::InRoot);
+            break;
+        case ParseState::InEventHold:
+            endElement("EventHold", ParseState::InRoot);
+            break;
+        case ParseState::InEventHoldDuration:
+            endElement("EventHoldDuration", ParseState::InRoot);
+            break;
+        case ParseState::InDays:
+            endElement("Days", ParseState::InEventHoldDuration);
+            break;
+        case ParseState::InYears:
+            endElement("Years", ParseState::InEventHoldDuration);
+            break;
+        default:
+            break;
     }
 }
 
-static void putObjectRetentionXmlCharData(void *userData,
-                                               const XML_Char *s, int len)
+static void putObjectRetentionXmlCharData(void* userData,
+                                          const XML_Char* s, int len)
 {
     using ParseState = S3Handler::PutObjectRetentionData::ParseState;
     auto data = reinterpret_cast<S3Handler::PutObjectRetentionData*>(userData);
 
     std::string* buf = nullptr;
-    switch(data->parseState)
+    switch (data->parseState)
     {
-    case ParseState::InMode: buf = &data->mode; break;
-    case ParseState::InRetainUntilDate: buf = &data->retainUntilDate; break;
-    case ParseState::InEventHold: buf = &data->eventHold; break;
-    case ParseState::InDays: buf = &data->days; break;
-    case ParseState::InYears: buf = &data->years; break;
-    default: break;
+        case ParseState::InMode:
+            buf = &data->mode;
+            break;
+        case ParseState::InRetainUntilDate:
+            buf = &data->retainUntilDate;
+            break;
+        case ParseState::InEventHold:
+            buf = &data->eventHold;
+            break;
+        case ParseState::InDays:
+            buf = &data->days;
+            break;
+        case ParseState::InYears:
+            buf = &data->years;
+            break;
+        default:
+            break;
     }
 
-    if(buf != nullptr && buf->size() < 100)
+    if (buf != nullptr && buf->size() < 100)
         *buf += std::string(s, len);
 }
 
-static void putObjectLockConfigurationXmlElementStart(void *userData,
-                                                const XML_Char *name,
-                                                const XML_Char **atts)
+static void putObjectLockConfigurationXmlElementStart(void* userData,
+                                                      const XML_Char* name,
+                                                      const XML_Char** atts)
 {
     auto data = reinterpret_cast<S3Handler::PutObjectLockConfigurationData*>(userData);
 
-    switch(data->parseState)
+    switch (data->parseState)
     {
-    case S3Handler::PutObjectLockConfigurationData::ParseState::Init:
+        case S3Handler::PutObjectLockConfigurationData::ParseState::Init:
         {
-            if(strcmp(name, "ObjectLockConfiguration")==0)
+            if (strcmp(name, "ObjectLockConfiguration") == 0)
                 data->parseState = S3Handler::PutObjectLockConfigurationData::ParseState::InRoot;
             else
                 data->parseState = S3Handler::PutObjectLockConfigurationData::ParseState::Unknown;
-        } break;
-    case S3Handler::PutObjectLockConfigurationData::ParseState::InRoot:
+        }
+        break;
+        case S3Handler::PutObjectLockConfigurationData::ParseState::InRoot:
         {
-            if(data->unknownDepth > 0)
+            if (data->unknownDepth > 0)
             {
                 ++data->unknownDepth;
             }
-            else if(strcmp(name, "ObjectLockEnabled")==0)
+            else if (strcmp(name, "ObjectLockEnabled") == 0)
             {
                 data->parseState = S3Handler::PutObjectLockConfigurationData::ParseState::InObjectLockEnabled;
             }
             else
             {
-                if(strcmp(name, "Rule")==0)
+                if (strcmp(name, "Rule") == 0)
                     data->hasRule = true;
                 ++data->unknownDepth;
             }
-        } break;
-    case S3Handler::PutObjectLockConfigurationData::ParseState::InObjectLockEnabled:
+        }
+        break;
+        case S3Handler::PutObjectLockConfigurationData::ParseState::InObjectLockEnabled:
         {
             data->parseState = S3Handler::PutObjectLockConfigurationData::ParseState::Unknown;
-        } break;
-    default:
+        }
         break;
+        default:
+            break;
     }
 }
 
-static void putObjectLockConfigurationXmlElementEnd(void *userData,
-                                               const XML_Char *name)
+static void putObjectLockConfigurationXmlElementEnd(void* userData,
+                                                    const XML_Char* name)
 {
     auto data = reinterpret_cast<S3Handler::PutObjectLockConfigurationData*>(userData);
 
-    switch(data->parseState)
+    switch (data->parseState)
     {
-    case S3Handler::PutObjectLockConfigurationData::ParseState::InRoot:
+        case S3Handler::PutObjectLockConfigurationData::ParseState::InRoot:
         {
-            if(data->unknownDepth > 0)
+            if (data->unknownDepth > 0)
                 --data->unknownDepth;
-            else if(strcmp(name, "ObjectLockConfiguration")==0)
+            else if (strcmp(name, "ObjectLockConfiguration") == 0)
                 data->parseState = S3Handler::PutObjectLockConfigurationData::ParseState::Finished;
             else
                 data->parseState = S3Handler::PutObjectLockConfigurationData::ParseState::Unknown;
-        } break;
-    case S3Handler::PutObjectLockConfigurationData::ParseState::InObjectLockEnabled:
+        }
+        break;
+        case S3Handler::PutObjectLockConfigurationData::ParseState::InObjectLockEnabled:
         {
             data->parseState = S3Handler::PutObjectLockConfigurationData::ParseState::InRoot;
-        } break;
-    default:
+        }
         break;
+        default:
+            break;
     }
 }
 
-static void putObjectLockConfigurationXmlCharData(void *userData,
-                                               const XML_Char *s, int len)
+static void putObjectLockConfigurationXmlCharData(void* userData,
+                                                  const XML_Char* s, int len)
 {
     auto data = reinterpret_cast<S3Handler::PutObjectLockConfigurationData*>(userData);
 
-    if(data->parseState == S3Handler::PutObjectLockConfigurationData::ParseState::InObjectLockEnabled &&
+    if (data->parseState == S3Handler::PutObjectLockConfigurationData::ParseState::InObjectLockEnabled &&
         data->objectLockEnabled.size() < 100)
     {
         data->objectLockEnabled += std::string(s, len);
     }
 }
 
-static void putBucketCorsXmlElementStart(void *userData,
-                                                const XML_Char *name,
-                                                const XML_Char **atts)
+static void putBucketCorsXmlElementStart(void* userData,
+                                         const XML_Char* name,
+                                         const XML_Char** atts)
 {
     auto putBucketCorsData = reinterpret_cast<S3Handler::PutBucketCorsData*>(userData);
 
-    switch(putBucketCorsData->parseState)
+    switch (putBucketCorsData->parseState)
     {
-    case S3Handler::PutBucketCorsData::ParseState::Init:
+        case S3Handler::PutBucketCorsData::ParseState::Init:
         {
-            if(strcmp(name, "CORSConfiguration")==0)
+            if (strcmp(name, "CORSConfiguration") == 0)
                 putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRoot;
             else
                 putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
-        } break;
-    case S3Handler::PutBucketCorsData::ParseState::InRoot:
-    {
-        if(strcmp(name, "CORSRule")==0)
-        {
-            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
-            putBucketCorsData->rules.push_back(buckets::BucketCorsRule());
         }
-        else
-            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
-    } break;
-    case S3Handler::PutBucketCorsData::ParseState::InRule:
-    {
-        if(strcmp(name, "AllowedHeader")==0)
-        {
-            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InAllowedHeader;
-            putBucketCorsData->rules.back().allowedHeaders.push_back("");
-        }
-        else if(strcmp(name, "AllowedOrigin") == 0)
-        {
-            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InAllowedOrigin;
-            putBucketCorsData->rules.back().allowedOrigins.push_back("");
-        }
-        else if(strcmp(name, "AllowedMethod") == 0)
-        {
-            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InAllowedMethod;
-            putBucketCorsData->rules.back().allowedMethods.push_back("");
-        }
-        else if(strcmp(name, "ExposeHeader") == 0)
-        {
-            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InExposeHeader;
-            putBucketCorsData->rules.back().exposeHeaders.push_back("");
-        }
-        else if(strcmp(name, "MaxAgeSeconds") == 0)
-            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InMaxAgeSeconds;
-        else if(strcmp(name, "ID") == 0)
-            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InId;
-        else
-            putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
-    } break;
-    default:
         break;
+        case S3Handler::PutBucketCorsData::ParseState::InRoot:
+        {
+            if (strcmp(name, "CORSRule") == 0)
+            {
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
+                putBucketCorsData->rules.push_back(buckets::BucketCorsRule());
+            }
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        }
+        break;
+        case S3Handler::PutBucketCorsData::ParseState::InRule:
+        {
+            if (strcmp(name, "AllowedHeader") == 0)
+            {
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InAllowedHeader;
+                putBucketCorsData->rules.back().allowedHeaders.push_back("");
+            }
+            else if (strcmp(name, "AllowedOrigin") == 0)
+            {
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InAllowedOrigin;
+                putBucketCorsData->rules.back().allowedOrigins.push_back("");
+            }
+            else if (strcmp(name, "AllowedMethod") == 0)
+            {
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InAllowedMethod;
+                putBucketCorsData->rules.back().allowedMethods.push_back("");
+            }
+            else if (strcmp(name, "ExposeHeader") == 0)
+            {
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InExposeHeader;
+                putBucketCorsData->rules.back().exposeHeaders.push_back("");
+            }
+            else if (strcmp(name, "MaxAgeSeconds") == 0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InMaxAgeSeconds;
+            else if (strcmp(name, "ID") == 0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InId;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        }
+        break;
+        default:
+            break;
     }
 }
 
-static void putBucketCorsXmlElementEnd(void *userData,
-                                               const XML_Char *name)
+static void putBucketCorsXmlElementEnd(void* userData,
+                                       const XML_Char* name)
 {
     auto putBucketCorsData = reinterpret_cast<S3Handler::PutBucketCorsData*>(userData);
 
-    switch(putBucketCorsData->parseState)
+    switch (putBucketCorsData->parseState)
     {
-    case S3Handler::PutBucketCorsData::ParseState::InRoot:
+        case S3Handler::PutBucketCorsData::ParseState::InRoot:
         {
-            if(strcmp(name, "CORSConfiguration")==0)
+            if (strcmp(name, "CORSConfiguration") == 0)
                 putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Finished;
             else
                 putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
-        } break;
-    case S3Handler::PutBucketCorsData::ParseState::InRule:
+        }
+        break;
+        case S3Handler::PutBucketCorsData::ParseState::InRule:
         {
-            if(strcmp(name, "CORSRule")==0)
+            if (strcmp(name, "CORSRule") == 0)
                 putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRoot;
             else
                 putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
-        } break;
-    case S3Handler::PutBucketCorsData::ParseState::InAllowedHeader:
-        {
-            if(strcmp(name, "AllowedHeader") == 0)
-                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
-            else
-                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
-        } break;
-    case S3Handler::PutBucketCorsData::ParseState::InAllowedOrigin:
-        {
-            if(strcmp(name, "AllowedOrigin") == 0)
-                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
-            else
-                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
-        } break;
-    case S3Handler::PutBucketCorsData::ParseState::InAllowedMethod:
-        {
-            if(strcmp(name, "AllowedMethod") == 0)
-                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
-            else
-                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
-        } break;
-    case S3Handler::PutBucketCorsData::ParseState::InExposeHeader:
-        {
-            if(strcmp(name, "ExposeHeader") == 0)
-                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
-            else
-                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
-        } break;
-    case S3Handler::PutBucketCorsData::ParseState::InMaxAgeSeconds:
-        {
-            if(strcmp(name, "MaxAgeSeconds") == 0)
-                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
-            else
-                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
-        } break;
-    case S3Handler::PutBucketCorsData::ParseState::InId:
-        {
-            if(strcmp(name, "ID") == 0)
-                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
-            else
-                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
-        } break;
-    default:
+        }
         break;
+        case S3Handler::PutBucketCorsData::ParseState::InAllowedHeader:
+        {
+            if (strcmp(name, "AllowedHeader") == 0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        }
+        break;
+        case S3Handler::PutBucketCorsData::ParseState::InAllowedOrigin:
+        {
+            if (strcmp(name, "AllowedOrigin") == 0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        }
+        break;
+        case S3Handler::PutBucketCorsData::ParseState::InAllowedMethod:
+        {
+            if (strcmp(name, "AllowedMethod") == 0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        }
+        break;
+        case S3Handler::PutBucketCorsData::ParseState::InExposeHeader:
+        {
+            if (strcmp(name, "ExposeHeader") == 0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        }
+        break;
+        case S3Handler::PutBucketCorsData::ParseState::InMaxAgeSeconds:
+        {
+            if (strcmp(name, "MaxAgeSeconds") == 0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        }
+        break;
+        case S3Handler::PutBucketCorsData::ParseState::InId:
+        {
+            if (strcmp(name, "ID") == 0)
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::InRule;
+            else
+                putBucketCorsData->parseState = S3Handler::PutBucketCorsData::ParseState::Unknown;
+        }
+        break;
+        default:
+            break;
     }
 }
 
-static void putBucketCorsXmlCharData(void *userData,
-                                               const XML_Char *s, int len)
+static void putBucketCorsXmlCharData(void* userData,
+                                     const XML_Char* s, int len)
 {
     auto putBucketCorsData = reinterpret_cast<S3Handler::PutBucketCorsData*>(userData);
 
     std::string_view data(s, len);
 
-    switch(putBucketCorsData->parseState)
+    switch (putBucketCorsData->parseState)
     {
         case S3Handler::PutBucketCorsData::ParseState::InAllowedHeader:
         {
             auto& rule = putBucketCorsData->rules.back();
-            if(rule.allowedHeaders.back().size() < 100)
+            if (rule.allowedHeaders.back().size() < 100)
                 rule.allowedHeaders.back() += std::string(data);
-        } break;
+        }
+        break;
         case S3Handler::PutBucketCorsData::ParseState::InAllowedOrigin:
         {
             auto& rule = putBucketCorsData->rules.back();
-            if(rule.allowedOrigins.back().size() < 100)
+            if (rule.allowedOrigins.back().size() < 100)
                 rule.allowedOrigins.back() += std::string(data);
-        } break;
+        }
+        break;
         case S3Handler::PutBucketCorsData::ParseState::InAllowedMethod:
         {
             auto& rule = putBucketCorsData->rules.back();
-            if(rule.allowedMethods.back().size() < 100)
+            if (rule.allowedMethods.back().size() < 100)
                 rule.allowedMethods.back() += std::string(data);
-        } break;
+        }
+        break;
         case S3Handler::PutBucketCorsData::ParseState::InExposeHeader:
         {
             auto& rule = putBucketCorsData->rules.back();
-            if(rule.exposeHeaders.back().size() < 100)
+            if (rule.exposeHeaders.back().size() < 100)
                 rule.exposeHeaders.back() += std::string(data);
-        } break;
+        }
+        break;
         case S3Handler::PutBucketCorsData::ParseState::InMaxAgeSeconds:
         {
             auto& rule = putBucketCorsData->rules.back();
-            if(rule.maxAgeSeconds.size() < 50)
+            if (rule.maxAgeSeconds.size() < 50)
                 rule.maxAgeSeconds += std::string(data);
-        } break;
+        }
+        break;
         case S3Handler::PutBucketCorsData::ParseState::InId:
         {
             auto& rule = putBucketCorsData->rules.back();
-            if(rule.id.size() < 100)
+            if (rule.id.size() < 100)
                 rule.id += std::string(data);
-        } break;
+        }
+        break;
         default:
             break;
     }
@@ -1619,7 +1703,7 @@ enum class S3ErrorCode
 
 std::string_view s3errorCodeToStr(const S3ErrorCode code)
 {
-    switch(code)
+    switch (code)
     {
         case S3ErrorCode::NoSuchBucket:
             return "NoSuchBucket";
@@ -1666,7 +1750,7 @@ std::string_view s3errorCodeToStr(const S3ErrorCode code)
 
 std::string_view s3errorMsg(const S3ErrorCode code)
 {
-    switch(code)
+    switch (code)
     {
         case S3ErrorCode::NoSuchBucket:
             return "The specified bucket does not exist";
@@ -1674,7 +1758,7 @@ std::string_view s3errorMsg(const S3ErrorCode code)
             return "Access Denied";
         case S3ErrorCode::BucketNotEmpty:
             return "The bucket you tried to delete is not empty";
-        case S3ErrorCode::InternalError:    
+        case S3ErrorCode::InternalError:
             return "We encountered an internal error. Please try again.";
         case S3ErrorCode::NoSuchKey:
             return "The specified key does not exist.";
@@ -1710,11 +1794,12 @@ std::string_view s3errorMsg(const S3ErrorCode code)
 std::string s3errorXml(const S3ErrorCode code, const std::string_view& msg, const std::string_view& ressource, const std::string_view& request_id)
 {
     return fmt::format("<Error>\n"
-        "\t<Code>{}</Code>\n"
-        "\t<Message>{}</Message>\n"
-        "\t<Resource>{}</Resource>\n"
-        "\t<RequestId>{}</RequestId>\n"
-        "</Error>", s3errorCodeToStr(code), msg.empty() ? s3errorMsg(code) : escapeXML(msg), escapeXML(ressource), escapeXML(request_id));
+                       "\t<Code>{}</Code>\n"
+                       "\t<Message>{}</Message>\n"
+                       "\t<Resource>{}</Resource>\n"
+                       "\t<RequestId>{}</RequestId>\n"
+                       "</Error>",
+                       s3errorCodeToStr(code), msg.empty() ? s3errorMsg(code) : escapeXML(msg), escapeXML(ressource), escapeXML(request_id));
 }
 
 ParsePartRes parsePartExtsFromStr(const std::string& rdata)
@@ -1727,13 +1812,13 @@ ParsePartRes parsePartExtsFromStr(const std::string& rdata)
     ObjMetadata objMetadata;
     objMetadata.deserialize(crdata, flags);
     AwsHashType sdkChecksumType = AwsHashType::None;
-    if(flags & metadata_flag_with_checksum)
+    if (flags & metadata_flag_with_checksum)
     {
         int64_t checksumTypeInt;
         crdata.getVarInt(&checksumTypeInt);
         sdkChecksumType = static_cast<AwsHashType>(checksumTypeInt);
     }
-    return ParsePartRes{nonce, objMetadata, sdkChecksumType, parsePartExts(crdata)};
+    return ParsePartRes{ nonce, objMetadata, sdkChecksumType, parsePartExts(crdata) };
 }
 
 std::vector<MultiPartDownloadData::PartExt> parsePartExts(CRData& rdata)
@@ -1741,9 +1826,9 @@ std::vector<MultiPartDownloadData::PartExt> parsePartExts(CRData& rdata)
     std::vector<MultiPartDownloadData::PartExt> ret;
     MultiPartDownloadData::PartExt part;
     int64_t start, len;
-    while(rdata.getVarInt(&part.size) &&
-        rdata.getVarInt(&start) &&
-        rdata.getVarInt(&len))
+    while (rdata.getVarInt(&part.size) &&
+           rdata.getVarInt(&start) &&
+           rdata.getVarInt(&len))
     {
         part.start = start;
         part.len = len;
@@ -1756,34 +1841,34 @@ std::vector<MultiPartDownloadData::PartExt> addPartExt(std::vector<MultiPartDown
 {
     std::vector<MultiPartDownloadData::PartExt> newParts;
     bool delParts = false;
-    for(auto& part: parts)
+    for (auto& part : parts)
     {
-        if(part.size == partSize && part.start + part.len == partNum)
+        if (part.size == partSize && part.start + part.len == partNum)
         {
             ++part.len;
             return parts;
         }
-        else if(part.start >= partNum && part.start + part.len > partNum)
+        else if (part.start >= partNum && part.start + part.len > partNum)
         {
             // split
             const auto origEnd = part.start + part.len;
             part.len = partNum - part.start;
-            delParts |= part.len==0;
-            const auto newPartLen = origEnd - partNum  - 1;
-            if(newPartLen>0)
-                newParts.push_back({partSize, partNum + 1, newPartLen});
+            delParts |= part.len == 0;
+            const auto newPartLen = origEnd - partNum - 1;
+            if (newPartLen > 0)
+                newParts.push_back({ partSize, partNum + 1, newPartLen });
         }
     }
 
     parts.insert(parts.end(), newParts.begin(), newParts.end());
-    parts.push_back({partSize, partNum, 1});    
+    parts.push_back({ partSize, partNum, 1 });
 
-    if(delParts)
+    if (delParts)
     {
         std::vector<MultiPartDownloadData::PartExt> filteredParts;
-        for(auto& part: parts)
+        for (auto& part : parts)
         {
-            if(part.len>0)
+            if (part.len > 0)
                 filteredParts.push_back(part);
         }
         return filteredParts;
@@ -1797,13 +1882,13 @@ std::string serializePartExts(const ParsePartRes& partRes)
     CWData wdata;
     wdata.addString2(partRes.nonce);
     int64_t flags = partRes.objMetadata.flags();
-    if(partRes.sdkChecksumType != AwsHashType::None)
+    if (partRes.sdkChecksumType != AwsHashType::None)
         flags |= metadata_flag_with_checksum;
     wdata.addVarInt(flags);
     partRes.objMetadata.serialize(wdata);
-    if(partRes.sdkChecksumType != AwsHashType::None)
+    if (partRes.sdkChecksumType != AwsHashType::None)
         wdata.addVarInt(static_cast<int64_t>(partRes.sdkChecksumType));
-    for(const auto& part: partRes.parts)    
+    for (const auto& part : partRes.parts)
     {
         wdata.addVarInt(part.size);
         wdata.addVarInt(part.start);
@@ -1819,17 +1904,17 @@ std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& mes
 {
     const auto payload = message.getHeaders().getSingleOrEmpty("x-amz-content-sha256");
 
-    if(payload == unsigned_payload)
+    if (payload == unsigned_payload)
         return payload;
 
-    if(payload == streaming_unsigned_payload_trailer)
+    if (payload == streaming_unsigned_payload_trailer)
     {
         const auto trailer = message.getHeaders().getSingleOrEmpty("x-amz-trailer");
-        
-        if(trailer.starts_with("x-amz-checksum-"))
+
+        if (trailer.starts_with("x-amz-checksum-"))
         {
             payloadHash = createPayloadHash(trailer);
-            if(!payloadHash)
+            if (!payloadHash)
             {
                 XLOGF(INFO, "Unsupported trailer for streaming upload: {}", trailer);
                 ResponseBuilder(downstream_)
@@ -1842,9 +1927,9 @@ std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& mes
 
         return payload;
     }
-    else if(payload == streaming_sha256_payload)
+    else if (payload == streaming_sha256_payload)
     {
-        if(!awsChunkedEncoding || !awsChunkedEncoding->isSigned)
+        if (!awsChunkedEncoding || !awsChunkedEncoding->isSigned)
         {
             XLOGF(INFO, "x-amz-content-sha256 set to streaming but aws chunked encoding not enabled");
             ResponseBuilder(downstream_)
@@ -1853,11 +1938,11 @@ std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& mes
                 .sendWithEOM();
             return std::nullopt;
         }
-        
+
         return payload;
     }
 
-    if(awsChunkedEncoding && awsChunkedEncoding->isSigned)
+    if (awsChunkedEncoding && awsChunkedEncoding->isSigned)
     {
         XLOGF(INFO, "x-amz-content-sha256 set to non-streaming value {} but aws-chunked encoding enabled", payload);
         ResponseBuilder(downstream_)
@@ -1868,7 +1953,7 @@ std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& mes
     }
 
     std::string payloadBin;
-    if(!folly::unhexlify(payload, payloadBin))
+    if (!folly::unhexlify(payload, payloadBin))
     {
         XLOGF(INFO, "Invalid payload hash: {}", payload);
         ResponseBuilder(downstream_)
@@ -1878,10 +1963,10 @@ std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& mes
         return std::nullopt;
     }
 
-    if(!payload.empty())
+    if (!payload.empty())
     {
         payloadHash = createPayloadHash("x-amz-checksum-sha256");
-        if(!payloadHash)
+        if (!payloadHash)
         {
             XLOGF(INFO, "Failed to init sha256 context");
             ResponseBuilder(downstream_)
@@ -1891,7 +1976,7 @@ std::optional<std::string> S3Handler::initPayloadHash(proxygen::HTTPMessage& mes
             return std::nullopt;
         }
         payloadHash->setExpectedHash(payloadBin);
-        if(!payloadHash->checkSize())
+        if (!payloadHash->checkSize())
         {
             XLOGF(INFO, "Payload hash size mismatch");
             ResponseBuilder(downstream_)
@@ -1910,41 +1995,41 @@ bool S3Handler::initSdkChecksum(proxygen::HTTPMessage& message, const Action act
     const auto algHeader = action == Action::CreateMultipartUpload ? "x-amz-checksum-algorithm" : "x-amz-sdk-checksum-algorithm";
 
     std::string sdkChecksum;
-    
-    if(action == Action::CompleteMultipartUpload)
+
+    if (action == Action::CompleteMultipartUpload)
     {
-        message.getHeaders().forEach([&](const std::string& header, const std::string& val) {
+        message.getHeaders().forEach([&](const std::string& header, const std::string& val)
+                                     {
             const auto& headerLower = asciiToLower(header);
             if (headerLower.find("x-amz-checksum-") == 0)
             {
                 const auto checksumType = headerLower.substr(15);
                 if(checksumType != "type")
                     sdkChecksum = checksumType;
-            }
-        });
+            } });
     }
     else
     {
         sdkChecksum = message.getHeaders().getSingleOrEmpty(algHeader);
     }
 
-    if(sdkChecksum.empty())
+    if (sdkChecksum.empty())
         return true;
 
     bool compositeChecksum = true;
 
-    if(action == Action::CreateMultipartUpload || action == Action::CompleteMultipartUpload)
+    if (action == Action::CreateMultipartUpload || action == Action::CompleteMultipartUpload)
     {
         const auto checksumType = message.getHeaders().getSingleOrEmpty("x-amz-checksum-type");
-        if(checksumType == "FULL_OBJECT")
+        if (checksumType == "FULL_OBJECT")
         {
             compositeChecksum = false;
         }
-        else if(checksumType == "COMPOSITE")
+        else if (checksumType == "COMPOSITE")
         {
             compositeChecksum = true;
         }
-        else if(checksumType.empty())
+        else if (checksumType.empty())
         {
             compositeChecksum = true;
         }
@@ -1961,7 +2046,7 @@ bool S3Handler::initSdkChecksum(proxygen::HTTPMessage& message, const Action act
 
     sdkChecksumHash = createSdkChecksum(sdkChecksum, compositeChecksum);
 
-    if(!sdkChecksumHash)
+    if (!sdkChecksumHash)
     {
         XLOGF(INFO, "Unsupported SDK checksum algorithm: {}", sdkChecksum);
         ResponseBuilder(downstream_)
@@ -1971,16 +2056,16 @@ bool S3Handler::initSdkChecksum(proxygen::HTTPMessage& message, const Action act
         return false;
     }
 
-    if(action == Action::CreateMultipartUpload)
+    if (action == Action::CreateMultipartUpload)
         return true;
 
     const auto checksumHeaderKey = fmt::format("x-amz-checksum-{}", sdkChecksum);
 
     const auto checksumHeaderVal = message.getHeaders().getSingleOrEmpty(checksumHeaderKey);
-    if(checksumHeaderVal.empty())
+    if (checksumHeaderVal.empty())
     {
         const auto trailerHeaderVal = message.getHeaders().getSingleOrEmpty("x-amz-trailer");
-        if(action == Action::CompleteMultipartUpload || asciiToLower(trailerHeaderVal).find(asciiToLower(checksumHeaderKey)) == std::string::npos)
+        if (action == Action::CompleteMultipartUpload || asciiToLower(trailerHeaderVal).find(asciiToLower(checksumHeaderKey)) == std::string::npos)
         {
             XLOGF(INFO, "Missing checksum header {} for SDK checksum algorithm {}", checksumHeaderKey, sdkChecksum);
             ResponseBuilder(downstream_)
@@ -1996,7 +2081,7 @@ bool S3Handler::initSdkChecksum(proxygen::HTTPMessage& message, const Action act
         {
             sdkChecksumHash->setExpectedHash(folly::base64Decode(checksumHeaderVal));
         }
-        catch(const folly::base64_decode_error&)
+        catch (const folly::base64_decode_error&)
         {
             XLOGF(WARN, "Received invalid base64 in payload hash in {}: {}", checksumHeaderKey, checksumHeaderVal);
             ResponseBuilder(self->downstream_)
@@ -2006,7 +2091,7 @@ bool S3Handler::initSdkChecksum(proxygen::HTTPMessage& message, const Action act
             return false;
         }
 
-        if(!sdkChecksumHash->checkSize())
+        if (!sdkChecksumHash->checkSize())
         {
             XLOGF(WARN, "SDK checksum hash size mismatch for header {}: {}", checksumHeaderKey, checksumHeaderVal);
             ResponseBuilder(self->downstream_)
@@ -2047,12 +2132,12 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     if (headers->getMethod() == HTTPMethod::GET || headers->getMethod() == HTTPMethod::HEAD)
     {
         std::string header_path_str;
-        if(!folly::tryUriUnescape(headers->getPathAsStringPiece(), header_path_str) ||header_path_str.empty())
+        if (!folly::tryUriUnescape(headers->getPathAsStringPiece(), header_path_str) || header_path_str.empty())
         {
             ResponseBuilder(downstream_)
-                        .status(500, "Internal error")
-                        .body("Path is empty or cannot be unescaped")
-                        .sendWithEOM();
+                .status(500, "Internal error")
+                .body("Path is empty or cannot be unescaped")
+                .sendWithEOM();
             return;
         }
 
@@ -2061,7 +2146,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         running = true;
 
         const auto nextSlash = header_path.find('/', 1);
-        if(nextSlash==std::string::npos || nextSlash == header_path.size()-1)
+        if (nextSlash == std::string::npos || nextSlash == header_path.size() - 1)
         {
             const auto partial = headers->hasQueryParam("uploads");
             const auto location = headers->hasQueryParam("location");
@@ -2074,18 +2159,14 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             setCorsAllowOrigin(*headers, bucketName);
 
-            const auto action = bucketName.empty() ? Action::ListBuckets : 
-                    (location ? Action::GetBucketLocation : (partial ? Action::ListMultipartUploads : (versions ? Action::ListObjectVersions : 
-                        (versioning ? Action::GetBucketVersioning : 
-                            (cors ? Action::GetBucketCors : 
-                                (objectLock ? Action::GetBucketObjectLockConfiguration : Action::ListObjects))))));
+            const auto action = bucketName.empty() ? Action::ListBuckets : (location ? Action::GetBucketLocation : (partial ? Action::ListMultipartUploads : (versions ? Action::ListObjectVersions : (versioning ? Action::GetBucketVersioning : (cors ? Action::GetBucketCors : (objectLock ? Action::GetBucketObjectLockConfiguration : Action::ListObjects))))));
 
             const auto resource = bucketName.empty() ? std::string() : fmt::format("arn:aws:s3:::{}", bucketName);
             auto accessKey = checkSig(this, *headers, "", resource, action, true);
-            if(!accessKey)
+            if (!accessKey)
             {
                 XLOGF(INFO, "Unauthorized list bucket: {}", bucketName);
-                if(headers->getMethod() == HTTPMethod::HEAD)
+                if (headers->getMethod() == HTTPMethod::HEAD)
                     ResponseBuilder(downstream_)
                         .status(403, "Forbidden")
                         .sendWithEOM();
@@ -2099,48 +2180,47 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             request_action = action;
 
-            if(action == Action::ListBuckets)
+            if (action == Action::ListBuckets)
                 XLOGF(INFO, "List buckets");
-            else if(action == Action::GetBucketLocation)
+            else if (action == Action::GetBucketLocation)
                 XLOGF(INFO, "Get bucket location {}", bucketName);
-            else if(action == Action::ListMultipartUploads)
+            else if (action == Action::ListMultipartUploads)
                 XLOGF(INFO, "List partial uploads bucket {}", bucketName);
-            else if(action == Action::ListObjectVersions)
+            else if (action == Action::ListObjectVersions)
                 XLOGF(INFO, "List object versions bucket {}", bucketName);
-            else if(action == Action::GetBucketVersioning)
+            else if (action == Action::GetBucketVersioning)
                 XLOGF(INFO, "Get bucket versioning {}", bucketName);
-            else if(action == Action::GetBucketCors)
+            else if (action == Action::GetBucketCors)
                 XLOGF(INFO, "Get bucket CORS {}", bucketName);
-            else if(action == Action::GetBucketObjectLockConfiguration)
+            else if (action == Action::GetBucketObjectLockConfiguration)
                 XLOGF(INFO, "Get bucket object lock configuration {}", bucketName);
             else
                 XLOGF(INFO, "List bucket {}", bucketName);
 
-            if(action == Action::ListBuckets)
+            if (action == Action::ListBuckets)
                 listBuckets(*headers, std::move(*accessKey));
-            else if(action == Action::GetBucketLocation)
+            else if (action == Action::GetBucketLocation)
                 getBucketLocation(*headers, std::string(bucketName));
-            else if(action == Action::GetBucketVersioning)
+            else if (action == Action::GetBucketVersioning)
                 getBucketVersioning(*headers, std::string(bucketName));
-            else if(action == Action::GetBucketCors)
+            else if (action == Action::GetBucketCors)
                 getBucketCors(*headers, std::string(bucketName));
-            else if(action == Action::GetBucketObjectLockConfiguration)
+            else if (action == Action::GetBucketObjectLockConfiguration)
                 getBucketObjectLockConfiguration(*headers, std::string(bucketName));
             else
                 listObjects(*headers, std::string(bucketName));
             return;
-        }   
+        }
 
         const auto resource = fmt::format("arn:aws:s3:::{}", header_path.substr(1));
-        const auto action = headers->getMethod() == HTTPMethod::GET ? 
-                (headers->hasQueryParam("attributes") ? Action::GetObjectAttributes : Action::GetObject) : Action::HeadObject;
+        const auto action = headers->getMethod() == HTTPMethod::GET ? (headers->hasQueryParam("attributes") ? Action::GetObjectAttributes : Action::GetObject) : Action::HeadObject;
 
         auto accessKey = checkSig(this, *headers, "", resource, action, true);
 
-        if(!accessKey)
+        if (!accessKey)
         {
             XLOGF(INFO, "Get object unauthorized: {}", header_path);
-            if(headers->getMethod() == HTTPMethod::HEAD)
+            if (headers->getMethod() == HTTPMethod::HEAD)
                 ResponseBuilder(downstream_)
                     .status(403, "Forbidden")
                     .sendWithEOM();
@@ -2154,19 +2234,19 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         request_action = action;
 
-        if(sfs().get_manual_commit() && header_path.find(c_commit_uuid)!=std::string::npos)
+        if (sfs().get_manual_commit() && header_path.find(c_commit_uuid) != std::string::npos)
         {
             XLOGF(INFO, "Getting commit object");
             getCommitObject(*headers);
             return;
         }
 
-        if(!setKeyInfoFromPath(*headers, header_path, headers->getQueryParamPtr("versionId"), true))
+        if (!setKeyInfoFromPath(*headers, header_path, headers->getQueryParamPtr("versionId"), true))
             return;
 
-        if(action == Action::GetObjectAttributes)
+        if (action == Action::GetObjectAttributes)
         {
-            if(headers->getMethod() == HTTPMethod::HEAD)
+            if (headers->getMethod() == HTTPMethod::HEAD)
             {
                 ResponseBuilder(downstream_)
                     .status(400, "Bad request")
@@ -2174,13 +2254,13 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                     .sendWithEOM();
                 return;
             }
-            
+
             getObjectAttributes(*headers, *accessKey);
             return;
         }
 
         parseMatchInfo(*headers, true, true);
-        
+
         XLOGF(INFO, "Get object {} range {}", header_path, headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_RANGE));
         getObject(*headers, *accessKey);
         return;
@@ -2192,13 +2272,13 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         bool hasAwsChunkedEncoding = false;
         const auto contentEncoding = headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_CONTENT_ENCODING);
-        if(!contentEncoding.empty())
+        if (!contentEncoding.empty())
         {
             std::vector<std::string_view> encodings;
             folly::split(',', contentEncoding, encodings);
-            for(auto& encoding: encodings)
+            for (auto& encoding : encodings)
             {
-                if(folly::trimWhitespace(encoding) == "aws-chunked")
+                if (folly::trimWhitespace(encoding) == "aws-chunked")
                 {
                     hasAwsChunkedEncoding = true;
                     break;
@@ -2206,23 +2286,23 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
         }
         const auto payloadHash = headers->getHeaders().getSingleOrEmpty("x-amz-content-sha256");
-        if(payloadHash == streaming_sha256_payload)
+        if (payloadHash == streaming_sha256_payload)
         {
             // Minio SDK does not set aws-chunked content encoding as it should
             hasAwsChunkedEncoding = true;
         }
-        else if(payloadHash == streaming_unsigned_payload_trailer)
+        else if (payloadHash == streaming_unsigned_payload_trailer)
         {
             // boto3 sets aws-chunked, even though it just uses a normal chunked encoding
             hasAwsChunkedEncoding = false;
         }
 
-        if(cl.empty() || hasAwsChunkedEncoding)
+        if (cl.empty() || hasAwsChunkedEncoding)
         {
-            if(!hasAwsChunkedEncoding)
+            if (!hasAwsChunkedEncoding)
             {
                 const auto transferEncoding = headers->getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_TRANSFER_ENCODING);
-                if(transferEncoding != "chunked")
+                if (transferEncoding != "chunked")
                 {
                     XLOGF(INFO, "Content-Length header not set and transfer encoding is not chunked");
                     ResponseBuilder(downstream_)
@@ -2235,18 +2315,18 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             awsChunkedEncoding = std::make_unique<AwsChunkedEncoding>();
             const auto decodedContentLength = headers->getHeaders().getSingleOrEmpty("x-amz-decoded-content-length");
-            if(!decodedContentLength.empty())
+            if (!decodedContentLength.empty())
             {
                 cl = decodedContentLength;
             }
 
-            if(hasAwsChunkedEncoding)
+            if (hasAwsChunkedEncoding)
             {
                 awsChunkedEncoding->isSigned = true;
                 awsChunkedEncoding->evpMdCtx.init(EVP_sha256());
             }
         }
-        
+
         if (cl.empty())
         {
             ResponseBuilder(downstream_)
@@ -2258,36 +2338,36 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         const auto remaining = std::atoll(cl.c_str());
         put_remaining = remaining;
-        
+
         std::string path_str;
-        if(!folly::tryUriUnescape(headers->getPathAsStringPiece(), path_str))
+        if (!folly::tryUriUnescape(headers->getPathAsStringPiece(), path_str))
         {
             ResponseBuilder(downstream_)
-                        .status(500, "Internal error")
-                        .body("Path cannot be unescaped")
-                        .sendWithEOM();
+                .status(500, "Internal error")
+                .body("Path cannot be unescaped")
+                .sendWithEOM();
             return;
         }
 
         const auto path = std::string_view(path_str);
 
         std::string xid;
-        if(!headers->getQueryStringAsStringPiece().empty())
+        if (!headers->getQueryStringAsStringPiece().empty())
         {
             xid = headers->getDecodedQueryParam("x-id");
         }
 
         bool createBucket = false;
         const auto nextSlash = path.empty() ? std::string::npos : path.find('/', 1);
-        const bool onlyBucketInPath = !path.empty() && (nextSlash==std::string::npos || nextSlash == path.size()-1) ;
-        if(onlyBucketInPath && (xid.empty() || xid == "CreateBucket" || xid == "PutBucketVersioning" || xid == "PutBucketCors" || xid == "PutObjectLockConfiguration") )
+        const bool onlyBucketInPath = !path.empty() && (nextSlash == std::string::npos || nextSlash == path.size() - 1);
+        if (onlyBucketInPath && (xid.empty() || xid == "CreateBucket" || xid == "PutBucketVersioning" || xid == "PutBucketCors" || xid == "PutObjectLockConfiguration"))
         {
             createBucket = true;
             const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
             keyInfo.key = bucketName;
         }
-        else if(!setKeyInfoFromPath(*headers, path, 
-                    (headers->hasQueryParam("legal-hold") || headers->hasQueryParam("retention")) ? headers->getQueryParamPtr("versionId") : nullptr, false))
+        else if (!setKeyInfoFromPath(*headers, path,
+                                     (headers->hasQueryParam("legal-hold") || headers->hasQueryParam("retention")) ? headers->getQueryParamPtr("versionId") : nullptr, false))
             return;
 
         const auto copySource = headers->getHeaders().getSingleOrEmpty("x-amz-copy-source");
@@ -2295,7 +2375,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
         const auto payloadOpt = initPayloadHash(*headers);
-        if(!payloadOpt)
+        if (!payloadOpt)
             return;
         const auto payload = *payloadOpt;
 
@@ -2303,12 +2383,11 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         const auto stringToSignHeaderPtr = hasAwsChunkedEncoding ? &awsChunkedEncoding->stringToSignHeader : nullptr;
         const auto signingKeyOutput = hasAwsChunkedEncoding ? &awsChunkedEncoding->signingKey : nullptr;
 
-        if(createBucket && headers->hasQueryParam("versioning") && (xid.empty() || xid == "PutBucketVersioning"))
+        if (createBucket && headers->hasQueryParam("versioning") && (xid.empty() || xid == "PutBucketVersioning"))
         {
             const auto action = Action::PutBucketVersioning;
 
-            if(!checkSig(this, *headers, payload, resource, action, false, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
-                || ( currSigPtr != nullptr && currSigPtr->empty()))
+            if (!checkSig(this, *headers, payload, resource, action, false, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) || (currSigPtr != nullptr && currSigPtr->empty()))
             {
                 XLOGF(INFO, "Unauthorized PutBucketVersioning: {}", path);
                 ResponseBuilder(downstream_)
@@ -2322,29 +2401,29 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             putBucketVersioning(*headers);
             return;
         }
-        else if(!createBucket && headers->hasQueryParam("uploadId") && (xid.empty() || xid == "UploadPart" || xid=="UploadPartCopy"))
+        else if (!createBucket && headers->hasQueryParam("uploadId") && (xid.empty() || xid == "UploadPart" || xid == "UploadPartCopy"))
         {
             int partNumber = 0;
             const auto& queryParams = headers->getQueryParams();
             const auto partNumberIt = queryParams.find("partNumber");
-            if(partNumberIt != queryParams.end())
+            if (partNumberIt != queryParams.end())
             {
                 try
                 {
                     partNumber = std::stoi(partNumberIt->second);
                 }
-                catch(std::invalid_argument&)
+                catch (std::invalid_argument&)
                 {
                     partNumber = 0;
                 }
-                catch(std::out_of_range&)
+                catch (std::out_of_range&)
                 {
-                    partNumber=0;
+                    partNumber = 0;
                 }
             }
             const auto uploadId = decryptUploadId(headers->getQueryParam("uploadId"));
 
-            if(uploadId.id<=0)
+            if (uploadId.id <= 0)
             {
                 XLOGF(INFO, "UploadId param not set in multi-part upload of {}", path);
                 ResponseBuilder(downstream_)
@@ -2354,7 +2433,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            if(partNumber<=0 || partNumber>10000)
+            if (partNumber <= 0 || partNumber > 10000)
             {
                 XLOGF(INFO, "PartNumber {} out of range in multi-part upload of {}", partNumber, path);
                 ResponseBuilder(downstream_)
@@ -2370,9 +2449,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             const auto action = copyObject ? Action::UploadPartCopy : Action::PutObjectPart;
 
-            if(!xid.empty())
+            if (!xid.empty())
             {
-                if( (action == Action::PutObjectPart && xid != "UploadPart") ||
+                if ((action == Action::PutObjectPart && xid != "UploadPart") ||
                     (action == Action::UploadPartCopy && xid != "UploadPartCopy"))
                 {
                     XLOGF(INFO, "Invalid x-id for {}: {}", action == Action::PutObjectPart ? "put object part" : "upload part copy", xid);
@@ -2386,8 +2465,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             const bool allowPresigned = action == Action::PutObjectPart;
 
-            if(!checkSig(this, *headers, payload, resource, action, allowPresigned, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
-                || ( currSigPtr != nullptr && currSigPtr->empty()))
+            if (!checkSig(this, *headers, payload, resource, action, allowPresigned, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) || (currSigPtr != nullptr && currSigPtr->empty()))
             {
                 XLOGF(INFO, "Unauthorized putObjectPart: {}", path);
                 ResponseBuilder(downstream_)
@@ -2400,10 +2478,10 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             try
             {
                 const auto contentMd5Base64 = headers->getHeaders().getSingleOrEmpty("Content-MD5");
-                if(!contentMd5Base64.empty())
+                if (!contentMd5Base64.empty())
                     contentMd5 = folly::base64Decode(contentMd5Base64);
             }
-            catch(const folly::base64_decode_error&)
+            catch (const folly::base64_decode_error&)
             {
                 XLOGF(INFO, "Invalid base64 in Content-MD5 header in putObjectPart of {}: {}", path, headers->getHeaders().getSingleOrEmpty("Content-MD5"));
                 ResponseBuilder(downstream_)
@@ -2413,19 +2491,18 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            if(!initSdkChecksum(*headers, action))
+            if (!initSdkChecksum(*headers, action))
                 return;
 
             request_action = action;
             putObjectPart(*headers, partNumber, uploadId.id, uploadId.nonce);
             return;
         }
-        else if(createBucket && headers->hasQueryParam("cors") && (xid.empty() || xid=="PutBucketCors") )
+        else if (createBucket && headers->hasQueryParam("cors") && (xid.empty() || xid == "PutBucketCors"))
         {
             const auto action = Action::PutBucketCors;
 
-            if(!checkSig(this, *headers, payload, resource, action, false, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
-                || ( currSigPtr != nullptr && currSigPtr->empty()))
+            if (!checkSig(this, *headers, payload, resource, action, false, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) || (currSigPtr != nullptr && currSigPtr->empty()))
             {
                 XLOGF(INFO, "Unauthorized PutBucketCors: {}", path);
                 ResponseBuilder(downstream_)
@@ -2439,12 +2516,11 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             putBucketCors(*headers);
             return;
         }
-        else if(createBucket && headers->hasQueryParam("object-lock") && (xid.empty() || xid=="PutObjectLockConfiguration") )
+        else if (createBucket && headers->hasQueryParam("object-lock") && (xid.empty() || xid == "PutObjectLockConfiguration"))
         {
             const auto action = Action::PutBucketObjectLockConfiguration;
 
-            if(!checkSig(this, *headers, payload, resource, action, false, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
-                || ( currSigPtr != nullptr && currSigPtr->empty()))
+            if (!checkSig(this, *headers, payload, resource, action, false, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) || (currSigPtr != nullptr && currSigPtr->empty()))
             {
                 XLOGF(INFO, "Unauthorized PutObjectLockConfiguration: {}", path);
                 ResponseBuilder(downstream_)
@@ -2458,12 +2534,11 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             putObjectLockConfiguration(*headers);
             return;
         }
-        else if(!createBucket && headers->hasQueryParam("legal-hold") && (xid.empty() || xid=="PutObjectLegalHold") )
+        else if (!createBucket && headers->hasQueryParam("legal-hold") && (xid.empty() || xid == "PutObjectLegalHold"))
         {
             const auto action = Action::PutObjectLegalHold;
 
-            if(!checkSig(this, *headers, payload, resource, action, false, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
-                || ( currSigPtr != nullptr && currSigPtr->empty()))
+            if (!checkSig(this, *headers, payload, resource, action, false, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) || (currSigPtr != nullptr && currSigPtr->empty()))
             {
                 XLOGF(INFO, "Unauthorized PutObjectLegalHold: {}", path);
                 ResponseBuilder(downstream_)
@@ -2477,12 +2552,12 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             putObjectLegalHold(*headers);
             return;
         }
-        else if(!createBucket && headers->hasQueryParam("retention") && (xid.empty() || xid=="PutObjectRetention") )
+        else if (!createBucket && headers->hasQueryParam("retention") && (xid.empty() || xid == "PutObjectRetention"))
         {
             const auto action = Action::PutObjectRetention;
 
             const auto accessKey = checkSig(this, *headers, payload, resource, action, false, currSigPtr, stringToSignHeaderPtr, signingKeyOutput);
-            if(!accessKey || ( currSigPtr != nullptr && currSigPtr->empty()))
+            if (!accessKey || (currSigPtr != nullptr && currSigPtr->empty()))
             {
                 XLOGF(INFO, "Unauthorized PutObjectRetention: {}", path);
                 ResponseBuilder(downstream_)
@@ -2493,7 +2568,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
 
             const auto bypassGovernance = checkBypassGovernance(*headers, resource, *accessKey);
-            if(!bypassGovernance)
+            if (!bypassGovernance)
                 return;
 
             request_action = action;
@@ -2501,13 +2576,12 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        const auto action = createBucket ? Action::CreateBucket : 
-                    (copyObject ? Action::CopyObject : Action::PutObject);
+        const auto action = createBucket ? Action::CreateBucket : (copyObject ? Action::CopyObject : Action::PutObject);
 
         const bool allowPresigned = action == Action::PutObject;
 
         const auto accessKey = checkSig(this, *headers, payload, resource, action, allowPresigned, currSigPtr, stringToSignHeaderPtr, signingKeyOutput);
-        if(!accessKey || ( currSigPtr != nullptr && currSigPtr->empty()))
+        if (!accessKey || (currSigPtr != nullptr && currSigPtr->empty()))
         {
             XLOGF(INFO, "Unauthorized putObject: {}", path);
             ResponseBuilder(downstream_)
@@ -2517,9 +2591,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        if(createBucket)
+        if (createBucket)
         {
-            if(!xid.empty() && xid != "CreateBucket")
+            if (!xid.empty() && xid != "CreateBucket")
             {
                 XLOGF(INFO, "Invalid x-id for create bucket: {}", xid);
                 ResponseBuilder(downstream_)
@@ -2529,8 +2603,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            if(folly::trimWhitespace(
-                headers->getHeaders().getSingleOrEmpty("x-amz-bucket-object-lock-enabled")) == "true")
+            if (folly::trimWhitespace(
+                    headers->getHeaders().getSingleOrEmpty("x-amz-bucket-object-lock-enabled")) == "true")
             {
                 putObjectLockConfigurationData = std::make_unique<PutObjectLockConfigurationData>();
                 putObjectLockConfigurationData->objectLockEnabled = "1";
@@ -2540,9 +2614,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        if(!xid.empty())
+        if (!xid.empty())
         {
-            if( (action == Action::PutObject && xid != "PutObject") ||
+            if ((action == Action::PutObject && xid != "PutObject") ||
                 (action == Action::CopyObject && xid != "CopyObject"))
             {
                 XLOGF(INFO, "Invalid x-id for {}: {}", action == Action::PutObject ? "put object" : "copy object", xid);
@@ -2557,10 +2631,10 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         try
         {
             const auto contentMd5Base64 = headers->getHeaders().getSingleOrEmpty("Content-MD5");
-            if(!contentMd5Base64.empty())
+            if (!contentMd5Base64.empty())
                 contentMd5 = folly::base64Decode(contentMd5Base64);
         }
-        catch(const folly::base64_decode_error&)
+        catch (const folly::base64_decode_error&)
         {
             XLOGF(INFO, "Invalid base64 in Content-MD5 header in PutObject of {}: {}", path, headers->getHeaders().getSingleOrEmpty("Content-MD5"));
             ResponseBuilder(downstream_)
@@ -2570,11 +2644,11 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        if(!initSdkChecksum(*headers, action))
+        if (!initSdkChecksum(*headers, action))
             return;
 
-        if(sfs().get_manual_commit() && action == Action::PutObject &&
-            path.find(c_commit_uuid)!=std::string::npos)
+        if (sfs().get_manual_commit() && action == Action::PutObject &&
+            path.find(c_commit_uuid) != std::string::npos)
         {
             XLOGF(DBG0, "PutObject {} COMMIT", path);
 
@@ -2582,39 +2656,38 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             // Don't handle EOM
             request_action = Action::HeadObject;
             return;
-        }        
+        }
 
-        if(FLAGS_with_stop_command &&
+        if (FLAGS_with_stop_command &&
             action == Action::PutObject &&
-            path.find(c_stop_uuid)!=std::string::npos)
+            path.find(c_stop_uuid) != std::string::npos)
         {
             XLOGF(DBG0, "PutObject {} STOP", path);
 #ifndef NDEBUG
             stopChecks();
 #endif
             ResponseBuilder(downstream_)
-                    .status(200, "OK")
-                    .body("Server is stopping")
-                    .sendWithEOM();
+                .status(200, "OK")
+                .body("Server is stopping")
+                .sendWithEOM();
             // Don't handle EOM
             request_action = Action::HeadObject;
 
-            if(path.find(c_stop_uuid_fast)!=std::string::npos)
+            if (path.find(c_stop_uuid_fast) != std::string::npos)
             {
                 _exit(0);
             }
             else
             {
-                folly::getGlobalCPUExecutor()->add([]{
-                    stopServer();
-                });
+                folly::getGlobalCPUExecutor()->add([]
+                                                   { stopServer(); });
             }
             return;
         }
 
         bool invalidMetadataValues = false;
         objMetadata = ObjMetadata::fromHeaders(*headers, invalidMetadataValues);
-        if(invalidMetadataValues)
+        if (invalidMetadataValues)
         {
             ResponseBuilder(downstream_)
                 .status(400, "Bad request")
@@ -2623,13 +2696,13 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
 
-        if(!parseObjectLockHeaders(*headers, resource, *accessKey))
+        if (!parseObjectLockHeaders(*headers, resource, *accessKey))
             return;
-        
+
         parseMatchInfo(*headers, false, false);
 
         // Early check before upload. Decided again before queueing
-        if(!keyInfo.withVersioning())
+        if (!keyInfo.withVersioning())
             addProtectedCheck(false);
 
         XLOGF(DBG0, "PutObject {} length {}", path, remaining);
@@ -2638,15 +2711,15 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         putObject(*headers);
         return;
     }
-    else if(headers->getMethod() == HTTPMethod::DELETE)
+    else if (headers->getMethod() == HTTPMethod::DELETE)
     {
         std::string path_str;
-        if(!folly::tryUriUnescape(headers->getPathAsStringPiece(), path_str))
+        if (!folly::tryUriUnescape(headers->getPathAsStringPiece(), path_str))
         {
             ResponseBuilder(downstream_)
-                        .status(500, "Internal error")
-                        .body("Path cannot be unescaped")
-                        .sendWithEOM();
+                .status(500, "Internal error")
+                .body("Path cannot be unescaped")
+                .sendWithEOM();
             return;
         }
 
@@ -2655,22 +2728,22 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         const auto uploadId = headers->getQueryParam("uploadId");
         const auto abortMultipart = !uploadId.empty();
         const auto nextSlash = path.empty() ? std::string::npos : path.find('/', 1);
-        if(!path.empty() && (nextSlash==std::string::npos || nextSlash == path.size()-1) )
+        if (!path.empty() && (nextSlash == std::string::npos || nextSlash == path.size() - 1))
         {
             isDeleteBucket = true;
             const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
             keyInfo.key = bucketName;
         }
-        else if(!setKeyInfoFromPath(*headers, path, abortMultipart ? nullptr : headers->getQueryParamPtr("versionId"), false))
+        else if (!setKeyInfoFromPath(*headers, path, abortMultipart ? nullptr : headers->getQueryParamPtr("versionId"), false))
             return;
 
         const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
-        const auto action = abortMultipart ? Action::AbortMultipartUpload 
-                : (isDeleteBucket ? Action::DeleteBucket : Action::DeleteObject);
+        const auto action = abortMultipart ? Action::AbortMultipartUpload
+                                           : (isDeleteBucket ? Action::DeleteBucket : Action::DeleteObject);
 
-        //TODO: Double-check that pre-signed delete is possible
+        // TODO: Double-check that pre-signed delete is possible
         const auto accessKey = checkSig(this, *headers, "", resource, action, true);
-        if(!accessKey)
+        if (!accessKey)
         {
             XLOGF(INFO, "Unauthorized delete object: {}", path);
             ResponseBuilder(downstream_)
@@ -2681,10 +2754,10 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         }
 
         bool bypassGovernance = false;
-        if(action == Action::DeleteObject)
+        if (action == Action::DeleteObject)
         {
             const auto bypass = checkBypassGovernance(*headers, resource, *accessKey);
-            if(!bypass)
+            if (!bypass)
                 return;
             bypassGovernance = *bypass;
         }
@@ -2695,31 +2768,31 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         XLOGF(INFO, "Delete {}", path);
 
-        if(abortMultipart)
+        if (abortMultipart)
             abortMultipartUpload(*headers, uploadId);
-        else if(isDeleteBucket)
+        else if (isDeleteBucket)
             deleteBucket(*headers);
         else
             deleteObject(*headers, bypassGovernance);
     }
-    else if(headers->getMethod() == HTTPMethod::POST)
+    else if (headers->getMethod() == HTTPMethod::POST)
     {
         std::string path_str;
-        if(!folly::tryUriUnescape(headers->getPathAsStringPiece(), path_str))
+        if (!folly::tryUriUnescape(headers->getPathAsStringPiece(), path_str))
         {
             ResponseBuilder(downstream_)
-                        .status(500, "Internal error")
-                        .body("Path cannot be unescaped")
-                        .sendWithEOM();
+                .status(500, "Internal error")
+                .body("Path cannot be unescaped")
+                .sendWithEOM();
             return;
         }
 
         const auto path = std::string_view(path_str);
-        
-        if(headers->hasQueryParam("delete"))
+
+        if (headers->hasQueryParam("delete"))
         {
             std::string cl = headers->getHeaders().getSingleOrEmpty(
-                    proxygen::HTTP_HEADER_CONTENT_LENGTH);
+                proxygen::HTTP_HEADER_CONTENT_LENGTH);
             if (cl.empty())
             {
                 ResponseBuilder(downstream_)
@@ -2729,7 +2802,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            if(path.size()<=1)
+            if (path.size() <= 1)
             {
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
@@ -2740,7 +2813,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
             const auto payloadOpt = initPayloadHash(*headers);
-            if(!payloadOpt)
+            if (!payloadOpt)
             {
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
@@ -2750,10 +2823,10 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
             const auto payload = *payloadOpt;
 
-            const auto bucketName = path[path.size()- 1] =='/' ? path.substr(1, path.size()-2) : path.substr(1);
+            const auto bucketName = path[path.size() - 1] == '/' ? path.substr(1, path.size() - 2) : path.substr(1);
 
-            const auto accessKey = checkSig(this,*headers, payload, resource, Action::DeleteObjects, true);
-            if(!accessKey)
+            const auto accessKey = checkSig(this, *headers, payload, resource, Action::DeleteObjects, true);
+            if (!accessKey)
             {
                 XLOGF(INFO, "Unauthorized delete object: {}", path);
                 ResponseBuilder(downstream_)
@@ -2764,20 +2837,20 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
 
             const auto bucketInfo = buckets::getBucketInfo(bucketName);
-            if(!bucketInfo)
+            if (!bucketInfo)
             {
                 XLOGF(INFO, "Bucket {} not found", bucketName);
                 ResponseBuilder(downstream_)
-                            .status(404, "Not found")
-                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucketName, ""))
-                            .sendWithEOM();
+                    .status(404, "Not found")
+                    .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucketName, ""))
+                    .sendWithEOM();
                 return;
             }
 
             keyInfo.bucketId = bucketInfo->id;
             keyInfo.versioning = bucketInfo->versioning;
 
-            if(!evpMdCtx.init(EVP_md5()) )
+            if (!evpMdCtx.init(EVP_md5()))
             {
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
@@ -2790,7 +2863,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             put_remaining = std::atoll(cl.c_str());
 
             xmlBody.init();
-            if(xmlBody.parser == nullptr)
+            if (xmlBody.parser == nullptr)
             {
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
@@ -2812,18 +2885,18 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         }
 
         const std::string uploadsStr = "uploads";
-        
-        if(headers->getQueryStringAsStringPiece() == uploadsStr ||
+
+        if (headers->getQueryStringAsStringPiece() == uploadsStr ||
             headers->hasQueryParam("uploads"))
         {
-            if(!setKeyInfoFromPath(*headers, path, nullptr, false))
+            if (!setKeyInfoFromPath(*headers, path, nullptr, false))
                 return;
 
             const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
             const auto action = Action::CreateMultipartUpload;
 
             const auto accessKey = checkSig(this, *headers, "", resource, action, true);
-            if(!accessKey)
+            if (!accessKey)
             {
                 XLOGF(INFO, "Unauthorized create multi-part upload: {}", path);
                 ResponseBuilder(downstream_)
@@ -2835,7 +2908,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             bool invalidMetadataValues = false;
             objMetadata = ObjMetadata::fromHeaders(*headers, invalidMetadataValues);
-            if(invalidMetadataValues)
+            if (invalidMetadataValues)
             {
                 ResponseBuilder(downstream_)
                     .status(400, "Bad request")
@@ -2844,10 +2917,10 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            if(!parseObjectLockHeaders(*headers, resource, *accessKey))
+            if (!parseObjectLockHeaders(*headers, resource, *accessKey))
                 return;
 
-            if(!initSdkChecksum(*headers, action))
+            if (!initSdkChecksum(*headers, action))
                 return;
 
             request_action = Action::CreateMultipartUpload;
@@ -2856,18 +2929,18 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             createMultipartUpload(*headers);
             return;
         }
-        else if(headers->hasQueryParam("uploadId"))
+        else if (headers->hasQueryParam("uploadId"))
         {
-            if(!setKeyInfoFromPath(*headers, path, nullptr, false))
+            if (!setKeyInfoFromPath(*headers, path, nullptr, false))
                 return;
 
             const auto payloadOpt = initPayloadHash(*headers);
-            if(!payloadOpt)
+            if (!payloadOpt)
                 return;
             const auto payload = *payloadOpt;
 
             const auto action = Action::CompleteMultipartUpload;
-            if(!checkSig(this, *headers, payload, "", action, true))
+            if (!checkSig(this, *headers, payload, "", action, true))
             {
                 XLOGF(INFO, "Unauthorized complete multi-part upload");
                 ResponseBuilder(downstream_)
@@ -2875,11 +2948,11 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                     .body(s3errorXml(S3ErrorCode::AccessDenied, "", "", ""))
                     .sendWithEOM();
                 return;
-            }           
+            }
 
             const auto uploadId = decryptUploadId(headers->getQueryParam("uploadId"));
 
-            if(uploadId.id<=0)
+            if (uploadId.id <= 0)
             {
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
@@ -2889,7 +2962,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
 
             std::string cl = headers->getHeaders().getSingleOrEmpty(
-                    proxygen::HTTP_HEADER_CONTENT_LENGTH);
+                proxygen::HTTP_HEADER_CONTENT_LENGTH);
             if (cl.empty())
             {
                 ResponseBuilder(downstream_)
@@ -2898,12 +2971,12 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                     .sendWithEOM();
                 return;
             }
-            if(!initSdkChecksum(*headers, action))
+            if (!initSdkChecksum(*headers, action))
                 return;
             put_remaining = std::atoll(cl.c_str());
             request_action = action;
             xmlBody.init();
-            if(xmlBody.parser == nullptr)
+            if (xmlBody.parser == nullptr)
             {
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
@@ -2922,7 +2995,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             parseMatchInfo(*headers, false, false);
 
             // Early check before upload. Decided again before queueing
-            if(!keyInfo.withVersioning())
+            if (!keyInfo.withVersioning())
                 addProtectedCheck(false);
 
             XLOGF(INFO, "Complete multi-part upload of {} uploadId {}", keyInfo.key, uploadId.id);
@@ -2930,7 +3003,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         else
         {
             std::string cl = headers->getHeaders().getSingleOrEmpty(
-                    proxygen::HTTP_HEADER_CONTENT_LENGTH);
+                proxygen::HTTP_HEADER_CONTENT_LENGTH);
             if (cl.empty())
             {
                 ResponseBuilder(downstream_)
@@ -2944,7 +3017,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             {
                 put_remaining = std::atoll(cl.c_str());
             }
-            catch(const std::exception& e)
+            catch (const std::exception& e)
             {
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
@@ -2957,7 +3030,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const std::string_view contentType(contentTypeStr);
 
             const auto paramsStart = contentType.find(';');
-            if(paramsStart == std::string::npos)
+            if (paramsStart == std::string::npos)
             {
                 ResponseBuilder(downstream_)
                     .status(400, "Bad request")
@@ -2967,7 +3040,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
 
             const auto contentTypeMain = contentType.substr(0, paramsStart);
-            if(folly::trimWhitespace(contentTypeMain) != "multipart/form-data")
+            if (folly::trimWhitespace(contentTypeMain) != "multipart/form-data")
             {
                 ResponseBuilder(downstream_)
                     .status(400, "Bad request")
@@ -2976,10 +3049,10 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            const auto paramsStr = contentType.substr(paramsStart+1);
-            
+            const auto paramsStr = contentType.substr(paramsStart + 1);
+
             const auto eqPos = paramsStr.find('=');
-            if(eqPos == std::string::npos)
+            if (eqPos == std::string::npos)
             {
                 ResponseBuilder(downstream_)
                     .status(400, "Bad request")
@@ -2989,9 +3062,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
 
             const auto paramName = folly::trimWhitespace(paramsStr.substr(0, eqPos));
-            const auto paramValue = folly::trimWhitespace(paramsStr.substr(eqPos+1));
+            const auto paramValue = folly::trimWhitespace(paramsStr.substr(eqPos + 1));
 
-            if(paramName != "boundary" || paramValue.empty())
+            if (paramName != "boundary" || paramValue.empty())
             {
                 ResponseBuilder(downstream_)
                     .status(400, "Bad request")
@@ -3000,7 +3073,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            if(path.empty())
+            if (path.empty())
             {
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
@@ -3012,13 +3085,13 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const auto bucketName = path.substr(1);
 
             const auto bucketInfoOpt = buckets::getBucketInfo(bucketName);
-            if(!bucketInfoOpt)
+            if (!bucketInfoOpt)
             {
                 XLOGF(INFO, "Bucket of {} not found", path);
                 ResponseBuilder(downstream_)
-                            .status(404, "Not found")
-                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucketName, ""))
-                            .sendWithEOM();
+                    .status(404, "Not found")
+                    .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucketName, ""))
+                    .sendWithEOM();
                 return;
             }
 
@@ -3033,41 +3106,41 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             return;
         }
     }
-    else if(headers->getMethod() == HTTPMethod::OPTIONS)
+    else if (headers->getMethod() == HTTPMethod::OPTIONS)
     {
         std::string path_str;
-        if(!folly::tryUriUnescape(headers->getPathAsStringPiece(), path_str))
+        if (!folly::tryUriUnescape(headers->getPathAsStringPiece(), path_str))
         {
             ResponseBuilder(downstream_)
-                        .status(500, "Internal error")
-                        .body("Path cannot be unescaped")
-                        .sendWithEOM();
+                .status(500, "Internal error")
+                .body("Path cannot be unescaped")
+                .sendWithEOM();
             return;
         }
 
         const auto path = std::string_view(path_str);
 
         const auto nextSlash = path.empty() ? std::string::npos : path.find('/', 1);
-        const bool onlyBucketInPath = !path.empty() && (nextSlash==std::string::npos || nextSlash == path.size()-1) ;
-        if(onlyBucketInPath)
+        const bool onlyBucketInPath = !path.empty() && (nextSlash == std::string::npos || nextSlash == path.size() - 1);
+        if (onlyBucketInPath)
         {
             const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
             keyInfo.key = bucketName;
 
             const auto bucketId = buckets::getBucket(bucketName);
-            if(!bucketId)
+            if (!bucketId)
             {
                 XLOGF(INFO, "Bucket {} not found", bucketName);
                 ResponseBuilder(downstream_)
-                            .status(404, "Not found")
-                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucketName, ""))
-                            .sendWithEOM();
+                    .status(404, "Not found")
+                    .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucketName, ""))
+                    .sendWithEOM();
                 return;
             }
 
             keyInfo.bucketId = *bucketId;
         }
-        else if(!setKeyInfoFromPath(*headers, path, nullptr, false))
+        else if (!setKeyInfoFromPath(*headers, path, nullptr, false))
             return;
 
         XLOGF(INFO, "Options {}", path);
@@ -3078,60 +3151,60 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
 bool S3Handler::setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::string_view path, const std::string* versionId, const bool setCorsHeader)
 {
-    if(path.empty())
+    if (path.empty())
     {
         XLOGF(INFO, "Path empty when getting key info");
         ResponseBuilder(downstream_)
-                    .status(500, "Internal error")
-                    .body(s3errorXml(S3ErrorCode::InternalError, "Path is empty", "", ""))
-                    .sendWithEOM();
+            .status(500, "Internal error")
+            .body(s3errorXml(S3ErrorCode::InternalError, "Path is empty", "", ""))
+            .sendWithEOM();
         return false;
     }
 
     int64_t version = 0;
-    if(versionId)
+    if (versionId)
     {
         version = sfs().decrypt_id(*versionId);
-        if(version<0)
+        if (version < 0)
         {
             XLOGF(INFO, "Version {} cannot be decrypted when getting key info", *versionId);
             ResponseBuilder(downstream_)
-                    .status(500, "Internal error")
-                    .body(s3errorXml(S3ErrorCode::InternalError, "VersionId invalid", "", ""))
-                    .sendWithEOM();
+                .status(500, "Internal error")
+                .body(s3errorXml(S3ErrorCode::InternalError, "VersionId invalid", "", ""))
+                .sendWithEOM();
             return false;
         }
     }
 
     const auto bucketEnd = path.find_first_of('/', 1);
 
-    if(bucketEnd == std::string::npos)
+    if (bucketEnd == std::string::npos)
     {
         XLOGF(INFO, "Could not find bucket in path {}", path);
         ResponseBuilder(downstream_)
-                    .status(500, "Internal error")
-                    .body(s3errorXml(S3ErrorCode::InternalError, "Could not find bucket in path", "", ""))
-                    .sendWithEOM();
+            .status(500, "Internal error")
+            .body(s3errorXml(S3ErrorCode::InternalError, "Could not find bucket in path", "", ""))
+            .sendWithEOM();
         return false;
     }
 
-    const auto bucketName = path.substr(1, bucketEnd-1);
-    const auto keyStr = path.substr(bucketEnd+1);
+    const auto bucketName = path.substr(1, bucketEnd - 1);
+    const auto keyStr = path.substr(bucketEnd + 1);
 
     const auto bucketInfoOpt = buckets::getBucketInfo(bucketName);
-    if(!bucketInfoOpt)
+    if (!bucketInfoOpt)
     {
         XLOGF(INFO, "Bucket of {} not found", path);
         ResponseBuilder(downstream_)
-                    .status(404, "Not found")
-                    .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucketName, ""))
-                    .sendWithEOM();
+            .status(404, "Not found")
+            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucketName, ""))
+            .sendWithEOM();
         return false;
     }
 
     const auto& bucketInfo = bucketInfoOpt.value();
 
-    if(setCorsHeader)
+    if (setCorsHeader)
     {
         setCorsAllowOrigin(headers, bucketName);
     }
@@ -3147,28 +3220,28 @@ bool S3Handler::setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::st
 void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& bucket)
 {
     auto bucketInfoOpt = buckets::getBucketInfo(bucket);
-    if(!bucketInfoOpt)
+    if (!bucketInfoOpt)
     {
-        if(headers.getMethod() == HTTPMethod::HEAD)
+        if (headers.getMethod() == HTTPMethod::HEAD)
         {
             ResponseBuilder(self->downstream_)
-                            .status(404, "Not found")
-                            .sendWithEOM();
+                .status(404, "Not found")
+                .sendWithEOM();
         }
         else
         {
             ResponseBuilder(self->downstream_)
-                                .status(404, "Not found")
-                                .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucket, ""))
-                                .sendWithEOM();
+                .status(404, "Not found")
+                .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucket, ""))
+                .sendWithEOM();
         }
         return;
     }
-    else if(headers.getMethod() == HTTPMethod::HEAD)
+    else if (headers.getMethod() == HTTPMethod::HEAD)
     {
         ResponseBuilder(self->downstream_)
-                            .status(200, "OK")
-                            .sendWithEOM();
+            .status(200, "OK")
+            .sendWithEOM();
         return;
     }
 
@@ -3178,17 +3251,17 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
     keyInfo.versioning = bucketInfo.versioning;
 
     const auto listType = headers.getQueryParam("list-type");
-    if(request_action == Action::ListObjects && listType=="2")
+    if (request_action == Action::ListObjects && listType == "2")
     {
         listObjectsV2(headers, bucket, bucketInfo.id);
         return;
     }
-    else if(!listType.empty())
+    else if (!listType.empty())
     {
         ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, "Unknown list type", bucket, ""))
-                            .sendWithEOM();
+            .status(500, "Internal error")
+            .body(s3errorXml(S3ErrorCode::InternalError, "Unknown list type", bucket, ""))
+            .sendWithEOM();
         return;
     }
 
@@ -3199,36 +3272,35 @@ void S3Handler::listObjects(proxygen::HTTPMessage& headers, const std::string& b
     const auto maxKeys = listPartial ? headers.getIntQueryParam("max-uploads", 1000) : headers.getIntQueryParam("max-keys", 1000);
     const auto prefix = headers.hasQueryParam("prefix") ? std::make_optional(headers.getDecodedQueryParam("prefix")) : std::nullopt;
     const auto delimiter = headers.getDecodedQueryParam("delimiter");
-    const auto uploadIdMarkerStr = listPartial ? headers.getDecodedQueryParam("upload-id-marker") :
-        (listVersions ? headers.getDecodedQueryParam("version-id-marker") : std::string());
+    const auto uploadIdMarkerStr = listPartial ? headers.getDecodedQueryParam("upload-id-marker") : (listVersions ? headers.getDecodedQueryParam("version-id-marker") : std::string());
     const auto encodingType = headers.getDecodedQueryParam("encoding-type");
     const bool urlEncode = encodingType == "url";
 
-    if(encodingType != "" && encodingType != "url")
+    if (encodingType != "" && encodingType != "url")
     {
         ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, "Unknown encoding type", bucket, ""))
-                            .sendWithEOM();
+            .status(500, "Internal error")
+            .body(s3errorXml(S3ErrorCode::InternalError, "Unknown encoding type", bucket, ""))
+            .sendWithEOM();
         return;
     }
 
-    if(delimiter.size()>1)
+    if (delimiter.size() > 1)
     {
         ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, "Delimiter has more than one char", bucket, ""))
-                            .sendWithEOM();
+            .status(500, "Internal error")
+            .body(s3errorXml(S3ErrorCode::InternalError, "Delimiter has more than one char", bucket, ""))
+            .sendWithEOM();
         return;
     }
 
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     folly::getGlobalCPUExecutor()->add(
-    [self = self, evb, marker, maxKeys, prefix, delimiter, bucket, bucketId = bucketInfo.id, uploadIdMarkerStr, urlEncode]()
-    {
-        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, std::nullopt, delimiter, bucketId, false, bucket, uploadIdMarkerStr, urlEncode);
-    });
+        [self = self, evb, marker, maxKeys, prefix, delimiter, bucket, bucketId = bucketInfo.id, uploadIdMarkerStr, urlEncode]()
+        {
+            self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, std::nullopt, delimiter, bucketId, false, bucket, uploadIdMarkerStr, urlEncode);
+        });
 }
 
 void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId)
@@ -3241,114 +3313,114 @@ void S3Handler::listObjectsV2(proxygen::HTTPMessage& headers, const std::string&
     const auto encodingType = headers.getDecodedQueryParam("encoding-type");
     const bool urlEncode = encodingType == "url";
 
-    if(encodingType != "" && encodingType != "url")
+    if (encodingType != "" && encodingType != "url")
     {
         ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, "Unknown encoding type", bucket, ""))
-                            .sendWithEOM();
+            .status(500, "Internal error")
+            .body(s3errorXml(S3ErrorCode::InternalError, "Unknown encoding type", bucket, ""))
+            .sendWithEOM();
         return;
     }
 
-    if(delimiter.size()>1)
+    if (delimiter.size() > 1)
     {
         ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, "Delimiter has more than one char", bucket, ""))
-                            .sendWithEOM();
+            .status(500, "Internal error")
+            .body(s3errorXml(S3ErrorCode::InternalError, "Delimiter has more than one char", bucket, ""))
+            .sendWithEOM();
         return;
     }
 
     std::string marker;
-    if(!folly::unhexlify(continuationToken, marker))
+    if (!folly::unhexlify(continuationToken, marker))
     {
         ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, "Cannot decode continuation token", bucket, ""))
-                            .sendWithEOM();
+            .status(500, "Internal error")
+            .body(s3errorXml(S3ErrorCode::InternalError, "Cannot decode continuation token", bucket, ""))
+            .sendWithEOM();
         return;
     }
 
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     folly::getGlobalCPUExecutor()->add(
-    [self = self, evb, marker, maxKeys, prefix, startAfter, delimiter, bucket, bucketId, urlEncode]()
-    {
-        self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, startAfter, delimiter, bucketId, true, bucket, std::string(), urlEncode);
-    });
+        [self = self, evb, marker, maxKeys, prefix, startAfter, delimiter, bucket, bucketId, urlEncode]()
+        {
+            self->listObjects(evb, self, marker, std::max(0, std::min(10000, maxKeys)), prefix, startAfter, delimiter, bucketId, true, bucket, std::string(), urlEncode);
+        });
 }
 
 void S3Handler::getBucketLocation(proxygen::HTTPMessage& headers, const std::string& bucket)
 {
     responseBuilderWithCors(200, "OK")
-                            .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
-                            .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
-                                "<LocationConstraint xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
-                                "{}"
-                                "</LocationConstraint>", FLAGS_aws_region))
-                            .sendWithEOM();
-
+        .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
+        .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                          "<LocationConstraint xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
+                          "{}"
+                          "</LocationConstraint>",
+                          FLAGS_aws_region))
+        .sendWithEOM();
 }
 
 void S3Handler::getBucketVersioning(proxygen::HTTPMessage& headers, const std::string& bucket)
 {
     const auto bucketInfoOpt = buckets::getBucketInfo(bucket);
-    if(!bucketInfoOpt)
+    if (!bucketInfoOpt)
     {
         responseBuilderWithCors(404, "Not found")
-                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucket, ""))
-                            .sendWithEOM();
+            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucket, ""))
+            .sendWithEOM();
         return;
     }
 
     const auto& bucketInfo = bucketInfoOpt.value();
 
     responseBuilderWithCors(200, "OK")
-                            .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
-                            .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-                                "<VersioningConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n"
-                                "\t<Status>{}</Status>\n"
-                                "</VersioningConfiguration>", buckets::versioningStateToStr(bucketInfo.versioning)))
-                            .sendWithEOM();
-
+        .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
+        .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                          "<VersioningConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n"
+                          "\t<Status>{}</Status>\n"
+                          "</VersioningConfiguration>",
+                          buckets::versioningStateToStr(bucketInfo.versioning)))
+        .sendWithEOM();
 }
 
 void S3Handler::getBucketObjectLockConfiguration(proxygen::HTTPMessage& headers, const std::string& bucket)
 {
     const auto bucketInfoOpt = buckets::getBucketInfo(bucket);
-    if(!bucketInfoOpt)
+    if (!bucketInfoOpt)
     {
         responseBuilderWithCors(404, "Not found")
-                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucket, ""))
-                            .sendWithEOM();
+            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucket, ""))
+            .sendWithEOM();
         return;
     }
 
-    if(!bucketInfoOpt->objectLockEnabled)
+    if (!bucketInfoOpt->objectLockEnabled)
     {
         responseBuilderWithCors(404, "Not found")
-                            .body(s3errorXml(S3ErrorCode::ObjectLockConfigurationNotFoundError, "", bucket, ""))
-                            .sendWithEOM();
+            .body(s3errorXml(S3ErrorCode::ObjectLockConfigurationNotFoundError, "", bucket, ""))
+            .sendWithEOM();
         return;
     }
 
     responseBuilderWithCors(200, "OK")
-                            .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
-                            .body("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-                                "<ObjectLockConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n"
-                                "\t<ObjectLockEnabled>Enabled</ObjectLockEnabled>\n"
-                                "</ObjectLockConfiguration>")
-                            .sendWithEOM();
+        .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
+        .body("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+              "<ObjectLockConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n"
+              "\t<ObjectLockEnabled>Enabled</ObjectLockEnabled>\n"
+              "</ObjectLockConfiguration>")
+        .sendWithEOM();
 }
 
 void S3Handler::getBucketCors(proxygen::HTTPMessage& headers, const std::string& bucket)
 {
     const auto bucketInfoOpt = buckets::getBucketInfo(bucket);
-    if(!bucketInfoOpt)
+    if (!bucketInfoOpt)
     {
         responseBuilderWithCors(404, "Not found")
-                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucket, ""))
-                            .sendWithEOM();
+            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucket, ""))
+            .sendWithEOM();
         return;
     }
 
@@ -3356,44 +3428,45 @@ void S3Handler::getBucketCors(proxygen::HTTPMessage& headers, const std::string&
 
     std::string corsRulesXml;
 
-    for(const auto& rule: bucketInfo.corsRules)
+    for (const auto& rule : bucketInfo.corsRules)
     {
         corsRulesXml += "\t<CORSRule>\n";
-        for(const auto& origin: rule.allowedOrigins)
+        for (const auto& origin : rule.allowedOrigins)
             corsRulesXml += fmt::format("\t\t<AllowedOrigin>{}</AllowedOrigin>\n", escapeXML(origin));
-        for(const auto& method: rule.allowedMethods)
+        for (const auto& method : rule.allowedMethods)
             corsRulesXml += fmt::format("\t\t<AllowedMethod>{}</AllowedMethod>\n", escapeXML(method));
-        for(const auto& header: rule.exposeHeaders)
+        for (const auto& header : rule.exposeHeaders)
             corsRulesXml += fmt::format("\t\t<ExposeHeader>{}</ExposeHeader>\n", escapeXML(header));
-        for(const auto& header: rule.allowedHeaders)
+        for (const auto& header : rule.allowedHeaders)
             corsRulesXml += fmt::format("\t\t<AllowedHeader>{}</AllowedHeader>\n", escapeXML(header));
-        
-        if(!rule.id.empty())
+
+        if (!rule.id.empty())
             corsRulesXml += fmt::format("\t\t<ID>{}</ID>\n", escapeXML(rule.id));
-        if(!rule.maxAgeSeconds.empty())
+        if (!rule.maxAgeSeconds.empty())
             corsRulesXml += fmt::format("\t\t<MaxAgeSeconds>{}</MaxAgeSeconds>\n", escapeXML(rule.maxAgeSeconds));
 
         corsRulesXml += "\t</CORSRule>\n";
     }
 
     responseBuilderWithCors(200, "OK")
-                            .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
-                            .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-                                "<CORSConfiguration>"
-                                "{}"
-                                "</CORSConfiguration>", corsRulesXml))
-                            .sendWithEOM();
-}    
+        .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
+        .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                          "<CORSConfiguration>"
+                          "{}"
+                          "</CORSConfiguration>",
+                          corsRulesXml))
+        .sendWithEOM();
+}
 
 void S3Handler::listBuckets(proxygen::HTTPMessage& headers, std::string accessKey)
 {
     request_action = Action::ListBuckets;
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-    [self = self, evb, accessKey = std::move(accessKey)]()
-    {
-        self->listBuckets(evb, self, std::move(accessKey));
-    });
+        [self = self, evb, accessKey = std::move(accessKey)]()
+        {
+            self->listBuckets(evb, self, std::move(accessKey));
+        });
 }
 
 void S3Handler::listBuckets(folly::EventBase* evb, std::shared_ptr<S3Handler> self, std::string accessKey)
@@ -3401,43 +3474,42 @@ void S3Handler::listBuckets(folly::EventBase* evb, std::shared_ptr<S3Handler> se
     const auto buckets = buckets::getBucketNames();
 
     std::string resp;
-    resp.reserve(80 + buckets.objects.size() * 90 + 40); 
-    
-    resp += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-                        "<ListAllMyBucketsResult>\n"
-                        "\t<Buckets>\n";
+    resp.reserve(80 + buckets.objects.size() * 90 + 40);
 
-    
-    for(const auto& bucket: buckets.objects)
+    resp += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<ListAllMyBucketsResult>\n"
+            "\t<Buckets>\n";
+
+    for (const auto& bucket : buckets.objects)
     {
-        if(isAuthorized("arn:aws:s3:::" + bucket.name, Action::ListBuckets, accessKey))
+        if (isAuthorized("arn:aws:s3:::" + bucket.name, Action::ListBuckets, accessKey))
         {
             const auto bucketName = escapeXML(bucket.name);
             const auto creationDate = format_last_modified(bucket.created);
             resp += fmt::format("\t\t<Bucket><Name>{}</Name>"
-                "<BucketArn>arn:aws:s3:::{}</BucketArn>"
-                "<CreationDate>{}</CreationDate>"
-                "<BucketRegion>{}</BucketRegion>"
-                "</Bucket>\n", bucketName, bucketName, creationDate, FLAGS_aws_region);   
+                                "<BucketArn>arn:aws:s3:::{}</BucketArn>"
+                                "<CreationDate>{}</CreationDate>"
+                                "<BucketRegion>{}</BucketRegion>"
+                                "</Bucket>\n",
+                                bucketName, bucketName, creationDate, FLAGS_aws_region);
         }
     }
 
-    resp+= "\t</Buckets>\n"
+    resp += "\t</Buckets>\n"
             "</ListAllMyBucketsResult>";
 
     evb->runInEventBaseThread([self = self, resp = std::move(resp)]()
-                                              {
-                        self->responseBuilderWithCors(200, "OK")
-                            .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
-                            .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(resp.size()))
-                            .body(std::move(resp))
-                            .sendWithEOM(); });
+                              { self->responseBuilderWithCors(200, "OK")
+                                    .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
+                                    .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(resp.size()))
+                                    .body(std::move(resp))
+                                    .sendWithEOM(); });
 }
 
 void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
 {
     const auto runtime_id = sfs().get_runtime_id();
-    if(request_action==Action::HeadObject)
+    if (request_action == Action::HeadObject)
     {
         XLOGF(DBG0, "Head commit object, runtime id size {}", runtime_id.size());
         auto resp = std::move(responseBuilderWithCors(200, "OK").header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(runtime_id.size())));
@@ -3448,19 +3520,19 @@ void S3Handler::getCommitObject(proxygen::HTTPMessage& headers)
     }
 
     XLOGF(DBG0, "Get commit object, runtime id size {}", runtime_id.size());
-    
+
     responseBuilderWithCors(200, "OK")
-                        .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(runtime_id.size()))
-                        .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "binary/octet-stream")
-                        .body(runtime_id)
-                        .sendWithEOM();
+        .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(runtime_id.size()))
+        .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "binary/octet-stream")
+        .body(runtime_id)
+        .sendWithEOM();
 }
 
-bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen, 
-    std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, std::unique_ptr<ObjMetadata>* objMetadata, std::unique_ptr<PayloadHashBase>* sdkChecksumHash)
+bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen,
+                                   std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, std::unique_ptr<ObjMetadata>* objMetadata, std::unique_ptr<PayloadHashBase>* sdkChecksumHash)
 {
 #ifdef ALLOW_LEGACY_MD5SUM
-    if(md5sum.size()==MD5_DIGEST_LENGTH || md5sum.empty())
+    if (md5sum.size() == MD5_DIGEST_LENGTH || md5sum.empty())
     {
         return true;
     }
@@ -3468,97 +3540,97 @@ bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen,
 
     CRData rdata(md5sum.data(), md5sum.size());
     int64_t itype;
-    if(!rdata.getVarInt(&itype))
+    if (!rdata.getVarInt(&itype))
         return false;
 
     const auto itypeFlags = itype;
     itype = itype & ~metadata_known_flags;
 
-    if(objMetadata && itype==metadata_object)
+    if (objMetadata && itype == metadata_object)
     {
         assert(sdkChecksumHash);
 
-        if(!rdata.incrementPtr(MD5_DIGEST_LENGTH))
+        if (!rdata.incrementPtr(MD5_DIGEST_LENGTH))
             return false;
 
         if (itypeFlags & metadata_flag_has_obj_metadata)
         {
             *objMetadata = std::make_unique<ObjMetadata>();
-            if(!(*objMetadata)->deserialize(rdata, itypeFlags))
+            if (!(*objMetadata)->deserialize(rdata, itypeFlags))
             {
                 *objMetadata = nullptr;
                 return false;
             }
         }
 
-        if(itypeFlags & metadata_flag_with_checksum)
+        if (itypeFlags & metadata_flag_with_checksum)
         {
-            if(!deserializeSdkChecksum(rdata, *sdkChecksumHash, true))
+            if (!deserializeSdkChecksum(rdata, *sdkChecksumHash, true))
                 return false;
         }
-        
+
         return true;
     }
-    else if(itype==metadata_object || itype==metadata_tombstone)
+    else if (itype == metadata_object || itype == metadata_tombstone)
     {
         return true;
     }
 
     assert(itype == metadata_multipart_object);
 
-    if(itype != metadata_multipart_object)
+    if (itype != metadata_multipart_object)
         return false;
-    
+
     multiPartDownloadData = std::make_unique<MultiPartDownloadData>();
-    if(rdata.getLeft()>=MD5_DIGEST_LENGTH)
+    if (rdata.getLeft() >= MD5_DIGEST_LENGTH)
     {
         multiPartDownloadData->etag.assign(rdata.getCurrDataPtr(), MD5_DIGEST_LENGTH);
         rdata.incrementPtr(MD5_DIGEST_LENGTH);
     }
 
-    if(!rdata.getVarInt(&multiPartDownloadData->uploadId))
+    if (!rdata.getVarInt(&multiPartDownloadData->uploadId))
         return false;
 
-    if(!rdata.getVarInt(&multiPartDownloadData->numParts))
+    if (!rdata.getVarInt(&multiPartDownloadData->numParts))
         return false;
 
-    if(multiPartDownloadData->numParts<0)
+    if (multiPartDownloadData->numParts < 0)
         return false;
 
     totalLen = 0;
     int64_t numParts = 0;
     int64_t size, start, len;
-    while(rdata.getVarInt(&size) &&
-        rdata.getVarInt(&start) &&
-        rdata.getVarInt(&len))
+    while (rdata.getVarInt(&size) &&
+           rdata.getVarInt(&start) &&
+           rdata.getVarInt(&len))
     {
         numParts += len;
-        totalLen += len*size;
-        MultiPartDownloadData::PartExt ext{.size=size, .start=static_cast<int>(start), .len=static_cast<int>(len)};
+        totalLen += len * size;
+        MultiPartDownloadData::PartExt ext{ .size = size, .start = static_cast<int>(start), .len = static_cast<int>(len) };
         multiPartDownloadData->exts.emplace_back(std::move(ext));
 
-        if(numParts==multiPartDownloadData->numParts)
+        if (numParts == multiPartDownloadData->numParts)
             break;
     }
 
-    if(numParts!=multiPartDownloadData->numParts)
+    if (numParts != multiPartDownloadData->numParts)
         return false;
 
-    if(objMetadata &&
+    if (objMetadata &&
         (itypeFlags & metadata_flag_has_obj_metadata))
     {
         *objMetadata = std::make_unique<ObjMetadata>();
-        if(!(*objMetadata)->deserialize(rdata, itypeFlags))
+        if (!(*objMetadata)->deserialize(rdata, itypeFlags))
         {
             *objMetadata = nullptr;
             return false;
         }
     }
 
-    if(sdkChecksumHash &&
+    if (sdkChecksumHash &&
         (itypeFlags & metadata_flag_with_checksum))
     {
-        if(!deserializeSdkChecksum(rdata, *sdkChecksumHash, true))
+        if (!deserializeSdkChecksum(rdata, *sdkChecksumHash, true))
             return false;
     }
 
@@ -3568,26 +3640,26 @@ bool S3Handler::parseMultipartInfo(const std::string& md5sum, int64_t& totalLen,
 std::string S3Handler::getEtag(const std::string& md5sum)
 {
 #ifdef ALLOW_LEGACY_MD5SUM
-    if(md5sum.size()==MD5_DIGEST_LENGTH || md5sum.empty())
+    if (md5sum.size() == MD5_DIGEST_LENGTH || md5sum.empty())
     {
         return md5sum;
     }
 #endif
 
-    if(md5sum.empty())
+    if (md5sum.empty())
         return std::string();
 
     CRData rdata(md5sum.data(), md5sum.size());
     int64_t itype;
-    if(!rdata.getVarInt(&itype))
+    if (!rdata.getVarInt(&itype))
         return std::string();
 
     itype = itype & ~metadata_known_flags;
 
-    if(itype == metadata_tombstone)
+    if (itype == metadata_tombstone)
         return std::string();
 
-    if(itype != metadata_multipart_object && itype != metadata_object)
+    if (itype != metadata_multipart_object && itype != metadata_object)
     {
         assert(false);
         return std::string();
@@ -3595,23 +3667,23 @@ std::string S3Handler::getEtag(const std::string& md5sum)
 
     std::string etag;
 
-    if(rdata.getLeft()>=MD5_DIGEST_LENGTH)
+    if (rdata.getLeft() >= MD5_DIGEST_LENGTH)
     {
         etag.assign(rdata.getCurrDataPtr(), MD5_DIGEST_LENGTH);
         rdata.incrementPtr(MD5_DIGEST_LENGTH);
     }
 
-    if(itype == metadata_object)
+    if (itype == metadata_object)
     {
         return fmt::format("\"{}\"", folly::hexlify(etag));
     }
 
     int64_t uploadId, numParts;
 
-    if(!rdata.getVarInt(&uploadId))
+    if (!rdata.getVarInt(&uploadId))
         return fmt::format("\"{}\"", folly::hexlify(etag));
 
-    if(!rdata.getVarInt(&numParts))
+    if (!rdata.getVarInt(&numParts))
         return fmt::format("\"{}\"", folly::hexlify(etag));
 
     return fmt::format("\"{}-{}\"", folly::hexlify(etag), numParts);
@@ -3619,7 +3691,7 @@ std::string S3Handler::getEtag(const std::string& md5sum)
 
 std::string S3Handler::getEtagParsedMultipart(const std::string& md5sum)
 {
-    if(multiPartDownloadData)
+    if (multiPartDownloadData)
         return fmt::format("\"{}-{}\"", folly::hexlify(multiPartDownloadData->etag), multiPartDownloadData->numParts);
     else
         return fmt::format("\"{}\"", folly::hexlify(md5sum));
@@ -3627,24 +3699,24 @@ std::string S3Handler::getEtagParsedMultipart(const std::string& md5sum)
 
 void S3Handler::manualCommit(proxygen::HTTPMessage& headers)
 {
-    if(put_remaining>0)
+    if (put_remaining > 0)
     {
         XLOGF(WARN, "put_remaining > 0 for key {}: {}", keyInfo.key, put_remaining.load(std::memory_order_relaxed));
-            ResponseBuilder(self->downstream_)
-                    .status(500, "Internal error")
-                    .body(s3errorXml(S3ErrorCode::InternalError, "put_remaining > 0", fullKeyPath(), ""))
-                    .sendWithEOM();
+        ResponseBuilder(self->downstream_)
+            .status(500, "Internal error")
+            .body(s3errorXml(S3ErrorCode::InternalError, "put_remaining > 0", fullKeyPath(), ""))
+            .sendWithEOM();
         return;
     }
 
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-    [self = this->self, evb]()
-    {
-        bool b = self->sfs().commit(false, -1, FLAGS_pre_sync_commit);
+        [self = this->self, evb]()
+        {
+            bool b = self->sfs().commit(false, -1, FLAGS_pre_sync_commit);
 
-        evb->runInEventBaseThread([self = self, b]()
-                                        {
+            evb->runInEventBaseThread([self = self, b]()
+                                      {
         if(!b)
         {
             ResponseBuilder(self->downstream_)
@@ -3656,40 +3728,39 @@ void S3Handler::manualCommit(proxygen::HTTPMessage& headers)
             ResponseBuilder(self->downstream_)
                     .status(200, "OK")
                     .sendWithEOM();
-        }
-                                        });
-    });
+        } });
+        });
 }
 
 std::pair<int64_t, int64_t> parseRange(const std::string_view range, int64_t fileSize)
 {
-    if(range.empty())
+    if (range.empty())
         return std::make_pair(0, fileSize);
 
     int64_t start = -1;
     int64_t end = -1;
-    if(!range.starts_with("bytes="))
+    if (!range.starts_with("bytes="))
         return std::make_pair(start, end);
-    if(range.find(',')!=std::string::npos)
+    if (range.find(',') != std::string::npos)
         return std::make_pair(start, end);
 
     const auto byteRange = range.substr(6);
     const auto dashPos = byteRange.find("-");
-    if(dashPos==std::string::npos)
+    if (dashPos == std::string::npos)
         return std::make_pair(start, end);
 
     try
     {
         auto startStr = std::string(byteRange.substr(0, dashPos));
-        auto endStr = std::string(byteRange.substr(dashPos+1));
-        if(startStr.empty() && !endStr.empty())
+        auto endStr = std::string(byteRange.substr(dashPos + 1));
+        if (startStr.empty() && !endStr.empty())
         {
             start = fileSize - std::stoll(endStr);
             end = fileSize;
         }
-        else if(!startStr.empty() && endStr.empty())
+        else if (!startStr.empty() && endStr.empty())
         {
-            start =  std::stoll(startStr);
+            start = std::stoll(startStr);
             end = fileSize;
         }
         else
@@ -3698,13 +3769,13 @@ std::pair<int64_t, int64_t> parseRange(const std::string_view range, int64_t fil
             end = std::stoll(endStr) + 1;
         }
     }
-    catch(const std::exception&)
+    catch (const std::exception&)
     {
         XLOGF(INFO, "Error parsing range header {}", range);
         start = -1;
         return std::make_pair(start, end);
     }
-    
+
     return std::make_pair(start, end);
 }
 
@@ -3714,45 +3785,45 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
     const auto partNumberStrPtr = headers.getQueryParamPtr("partNumber");
     const auto checksumModeStr = headers.getHeaders().getSingleOrEmpty("x-amz-checksum-mode");
 
-    if(!checksumModeStr.empty() && checksumModeStr!="ENABLED")
+    if (!checksumModeStr.empty() && checksumModeStr != "ENABLED")
     {
         ResponseBuilder(self->downstream_)
-                    .status(400, "Bad request")
-                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid checksum mode", fullKeyPath(), ""))
-                    .sendWithEOM();
+            .status(400, "Bad request")
+            .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid checksum mode", fullKeyPath(), ""))
+            .sendWithEOM();
         return;
     }
     const auto checksumModeEnabled = checksumModeStr == "ENABLED";
 
     folly::getGlobalCPUExecutor()->add(
-            [self = self, evb, accessKey, range=headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_RANGE), partNumberStr = partNumberStrPtr ? std::optional<std::string>(*partNumberStrPtr) : std::nullopt, checksumModeEnabled]()
-            { 
-                unsigned int flags = 0;
-                if(self->request_action == Action::HeadObject)
-                    flags |= SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading;
-                else
-                    flags |= SingleFileStorage::ReadAddReadingCallback;
-                
-                std::string findPath;
+        [self = self, evb, accessKey, range = headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_RANGE), partNumberStr = partNumberStrPtr ? std::optional<std::string>(*partNumberStrPtr) : std::nullopt, checksumModeEnabled]()
+        {
+            unsigned int flags = 0;
+            if (self->request_action == Action::HeadObject)
+                flags |= SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading;
+            else
+                flags |= SingleFileStorage::ReadAddReadingCallback;
 
-                const auto findNewestVersion = self->keyInfo.withVersioning() && self->keyInfo.version==0;
-                if(findNewestVersion)
-                {
-                    flags |= SingleFileStorage::ReadNewest;
-                    findPath = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
-                }
-                else
-                {
-                    findPath = make_key(self->keyInfo);
-                }
+            std::string findPath;
 
-                auto res = self->sfs().read_prepare(findPath, flags);
+            const auto findNewestVersion = self->keyInfo.withVersioning() && self->keyInfo.version == 0;
+            if (findNewestVersion)
+            {
+                flags |= SingleFileStorage::ReadNewest;
+                findPath = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
+            }
+            else
+            {
+                findPath = make_key(self->keyInfo);
+            }
 
-                if (res.err != 0)
-                {
-                    XLOGF(INFO, "Object {} err {}", self->keyInfo.key, res.err);
-                    evb->runInEventBaseThread([self = self, res, accessKey]()
-                                              {
+            auto res = self->sfs().read_prepare(findPath, flags);
+
+            if (res.err != 0)
+            {
+                XLOGF(INFO, "Object {} err {}", self->keyInfo.key, res.err);
+                evb->runInEventBaseThread([self = self, res, accessKey]()
+                                          {
 
                         if(res.err==ENOENT)
                         {
@@ -3781,168 +3852,151 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                             self->responseBuilderWithCors(500, "Internal error")
                                 .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error code: {}", res.err), self->fullKeyPath(), ""))
                                 .sendWithEOM();
-                        }
-                                              });
+                        } });
+                return;
+            }
+            else if (findNewestVersion)
+            {
+                findPath = res.key;
+                self->keyInfo.version = extractKeyInfoView(findPath).version;
+            }
+
+            bool runReadCleanup = true;
+            SCOPE_EXIT
+            {
+                if (!runReadCleanup || self->request_action == Action::HeadObject)
                     return;
-                }
-                else if(findNewestVersion)
-                {
-                    findPath = res.key;
-                    self->keyInfo.version = extractKeyInfoView(findPath).version;
-                }
+                int rc;
+                if (self->multiPartDownloadData)
+                    rc = finalizeMultiPart(self->sfs(), findPath, self->keyInfo.bucketId, *self->multiPartDownloadData, res.extents);
+                else
+                    rc = self->sfs().read_finalize(findPath, res.extents, 0);
+                assert(rc == 0);
+            };
 
-                bool runReadCleanup = true;
-                SCOPE_EXIT {
-                    if(!runReadCleanup || self->request_action == Action::HeadObject)
-                        return;
-                    int rc;
-                    if(self->multiPartDownloadData)
-                        rc = finalizeMultiPart(self->sfs(), findPath, self->keyInfo.bucketId, *self->multiPartDownloadData, res.extents);
-                    else
-                        rc = self->sfs().read_finalize(findPath, res.extents, 0);
-                    assert(rc==0);
-                };
+            if (!self->parseMultipartInfo(res.md5sum, res.total_len, self->multiPartDownloadData, &self->objMetadata, &self->sdkChecksumHash))
+            {
+                evb->runInEventBaseThread([self = self]()
+                                          { self->responseBuilderWithCors(500, "Internal error")
+                                                .body(s3errorXml(S3ErrorCode::InternalError, "Error parsing md5sum data", self->fullKeyPath(), ""))
+                                                .sendWithEOM(); });
+                return;
+            }
 
-                if(!self->parseMultipartInfo(res.md5sum, res.total_len, self->multiPartDownloadData, &self->objMetadata, &self->sdkChecksumHash))
-                {
-                    evb->runInEventBaseThread([self = self]()
-                                              {
-                                self->responseBuilderWithCors(500, "Internal error")
-                                .body(s3errorXml(S3ErrorCode::InternalError, "Error parsing md5sum data", self->fullKeyPath(), ""))
-                                .sendWithEOM();
-                                              });
-                                            return;
-                }
-
-                if(res.md5sum.size()==1 && res.md5sum[0] == metadata_tombstone)
-                {
-                    const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
-                    if(isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), Action::ListObjects, accessKey))
-                    {
-                        evb->runInEventBaseThread([self = self, res]()
-                        {
-                            self->responseBuilderWithCors(404, "Not found")
-                                        .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
-                                        .sendWithEOM();
-                        });
-                    }
-                    else
-                    {
-                        evb->runInEventBaseThread([self = self, res]()
-                        {
-                            self->responseBuilderWithCors(403, "Forbidden")
-                                    .body(s3errorXml(S3ErrorCode::AccessDenied, "Access is forbidden", self->fullKeyPath(), ""))
-                                    .sendWithEOM();
-                        });
-                    }
-                    return;
-                }
-
-                const auto md5sum = S3Handler::md5sumBinFromData(res.md5sum);
-
-                auto [rangeStart, rangeEnd] = parseRange(range, res.total_len);
-
-                if(!range.empty() && 
-                    (rangeStart<0 || rangeEnd<0 || rangeStart>=rangeEnd || rangeEnd > res.total_len) )
+            if (res.md5sum.size() == 1 && res.md5sum[0] == metadata_tombstone)
+            {
+                const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
+                if (isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), Action::ListObjects, accessKey))
                 {
                     evb->runInEventBaseThread([self = self, res]()
-                        {
-                            self->responseBuilderWithCors(416, "Range Not Satisfiable")
-                                    .sendWithEOM();
-                        });
+                                              { self->responseBuilderWithCors(404, "Not found")
+                                                    .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
+                                                    .sendWithEOM(); });
+                }
+                else
+                {
+                    evb->runInEventBaseThread([self = self, res]()
+                                              { self->responseBuilderWithCors(403, "Forbidden")
+                                                    .body(s3errorXml(S3ErrorCode::AccessDenied, "Access is forbidden", self->fullKeyPath(), ""))
+                                                    .sendWithEOM(); });
+                }
+                return;
+            }
+
+            const auto md5sum = S3Handler::md5sumBinFromData(res.md5sum);
+
+            auto [rangeStart, rangeEnd] = parseRange(range, res.total_len);
+
+            if (!range.empty() &&
+                (rangeStart < 0 || rangeEnd < 0 || rangeStart >= rangeEnd || rangeEnd > res.total_len))
+            {
+                evb->runInEventBaseThread([self = self, res]()
+                                          { self->responseBuilderWithCors(416, "Range Not Satisfiable")
+                                                .sendWithEOM(); });
+                return;
+            }
+
+            std::optional<std::string> partNumberEtag;
+            std::optional<int64_t> partNumberSize;
+            bool setMultiPartExtents = false;
+            if (partNumberStr)
+            {
+                if (!range.empty())
+                {
+                    evb->runInEventBaseThread([self = self]()
+                                              { self->responseBuilderWithCors(400, "Bad Request")
+                                                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Cannot specify both Range header and partNumber parameter", self->fullKeyPath(), ""))
+                                                    .sendWithEOM(); });
                     return;
                 }
 
-                std::optional<std::string> partNumberEtag;
-                std::optional<int64_t> partNumberSize;
-                bool setMultiPartExtents = false;
-                if(partNumberStr)
+                int partNumber;
+                try
                 {
-                    if(!range.empty())
-                    {
-                        evb->runInEventBaseThread([self = self]()
-                                {
-                                    self->responseBuilderWithCors(400, "Bad Request")
-                                        .body(s3errorXml(S3ErrorCode::InvalidArgument, "Cannot specify both Range header and partNumber parameter", self->fullKeyPath(), ""))
-                                        .sendWithEOM();
-                            });
-                        return;
-                    }
-
-                    int partNumber;
-                    try
-                    {
-                        partNumber = std::atoi(partNumberStr->c_str()) - 1;
-                    }
-                    catch(const std::exception&)
-                    {
-                        evb->runInEventBaseThread([self = self]()
-                                {
-                                    self->responseBuilderWithCors(400, "Bad Request")
-                                        .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid partNumber parameter", self->fullKeyPath(), ""))
-                                        .sendWithEOM();
-                            });
-                        return;
-                    }
-
-                    if( (!self->multiPartDownloadData && partNumber != 0)
-                         || partNumber<0 || partNumber>=self->multiPartDownloadData->numParts)
-                    {
-                        evb->runInEventBaseThread([self = self, partNumber]()
-                                {
-                                    self->responseBuilderWithCors(400, "Bad Request")
-                                        .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid partNumber parameter", self->fullKeyPath(), ""))
-                                        .sendWithEOM();
-                            });
-                        return;
-                    }
-
-                    if(self->multiPartDownloadData)
-                    {
-                        std::string partNumberEtagOut;
-                        int64_t partNumberOffset;
-                        int64_t partNumberSizeOut;
-                        std::unique_ptr<PayloadHashBase> partNumberChecksumHashOut;
-                        const auto rc = seekMultipart(self->sfs(), partNumber, self->keyInfo.bucketId, self->request_action != Action::HeadObject,
-                            *self->multiPartDownloadData, self->extents, partNumberEtagOut, partNumberOffset, partNumberSizeOut, partNumberChecksumHashOut, nullptr);
-                        if(rc!=0)
-                        {
-                            XLOGF(WARN, "Error seeking to part number {} of key {}: {}",
-                                partNumber+1, self->keyInfo.key, rc);
-                            evb->runInEventBaseThread([self = self, rc]()
-                                    {
-                                        self->responseBuilderWithCors(500, "Internal error")
-                                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error seeking to part: {}", rc), self->fullKeyPath(), ""))
-                                            .sendWithEOM();
-                            });
-                            return;
-                        }
-
-                        rangeStart = partNumberOffset;
-                        rangeEnd = partNumberOffset + partNumberSizeOut;
-                        partNumberEtag = partNumberEtagOut;
-                        setMultiPartExtents = true;
-
-                        if(partNumberChecksumHashOut && self->sdkChecksumHash)
-                        {
-                            self->sdkChecksumHash->setExpectedHash(partNumberChecksumHashOut->getExpectedHash());
-                        }
-                    }
+                    partNumber = std::atoi(partNumberStr->c_str()) - 1;
+                }
+                catch (const std::exception&)
+                {
+                    evb->runInEventBaseThread([self = self]()
+                                              { self->responseBuilderWithCors(400, "Bad Request")
+                                                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid partNumber parameter", self->fullKeyPath(), ""))
+                                                    .sendWithEOM(); });
+                    return;
                 }
 
-                if(self->matchInfo)
+                if ((!self->multiPartDownloadData && partNumber != 0) || partNumber < 0 || partNumber >= self->multiPartDownloadData->numParts)
                 {
-                    SingleFileStorage::SFragInfo frag_info;
-                    frag_info.last_modified = res.last_modified;
-                    onMatchCallback(*self->matchInfo, frag_info, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum));
+                    evb->runInEventBaseThread([self = self, partNumber]()
+                                              { self->responseBuilderWithCors(400, "Bad Request")
+                                                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid partNumber parameter", self->fullKeyPath(), ""))
+                                                    .sendWithEOM(); });
+                    return;
                 }
 
-                const bool fullRange = rangeStart==0 && rangeEnd==res.total_len;
+                if (self->multiPartDownloadData)
+                {
+                    std::string partNumberEtagOut;
+                    int64_t partNumberOffset;
+                    int64_t partNumberSizeOut;
+                    std::unique_ptr<PayloadHashBase> partNumberChecksumHashOut;
+                    const auto rc = seekMultipart(self->sfs(), partNumber, self->keyInfo.bucketId, self->request_action != Action::HeadObject,
+                                                  *self->multiPartDownloadData, self->extents, partNumberEtagOut, partNumberOffset, partNumberSizeOut, partNumberChecksumHashOut, nullptr);
+                    if (rc != 0)
+                    {
+                        XLOGF(WARN, "Error seeking to part number {} of key {}: {}",
+                              partNumber + 1, self->keyInfo.key, rc);
+                        evb->runInEventBaseThread([self = self, rc]()
+                                                  { self->responseBuilderWithCors(500, "Internal error")
+                                                        .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error seeking to part: {}", rc), self->fullKeyPath(), ""))
+                                                        .sendWithEOM(); });
+                        return;
+                    }
 
-                evb->runInEventBaseThread([self = self, hasRange=!range.empty() || partNumberSize, 
-                        rangeStart, rangeEnd, md5sum, partNumberEtag, last_modified = res.last_modified,
-                        checksumModeEnabled, returnPart = partNumberStr.has_value(), fullRange ]()
-                                              {
+                    rangeStart = partNumberOffset;
+                    rangeEnd = partNumberOffset + partNumberSizeOut;
+                    partNumberEtag = partNumberEtagOut;
+                    setMultiPartExtents = true;
+
+                    if (partNumberChecksumHashOut && self->sdkChecksumHash)
+                    {
+                        self->sdkChecksumHash->setExpectedHash(partNumberChecksumHashOut->getExpectedHash());
+                    }
+                }
+            }
+
+            if (self->matchInfo)
+            {
+                SingleFileStorage::SFragInfo frag_info;
+                frag_info.last_modified = res.last_modified;
+                onMatchCallback(*self->matchInfo, frag_info, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum));
+            }
+
+            const bool fullRange = rangeStart == 0 && rangeEnd == res.total_len;
+
+            evb->runInEventBaseThread([self = self, hasRange = !range.empty() || partNumberSize,
+                                       rangeStart, rangeEnd, md5sum, partNumberEtag, last_modified = res.last_modified,
+                                       checksumModeEnabled, returnPart = partNumberStr.has_value(), fullRange]()
+                                      {
                     if(self->matchInfo && !self->matchInfo->match)
                     {
                         self->responseBuilderWithCors(412, "Precondition Failed")
@@ -3995,20 +4049,19 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                     {
                         XLOGF(DBG0, "Content length {} bytes for readObject GET of {}", rangeEnd-rangeStart, self->keyInfo.key);
                         resp.send();
-                    }
-                                              });
+                    } });
 
-                if (self->request_action == Action::HeadObject || (self->matchInfo && !self->matchInfo->match))
-                    return;
+            if (self->request_action == Action::HeadObject || (self->matchInfo && !self->matchInfo->match))
+                return;
 
-                runReadCleanup = false;
-                if(!setMultiPartExtents)
-                    self->extents = std::move(res.extents);
-                self->done_bytes = rangeStart;
-                self->put_remaining.store(rangeEnd, std::memory_order_relaxed);
+            runReadCleanup = false;
+            if (!setMultiPartExtents)
+                self->extents = std::move(res.extents);
+            self->done_bytes = rangeStart;
+            self->put_remaining.store(rangeEnd, std::memory_order_relaxed);
 
-                self->readObject(evb, std::move(self), rangeStart);
-            });
+            self->readObject(evb, std::move(self), rangeStart);
+        });
 }
 
 void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::string& accessKey)
@@ -4021,36 +4074,36 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
     int partNumberMarker = 0;
     try
     {
-        if(!partNumberMarkerStr.empty())
+        if (!partNumberMarkerStr.empty())
             partNumberMarker = std::stoi(partNumberMarkerStr);
     }
-    catch(const std::exception&)
+    catch (const std::exception&)
     {
         self->responseBuilderWithCors(400, "Bad request")
-                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid part number marker", fullKeyPath(), ""))
-                    .sendWithEOM();
+            .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid part number marker", fullKeyPath(), ""))
+            .sendWithEOM();
         return;
     }
 
     int maxParts = 1000;
     try
     {
-        if(!maxPartsStr.empty())
+        if (!maxPartsStr.empty())
             maxParts = std::stoi(maxPartsStr);
     }
-    catch(const std::exception&)
+    catch (const std::exception&)
     {
         self->responseBuilderWithCors(400, "Bad request")
-                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid max parts", fullKeyPath(), ""))
-                    .sendWithEOM();
+            .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid max parts", fullKeyPath(), ""))
+            .sendWithEOM();
         return;
     }
 
-    if(maxParts<1 || maxParts>1000)
+    if (maxParts < 1 || maxParts > 1000)
     {
         self->responseBuilderWithCors(400, "Bad request")
-                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "max parts must be between 1 and 1000", fullKeyPath(), ""))
-                    .sendWithEOM();
+            .body(s3errorXml(S3ErrorCode::InvalidArgument, "max parts must be between 1 and 1000", fullKeyPath(), ""))
+            .sendWithEOM();
         return;
     }
 
@@ -4062,7 +4115,7 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
     bool outputStorageClass = false;
 
     headers.getHeaders().forEachValueOfHeader("x-amz-object-attributes", [&](std::string_view val) -> bool
-    {
+                                              {
         if(val=="ETag")
             outputEtag = true;
         else if(val=="Checksum")
@@ -4097,33 +4150,31 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
             }
         }
 
-        return false;
-    });
-    
+        return false; });
 
     folly::getGlobalCPUExecutor()->add(
-            [self = self, evb, outputEtag, outputChecksum, outputLastModified, outputSize, outputParts, outputStorageClass, accessKey, partNumberMarker, maxParts, hasPartNumberMarker = !partNumberMarkerStr.empty()]()
-            { 
-                unsigned int flags = SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading;
-                const auto findNewestVersion = self->keyInfo.withVersioning() && self->keyInfo.version==0;
-                std::string findPath;
-                if(findNewestVersion)
-                {
-                    flags |= SingleFileStorage::ReadNewest;
-                    findPath = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
-                }
-                else
-                {
-                    findPath = make_key(self->keyInfo);
-                }               
+        [self = self, evb, outputEtag, outputChecksum, outputLastModified, outputSize, outputParts, outputStorageClass, accessKey, partNumberMarker, maxParts, hasPartNumberMarker = !partNumberMarkerStr.empty()]()
+        {
+            unsigned int flags = SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading;
+            const auto findNewestVersion = self->keyInfo.withVersioning() && self->keyInfo.version == 0;
+            std::string findPath;
+            if (findNewestVersion)
+            {
+                flags |= SingleFileStorage::ReadNewest;
+                findPath = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
+            }
+            else
+            {
+                findPath = make_key(self->keyInfo);
+            }
 
-                auto res = self->sfs().read_prepare(findPath, flags);
+            auto res = self->sfs().read_prepare(findPath, flags);
 
-                if (res.err != 0)
-                {
-                    XLOGF(INFO, "Object {} err {}", self->keyInfo.key, res.err);
-                    evb->runInEventBaseThread([self = self, res, accessKey]()
-                                              {
+            if (res.err != 0)
+            {
+                XLOGF(INFO, "Object {} err {}", self->keyInfo.key, res.err);
+                evb->runInEventBaseThread([self = self, res, accessKey]()
+                                          {
 
                         if(res.err==ENOENT)
                         {
@@ -4152,186 +4203,175 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
                             self->responseBuilderWithCors(500, "Internal error")
                                 .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error code: {}", res.err), self->fullKeyPath(), ""))
                                 .sendWithEOM();
-                        }
-                                              });
+                        } });
+                return;
+            }
+            else if (findNewestVersion)
+            {
+                findPath = res.key;
+                self->keyInfo.version = extractKeyInfoView(findPath).version;
+            }
+
+            if (!self->parseMultipartInfo(res.md5sum, res.total_len, self->multiPartDownloadData, &self->objMetadata, &self->sdkChecksumHash))
+            {
+                evb->runInEventBaseThread([self = self]()
+                                          { self->responseBuilderWithCors(500, "Internal error")
+                                                .body(s3errorXml(S3ErrorCode::InternalError, "Error parsing object metadata", self->fullKeyPath(), ""))
+                                                .sendWithEOM(); });
+                return;
+            }
+
+            std::string output = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                                 "<GetObjectAttributesResponse>\n";
+
+            if (outputEtag)
+            {
+                const auto md5sum = S3Handler::md5sumBinFromData(res.md5sum);
+                output += fmt::format("\t<ETag>{}</ETag>\n", self->getEtagParsedMultipart(md5sum));
+            }
+
+            if (outputChecksum && self->sdkChecksumHash)
+            {
+                const auto checksumType = (!self->multiPartDownloadData || self->sdkChecksumHash->isFull()) ? "FULL_OBJECT" : "COMPOSITE";
+
+                output += fmt::format("\t<Checksum>\n\t\t<Checksum{}>{}</Checksum{}>\n\t\t<ChecksumType>{}</ChecksumType>\n\t</Checksum>\n",
+                                      self->sdkChecksumHash->getHashTypeStr(), self->sdkChecksumHash->expectedCombined(self->multiPartDownloadData ? self->multiPartDownloadData->numParts : 0),
+                                      self->sdkChecksumHash->getHashTypeStr(), checksumType);
+            }
+
+            if (outputParts)
+            {
+                std::string partEtag;
+                int64_t partOffset;
+                int64_t partLen;
+                int64_t partSize;
+                std::unique_ptr<PayloadHashBase> partChecksumHash;
+                const auto rc = seekMultipart(self->sfs(), partNumberMarker, self->keyInfo.bucketId, false,
+                                              *self->multiPartDownloadData, res.extents, partEtag, partOffset, partLen, partChecksumHash, &partSize);
+
+                if (rc)
+                {
+                    evb->runInEventBaseThread([self = self, rc]()
+                                              { self->responseBuilderWithCors(500, "Internal error")
+                                                    .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error seeking to part: {}", rc), self->fullKeyPath(), ""))
+                                                    .sendWithEOM(); });
                     return;
                 }
-                else if(findNewestVersion)
+
+                output += fmt::format("\t<ObjectParts>\n\t\t<MaxParts>{}</MaxParts>\n", maxParts);
+
+                if (hasPartNumberMarker)
                 {
-                    findPath = res.key;
-                    self->keyInfo.version = extractKeyInfoView(findPath).version;
+                    output += fmt::format("\t\t<PartNumberMarker>{}</PartNumberMarker>\n", partNumberMarker);
                 }
 
-                if(!self->parseMultipartInfo(res.md5sum, res.total_len, self->multiPartDownloadData, &self->objMetadata, &self->sdkChecksumHash))
+                int outputPartNumber = 0;
+                bool isTruncated = true;
+
+                do
                 {
-                    evb->runInEventBaseThread([self = self]()
-                                              {
-                                self->responseBuilderWithCors(500, "Internal error")
-                                .body(s3errorXml(S3ErrorCode::InternalError, "Error parsing object metadata", self->fullKeyPath(), ""))
-                                .sendWithEOM();
-                                              });
-                                            return;
-                }
-                
-                std::string output= "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-                    "<GetObjectAttributesResponse>\n";
 
-                if(outputEtag)
-                {
-                    const auto md5sum = S3Handler::md5sumBinFromData(res.md5sum);
-                    output += fmt::format("\t<ETag>{}</ETag>\n", self->getEtagParsedMultipart(md5sum));
-                }
+                    output += "\t\t<Part>\n";
 
-                if(outputChecksum && self->sdkChecksumHash)
-                {
-                    const auto checksumType = (!self->multiPartDownloadData || self->sdkChecksumHash->isFull()) ? "FULL_OBJECT" : "COMPOSITE";
-
-                    output += fmt::format("\t<Checksum>\n\t\t<Checksum{}>{}</Checksum{}>\n\t\t<ChecksumType>{}</ChecksumType>\n\t</Checksum>\n",
-                        self->sdkChecksumHash->getHashTypeStr(), self->sdkChecksumHash->expectedCombined(self->multiPartDownloadData ? self->multiPartDownloadData->numParts : 0), 
-                        self->sdkChecksumHash->getHashTypeStr(), checksumType);
-                }
-
-                if(outputParts)
-                {
-                    std::string partEtag;
-                    int64_t partOffset;
-                    int64_t partLen;
-                    int64_t partSize;
-                    std::unique_ptr<PayloadHashBase> partChecksumHash;
-                    const auto rc = seekMultipart(self->sfs(), partNumberMarker, self->keyInfo.bucketId, false, 
-                        *self->multiPartDownloadData, res.extents, partEtag, partOffset, partLen, partChecksumHash, &partSize);
-
-                    if(rc)
+                    if (partChecksumHash)
                     {
+                        output += fmt::format("\t\t\t<Checksum{}>{}</Checksum{}>\n", partChecksumHash->getHashTypeStr(), partChecksumHash->expectedCombined(0), partChecksumHash->getHashTypeStr());
+                    }
+
+                    output += fmt::format(
+                        "\t\t\t<PartNumber>{}</PartNumber>\n"
+                        "\t\t\t<Size>{}</Size>\n"
+                        "\t\t</Part>\n",
+                        partNumberMarker + outputPartNumber + 1, partSize);
+
+                    ++outputPartNumber;
+
+                    std::vector<SingleFileStorage::Ext> extents;
+                    const int rc = readNextMultipartExt(self->sfs(), partOffset, self->keyInfo.bucketId, false,
+                                                        *self->multiPartDownloadData, extents, &partEtag, &partChecksumHash, &partSize);
+                    if (rc && rc != ENOENT)
+                    {
+                        XLOGF(WARN, "Error reading part number {} of key {}: {}",
+                              outputPartNumber + 1, self->keyInfo.key, rc);
                         evb->runInEventBaseThread([self = self, rc]()
-                                {
-                                    self->responseBuilderWithCors(500, "Internal error")
-                                        .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error seeking to part: {}", rc), self->fullKeyPath(), ""))
-                                        .sendWithEOM();
-                            });
+                                                  { self->responseBuilderWithCors(500, "Internal error")
+                                                        .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error reading part: {}", rc), self->fullKeyPath(), ""))
+                                                        .sendWithEOM(); });
                         return;
                     }
-
-                    output+= fmt::format("\t<ObjectParts>\n\t\t<MaxParts>{}</MaxParts>\n", maxParts);
-
-                    if(hasPartNumberMarker)
+                    else if (rc == EIO)
                     {
-                        output += fmt::format("\t\t<PartNumberMarker>{}</PartNumberMarker>\n", partNumberMarker);
-                    }
-
-                    int outputPartNumber = 0;
-                    bool isTruncated = true;
-
-                    do
-                    {
-
-                        output+= "\t\t<Part>\n";
-
-                        if(partChecksumHash)
+                        const auto keyRc = self->sfs().read_prepare(findPath, SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading);
+                        if (keyRc.err == ENOENT)
                         {
-                            output += fmt::format("\t\t\t<Checksum{}>{}</Checksum{}>\n", partChecksumHash->getHashTypeStr(), partChecksumHash->expectedCombined(0), partChecksumHash->getHashTypeStr());
-                        }
-
-                        output += fmt::format(
-                            "\t\t\t<PartNumber>{}</PartNumber>\n"
-                            "\t\t\t<Size>{}</Size>\n"
-                            "\t\t</Part>\n", partNumberMarker + outputPartNumber + 1, partSize);
-
-                        ++outputPartNumber;
-
-                        std::vector<SingleFileStorage::Ext> extents;
-                        const int rc = readNextMultipartExt(self->sfs(), partOffset, self->keyInfo.bucketId, false,
-                             *self->multiPartDownloadData, extents, &partEtag, &partChecksumHash, &partSize);
-                        if(rc && rc != ENOENT)
-                        {
-                            XLOGF(WARN, "Error reading part number {} of key {}: {}",
-                                outputPartNumber+1, self->keyInfo.key, rc);
-                            evb->runInEventBaseThread([self = self, rc]()
-                                    {
-                                        self->responseBuilderWithCors(500, "Internal error")
-                                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error reading part: {}", rc), self->fullKeyPath(), ""))
-                                            .sendWithEOM();
-                            });
-                            return;
-                        }
-                        else if(rc==EIO)
-                        {
-                            const auto keyRc = self->sfs().read_prepare(findPath, SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading);
-                            if(keyRc.err == ENOENT)
+                            const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
+                            if (isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), Action::ListObjects, accessKey))
                             {
-                                const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
-                                if(isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), Action::ListObjects, accessKey))
-                                {
-                                    evb->runInEventBaseThread([self = self]()
-                                        {
-                                    self->responseBuilderWithCors(404, "Not found")
-                                        .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
-                                        .sendWithEOM();
-                                    });
-                                }
-                                else
-                                {
-                                    evb->runInEventBaseThread([self = self]()
-                                        {
-                                    self->responseBuilderWithCors(403, "Forbidden")
-                                        .body(s3errorXml(S3ErrorCode::AccessDenied, "Access is forbidden", self->fullKeyPath(), ""))
-                                        .sendWithEOM();
-                                        });
-                                }
-                                return;
+                                evb->runInEventBaseThread([self = self]()
+                                                          { self->responseBuilderWithCors(404, "Not found")
+                                                                .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
+                                                                .sendWithEOM(); });
                             }
                             else
                             {
-                                XLOGF(WARN, "Error reading part number {} of key {}: {}",
-                                outputPartNumber+1, self->keyInfo.key, rc);
-                                evb->runInEventBaseThread([self = self, rc]()
-                                        {
-                                            self->responseBuilderWithCors(500, "Internal error")
-                                                .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error reading part: {}", rc), self->fullKeyPath(), ""))
-                                                .sendWithEOM();
-                                });
-                                return;
+                                evb->runInEventBaseThread([self = self]()
+                                                          { self->responseBuilderWithCors(403, "Forbidden")
+                                                                .body(s3errorXml(S3ErrorCode::AccessDenied, "Access is forbidden", self->fullKeyPath(), ""))
+                                                                .sendWithEOM(); });
                             }
+                            return;
                         }
-                        else if(rc==ENOENT)
+                        else
                         {
-                            isTruncated=false;
-                            break;
+                            XLOGF(WARN, "Error reading part number {} of key {}: {}",
+                                  outputPartNumber + 1, self->keyInfo.key, rc);
+                            evb->runInEventBaseThread([self = self, rc]()
+                                                      { self->responseBuilderWithCors(500, "Internal error")
+                                                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error reading part: {}", rc), self->fullKeyPath(), ""))
+                                                            .sendWithEOM(); });
+                            return;
                         }
                     }
-                    while(outputPartNumber<maxParts);
-
-                    if(isTruncated)
+                    else if (rc == ENOENT)
                     {
-                        output += fmt::format("\t\t<IsTruncated>true</IsTruncated>\n"
-                            "\t\t<NextPartNumberMarker>{}</NextPartNumberMarker>\n", partNumberMarker + outputPartNumber);
+                        isTruncated = false;
+                        break;
                     }
-                    else
-                    {
-                        output += "\t\t<IsTruncated>false</IsTruncated>\n";
-                    }
+                } while (outputPartNumber < maxParts);
 
-                    output += fmt::format("\t\t<PartsCount>{}</PartsCount>\n"
-                        "\t</ObjectParts>\n", outputPartNumber);
-                }
-
-                if(outputStorageClass)
+                if (isTruncated)
                 {
-                    output += "\t<StorageClass>STANDARD</StorageClass>\n";
+                    output += fmt::format("\t\t<IsTruncated>true</IsTruncated>\n"
+                                          "\t\t<NextPartNumberMarker>{}</NextPartNumberMarker>\n",
+                                          partNumberMarker + outputPartNumber);
                 }
-
-                if(outputSize)
+                else
                 {
-                    output += fmt::format("\t<ObjectSize>{}</ObjectSize>\n", res.total_len);
+                    output += "\t\t<IsTruncated>false</IsTruncated>\n";
                 }
 
-                output += "</GetObjectAttributesResponse>";
+                output += fmt::format("\t\t<PartsCount>{}</PartsCount>\n"
+                                      "\t</ObjectParts>\n",
+                                      outputPartNumber);
+            }
 
-                XLOGF(INFO, "Output for GetObjectAttributes of {}: {}", self->keyInfo.key, output);
+            if (outputStorageClass)
+            {
+                output += "\t<StorageClass>STANDARD</StorageClass>\n";
+            }
 
-                evb->runInEventBaseThread([self = self, 
-                        last_modified = res.last_modified, outputLastModified, output = std::move(output)]()
-                                              {
+            if (outputSize)
+            {
+                output += fmt::format("\t<ObjectSize>{}</ObjectSize>\n", res.total_len);
+            }
+
+            output += "</GetObjectAttributesResponse>";
+
+            XLOGF(INFO, "Output for GetObjectAttributes of {}: {}", self->keyInfo.key, output);
+
+            evb->runInEventBaseThread([self = self,
+                                       last_modified = res.last_modified, outputLastModified, output = std::move(output)]()
+                                      {
                     
                     auto resp = std::move(self->responseBuilderWithCors(200, "OK"));
 
@@ -4345,21 +4385,20 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
                         resp.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN, self->corsAllowOrigin);
 
                     resp.body(output).sendWithEOM();
-                    self->finished_ = true;
-                });
-    });
+                    self->finished_ = true; });
+        });
 }
 
 std::string S3Handler::md5sumBinFromData(const std::string_view md5sumData)
 {
 #ifdef ALLOW_LEGACY_MD5SUM
-    return = md5sumData.size() == MD5_DIGEST_LENGTH ? std::string(md5sumData) : ((!md5sumData.empty() && md5sumData[0] == metadata_object ) ? std::string(md5sumData.substr(1)) : "");
+    return = md5sumData.size() == MD5_DIGEST_LENGTH ? std::string(md5sumData) : ((!md5sumData.empty() && md5sumData[0] == metadata_object) ? std::string(md5sumData.substr(1)) : "");
 #else
     CRData rdata(md5sumData.data(), md5sumData.size());
     int64_t itype;
-    if(!rdata.getVarInt(&itype))
+    if (!rdata.getVarInt(&itype))
         return std::string();
-    if(rdata.getLeft()<MD5_DIGEST_LENGTH)
+    if (rdata.getLeft() < MD5_DIGEST_LENGTH)
         return std::string();
     return std::string(rdata.getCurrDataPtr(), MD5_DIGEST_LENGTH);
 #endif
@@ -4369,9 +4408,9 @@ std::pair<int64_t, std::string_view> S3Handler::flagsAndMd5sumBinFromData(const 
 {
     CRData rdata(md5sumData.data(), md5sumData.size());
     int64_t itype;
-    if(!rdata.getVarInt(&itype))
+    if (!rdata.getVarInt(&itype))
         return std::make_pair(0, std::string_view());
-    if(rdata.getLeft()<MD5_DIGEST_LENGTH)
+    if (rdata.getLeft() < MD5_DIGEST_LENGTH)
         return std::make_pair(itype, std::string_view());
     return std::make_pair(itype, std::string_view(rdata.getCurrDataPtr(), MD5_DIGEST_LENGTH));
 }
@@ -4381,8 +4420,8 @@ int S3Handler::checkMatchInfo()
     std::string findPath;
     unsigned int flags = SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading;
 
-    const auto withVersioning = self->keyInfo.withVersioning() && self->keyInfo.version==0;
-    if(withVersioning)
+    const auto withVersioning = self->keyInfo.withVersioning() && self->keyInfo.version == 0;
+    if (withVersioning)
     {
         flags |= SingleFileStorage::ReadNewest;
         findPath = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
@@ -4393,19 +4432,19 @@ int S3Handler::checkMatchInfo()
     }
 
     auto res = self->sfs().read_prepare(findPath, flags);
-    
-    if(res.err!=0)
+
+    if (res.err != 0)
     {
-        if(res.err == ENOENT)
+        if (res.err == ENOENT)
         {
-            if(matchInfo->ifMatch.empty())
+            if (matchInfo->ifMatch.empty())
             {
-                matchInfo->match=true;
+                matchInfo->match = true;
             }
         }
         else
         {
-            XLOGF(WARN, "Reading object metadata of {} failed for match check: {}", self->keyInfo.key, res.err);        
+            XLOGF(WARN, "Reading object metadata of {} failed for match check: {}", self->keyInfo.key, res.err);
             return res.err;
         }
     }
@@ -4422,27 +4461,27 @@ int S3Handler::checkMatchInfo()
 void S3Handler::putObject(proxygen::HTTPMessage& headers)
 {
     std::unique_ptr<CopyObjectInfo> copyObjectInfo;
-    if(request_action == Action::CopyObject)
+    if (request_action == Action::CopyObject)
     {
         copyObjectInfo = std::make_unique<CopyObjectInfo>();
         const auto metadataDirective = headers.getHeaders().getSingleOrEmpty("x-amz-metadata-directive");
-        if(metadataDirective=="REPLACE")
+        if (metadataDirective == "REPLACE")
             copyObjectInfo->metadataDirective = CopyObjectInfo::MetadataDirective::Replace;
         copyObjectInfo->source = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source");
-        if(copyObjectInfo->source.starts_with("/"))
+        if (copyObjectInfo->source.starts_with("/"))
             copyObjectInfo->source = copyObjectInfo->source.substr(1);
         parseSourceMatchInfo(headers, copyObjectInfo->sourceMatchInfo);
     }
 
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb, copyObjectInfo = std::move(copyObjectInfo)]()
+        [self = this->self, evb, copyObjectInfo = std::move(copyObjectInfo)]()
+        {
+            if (!self->evpMdCtx.init(EVP_md5()))
             {
-                if(!self->evpMdCtx.init(EVP_md5()))
-                {
-                    XLOGF(ERR, "Failed to initialize md5 context");
-                    evb->runInEventBaseThread([self = self]()
-                                              {
+                XLOGF(ERR, "Failed to initialize md5 context");
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, "Could not initialize md5", self->fullKeyPath(), ""))
@@ -4450,17 +4489,17 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
                         self->extents_cond.notify_all(); });
-                    return;
-                }
+                return;
+            }
 
-                if(self->keyInfo.withVersioning())
-                    self->keyInfo.version = self->sfs().get_next_version();
+            if (self->keyInfo.withVersioning())
+                self->keyInfo.version = self->sfs().get_next_version();
 
-                if(self->keyInfo.key.size()>1024)
-                {
-                    XLOGF(WARN, "Key too long. Size {}", self->keyInfo.key.size());
-                    evb->runInEventBaseThread([self = self]()
-                                              {
+            if (self->keyInfo.key.size() > 1024)
+            {
+                XLOGF(WARN, "Key too long. Size {}", self->keyInfo.key.size());
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(400, "Bad Request")
                             .body(s3errorXml(S3ErrorCode::KeyTooLongError, "Your key is too long", self->fullKeyPath(), ""))
@@ -4468,16 +4507,16 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
                         self->extents_cond.notify_all(); });
-                    return;
-                }
+                return;
+            }
 
-                if(FLAGS_check_conditional_headers_before_upload && self->matchInfo)
+            if (FLAGS_check_conditional_headers_before_upload && self->matchInfo)
+            {
+                const auto rc = self->checkMatchInfo();
+                if (rc != 0 && rc != ENOENT)
                 {
-                    const auto rc = self->checkMatchInfo();
-                    if(rc!=0 && rc != ENOENT)
-                    {
-                        evb->runInEventBaseThread([self = self, rc]()
-                                    {
+                    evb->runInEventBaseThread([self = self, rc]()
+                                              {
                             ResponseBuilder(self->downstream_)
                                 .status(500, "Internal error")
                                 .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error preparing reading. Errno {}", rc), self->fullKeyPath(), ""))
@@ -4485,13 +4524,13 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                             std::lock_guard lock(self->extents_mutex);
                             self->finished_ = true;
                             self->extents_cond.notify_all(); });
-                        return;
-                    }
+                    return;
+                }
 
-                    if(!self->matchInfo->match)
-                    {
-                        evb->runInEventBaseThread([self = self]()
-                                                {
+                if (!self->matchInfo->match)
+                {
+                    evb->runInEventBaseThread([self = self]()
+                                              {
                             if(self->matchInfo->isProtected)
                                 ResponseBuilder(self->downstream_)
                                     .status(403, "Forbidden")
@@ -4505,23 +4544,23 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                             std::lock_guard lock(self->extents_mutex);
                             self->finished_ = true;
                             self->extents_cond.notify_all(); });
-                        return;
-                    }
+                    return;
                 }
+            }
 
-                const auto fpath = make_key(self->keyInfo);
+            const auto fpath = make_key(self->keyInfo);
 
-                if(copyObjectInfo)
-                {
-                    self->copyObject(evb, fpath, *copyObjectInfo);
-                    return;   
-                }
+            if (copyObjectInfo)
+            {
+                self->copyObject(evb, fpath, *copyObjectInfo);
+                return;
+            }
 
-                if(self->put_remaining>5ULL*1024*1024*1024)
-                {
-                    XLOGF(WARN, "Object too large. Size {}", self->put_remaining.load());
-                    evb->runInEventBaseThread([self = self]()
-                                              {
+            if (self->put_remaining > 5ULL * 1024 * 1024 * 1024)
+            {
+                XLOGF(WARN, "Object too large. Size {}", self->put_remaining.load());
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, "Object too large", self->fullKeyPath(), ""))
@@ -4529,15 +4568,15 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
                         self->extents_cond.notify_all(); });
-                    return;
-                }
+                return;
+            }
 
-                auto res = self->sfs().write_prepare(fpath, self->put_remaining);
-                if (res.err != 0)
-                {            
-                    XLOGF(WARN, "Write object prepare failed for key {} err {}", self->keyInfo.key, res.err);        
-                    evb->runInEventBaseThread([self = self, res]()
-                                              {
+            auto res = self->sfs().write_prepare(fpath, self->put_remaining);
+            if (res.err != 0)
+            {
+                XLOGF(WARN, "Write object prepare failed for key {} err {}", self->keyInfo.key, res.err);
+                evb->runInEventBaseThread([self = self, res]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error preparing writing. Errno {}", res.err), self->fullKeyPath(), ""))
@@ -4545,39 +4584,39 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
                         self->extents_cond.notify_all(); });
-                    return;
-                }
+                return;
+            }
 
-                bool freeExtents = false;
+            bool freeExtents = false;
+            {
+                std::lock_guard lock(self->extents_mutex);
+                if (!self->finished_)
                 {
-                    std::lock_guard lock(self->extents_mutex);
-                    if(!self->finished_)
-                    {
-                        if(!res.extents.empty())
-                            self->extents = std::move(res.extents);
+                    if (!res.extents.empty())
+                        self->extents = std::move(res.extents);
 
-                        self->extentsInitialized = true;
-                        self->extents_cond.notify_all();
-                    }
-                    else
-                    {
-                        freeExtents = true;
-                    }
+                    self->extentsInitialized = true;
+                    self->extents_cond.notify_all();
                 }
+                else
+                {
+                    freeExtents = true;
+                }
+            }
 
-                // Request finished while preparing (e.g. onError)
-                if(freeExtents && !res.extents.empty())
-                    self->sfs().free_extents(res.extents);
-            });
+            // Request finished while preparing (e.g. onError)
+            if (freeExtents && !res.extents.empty())
+                self->sfs().free_extents(res.extents);
+        });
 }
 
 std::pair<std::string, std::string> splitUploadId(const std::string& uploadId)
 {
     auto dashIdx = uploadId.find('-');
-    if(dashIdx != std::string::npos)
+    if (dashIdx != std::string::npos)
     {
-        return std::make_pair(uploadId.substr(0, dashIdx), 
-            uploadId.substr(dashIdx+1));
+        return std::make_pair(uploadId.substr(0, dashIdx),
+                              uploadId.substr(dashIdx + 1));
     }
     else
     {
@@ -4588,25 +4627,25 @@ std::pair<std::string, std::string> splitUploadId(const std::string& uploadId)
 void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId)
 {
     std::unique_ptr<CopyObjectInfo> copyObjectInfo;
-    if(request_action == Action::UploadPartCopy)
+    if (request_action == Action::UploadPartCopy)
     {
         copyObjectInfo = std::make_unique<CopyObjectInfo>();
         copyObjectInfo->source = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source");
         copyObjectInfo->range = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source-range");
-        if(copyObjectInfo->source.starts_with("/"))
+        if (copyObjectInfo->source.starts_with("/"))
             copyObjectInfo->source = copyObjectInfo->source.substr(1);
         parseSourceMatchInfo(headers, copyObjectInfo->sourceMatchInfo);
     }
 
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb, partNumber, uploadId, uploadVerId, copyObjectInfo=std::move(copyObjectInfo)]()
+        [self = this->self, evb, partNumber, uploadId, uploadVerId, copyObjectInfo = std::move(copyObjectInfo)]()
+        {
+            if (!self->evpMdCtx.init(EVP_md5()))
             {
-                if(!self->evpMdCtx.init(EVP_md5()))
-                {
-                    XLOGF(ERR, "Failed to initialize md5 context");
-                    evb->runInEventBaseThread([self = self]()
-                                              {
+                XLOGF(ERR, "Failed to initialize md5 context");
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, "Could not initialize md5", self->fullKeyPath(), ""))
@@ -4614,19 +4653,18 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
                         self->extents_cond.notify_all(); });
-                    return;
-                }
+                return;
+            }
 
-                const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
-                const auto partsBucketId = buckets::getPartsBucket(self->keyInfo.bucketId);
+            const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
+            const auto partsBucketId = buckets::getPartsBucket(self->keyInfo.bucketId);
 
-                auto readRes = self->sfs().read_prepare(make_key({.key = self->keyInfo.key, .version = uploadId, 
-                    .bucketId = partialUploadsBucketId}), SingleFileStorage::ReadSkipAddReading);
-                if(readRes.err!=0)
-                {
-                    XLOGF(WARN, "Could not read upload data for uploadId {} err {}", uploadId, readRes.err);
-                    evb->runInEventBaseThread([self = self, readRes]()
-                                              {
+            auto readRes = self->sfs().read_prepare(make_key({ .key = self->keyInfo.key, .version = uploadId, .bucketId = partialUploadsBucketId }), SingleFileStorage::ReadSkipAddReading);
+            if (readRes.err != 0)
+            {
+                XLOGF(WARN, "Could not read upload data for uploadId {} err {}", uploadId, readRes.err);
+                evb->runInEventBaseThread([self = self, readRes]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, "Could not find upload data.", self->fullKeyPath(), ""))
@@ -4634,18 +4672,18 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
                         self->extents_cond.notify_all(); });
-                    return;
-                }
+                return;
+            }
 
-                CRData rdata(readRes.md5sum.data(), readRes.md5sum.size());
+            CRData rdata(readRes.md5sum.data(), readRes.md5sum.size());
 
-                std::string dataPath, dataUploadVerId;
+            std::string dataPath, dataUploadVerId;
 
-                if(!rdata.getStr2(&dataUploadVerId) || dataUploadVerId!=uploadVerId)
-                {
-                    XLOGF(WARN, "Could not verify upload data for uploadId {} partNumber {}", uploadId, partNumber);
-                    evb->runInEventBaseThread([self = self, readRes]()
-                                              {
+            if (!rdata.getStr2(&dataUploadVerId) || dataUploadVerId != uploadVerId)
+            {
+                XLOGF(WARN, "Could not verify upload data for uploadId {} partNumber {}", uploadId, partNumber);
+                evb->runInEventBaseThread([self = self, readRes]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, "Could not verify upload data.", self->fullKeyPath(), ""))
@@ -4653,24 +4691,24 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
                         self->extents_cond.notify_all(); });
-                    return;
-                }
+                return;
+            }
 
-                self->bodyData = uploadIdToStr(uploadId) +"."+uploadIdToStr(partNumber);
-                const KeyInfo partKeyInfo = {.key = self->bodyData, .version = 0, .bucketId = partsBucketId};
-                
-                if(copyObjectInfo)
-                {
-                    self->copyObject(evb, make_key(partKeyInfo), *copyObjectInfo);
-                    return;                  
-                }
+            self->bodyData = uploadIdToStr(uploadId) + "." + uploadIdToStr(partNumber);
+            const KeyInfo partKeyInfo = { .key = self->bodyData, .version = 0, .bucketId = partsBucketId };
 
-                auto res = self->sfs().write_prepare(make_key(partKeyInfo), self->put_remaining);
-                if (res.err != 0)
-                {            
-                    XLOGF(WARN, "Write object part prepare failed for uploadId {} partNumber {} err {}", uploadId, partNumber, res.err);        
-                    evb->runInEventBaseThread([self = self, res]()
-                                              {
+            if (copyObjectInfo)
+            {
+                self->copyObject(evb, make_key(partKeyInfo), *copyObjectInfo);
+                return;
+            }
+
+            auto res = self->sfs().write_prepare(make_key(partKeyInfo), self->put_remaining);
+            if (res.err != 0)
+            {
+                XLOGF(WARN, "Write object part prepare failed for uploadId {} partNumber {} err {}", uploadId, partNumber, res.err);
+                evb->runInEventBaseThread([self = self, res]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error preparing writing. Errno {}", res.err), self->fullKeyPath(), ""))
@@ -4678,84 +4716,84 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
                         self->extents_cond.notify_all(); });
-                    return;
-                }
+                return;
+            }
 
-                for(const auto& ext: res.extents)
+            for (const auto& ext : res.extents)
+            {
+                assert(ext.len > 0);
+            }
+
+            if (!res.extents.empty())
+                XLOGF(INFO, "Write object prepare done partNumber {} size {} ext offset={} len={}", partNumber, self->put_remaining.load(std::memory_order_relaxed), res.extents[0].data_file_offset, res.extents[0].len);
+
+            bool freeExtents = false;
+            {
+                std::lock_guard lock(self->extents_mutex);
+                if (!self->finished_)
                 {
-                    assert(ext.len>0);
+                    self->extents = std::move(res.extents);
+                    self->extentsInitialized = true;
+                    self->extents_cond.notify_all();
                 }
-
-                if(!res.extents.empty())
-                    XLOGF(INFO, "Write object prepare done partNumber {} size {} ext offset={} len={}", partNumber, self->put_remaining.load(std::memory_order_relaxed), res.extents[0].data_file_offset, res.extents[0].len);
-
-                bool freeExtents = false;
+                else
                 {
-                    std::lock_guard lock(self->extents_mutex);
-                    if(!self->finished_)
-                    {
-                        self->extents = std::move(res.extents);
-                        self->extentsInitialized = true;
-                        self->extents_cond.notify_all();
-                    }
-                    else
-                    {
-                        freeExtents = true;
-                    }
+                    freeExtents = true;
                 }
+            }
 
-                // Request finished while preparing (e.g. onError). onBodyCPU already gave up, so free here
-                if(freeExtents && !res.extents.empty())
-                    self->sfs().free_extents(res.extents);
-            });
+            // Request finished while preparing (e.g. onError). onBodyCPU already gave up, so free here
+            if (freeExtents && !res.extents.empty())
+                self->sfs().free_extents(res.extents);
+        });
 }
 
 void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb]()
+        [self = this->self, evb]()
+        {
+            const auto uploadId = self->sfs().get_next_partid();
+            std::string uploadNonce(uploadIdNonceSize, '\0');
+            folly::Random::secureRandom(uploadNonce.data(), uploadNonce.size());
+            const auto uploadIdEnc = self->encryptUploadId(uploadId, uploadNonce);
+
+            CWData data;
+            data.addString2(uploadNonce);
+            int64_t flags = 0;
+            if (self->sdkChecksumHash)
+                flags |= metadata_flag_with_checksum;
+            if (self->objMetadata)
             {
-                const auto uploadId = self->sfs().get_next_partid();
-                std::string uploadNonce(uploadIdNonceSize, '\0');
-                folly::Random::secureRandom(uploadNonce.data(), uploadNonce.size());
-                const auto uploadIdEnc = self->encryptUploadId(uploadId, uploadNonce);
+                flags |= self->objMetadata->flags();
+                data.addVarInt(flags);
+                self->objMetadata->serialize(data);
+            }
+            else
+            {
+                data.addVarInt(flags);
+            }
+            if (self->sdkChecksumHash)
+                serializeSdkChecksum(self->sdkChecksumHash->getExpectedHash(), self->sdkChecksumHash->getHashType(), data);
 
-                CWData data;
-                data.addString2(uploadNonce);
-                int64_t flags = 0;
-                if(self->sdkChecksumHash)
-                    flags |= metadata_flag_with_checksum;
-                if(self->objMetadata)
-                {
-                    flags |= self->objMetadata->flags();
-                    data.addVarInt(flags);
-                    self->objMetadata->serialize(data);
-                }
-                else
-                {
-                    data.addVarInt(flags);
-                }
-                if(self->sdkChecksumHash)
-                    serializeSdkChecksum(self->sdkChecksumHash->getExpectedHash(), self->sdkChecksumHash->getHashType(), data);
+            std::string md5sum(data.getDataPtr(), data.getDataSize());
+            const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
 
-                std::string md5sum(data.getDataPtr(), data.getDataSize());
-                const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
+            const auto tnow = std::chrono::system_clock::now();
+            const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                          tnow.time_since_epoch())
+                                          .count();
 
-                const auto tnow = std::chrono::system_clock::now();
-                const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        tnow.time_since_epoch()).count();
+            auto rc = self->sfs().write(make_key({ .key = self->keyInfo.key, .version = uploadId, .bucketId = partialUploadsBucketId }), nullptr, 0, 0, lastModified, md5sum, false, false);
 
-                auto rc = self->sfs().write(make_key({.key = self->keyInfo.key, .version = uploadId, 
-                    .bucketId = partialUploadsBucketId}), nullptr, 0, 0, lastModified, md5sum,  false, false);
+            if (rc != 0)
+            {
+                XLOGF(WARN, "Could not write upload data for uploadId {} err {}", uploadId, rc);
+            }
 
-                if(rc!=0)
-                {
-                    XLOGF(WARN, "Could not write upload data for uploadId {} err {}", uploadId, rc);
-                }
-         
-                evb->runInEventBaseThread([rc=rc, uploadIdEnc = uploadIdEnc, self = self]()
-                                  {   
+            evb->runInEventBaseThread([rc = rc, uploadIdEnc = uploadIdEnc, self = self]()
+                                      {   
                                     if(rc!=0)        
                                     {
                         ResponseBuilder(self->downstream_)
@@ -4778,8 +4816,8 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
                         .sendWithEOM(); 
                                     }
                     self->finished_ = true; });
-                    return;
-            });
+            return;
+        });
 }
 
 // Upload id is the encrypted id followed by the (unencrypted) nonce stored with the upload
@@ -4791,46 +4829,46 @@ std::string S3Handler::encryptUploadId(const int64_t id, const std::string& nonc
 S3Handler::UploadIdDec S3Handler::decryptUploadId(const std::string& encdata)
 {
     constexpr auto noncePos = folly::base64URLEncodedSize(cryptIdSize);
-    if(encdata.size()!=noncePos + folly::base64URLEncodedSize(uploadIdNonceSize))
-        return UploadIdDec{-1, std::string()};
+    if (encdata.size() != noncePos + folly::base64URLEncodedSize(uploadIdNonceSize))
+        return UploadIdDec{ -1, std::string() };
 
     try
     {
         return UploadIdDec{ sfs().decrypt_id(encdata.substr(0, noncePos)),
-            folly::base64URLDecode(std::string_view(encdata).substr(noncePos)) };
+                            folly::base64URLDecode(std::string_view(encdata).substr(noncePos)) };
     }
-    catch(folly::base64_decode_error&)
+    catch (folly::base64_decode_error&)
     {
-        return UploadIdDec{-1, std::string()};
+        return UploadIdDec{ -1, std::string() };
     }
 }
 
 void S3Handler::finalizeMultipartUpload()
 {
-    assert(multiPartUploadData.get()!=nullptr);
+    assert(multiPartUploadData.get() != nullptr);
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb, multiPartData = this->multiPartUploadData.get()]()
+        [self = this->self, evb, multiPartData = this->multiPartUploadData.get()]()
+        {
+            if (FLAGS_check_conditional_headers_before_upload && self->matchInfo)
             {
-                if(FLAGS_check_conditional_headers_before_upload && self->matchInfo)
+                const auto rc = self->checkMatchInfo();
+                if (rc != 0 && rc != ENOENT)
                 {
-                    const auto rc = self->checkMatchInfo();
-                    if(rc!=0 && rc != ENOENT)
-                    {
-                        evb->runInEventBaseThread([self = self, rc]()
-                                    {
+                    evb->runInEventBaseThread([self = self, rc]()
+                                              {
                             ResponseBuilder(self->downstream_)
                                 .status(500, "Internal error")
                                 .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error preparing finalize multipart upload. Errno {}", rc), self->fullKeyPath(), ""))
                                 .sendWithEOM();
                             self->finished_ = true; });
-                        return;
-                    }
+                    return;
+                }
 
-                    if(!self->matchInfo->match)
-                    {
-                        evb->runInEventBaseThread([self = self]()
-                                                {
+                if (!self->matchInfo->match)
+                {
+                    evb->runInEventBaseThread([self = self]()
+                                              {
                             if(self->matchInfo->isProtected)
                                 ResponseBuilder(self->downstream_)
                                     .status(403, "Forbidden")
@@ -4842,328 +4880,324 @@ void S3Handler::finalizeMultipartUpload()
                                     .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", self->fullKeyPath(), ""))
                                     .sendWithEOM();
                             self->finished_ = true; });
-                        return;
-                    }
+                    return;
                 }
+            }
 
-                const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
-                auto readRes = self->sfs().read_prepare(
-                    make_key({.key = self->keyInfo.key, .version = multiPartData->uploadId.id, 
-                    .bucketId = partialUploadsBucketId}), SingleFileStorage::ReadSkipAddReading);
-                CRData uploadData(readRes.md5sum.data(), readRes.md5sum.size());
-                int64_t uploadObjMetadataFlags;
-                ObjMetadata uploadObjMetadata;
-                std::unique_ptr<PayloadHashBase> uploadSdkChecksumHash;
-                std::string uploadFPath = make_key(self->keyInfo);
-                std::string uploadNonce;
-                if(readRes.err != 0 ||
-                    !uploadData.getStr2(&uploadNonce) ||
-                    uploadNonce!=multiPartData->uploadId.nonce ||
-                    !uploadData.getVarInt(&uploadObjMetadataFlags) ||
-                    !uploadObjMetadata.deserialize(uploadData, uploadObjMetadataFlags) ||
-                    ((uploadObjMetadataFlags & metadata_flag_with_checksum) && !deserializeSdkChecksum(uploadData, uploadSdkChecksumHash, false)))
-                {
-                    XLOGF(WARN, "Could not find upload data for uploadId {} err {}", multiPartData->uploadId.id, readRes.err);
-                    evb->runInEventBaseThread([self = self, readRes = readRes]()
-                                              {
+            const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
+            auto readRes = self->sfs().read_prepare(
+                make_key({ .key = self->keyInfo.key, .version = multiPartData->uploadId.id, .bucketId = partialUploadsBucketId }), SingleFileStorage::ReadSkipAddReading);
+            CRData uploadData(readRes.md5sum.data(), readRes.md5sum.size());
+            int64_t uploadObjMetadataFlags;
+            ObjMetadata uploadObjMetadata;
+            std::unique_ptr<PayloadHashBase> uploadSdkChecksumHash;
+            std::string uploadFPath = make_key(self->keyInfo);
+            std::string uploadNonce;
+            if (readRes.err != 0 ||
+                !uploadData.getStr2(&uploadNonce) ||
+                uploadNonce != multiPartData->uploadId.nonce ||
+                !uploadData.getVarInt(&uploadObjMetadataFlags) ||
+                !uploadObjMetadata.deserialize(uploadData, uploadObjMetadataFlags) ||
+                ((uploadObjMetadataFlags & metadata_flag_with_checksum) && !deserializeSdkChecksum(uploadData, uploadSdkChecksumHash, false)))
+            {
+                XLOGF(WARN, "Could not find upload data for uploadId {} err {}", multiPartData->uploadId.id, readRes.err);
+                evb->runInEventBaseThread([self = self, readRes = readRes]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Could not find upload. Errno {}", readRes.err), self->fullKeyPath(), ""))
                             .sendWithEOM();
                         self->finished_ = true; });
-                    return;
-                }
+                return;
+            }
 
-                bool checkUploadSdkChecksumHash = true;
+            bool checkUploadSdkChecksumHash = true;
 
-                if(uploadSdkChecksumHash)
+            if (uploadSdkChecksumHash)
+            {
+                if (self->sdkChecksumHash)
                 {
-                    if(self->sdkChecksumHash)
+                    if (uploadSdkChecksumHash->getHashType() != self->sdkChecksumHash->getHashType())
                     {
-                        if(uploadSdkChecksumHash->getHashType() != self->sdkChecksumHash->getHashType())
-                        {
-                            XLOGF(WARN, "Upload checksum type {} does not match specified overall checksum type {} for uploadId {}", 
-                                    static_cast<int>(uploadSdkChecksumHash->getHashType()), static_cast<int>(self->sdkChecksumHash->getHashType()), multiPartData->uploadId.id);
-                            evb->runInEventBaseThread([self = self]()
-                                                    {
+                        XLOGF(WARN, "Upload checksum type {} does not match specified overall checksum type {} for uploadId {}",
+                              static_cast<int>(uploadSdkChecksumHash->getHashType()), static_cast<int>(self->sdkChecksumHash->getHashType()), multiPartData->uploadId.id);
+                        evb->runInEventBaseThread([self = self]()
+                                                  {
                                 ResponseBuilder(self->downstream_)
                                     .status(500, "Internal error")
                                     .body(s3errorXml(S3ErrorCode::InternalError, "Upload checksum type does not match specified overall checksum type", self->fullKeyPath(), ""))
                                     .sendWithEOM();
                                 self->finished_ = true; });
-                            return;
-                        }
-
-                        uploadSdkChecksumHash->setExpectedHash(self->sdkChecksumHash->getExpectedHash());
+                        return;
                     }
-                    else
-                    {
-                        XLOGF(INFO, "Upload has checksum but no overall checksum specified for uploadId {}", multiPartData->uploadId.id);
-                        checkUploadSdkChecksumHash = false;
-                    }
+
+                    uploadSdkChecksumHash->setExpectedHash(self->sdkChecksumHash->getExpectedHash());
                 }
-
-                if(self->keyInfo.withVersioning())
+                else
                 {
-                    self->keyInfo.version = self->sfs().get_next_version();
-                    uploadFPath = make_key(self->keyInfo);
+                    XLOGF(INFO, "Upload has checksum but no overall checksum specified for uploadId {}", multiPartData->uploadId.id);
+                    checkUploadSdkChecksumHash = false;
                 }
+            }
 
-                MultiPartDownloadData::PartExt lastExt = {-1, 0, 0};
-                CWData wdata;
-                int64_t itype = metadata_multipart_object;
-                itype |= uploadObjMetadataFlags;
-                wdata.addVarInt(itype);
-                const size_t md5sumOffset = wdata.getDataSize();
-                wdata.resize(wdata.getDataSize()+MD5_DIGEST_LENGTH);
-                wdata.addVarInt(multiPartData->uploadId.id);
-                wdata.addVarInt(multiPartData->parts.size());
+            if (self->keyInfo.withVersioning())
+            {
+                self->keyInfo.version = self->sfs().get_next_version();
+                uploadFPath = make_key(self->keyInfo);
+            }
 
-                EVP_MD_CTX* md5Ctx = EVP_MD_CTX_new();
-                SCOPE_EXIT { EVP_MD_CTX_free(md5Ctx); };
-                if(md5Ctx==nullptr ||
-                    EVP_DigestInit(md5Ctx, EVP_md5())!=1)
-                {
-                    XLOGF(ERR, "Failed to initialize md5 context");
-                    evb->runInEventBaseThread([self = self]()
-                                              {
+            MultiPartDownloadData::PartExt lastExt = { -1, 0, 0 };
+            CWData wdata;
+            int64_t itype = metadata_multipart_object;
+            itype |= uploadObjMetadataFlags;
+            wdata.addVarInt(itype);
+            const size_t md5sumOffset = wdata.getDataSize();
+            wdata.resize(wdata.getDataSize() + MD5_DIGEST_LENGTH);
+            wdata.addVarInt(multiPartData->uploadId.id);
+            wdata.addVarInt(multiPartData->parts.size());
+
+            EVP_MD_CTX* md5Ctx = EVP_MD_CTX_new();
+            SCOPE_EXIT { EVP_MD_CTX_free(md5Ctx); };
+            if (md5Ctx == nullptr ||
+                EVP_DigestInit(md5Ctx, EVP_md5()) != 1)
+            {
+                XLOGF(ERR, "Failed to initialize md5 context");
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, "Error initializing hash function", self->fullKeyPath(), ""))
                             .sendWithEOM();
                         self->finished_ = true; });
-                    return;
-                }
+                return;
+            }
 
-                const auto partsBucketId = buckets::getPartsBucket(self->keyInfo.bucketId);
+            const auto partsBucketId = buckets::getPartsBucket(self->keyInfo.bucketId);
 
-                for(const auto& part: multiPartData->parts)
+            for (const auto& part : multiPartData->parts)
+            {
+                auto readPartRes = self->sfs().read_prepare(
+                    make_key({ .key = uploadIdToStr(multiPartData->uploadId.id) + "." + uploadIdToStr(part.partNumber), .version = 0, .bucketId = partsBucketId }), SingleFileStorage::ReadSkipAddReading);
+
+                if (readPartRes.err != 0)
                 {
-                    auto readPartRes = self->sfs().read_prepare(
-                        make_key({.key = uploadIdToStr(multiPartData->uploadId.id)+"."+uploadIdToStr(part.partNumber), .version = 0, 
-                            .bucketId = partsBucketId}), SingleFileStorage::ReadSkipAddReading);
-
-                    if(readPartRes.err!=0)
-                    {
-                        XLOGF(WARN, "Could not read part data for uploadId {} partNumber {} err {}", multiPartData->uploadId.id, part.partNumber, readPartRes.err);
-                        evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
+                    XLOGF(WARN, "Could not read part data for uploadId {} partNumber {} err {}", multiPartData->uploadId.id, part.partNumber, readPartRes.err);
+                    evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
                                               {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Could not find part {}", partNumber), self->fullKeyPath(), ""))
                             .sendWithEOM();
                         self->finished_ = true; });
-                        return;
-                    }
+                    return;
+                }
 
-                    const auto [partFlags, md5sumBin] = S3Handler::flagsAndMd5sumBinFromData(readPartRes.md5sum);
+                const auto [partFlags, md5sumBin] = S3Handler::flagsAndMd5sumBinFromData(readPartRes.md5sum);
 
-                    if(!part.etag.empty())
+                if (!part.etag.empty())
+                {
+                    const auto etag = (part.etag.size() > 1 && part.etag[0] == '"' && part.etag[part.etag.size() - 1] == '"') ? part.etag.substr(1, part.etag.size() - 2) : part.etag;
+                    std::string etagBin;
+                    try
                     {
-                        const auto etag = (part.etag.size() > 1 && part.etag[0] == '"' && part.etag[part.etag.size()-1] == '"') ?
-                                            part.etag.substr(1, part.etag.size()-2) : part.etag;
-                        std::string etagBin;
-                        try
-                        {
-                            etagBin = folly::unhexlify(etag);
-                        }
-                        catch(const std::exception&)
-                        {
-                            XLOGF(WARN, "Invalid etag format for uploadId {} partNumber {} etag {}", multiPartData->uploadId.id, part.partNumber, part.etag);
-                            evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
-                                                {
+                        etagBin = folly::unhexlify(etag);
+                    }
+                    catch (const std::exception&)
+                    {
+                        XLOGF(WARN, "Invalid etag format for uploadId {} partNumber {} etag {}", multiPartData->uploadId.id, part.partNumber, part.etag);
+                        evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
+                                                  {
                             ResponseBuilder(self->downstream_)
                                 .status(500, "Internal error")
                                 .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Invalid etag format for part {}", partNumber), self->fullKeyPath(), ""))
                                 .sendWithEOM();
                             self->finished_ = true; });
-                            return;
-                        }
+                        return;
+                    }
 
-                        if(etagBin != md5sumBin)
-                        {
-                            XLOGF(WARN, "Etag does not match md5sum for uploadId {} partNumber {} etag {} md5sum {}", multiPartData->uploadId.id, part.partNumber, part.etag, folly::hexlify(md5sumBin));
-                            evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
-                                                {
+                    if (etagBin != md5sumBin)
+                    {
+                        XLOGF(WARN, "Etag does not match md5sum for uploadId {} partNumber {} etag {} md5sum {}", multiPartData->uploadId.id, part.partNumber, part.etag, folly::hexlify(md5sumBin));
+                        evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
+                                                  {
                             ResponseBuilder(self->downstream_)
                                 .status(500, "Internal error")
                                 .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Etag does not match md5sum for part {}", partNumber), self->fullKeyPath(), ""))
                                 .sendWithEOM();
                             self->finished_ = true; });
-                            return;
-                        }
+                        return;
                     }
+                }
 
-                    if(uploadSdkChecksumHash)
+                if (uploadSdkChecksumHash)
+                {
+                    if (!(partFlags & metadata_flag_with_checksum))
                     {
-                        if(!(partFlags & metadata_flag_with_checksum))
-                        {
-                            XLOGF(WARN, "Part {} of uploadId {} does not have checksum but overall checksum specified", part.partNumber, multiPartData->uploadId.id);
-                            evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
-                                                    {
+                        XLOGF(WARN, "Part {} of uploadId {} does not have checksum but overall checksum specified", part.partNumber, multiPartData->uploadId.id);
+                        evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
+                                                  {
                                 ResponseBuilder(self->downstream_)
                                     .status(500, "Internal error")
                                     .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Part {} does not have checksum but overall checksum specified", partNumber), self->fullKeyPath(), ""))
                                     .sendWithEOM();
                                 self->finished_ = true; });
-                            return;
-                        }
+                        return;
+                    }
 
-                        std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
-                        int64_t multiPartSize;
-                        std::unique_ptr<ObjMetadata> partObjMetadata;
-                        std::unique_ptr<PayloadHashBase> partSdkChecksumHash;
-                        if(!parseMultipartInfo(readPartRes.md5sum, multiPartSize, multiPartDownloadData, &partObjMetadata, &partSdkChecksumHash))
-                        {
-                            XLOGF(WARN, "Failed to parse multipart info for part {} of uploadId {}", part.partNumber, multiPartData->uploadId.id);
-                            evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
-                                                    {
+                    std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
+                    int64_t multiPartSize;
+                    std::unique_ptr<ObjMetadata> partObjMetadata;
+                    std::unique_ptr<PayloadHashBase> partSdkChecksumHash;
+                    if (!parseMultipartInfo(readPartRes.md5sum, multiPartSize, multiPartDownloadData, &partObjMetadata, &partSdkChecksumHash))
+                    {
+                        XLOGF(WARN, "Failed to parse multipart info for part {} of uploadId {}", part.partNumber, multiPartData->uploadId.id);
+                        evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
+                                                  {
                                 ResponseBuilder(self->downstream_)
                                     .status(500, "Internal error")
                                     .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Failed to parse multipart info for part {}", partNumber), self->fullKeyPath(), ""))
                                     .sendWithEOM();
                                 self->finished_ = true; });
-                            return;
-                        }
+                        return;
+                    }
 
-                        if(!partSdkChecksumHash)
-                        {
-                            XLOGF(WARN, "Part {} of uploadId {} does not have valid checksum info", part.partNumber, multiPartData->uploadId.id);
-                            evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
-                                                    {
+                    if (!partSdkChecksumHash)
+                    {
+                        XLOGF(WARN, "Part {} of uploadId {} does not have valid checksum info", part.partNumber, multiPartData->uploadId.id);
+                        evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
+                                                  {
                                 ResponseBuilder(self->downstream_)
                                     .status(500, "Internal error")
                                     .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Part {} does not have valid checksum info", partNumber), self->fullKeyPath(), ""))
                                     .sendWithEOM();
                                 self->finished_ = true; });
-                            return;
-                        }
+                        return;
+                    }
 
-                        if(!uploadSdkChecksumHash->canCombine(*partSdkChecksumHash))
-                        {
-                            XLOGF(WARN, "Part {} of uploadId {} has different checksum type {} than overall checksum {}", part.partNumber, multiPartData->uploadId.id, 
-                                static_cast<int>(partSdkChecksumHash->getHashType()), static_cast<int>(uploadSdkChecksumHash->getHashType()));
-                            evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
-                                                    {
+                    if (!uploadSdkChecksumHash->canCombine(*partSdkChecksumHash))
+                    {
+                        XLOGF(WARN, "Part {} of uploadId {} has different checksum type {} than overall checksum {}", part.partNumber, multiPartData->uploadId.id,
+                              static_cast<int>(partSdkChecksumHash->getHashType()), static_cast<int>(uploadSdkChecksumHash->getHashType()));
+                        evb->runInEventBaseThread([self = self, partNumber = part.partNumber]()
+                                                  {
                                 ResponseBuilder(self->downstream_)
                                     .status(500, "Internal error")
                                     .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Part {} has different checksum type than overall checksum", partNumber), self->fullKeyPath(), ""))
                                     .sendWithEOM();
                                 self->finished_ = true; });
-                            return;
-                        }
-
-                        uploadSdkChecksumHash->combine(*partSdkChecksumHash, readPartRes.total_len);
+                        return;
                     }
 
-                    EVP_DigestUpdate(md5Ctx, md5sumBin.data(), md5sumBin.size());
+                    uploadSdkChecksumHash->combine(*partSdkChecksumHash, readPartRes.total_len);
+                }
 
-                    if(lastExt.len==0)
+                EVP_DigestUpdate(md5Ctx, md5sumBin.data(), md5sumBin.size());
+
+                if (lastExt.len == 0)
+                {
+                    lastExt.size = readPartRes.total_len;
+                    lastExt.start = part.partNumber;
+                    lastExt.len = 1;
+                }
+                else
+                {
+                    if (lastExt.start + lastExt.len == part.partNumber &&
+                        lastExt.size == readPartRes.total_len)
                     {
+                        ++lastExt.len;
+                    }
+                    else
+                    {
+                        wdata.addVarInt(lastExt.size);
+                        wdata.addVarInt(lastExt.start);
+                        wdata.addVarInt(lastExt.len);
                         lastExt.size = readPartRes.total_len;
                         lastExt.start = part.partNumber;
                         lastExt.len = 1;
                     }
-                    else
-                    {
-                        if(lastExt.start + lastExt.len == part.partNumber &&
-                            lastExt.size == readPartRes.total_len)
-                        {
-                            ++lastExt.len;
-                        }
-                        else
-                        {
-                            wdata.addVarInt(lastExt.size);
-                            wdata.addVarInt(lastExt.start);
-                            wdata.addVarInt(lastExt.len);
-                            lastExt.size = readPartRes.total_len;
-                            lastExt.start = part.partNumber;
-                            lastExt.len = 1;
-                        }
-                    }
                 }
+            }
 
-                if(lastExt.len>0)
-                {
-                    wdata.addVarInt(lastExt.size);
-                    wdata.addVarInt(lastExt.start);
-                    wdata.addVarInt(lastExt.len);
-                }
+            if (lastExt.len > 0)
+            {
+                wdata.addVarInt(lastExt.size);
+                wdata.addVarInt(lastExt.start);
+                wdata.addVarInt(lastExt.len);
+            }
 
-                uploadObjMetadata.serialize(wdata);
+            uploadObjMetadata.serialize(wdata);
 
-                if(uploadSdkChecksumHash && checkUploadSdkChecksumHash)
-                    serializeSdkChecksum(uploadSdkChecksumHash->getExpectedHash(), uploadSdkChecksumHash->getHashType(), wdata);
-                else if(uploadSdkChecksumHash)
-                    serializeSdkChecksum(uploadSdkChecksumHash->final(), uploadSdkChecksumHash->getHashType(), wdata);
+            if (uploadSdkChecksumHash && checkUploadSdkChecksumHash)
+                serializeSdkChecksum(uploadSdkChecksumHash->getExpectedHash(), uploadSdkChecksumHash->getHashType(), wdata);
+            else if (uploadSdkChecksumHash)
+                serializeSdkChecksum(uploadSdkChecksumHash->final(), uploadSdkChecksumHash->getHashType(), wdata);
 
-                EVP_DigestFinal_ex(md5Ctx, reinterpret_cast<unsigned char*>(wdata.getDataPtr()) + md5sumOffset, nullptr);
+            EVP_DigestFinal_ex(md5Ctx, reinterpret_cast<unsigned char*>(wdata.getDataPtr()) + md5sumOffset, nullptr);
 
-                if(uploadSdkChecksumHash && checkUploadSdkChecksumHash && !uploadSdkChecksumHash->isFinalCombinedExpected(multiPartData->parts.size())) 
-                {
-                    XLOGF(WARN, "Overall checksum does not match combined part checksums for uploadId {}", multiPartData->uploadId.id);
-                    evb->runInEventBaseThread([self = self]()
-                                              {
+            if (uploadSdkChecksumHash && checkUploadSdkChecksumHash && !uploadSdkChecksumHash->isFinalCombinedExpected(multiPartData->parts.size()))
+            {
+                XLOGF(WARN, "Overall checksum does not match combined part checksums for uploadId {}", multiPartData->uploadId.id);
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, "Overall checksum does not match combined part checksums", self->fullKeyPath(), ""))
                             .sendWithEOM();
                         self->finished_ = true; });
-                    return;
-                }
+                return;
+            }
 
-                std::string etagBin(wdata.getDataPtr() + md5sumOffset, wdata.getDataPtr() + md5sumOffset + MD5_DIGEST_LENGTH);
-                std::string md5sum(wdata.getDataPtr(), wdata.getDataSize());
+            std::string etagBin(wdata.getDataPtr() + md5sumOffset, wdata.getDataPtr() + md5sumOffset + MD5_DIGEST_LENGTH);
+            std::string md5sum(wdata.getDataPtr(), wdata.getDataSize());
 
-                const auto tnow = std::chrono::system_clock::now();
-                const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                   tnow.time_since_epoch()).count();
+            const auto tnow = std::chrono::system_clock::now();
+            const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                          tnow.time_since_epoch())
+                                          .count();
 
+            auto fragInfoFinalize = std::make_unique<SingleFileStorage::SFragInfo>(0, 0);
+            fragInfoFinalize->action = SingleFileStorage::FragAction::Add;
+            fragInfoFinalize->fn = uploadFPath;
+            fragInfoFinalize->md5sum = md5sum;
+            fragInfoFinalize->last_modified = lastModified;
 
-                auto fragInfoFinalize = std::make_unique< SingleFileStorage::SFragInfo>(0, 0);
-                fragInfoFinalize->action = SingleFileStorage::FragAction::Add;
-                fragInfoFinalize->fn = uploadFPath;
-                fragInfoFinalize->md5sum = md5sum;
-                fragInfoFinalize->last_modified = lastModified;
+            const auto partFn = make_key({ .key = self->keyInfo.key, .version = multiPartData->uploadId.id, .bucketId = partialUploadsBucketId });
 
-                const auto partFn = make_key({.key = self->keyInfo.key, .version = multiPartData->uploadId.id, 
-                        .bucketId = partialUploadsBucketId});
+            if (!self->keyInfo.withVersioning())
+                self->addProtectedCheck(false);
 
-                if(!self->keyInfo.withVersioning())
-                    self->addProtectedCheck(false);
-
-                if(self->matchInfo)
+            if (self->matchInfo)
+            {
+                if (self->keyInfo.withVersioning() && self->keyInfo.version != 0)
                 {
-                    if(self->keyInfo.withVersioning() && self->keyInfo.version != 0)
-                    {
-                        self->matchInfo->readFn = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
-                        self->matchInfo->readNewest = true;
-                    }
-                    else
-                    {
-                        self->matchInfo->readFn = uploadFPath;
-                    }
+                    self->matchInfo->readFn = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
+                    self->matchInfo->readNewest = true;
                 }
-
-                auto delRes = self->sfs().del(partFn, SingleFileStorage::DelAction::DelNoCallback, false, std::move(fragInfoFinalize), self->matchInfo.get());
-
-                if(delRes)
+                else
                 {
-                    XLOGF(WARN, "Could not delete upload metadata for uploadId {} err {}", multiPartData->uploadId.id, delRes);
-                    evb->runInEventBaseThread([self = self, delRes]()
-                                              {
+                    self->matchInfo->readFn = uploadFPath;
+                }
+            }
+
+            auto delRes = self->sfs().del(partFn, SingleFileStorage::DelAction::DelNoCallback, false, std::move(fragInfoFinalize), self->matchInfo.get());
+
+            if (delRes)
+            {
+                XLOGF(WARN, "Could not delete upload metadata for uploadId {} err {}", multiPartData->uploadId.id, delRes);
+                evb->runInEventBaseThread([self = self, delRes]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error deleting upload metadata. Err {}", delRes), self->fullKeyPath(), ""))
                             .sendWithEOM();
                         self->finished_ = true; });
-                        return;
-                }
+                return;
+            }
 
-                if(self->matchInfo && !self->matchInfo->match)
-                {
-                    evb->runInEventBaseThread([self = self]()
-                                              {
+            if (self->matchInfo && !self->matchInfo->match)
+            {
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         if(self->matchInfo->isProtected)
                             ResponseBuilder(self->downstream_)
                                 .status(403, "Forbidden")
@@ -5175,24 +5209,24 @@ void S3Handler::finalizeMultipartUpload()
                                 .body(s3errorXml(S3ErrorCode::ConditionalRequestConflict, "", self->fullKeyPath(), ""))
                                 .sendWithEOM();
                         self->finished_ = true; });
-                    return;
-                }
+                return;
+            }
 
-                if(!self->commit())
-                {
-                    XLOGF(ERR, "Storage commit failed");
-                    evb->runInEventBaseThread([self = self]()
-                                        {           
+            if (!self->commit())
+            {
+                XLOGF(ERR, "Storage commit failed");
+                evb->runInEventBaseThread([self = self]()
+                                          {           
                             ResponseBuilder(self->downstream_)
                                 .status(500, "Internal error")
                                 .body(s3errorXml(S3ErrorCode::InternalError, "Commit error", self->fullKeyPath(), ""))
                                 .sendWithEOM();
                             self->finished_ = true; });
-                    return;
-                }
+                return;
+            }
 
-                evb->runInEventBaseThread([self = self, etagBin, numParts = multiPartData->parts.size()]()
-                                              {
+            evb->runInEventBaseThread([self = self, etagBin, numParts = multiPartData->parts.size()]()
+                                      {
                                                 const auto bucket = buckets::getBucketName(self->keyInfo.bucketId);
                         ResponseBuilder resp(self->downstream_);
                         resp.status(200, "OK");
@@ -5207,13 +5241,13 @@ void S3Handler::finalizeMultipartUpload()
             "</CompleteMultipartUploadResult>", escapeXML(self->serverUrl), escapeXML(bucket), escapeXML(self->keyInfo.key), escapeXML(bucket), escapeXML(self->keyInfo.key), folly::hexlify(etagBin), numParts))
                             .sendWithEOM();
                         self->finished_ = true; });
-                        return;
-            });    
+            return;
+        });
 }
 
 bool S3Handler::commit()
 {
-    if(self->sfs().get_manual_commit() && FLAGS_commit_after_ms>0)
+    if (self->sfs().get_manual_commit() && FLAGS_commit_after_ms > 0)
     {
         static std::mutex mutex;
         static std::set<SingleFileStorage*> commitAfterStarted;
@@ -5223,13 +5257,14 @@ bool S3Handler::commit()
         {
             std::lock_guard lock(mutex);
             const auto [it, inserted] = commitAfterStarted.insert(&self->sfs());
-            if(inserted)
+            if (inserted)
                 doStart = true;
         }
 
-        if(doStart)
+        if (doStart)
         {
-            folly::getGlobalCPUExecutor()->add([sfs = &self->sfs()]() {
+            folly::getGlobalCPUExecutor()->add([sfs = &self->sfs()]()
+                                               {
 
                 std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_commit_after_ms));
 
@@ -5250,15 +5285,14 @@ bool S3Handler::commit()
                 else
                 {
                     XLOGF(INFO, "Commit after {} ms succeeded. Commit duration {}ms", FLAGS_commit_after_ms, std::chrono::duration_cast<std::chrono::milliseconds>(duration).count());
-                }                    
-            });
+                } });
         }
     }
-    else if(!self->sfs().get_manual_commit())
+    else if (!self->sfs().get_manual_commit())
     {
         const bool b = self->sfs().commit(false, -1, FLAGS_pre_sync_commit);
 
-        if(!b)
+        if (!b)
         {
             XLOGF(ERR, "Storage commit failed");
             return false;
@@ -5268,229 +5302,213 @@ bool S3Handler::commit()
     return true;
 }
 
-
 void S3Handler::finalizeCreateBucket()
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb]()
+        [self = this->self, evb]()
+        {
+            if (!buckets::isValidBucketName(self->keyInfo.key))
             {
-                if(!buckets::isValidBucketName(self->keyInfo.key))
-                {
-                    XLOGF(WARN, "Invalid bucket name {}", self->keyInfo.key);
-                    evb->runInEventBaseThread([self = self]()
-                                              {
+                XLOGF(WARN, "Invalid bucket name {}", self->keyInfo.key);
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(400, "Bad Request")
                             .body(s3errorXml(S3ErrorCode::InvalidBucketName, "Invalid bucket name", self->fullKeyPath(), ""))
                             .sendWithEOM();
-                        self->finished_ = true;
-                                              });
-                    return;
-                }
+                        self->finished_ = true; });
+                return;
+            }
 
-                const bool objectLockEnabled = self->putObjectLockConfigurationData &&
-                    self->putObjectLockConfigurationData->objectLockEnabled == "1";
-                const auto bucketId = buckets::addBucket(self->keyInfo.key, true, objectLockEnabled);
+            const bool objectLockEnabled = self->putObjectLockConfigurationData &&
+                                           self->putObjectLockConfigurationData->objectLockEnabled == "1";
+            const auto bucketId = buckets::addBucket(self->keyInfo.key, true, objectLockEnabled);
 
-                if(bucketId < 0)
-                {
-                    XLOGF(WARN, "Bucket {} already exists", self->keyInfo.key);
-                    evb->runInEventBaseThread([self = self]()
-                                              {
+            if (bucketId < 0)
+            {
+                XLOGF(WARN, "Bucket {} already exists", self->keyInfo.key);
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(409, "OK")
                             .body(s3errorXml(S3ErrorCode::BucketAlreadyExists, "", self->fullKeyPath(), ""))
                             .sendWithEOM();
-                        self->finished_ = true;
-                    });
-                    return;
-                }                
+                        self->finished_ = true; });
+                return;
+            }
 
-                evb->runInEventBaseThread([self = self]()
-                                              {
+            evb->runInEventBaseThread([self = self]()
+                                      {
                         ResponseBuilder(self->downstream_)
                             .status(200, "OK")
                             .header(HTTPHeaderCode::HTTP_HEADER_LOCATION, fmt::format("/{}", self->keyInfo.key))
                             .sendWithEOM();
-                        self->finished_ = true;
-                });
-                return;
-            }
-        );
+                        self->finished_ = true; });
+            return;
+        });
 }
 
 void S3Handler::finalizePutBucketVersioning()
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb]()
-            {
-                const auto versioningState = buckets::versioningStateFromStr(folly::trimWhitespace(self->deleteObjectsData->buf));
+        [self = this->self, evb]()
+        {
+            const auto versioningState = buckets::versioningStateFromStr(folly::trimWhitespace(self->deleteObjectsData->buf));
 
-                if(!versioningState)
-                {
-                    XLOGF(WARN, "Invalid versioning state specified for bucket {}: {}", self->keyInfo.key, self->deleteObjectsData->buf);
-                    evb->runInEventBaseThread([self = self]()
-                                              {
+            if (!versioningState)
+            {
+                XLOGF(WARN, "Invalid versioning state specified for bucket {}: {}", self->keyInfo.key, self->deleteObjectsData->buf);
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(400, "Bad Request")
                             .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid versioning state specified", self->fullKeyPath(), ""))
                             .sendWithEOM();
-                        self->finished_ = true;
-                                              });
-                    return;
-                }
+                        self->finished_ = true; });
+                return;
+            }
 
-                const auto setVersioningRes = buckets::setVersioning(self->keyInfo.key, versioningState.value());
-                if(setVersioningRes == buckets::SetVersioningResult::ObjectLockEnabled)
-                {
-                    XLOGF(INFO, "Cannot change versioning of bucket {} with object lock enabled", self->keyInfo.key);
-                    evb->runInEventBaseThread([self = self]()
-                                              {
+            const auto setVersioningRes = buckets::setVersioning(self->keyInfo.key, versioningState.value());
+            if (setVersioningRes == buckets::SetVersioningResult::ObjectLockEnabled)
+            {
+                XLOGF(INFO, "Cannot change versioning of bucket {} with object lock enabled", self->keyInfo.key);
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(409, "Conflict")
                             .body(s3errorXml(S3ErrorCode::InvalidBucketState, "An Object Lock configuration is present on this bucket, so the versioning state cannot be changed.", self->fullKeyPath(), ""))
                             .sendWithEOM();
-                        self->finished_ = true;
-                                              });
-                    return;
-                }
-                else if(setVersioningRes != buckets::SetVersioningResult::Ok)
-                {
-                    XLOGF(ERR, "Failed to set bucket versioning for bucket {}", self->keyInfo.key);
-                    evb->runInEventBaseThread([self = self]()
-                                              {
+                        self->finished_ = true; });
+                return;
+            }
+            else if (setVersioningRes != buckets::SetVersioningResult::Ok)
+            {
+                XLOGF(ERR, "Failed to set bucket versioning for bucket {}", self->keyInfo.key);
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, "Failed to set bucket versioning", self->fullKeyPath(), ""))
                             .sendWithEOM();
-                        self->finished_ = true;
-                                              });
-                    return;
-                }
+                        self->finished_ = true; });
+                return;
+            }
 
-                XLOGF(INFO, "Set bucket versioning for bucket {} to {}", self->keyInfo.key, buckets::versioningStateToStr(versioningState.value()));
+            XLOGF(INFO, "Set bucket versioning for bucket {} to {}", self->keyInfo.key, buckets::versioningStateToStr(versioningState.value()));
 
-                evb->runInEventBaseThread([self = self]()
-                                              {
+            evb->runInEventBaseThread([self = self]()
+                                      {
                         ResponseBuilder(self->downstream_)
                             .status(200, "OK")
                             .sendWithEOM();
-                        self->finished_ = true;
-                });
-                return;
-            }
-        );
+                        self->finished_ = true; });
+            return;
+        });
 }
 
 void S3Handler::finalizePutBucketCors()
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb]()
+        [self = this->self, evb]()
+        {
+            for (auto rule : self->putBucketCorsData->rules)
             {
-                for(auto rule: self->putBucketCorsData->rules)
+                if (!buckets::validateCorsRule(rule))
                 {
-                    if(!buckets::validateCorsRule(rule))
-                    {
-                        XLOGF(WARN, "Invalid CORS rule specified for bucket {}", self->keyInfo.key);
-                        evb->runInEventBaseThread([self = self]()
-                                                  {
+                    XLOGF(WARN, "Invalid CORS rule specified for bucket {}", self->keyInfo.key);
+                    evb->runInEventBaseThread([self = self]()
+                                              {
                             ResponseBuilder(self->downstream_)
                                 .status(400, "Bad Request")
                                 .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid CORS rule specified", self->fullKeyPath(), ""))
                                 .sendWithEOM();
-                            self->finished_ = true;
-                                                    });
-                        return;
-                    }
+                            self->finished_ = true; });
+                    return;
                 }
+            }
 
-                const auto bucketId = buckets::getBucket(self->keyInfo.key);
-                if(!bucketId)
-                {
-                    evb->runInEventBaseThread([self = self]()
-                                              {
+            const auto bucketId = buckets::getBucket(self->keyInfo.key);
+            if (!bucketId)
+            {
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(404, "Not found")
                             .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", self->keyInfo.key, ""))
                             .sendWithEOM();
-                        self->finished_ = true;
-                                              });
-                    return;
-                }
+                        self->finished_ = true; });
+                return;
+            }
 
-                if(!buckets::replaceCorsRules(*bucketId, self->putBucketCorsData->rules))
-                {
-                    XLOGF(ERR, "Failed to set CORS rules for bucket {}", self->keyInfo.key);
-                    evb->runInEventBaseThread([self = self]()
-                                              {
+            if (!buckets::replaceCorsRules(*bucketId, self->putBucketCorsData->rules))
+            {
+                XLOGF(ERR, "Failed to set CORS rules for bucket {}", self->keyInfo.key);
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, "Failed to set CORS rules", self->keyInfo.key, ""))
                             .sendWithEOM();
-                        self->finished_ = true;
-                                              });
-                    return;
-                }
+                        self->finished_ = true; });
+                return;
+            }
 
-                evb->runInEventBaseThread([self = self]()
-                                              {
+            evb->runInEventBaseThread([self = self]()
+                                      {
                         ResponseBuilder(self->downstream_)
                             .status(200, "OK")
                             .sendWithEOM();
-                        self->finished_ = true;
-                });
-                return;
-            }
-        );
+                        self->finished_ = true; });
+            return;
+        });
 }
 
 void S3Handler::finalizePutObjectLockConfiguration()
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb]()
+        [self = this->self, evb]()
+        {
+            auto sendError = [&self, evb](const uint16_t code, const std::string& message, const S3ErrorCode errorCode, const std::string& errorMsg)
             {
-                auto sendError = [&self, evb](const uint16_t code, const std::string& message, const S3ErrorCode errorCode, const std::string& errorMsg)
-                {
-                    evb->runInEventBaseThread([self = self, code, message, errorCode, errorMsg]()
-                                              {
+                evb->runInEventBaseThread([self = self, code, message, errorCode, errorMsg]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(code, message)
                             .body(s3errorXml(errorCode, errorMsg, self->keyInfo.key, ""))
                             .sendWithEOM();
-                        self->finished_ = true;
-                                              });
-                };
+                        self->finished_ = true; });
+            };
 
-                const auto& data = *self->putObjectLockConfigurationData;
+            const auto& data = *self->putObjectLockConfigurationData;
 
-                if(data.parseState != PutObjectLockConfigurationData::ParseState::Finished ||
-                    folly::trimWhitespace(data.objectLockEnabled) != "Enabled")
-                {
-                    XLOGF(WARN, "Invalid object lock configuration for bucket {}", self->keyInfo.key);
-                    sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "");
-                    return;
-                }
+            if (data.parseState != PutObjectLockConfigurationData::ParseState::Finished ||
+                folly::trimWhitespace(data.objectLockEnabled) != "Enabled")
+            {
+                XLOGF(WARN, "Invalid object lock configuration for bucket {}", self->keyInfo.key);
+                sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "");
+                return;
+            }
 
-                if(data.hasRule)
-                {
-                    XLOGF(INFO, "Object lock default retention rule for bucket {} not supported", self->keyInfo.key);
-                    sendError(501, "Not Implemented", S3ErrorCode::NotImplemented, "Object lock default retention rules are not supported");
-                    return;
-                }
+            if (data.hasRule)
+            {
+                XLOGF(INFO, "Object lock default retention rule for bucket {} not supported", self->keyInfo.key);
+                sendError(501, "Not Implemented", S3ErrorCode::NotImplemented, "Object lock default retention rules are not supported");
+                return;
+            }
 
-                const auto bucketId = buckets::getBucket(self->keyInfo.key);
-                if(!bucketId)
-                {
-                    sendError(404, "Not found", S3ErrorCode::NoSuchBucket, "");
-                    return;
-                }
+            const auto bucketId = buckets::getBucket(self->keyInfo.key);
+            if (!bucketId)
+            {
+                sendError(404, "Not found", S3ErrorCode::NoSuchBucket, "");
+                return;
+            }
 
-                switch(buckets::enableObjectLock(*bucketId))
-                {
+            switch (buckets::enableObjectLock(*bucketId))
+            {
                 case buckets::EnableObjectLockResult::Ok:
                     break;
                 case buckets::EnableObjectLockResult::NotFound:
@@ -5503,334 +5521,326 @@ void S3Handler::finalizePutObjectLockConfiguration()
                     XLOGF(ERR, "Failed to enable object lock for bucket {}", self->keyInfo.key);
                     sendError(500, "Internal error", S3ErrorCode::InternalError, "Failed to enable object lock");
                     return;
-                }
+            }
 
-                XLOGF(INFO, "Enabled object lock for bucket {}", self->keyInfo.key);
+            XLOGF(INFO, "Enabled object lock for bucket {}", self->keyInfo.key);
 
-                evb->runInEventBaseThread([self = self]()
-                                              {
+            evb->runInEventBaseThread([self = self]()
+                                      {
                         ResponseBuilder(self->downstream_)
                             .status(200, "OK")
                             .sendWithEOM();
-                        self->finished_ = true;
-                });
-            }
-        );
+                        self->finished_ = true; });
+        });
 }
 
 void S3Handler::finalizePutObjectRetention()
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb]()
+        [self = this->self, evb]()
+        {
+            const auto sendError = [&](const uint16_t code, const std::string& message, const S3ErrorCode errorCode, const std::string& errorMsg)
             {
-                const auto sendError = [&](const uint16_t code, const std::string& message, const S3ErrorCode errorCode, const std::string& errorMsg)
-                {
-                    evb->runInEventBaseThread([self = self, code, message, errorCode, errorMsg]()
-                                              {
+                evb->runInEventBaseThread([self = self, code, message, errorCode, errorMsg]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(code, message)
                             .body(s3errorXml(errorCode, errorMsg, self->fullKeyPath(), ""))
                             .sendWithEOM();
-                        self->finished_ = true;
-                                              });
-                };
+                        self->finished_ = true; });
+            };
 
-                const auto& data = *self->putObjectRetentionData;
+            const auto& data = *self->putObjectRetentionData;
 
-                if(data.parseState != PutObjectRetentionData::ParseState::Finished)
+            if (data.parseState != PutObjectRetentionData::ParseState::Finished)
+            {
+                XLOGF(WARN, "Invalid retention XML for object {}", self->keyInfo.key);
+                sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "");
+                return;
+            }
+
+            const auto modeStr = folly::trimWhitespace(data.mode);
+            const auto retainUntilStr = folly::trimWhitespace(data.retainUntilDate);
+            const auto eventHoldStr = folly::trimWhitespace(data.eventHold);
+
+            if (!modeStr.empty() && modeStr != "GOVERNANCE" && modeStr != "COMPLIANCE")
+            {
+                sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Invalid retention mode");
+                return;
+            }
+
+            if (!eventHoldStr.empty() && eventHoldStr != "ON" && eventHoldStr != "OFF")
+            {
+                sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Invalid event hold status");
+                return;
+            }
+
+            const auto now = std::chrono::system_clock::now();
+
+            std::optional<ObjMetadata::LockInfo> lockInfo;
+            if (!modeStr.empty())
+            {
+                lockInfo.emplace();
+                if (modeStr == "COMPLIANCE")
+                    lockInfo->flags |= lockinfo_flag_lock_mode_compliance;
+
+                if (!retainUntilStr.empty())
                 {
-                    XLOGF(WARN, "Invalid retention XML for object {}", self->keyInfo.key);
-                    sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "");
-                    return;
-                }
-
-                const auto modeStr = folly::trimWhitespace(data.mode);
-                const auto retainUntilStr = folly::trimWhitespace(data.retainUntilDate);
-                const auto eventHoldStr = folly::trimWhitespace(data.eventHold);
-
-                if(!modeStr.empty() && modeStr != "GOVERNANCE" && modeStr != "COMPLIANCE")
-                {
-                    sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Invalid retention mode");
-                    return;
-                }
-
-                if(!eventHoldStr.empty() && eventHoldStr != "ON" && eventHoldStr != "OFF")
-                {
-                    sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Invalid event hold status");
-                    return;
-                }
-
-                const auto now = std::chrono::system_clock::now();
-
-                std::optional<ObjMetadata::LockInfo> lockInfo;
-                if(!modeStr.empty())
-                {
-                    lockInfo.emplace();
-                    if(modeStr == "COMPLIANCE")
-                        lockInfo->flags |= lockinfo_flag_lock_mode_compliance;
-
-                    if(!retainUntilStr.empty())
+                    const auto retainUntil = parse_iso8601(retainUntilStr);
+                    if (!retainUntil)
                     {
-                        const auto retainUntil = parse_iso8601(retainUntilStr);
-                        if(!retainUntil)
-                        {
-                            sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Invalid retain until date");
-                            return;
-                        }
-                        if(*retainUntil <= now)
-                        {
-                            sendError(400, "Bad Request", S3ErrorCode::InvalidArgument, "The retain until date must be in the future!");
-                            return;
-                        }
-                        lockInfo->flags |= lockinfo_flag_retain_until;
-                        lockInfo->retainUntil = std::chrono::time_point_cast<std::chrono::seconds>(*retainUntil);
-                    }
-
-                    if(eventHoldStr == "ON")
-                        lockInfo->flags |= lockinfo_flag_event_hold;
-
-                    if(data.hasEventHoldDuration)
-                    {
-                        const auto daysStr = folly::trimWhitespace(data.days);
-                        const auto yearsStr = folly::trimWhitespace(data.years);
-                        const auto days = daysStr.empty() ? folly::Expected<int, folly::ConversionCode>(0) : folly::tryTo<int>(daysStr);
-                        const auto years = yearsStr.empty() ? folly::Expected<int, folly::ConversionCode>(0) : folly::tryTo<int>(yearsStr);
-                        if(!days || !years || (daysStr.empty() == yearsStr.empty()) ||
-                            (!daysStr.empty() && (*days < 1 || *days > 36500)) ||
-                            (!yearsStr.empty() && (*years < 1 || *years > 100)))
-                        {
-                            sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Event hold duration must specify either Days (1-36500) or Years (1-100)");
-                            return;
-                        }
-                        lockInfo->eventDurationDays = *days;
-                        lockInfo->eventDurationYears = static_cast<unsigned short>(*years);
-                    }
-
-                    // EventHold OFF without retain until date releases an event hold
-                    if(!lockInfo->retainUntilSet() && eventHoldStr.empty())
-                    {
-                        sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Retention mode requires RetainUntilDate or EventHold");
+                        sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Invalid retain until date");
                         return;
                     }
-                }
-                else if(!retainUntilStr.empty() || !eventHoldStr.empty() || data.hasEventHoldDuration)
-                {
-                    sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Retention mode is required");
-                    return;
-                }
-
-                if(!buckets::isObjectLockEnabled(self->keyInfo.bucketId))
-                {
-                    XLOGF(INFO, "Object lock not enabled for bucket of object {}", self->keyInfo.key);
-                    sendError(400, "Bad Request", S3ErrorCode::InvalidRequest, "Bucket is missing Object Lock Configuration");
-                    return;
-                }
-
-                std::string fn;
-                if(self->keyInfo.withVersioning() && self->keyInfo.version==0)
-                {
-                    const auto res = self->sfs().read_prepare(make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max()), 
-                        SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading | SingleFileStorage::ReadNewest);
-
-                    if(res.err == ENOENT)
+                    if (*retainUntil <= now)
                     {
-                        sendError(404, "Not found", S3ErrorCode::NoSuchKey, "");
+                        sendError(400, "Bad Request", S3ErrorCode::InvalidArgument, "The retain until date must be in the future!");
                         return;
                     }
-                    else if(res.err != 0)
+                    lockInfo->flags |= lockinfo_flag_retain_until;
+                    lockInfo->retainUntil = std::chrono::time_point_cast<std::chrono::seconds>(*retainUntil);
+                }
+
+                if (eventHoldStr == "ON")
+                    lockInfo->flags |= lockinfo_flag_event_hold;
+
+                if (data.hasEventHoldDuration)
+                {
+                    const auto daysStr = folly::trimWhitespace(data.days);
+                    const auto yearsStr = folly::trimWhitespace(data.years);
+                    const auto days = daysStr.empty() ? folly::Expected<int, folly::ConversionCode>(0) : folly::tryTo<int>(daysStr);
+                    const auto years = yearsStr.empty() ? folly::Expected<int, folly::ConversionCode>(0) : folly::tryTo<int>(yearsStr);
+                    if (!days || !years || (daysStr.empty() == yearsStr.empty()) ||
+                        (!daysStr.empty() && (*days < 1 || *days > 36500)) ||
+                        (!yearsStr.empty() && (*years < 1 || *years > 100)))
                     {
-                        XLOGF(WARN, "Reading object metadata of {} failed for PutObjectRetention: {}", self->keyInfo.key, res.err);
-                        sendError(500, "Internal error", S3ErrorCode::InternalError, fmt::format("Error code: {}", res.err));
+                        sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Event hold duration must specify either Days (1-36500) or Years (1-100)");
                         return;
                     }
-
-                    fn = res.key;
+                    lockInfo->eventDurationDays = *days;
+                    lockInfo->eventDurationYears = static_cast<unsigned short>(*years);
                 }
-                else
+
+                // EventHold OFF without retain until date releases an event hold
+                if (!lockInfo->retainUntilSet() && eventHoldStr.empty())
                 {
-                    fn = make_key(self->keyInfo);
+                    sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Retention mode requires RetainUntilDate or EventHold");
+                    return;
                 }
+            }
+            else if (!retainUntilStr.empty() || !eventHoldStr.empty() || data.hasEventHoldDuration)
+            {
+                sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Retention mode is required");
+                return;
+            }
 
-                // Current time and bypass are part of the parameter so that the result
-                // is the same if the modification is replayed from the WAL
-                CWData param;
-                param.addChar(metadata_modify_retention);
-                param.addVarInt(std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count());
-                param.addChar(data.bypassGovernance ? 1 : 0);
-                if(lockInfo)
-                {
-                    param.addChar(1);
-                    param.addVarInt(lockInfo->flags);
-                    param.addVarInt(std::chrono::duration_cast<std::chrono::seconds>(lockInfo->retainUntil.time_since_epoch()).count());
-                    param.addVarInt(lockInfo->eventDurationDays);
-                    param.addVarInt(lockInfo->eventDurationYears);
-                }
-                else
-                {
-                    param.addChar(0);
-                }
+            if (!buckets::isObjectLockEnabled(self->keyInfo.bucketId))
+            {
+                XLOGF(INFO, "Object lock not enabled for bucket of object {}", self->keyInfo.key);
+                sendError(400, "Bad Request", S3ErrorCode::InvalidRequest, "Bucket is missing Object Lock Configuration");
+                return;
+            }
 
-                const auto rc = self->sfs().modify_metadata(fn, std::string_view(param.getDataPtr(), param.getDataSize()));
+            std::string fn;
+            if (self->keyInfo.withVersioning() && self->keyInfo.version == 0)
+            {
+                const auto res = self->sfs().read_prepare(make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max()),
+                                                          SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading | SingleFileStorage::ReadNewest);
 
-                if(rc == ENOENT)
+                if (res.err == ENOENT)
                 {
                     sendError(404, "Not found", S3ErrorCode::NoSuchKey, "");
                     return;
                 }
-                else if(rc == EINVAL)
+                else if (res.err != 0)
                 {
-                    // Delete marker
-                    sendError(405, "Method Not Allowed", S3ErrorCode::MethodNotAllowed, "");
-                    return;
-                }
-                else if(rc == EACCES)
-                {
-                    sendError(403, "Forbidden", S3ErrorCode::AccessDenied, "Object is protected by object lock. Retention cannot be shortened or removed");
-                    return;
-                }
-                else if(rc == ERANGE)
-                {
-                    sendError(400, "Bad Request", S3ErrorCode::InvalidRequest, "Object has no event hold to release. RetainUntilDate is required");
-                    return;
-                }
-                else if(rc != 0)
-                {
-                    XLOGF(WARN, "Setting retention of object {} failed: {}", self->keyInfo.key, rc);
-                    sendError(500, "Internal error", S3ErrorCode::InternalError, fmt::format("Error code: {}", rc));
+                    XLOGF(WARN, "Reading object metadata of {} failed for PutObjectRetention: {}", self->keyInfo.key, res.err);
+                    sendError(500, "Internal error", S3ErrorCode::InternalError, fmt::format("Error code: {}", res.err));
                     return;
                 }
 
-                if(!self->commit())
-                {
-                    XLOGF(WARN, "Commit after setting retention of object {} failed", self->keyInfo.key);
-                    sendError(500, "Internal error", S3ErrorCode::InternalError, "Commit error");
-                    return;
-                }
+                fn = res.key;
+            }
+            else
+            {
+                fn = make_key(self->keyInfo);
+            }
 
-                XLOGF(INFO, "Set retention of object {} to mode {} retain until {} event hold {}", self->keyInfo.key, 
-                    modeStr, retainUntilStr, eventHoldStr);
+            // Current time and bypass are part of the parameter so that the result
+            // is the same if the modification is replayed from the WAL
+            CWData param;
+            param.addChar(metadata_modify_retention);
+            param.addVarInt(std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count());
+            param.addChar(data.bypassGovernance ? 1 : 0);
+            if (lockInfo)
+            {
+                param.addChar(1);
+                param.addVarInt(lockInfo->flags);
+                param.addVarInt(std::chrono::duration_cast<std::chrono::seconds>(lockInfo->retainUntil.time_since_epoch()).count());
+                param.addVarInt(lockInfo->eventDurationDays);
+                param.addVarInt(lockInfo->eventDurationYears);
+            }
+            else
+            {
+                param.addChar(0);
+            }
 
-                evb->runInEventBaseThread([self = self]()
-                                              {
+            const auto rc = self->sfs().modify_metadata(fn, std::string_view(param.getDataPtr(), param.getDataSize()));
+
+            if (rc == ENOENT)
+            {
+                sendError(404, "Not found", S3ErrorCode::NoSuchKey, "");
+                return;
+            }
+            else if (rc == EINVAL)
+            {
+                // Delete marker
+                sendError(405, "Method Not Allowed", S3ErrorCode::MethodNotAllowed, "");
+                return;
+            }
+            else if (rc == EACCES)
+            {
+                sendError(403, "Forbidden", S3ErrorCode::AccessDenied, "Object is protected by object lock. Retention cannot be shortened or removed");
+                return;
+            }
+            else if (rc == ERANGE)
+            {
+                sendError(400, "Bad Request", S3ErrorCode::InvalidRequest, "Object has no event hold to release. RetainUntilDate is required");
+                return;
+            }
+            else if (rc != 0)
+            {
+                XLOGF(WARN, "Setting retention of object {} failed: {}", self->keyInfo.key, rc);
+                sendError(500, "Internal error", S3ErrorCode::InternalError, fmt::format("Error code: {}", rc));
+                return;
+            }
+
+            if (!self->commit())
+            {
+                XLOGF(WARN, "Commit after setting retention of object {} failed", self->keyInfo.key);
+                sendError(500, "Internal error", S3ErrorCode::InternalError, "Commit error");
+                return;
+            }
+
+            XLOGF(INFO, "Set retention of object {} to mode {} retain until {} event hold {}", self->keyInfo.key,
+                  modeStr, retainUntilStr, eventHoldStr);
+
+            evb->runInEventBaseThread([self = self]()
+                                      {
                         ResponseBuilder(self->downstream_)
                             .status(200, "OK")
                             .sendWithEOM();
-                        self->finished_ = true;
-                });
-            }
-        );
+                        self->finished_ = true; });
+        });
 }
 
 void S3Handler::finalizePutObjectLegalHold()
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb]()
+        [self = this->self, evb]()
+        {
+            const auto sendError = [&](const uint16_t code, const std::string& message, const S3ErrorCode errorCode, const std::string& errorMsg)
             {
-                const auto sendError = [&](const uint16_t code, const std::string& message, const S3ErrorCode errorCode, const std::string& errorMsg)
-                {
-                    evb->runInEventBaseThread([self = self, code, message, errorCode, errorMsg]()
-                                              {
+                evb->runInEventBaseThread([self = self, code, message, errorCode, errorMsg]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(code, message)
                             .body(s3errorXml(errorCode, errorMsg, self->fullKeyPath(), ""))
                             .sendWithEOM();
-                        self->finished_ = true;
-                                              });
-                };
+                        self->finished_ = true; });
+            };
 
-                const auto statusStr = folly::trimWhitespace(self->deleteObjectsData->buf);
+            const auto statusStr = folly::trimWhitespace(self->deleteObjectsData->buf);
 
-                if(self->deleteObjectsData->parseState != DeleteObjectsData::ParseState::Finished ||
-                    (statusStr != "ON" && statusStr != "OFF"))
-                {
-                    XLOGF(WARN, "Invalid legal hold status specified for object {}: {}", self->keyInfo.key, self->deleteObjectsData->buf);
-                    sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "");
-                    return;
-                }
+            if (self->deleteObjectsData->parseState != DeleteObjectsData::ParseState::Finished ||
+                (statusStr != "ON" && statusStr != "OFF"))
+            {
+                XLOGF(WARN, "Invalid legal hold status specified for object {}: {}", self->keyInfo.key, self->deleteObjectsData->buf);
+                sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "");
+                return;
+            }
 
-                const bool legalHold = statusStr == "ON";
+            const bool legalHold = statusStr == "ON";
 
-                if(!buckets::isObjectLockEnabled(self->keyInfo.bucketId))
-                {
-                    XLOGF(INFO, "Object lock not enabled for bucket of object {}", self->keyInfo.key);
-                    sendError(400, "Bad Request", S3ErrorCode::InvalidRequest, "Bucket is missing Object Lock Configuration");
-                    return;
-                }
+            if (!buckets::isObjectLockEnabled(self->keyInfo.bucketId))
+            {
+                XLOGF(INFO, "Object lock not enabled for bucket of object {}", self->keyInfo.key);
+                sendError(400, "Bad Request", S3ErrorCode::InvalidRequest, "Bucket is missing Object Lock Configuration");
+                return;
+            }
 
-                std::string fn;
-                if(self->keyInfo.withVersioning() && self->keyInfo.version==0)
-                {
-                    const auto res = self->sfs().read_prepare(make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max()), 
-                        SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading | SingleFileStorage::ReadNewest);
+            std::string fn;
+            if (self->keyInfo.withVersioning() && self->keyInfo.version == 0)
+            {
+                const auto res = self->sfs().read_prepare(make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max()),
+                                                          SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading | SingleFileStorage::ReadNewest);
 
-                    if(res.err == ENOENT)
-                    {
-                        sendError(404, "Not found", S3ErrorCode::NoSuchKey, "");
-                        return;
-                    }
-                    else if(res.err != 0)
-                    {
-                        XLOGF(WARN, "Reading object metadata of {} failed for PutObjectLegalHold: {}", self->keyInfo.key, res.err);
-                        sendError(500, "Internal error", S3ErrorCode::InternalError, fmt::format("Error code: {}", res.err));
-                        return;
-                    }
-
-                    fn = res.key;
-                }
-                else
-                {
-                    fn = make_key(self->keyInfo);
-                }
-
-                CWData param;
-                param.addChar(metadata_modify_legal_hold);
-                param.addChar(legalHold ? 1 : 0);
-
-                const auto rc = self->sfs().modify_metadata(fn, std::string_view(param.getDataPtr(), param.getDataSize()));
-
-                if(rc == ENOENT)
+                if (res.err == ENOENT)
                 {
                     sendError(404, "Not found", S3ErrorCode::NoSuchKey, "");
                     return;
                 }
-                else if(rc == EINVAL)
+                else if (res.err != 0)
                 {
-                    // Delete marker
-                    sendError(405, "Method Not Allowed", S3ErrorCode::MethodNotAllowed, "");
-                    return;
-                }
-                else if(rc != 0)
-                {
-                    XLOGF(WARN, "Setting legal hold of object {} failed: {}", self->keyInfo.key, rc);
-                    sendError(500, "Internal error", S3ErrorCode::InternalError, fmt::format("Error code: {}", rc));
+                    XLOGF(WARN, "Reading object metadata of {} failed for PutObjectLegalHold: {}", self->keyInfo.key, res.err);
+                    sendError(500, "Internal error", S3ErrorCode::InternalError, fmt::format("Error code: {}", res.err));
                     return;
                 }
 
-                if(!self->commit())
-                {
-                    XLOGF(WARN, "Commit after setting legal hold of object {} failed", self->keyInfo.key);
-                    sendError(500, "Internal error", S3ErrorCode::InternalError, "Commit error");
-                    return;
-                }
+                fn = res.key;
+            }
+            else
+            {
+                fn = make_key(self->keyInfo);
+            }
 
-                XLOGF(INFO, "Set legal hold of object {} to {}", self->keyInfo.key, legalHold ? "ON" : "OFF");
+            CWData param;
+            param.addChar(metadata_modify_legal_hold);
+            param.addChar(legalHold ? 1 : 0);
 
-                evb->runInEventBaseThread([self = self]()
-                                              {
+            const auto rc = self->sfs().modify_metadata(fn, std::string_view(param.getDataPtr(), param.getDataSize()));
+
+            if (rc == ENOENT)
+            {
+                sendError(404, "Not found", S3ErrorCode::NoSuchKey, "");
+                return;
+            }
+            else if (rc == EINVAL)
+            {
+                // Delete marker
+                sendError(405, "Method Not Allowed", S3ErrorCode::MethodNotAllowed, "");
+                return;
+            }
+            else if (rc != 0)
+            {
+                XLOGF(WARN, "Setting legal hold of object {} failed: {}", self->keyInfo.key, rc);
+                sendError(500, "Internal error", S3ErrorCode::InternalError, fmt::format("Error code: {}", rc));
+                return;
+            }
+
+            if (!self->commit())
+            {
+                XLOGF(WARN, "Commit after setting legal hold of object {} failed", self->keyInfo.key);
+                sendError(500, "Internal error", S3ErrorCode::InternalError, "Commit error");
+                return;
+            }
+
+            XLOGF(INFO, "Set legal hold of object {} to {}", self->keyInfo.key, legalHold ? "ON" : "OFF");
+
+            evb->runInEventBaseThread([self = self]()
+                                      {
                         ResponseBuilder(self->downstream_)
                             .status(200, "OK")
                             .sendWithEOM();
-                        self->finished_ = true;
-                });
-            }
-        );
+                        self->finished_ = true; });
+        });
 }
 
 void S3Handler::deleteObjects()
 {
-    if(deleteObjectsData->objects.size() > 1000)
+    if (deleteObjectsData->objects.size() > 1000)
     {
         XLOGF(WARN, "Too many objects to delete: {}", deleteObjectsData->objects.size());
         ResponseBuilder(self->downstream_)
@@ -5843,170 +5853,175 @@ void S3Handler::deleteObjects()
 
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb, deleteObjectsData = this->deleteObjectsData.get()]()
+        [self = this->self, evb, deleteObjectsData = this->deleteObjectsData.get()]()
+        {
+            const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
+            const auto withVersioning = self->keyInfo.withVersioning();
+
+            size_t deletedObjects = 0;
+
+            std::string resp = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                               "<DeleteResult>\n";
+
+            for (const auto& obj : deleteObjectsData->objects)
             {
-                const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
-                const auto withVersioning = self->keyInfo.withVersioning();
+                const auto resource = fmt::format("arn:aws:s3:::{}/{}", bucketName, obj.key);
+                const auto action = Action::DeleteObject;
 
-                size_t deletedObjects = 0;
-
-                std::string resp = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-                                    "<DeleteResult>\n";
-
-                for(const auto& obj: deleteObjectsData->objects)
+                if (!isAuthorized(resource, action, deleteObjectsData->accessKey))
                 {
-                    const auto resource = fmt::format("arn:aws:s3:::{}/{}", bucketName, obj.key);
-                    const auto action = Action::DeleteObject;
+                    resp += fmt::format("\t<Error>\n"
+                                        "\t\t<Code>AccessDenied</Code>\n"
+                                        "\t\t<Message>Access to object not authorized</Message>\n"
+                                        "\t\t<Key>{}</Key>\n"
+                                        "\t\t</Error>\n",
+                                        escapeXML(obj.key));
+                    continue;
+                }
 
-                    if(!isAuthorized(resource, action, deleteObjectsData->accessKey))
+                bool delNewest = false;
+
+                int64_t version = 0;
+
+                if (withVersioning && obj.versionId.empty())
+                {
+                    version = std::numeric_limits<int64_t>::max();
+                    delNewest = true;
+                }
+                else if (withVersioning && !obj.versionId.empty())
+                {
+                    version = self->sfs().decrypt_id(obj.versionId);
+                    if (version < 0)
                     {
                         resp += fmt::format("\t<Error>\n"
-                            "\t\t<Code>AccessDenied</Code>\n"
-                            "\t\t<Message>Access to object not authorized</Message>\n"
-                            "\t\t<Key>{}</Key>\n"
-                            "\t\t</Error>\n", escapeXML(obj.key));
+                                            "\t\t<Code>InvalidArgument</Code>\n"
+                                            "\t\t<Message>Invalid version id specified</Message>\n"
+                                            "\t\t<Key>{}</Key>\n"
+                                            "\t</Error>\n",
+                                            escapeXML(obj.key));
                         continue;
-                    }
-
-                    bool delNewest = false;
-
-                    int64_t version = 0;
-
-                    if(withVersioning && obj.versionId.empty())
-                    {
-                        version= std::numeric_limits<int64_t>::max();
-                        delNewest = true;
-                    }
-                    else if(withVersioning && !obj.versionId.empty())
-                    {
-                        version = self->sfs().decrypt_id(obj.versionId);
-                        if(version<0)
-                        {
-                            resp += fmt::format("\t<Error>\n"
-                                "\t\t<Code>InvalidArgument</Code>\n"
-                                "\t\t<Message>Invalid version id specified</Message>\n"
-                                "\t\t<Key>{}</Key>\n"
-                                "\t</Error>\n", escapeXML(obj.key));
-                            continue;
-                        }
-                    }
-
-                    const auto currPath = make_key(obj.key, self->keyInfo.bucketId, version);
-
-                    std::optional<SingleFileStorage::MatchInfo> objMatchInfo;
-                    if(self->matchInfo)
-                    {
-                        objMatchInfo = *self->matchInfo;
-                        objMatchInfo->match = false;
-                        objMatchInfo->isProtected = false;
-                    }
-
-                    int res;
-
-                    if(delNewest)
-                    {
-                        const auto objRes = self->sfs().check_existence(currPath, SingleFileStorage::ReadNewest);
-
-                        if(objRes.err==0)
-                        {
-                            if(objMatchInfo)
-                            {
-                                objMatchInfo->readFn = currPath;
-                                objMatchInfo->readNewest = true;
-                            }
-
-                            version = self->sfs().get_next_version();
-                            const auto writePath = make_key(obj.key, self->keyInfo.bucketId, version);
-                            std::string md5sum(1, metadata_tombstone);
-                            res = self->sfs().write(writePath, nullptr, 0, 0, 0, md5sum, false, false, objMatchInfo ? &*objMatchInfo : nullptr);
-                        }
-                        else
-                        {
-                            res = objRes.err;
-                        }
-                    }
-                    else
-                    {
-                        if(buckets::isObjectLockEnabled(self->keyInfo.bucketId))
-                        {
-                            if(!objMatchInfo)
-                                objMatchInfo.emplace();
-                            objMatchInfo->checkProtected = true;
-                            objMatchInfo->protectedCheckTime = std::chrono::duration_cast<std::chrono::seconds>(
-                                std::chrono::system_clock::now().time_since_epoch()).count();
-                            objMatchInfo->bypassGovernance = deleteObjectsData->bypassGovernanceRequested &&
-                                isAuthorized(resource, Action::BypassGovernanceRetention, deleteObjectsData->accessKey);
-                        }
-                        res = self->sfs().del(currPath, SingleFileStorage::DelAction::Del, false, nullptr, objMatchInfo ? &*objMatchInfo : nullptr);
-                    }
-
-                    if(res==0 && (!objMatchInfo || objMatchInfo->match))
-                    {
-                        ++deletedObjects;
-                    }
-
-                    if(res==0 || res==ENOENT)
-                    {
-                        if(objMatchInfo && objMatchInfo->isProtected)
-                        {
-                            resp += fmt::format("\t<Error>\n"
-                                "\t\t<Code>AccessDenied</Code>\n"
-                                "\t\t<Message>Object is protected by object lock</Message>\n"
-                                "\t\t<Key>{}</Key>\n"
-                                "\t</Error>\n",  escapeXML(obj.key));
-                        }
-                        else if(objMatchInfo && !objMatchInfo->match)
-                        {
-                            resp += fmt::format("\t<Error>\n"
-                                "\t\t<Code>PreconditionFailed</Code>\n"
-                                "\t\t<Message>At least one of the preconditions you specified did not hold</Message>\n"
-                                "\t\t<Key>{}</Key>\n"
-                                "\t</Error>\n",  escapeXML(obj.key));
-                        }
-                        else if(!deleteObjectsData->quiet)
-                        {
-                            resp += fmt::format("\t<Deleted>\n"
-                                "\t\t<Key>{}</Key>\n"
-                                "\t</Deleted>\n", escapeXML(obj.key));
-                        }
-                    }
-                    else
-                    {
-                        resp += fmt::format("\t<Error>\n"
-                            "\t\t<Code>InternalError</Code>\n"
-                            "\t\t<Message>Internal error {}</Message>\n"
-                            "\t\t<Key>{}</Key>\n"
-                            "\t</Error>\n", res, escapeXML(obj.key));
                     }
                 }
 
-                resp += "</DeleteResult>";
+                const auto currPath = make_key(obj.key, self->keyInfo.bucketId, version);
 
-                if(deletedObjects>0 && !self->commit())
+                std::optional<SingleFileStorage::MatchInfo> objMatchInfo;
+                if (self->matchInfo)
                 {
-                    XLOGF(ERR, "Storage commit failed");
-                    evb->runInEventBaseThread([self = self]()
-                                        {           
+                    objMatchInfo = *self->matchInfo;
+                    objMatchInfo->match = false;
+                    objMatchInfo->isProtected = false;
+                }
+
+                int res;
+
+                if (delNewest)
+                {
+                    const auto objRes = self->sfs().check_existence(currPath, SingleFileStorage::ReadNewest);
+
+                    if (objRes.err == 0)
+                    {
+                        if (objMatchInfo)
+                        {
+                            objMatchInfo->readFn = currPath;
+                            objMatchInfo->readNewest = true;
+                        }
+
+                        version = self->sfs().get_next_version();
+                        const auto writePath = make_key(obj.key, self->keyInfo.bucketId, version);
+                        std::string md5sum(1, metadata_tombstone);
+                        res = self->sfs().write(writePath, nullptr, 0, 0, 0, md5sum, false, false, objMatchInfo ? &*objMatchInfo : nullptr);
+                    }
+                    else
+                    {
+                        res = objRes.err;
+                    }
+                }
+                else
+                {
+                    if (buckets::isObjectLockEnabled(self->keyInfo.bucketId))
+                    {
+                        if (!objMatchInfo)
+                            objMatchInfo.emplace();
+                        objMatchInfo->checkProtected = true;
+                        objMatchInfo->protectedCheckTime = std::chrono::duration_cast<std::chrono::seconds>(
+                                                               std::chrono::system_clock::now().time_since_epoch())
+                                                               .count();
+                        objMatchInfo->bypassGovernance = deleteObjectsData->bypassGovernanceRequested &&
+                                                         isAuthorized(resource, Action::BypassGovernanceRetention, deleteObjectsData->accessKey);
+                    }
+                    res = self->sfs().del(currPath, SingleFileStorage::DelAction::Del, false, nullptr, objMatchInfo ? &*objMatchInfo : nullptr);
+                }
+
+                if (res == 0 && (!objMatchInfo || objMatchInfo->match))
+                {
+                    ++deletedObjects;
+                }
+
+                if (res == 0 || res == ENOENT)
+                {
+                    if (objMatchInfo && objMatchInfo->isProtected)
+                    {
+                        resp += fmt::format("\t<Error>\n"
+                                            "\t\t<Code>AccessDenied</Code>\n"
+                                            "\t\t<Message>Object is protected by object lock</Message>\n"
+                                            "\t\t<Key>{}</Key>\n"
+                                            "\t</Error>\n",
+                                            escapeXML(obj.key));
+                    }
+                    else if (objMatchInfo && !objMatchInfo->match)
+                    {
+                        resp += fmt::format("\t<Error>\n"
+                                            "\t\t<Code>PreconditionFailed</Code>\n"
+                                            "\t\t<Message>At least one of the preconditions you specified did not hold</Message>\n"
+                                            "\t\t<Key>{}</Key>\n"
+                                            "\t</Error>\n",
+                                            escapeXML(obj.key));
+                    }
+                    else if (!deleteObjectsData->quiet)
+                    {
+                        resp += fmt::format("\t<Deleted>\n"
+                                            "\t\t<Key>{}</Key>\n"
+                                            "\t</Deleted>\n",
+                                            escapeXML(obj.key));
+                    }
+                }
+                else
+                {
+                    resp += fmt::format("\t<Error>\n"
+                                        "\t\t<Code>InternalError</Code>\n"
+                                        "\t\t<Message>Internal error {}</Message>\n"
+                                        "\t\t<Key>{}</Key>\n"
+                                        "\t</Error>\n",
+                                        res, escapeXML(obj.key));
+                }
+            }
+
+            resp += "</DeleteResult>";
+
+            if (deletedObjects > 0 && !self->commit())
+            {
+                XLOGF(ERR, "Storage commit failed");
+                evb->runInEventBaseThread([self = self]()
+                                          {           
                             ResponseBuilder(self->downstream_)
                                 .status(500, "Internal error")
                                 .body(s3errorXml(S3ErrorCode::InternalError, "Commit error", "", ""))
                                 .sendWithEOM();
                             self->finished_ = true; });
-                    return;
-                }
-                else
-                {
-                    evb->runInEventBaseThread([self = self, resp = std::move(resp)] ()
-                    {
+                return;
+            }
+            else
+            {
+                evb->runInEventBaseThread([self = self, resp = std::move(resp)]()
+                                          {
                         ResponseBuilder(self->downstream_)
                                 .status(200, "OK")
                                 .body(resp)
                                 .sendWithEOM();
-                        self->finished_ = true;
-                    });
-                }
+                        self->finished_ = true; });
             }
-        );
+        });
 }
 
 void S3Handler::abortMultipartUpload(proxygen::HTTPMessage& headers, const std::string& uploadIdStr)
@@ -6018,11 +6033,11 @@ void S3Handler::abortMultipartUpload(proxygen::HTTPMessage& headers, const std::
         {
             const auto uploadId = self->decryptUploadId(uploadIdStr);
 
-            if(uploadId.id<=0)
+            if (uploadId.id <= 0)
             {
                 XLOGF(INFO, "Invalid uploadId {}", uploadIdStr);
                 evb->runInEventBaseThread([self = self]()
-                                            {
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(400, "Bad Request")
                             .sendWithEOM();
@@ -6032,27 +6047,26 @@ void S3Handler::abortMultipartUpload(proxygen::HTTPMessage& headers, const std::
 
             XLOGF(INFO, "Aborting multipart upload for object {} uploadId {}", self->keyInfo.key, uploadIdStr);
 
-
             const auto currPath = make_key(self->keyInfo.key, buckets::getPartialUploadsBucket(self->keyInfo.bucketId),
-                                            uploadId.id);
-            
+                                           uploadId.id);
+
             const auto readRes = self->sfs().read_prepare(currPath, SingleFileStorage::ReadSkipAddReading);
 
-            if(readRes.err==ENOENT)
+            if (readRes.err == ENOENT)
             {
                 XLOGF(INFO, "Aborting multipart upload for object {} uploadId {} not found", self->keyInfo.key, uploadIdStr);
                 evb->runInEventBaseThread([self = self]()
-                                        {
+                                          {
                         ResponseBuilder(self->downstream_)
                             .sendWithEOM();
                         self->finished_ = true; });
                 return;
             }
-            else if(readRes.err != 0)
+            else if (readRes.err != 0)
             {
                 XLOGF(INFO, "Aborting multipart upload for object {} uploadId {} read err {}", self->keyInfo.key, uploadIdStr, readRes.err);
                 evb->runInEventBaseThread([self = self, readRes]()
-                                        {
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .sendWithEOM();
@@ -6062,28 +6076,28 @@ void S3Handler::abortMultipartUpload(proxygen::HTTPMessage& headers, const std::
 
             CRData rdata(readRes.md5sum.data(), readRes.md5sum.size());
             std::string nonce;
-            if(!rdata.getStr2(&nonce) ||
-                nonce!=uploadId.nonce)
+            if (!rdata.getStr2(&nonce) ||
+                nonce != uploadId.nonce)
             {
                 XLOGF(WARN, "Aborting multipart upload for object {} uploadId {} verification failed", self->keyInfo.key, uploadIdStr);
                 evb->runInEventBaseThread([self = self]()
-                                        {
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(400, "Bad Request")
                             .sendWithEOM();
                         self->finished_ = true; });
                 return;
             }
-            
+
             auto res = self->sfs().del(currPath, SingleFileStorage::DelAction::Del, false);
 
-            if(res==0)
+            if (res == 0)
             {
                 res = self->commit() ? 0 : 1;
             }
 
             evb->runInEventBaseThread([self = self, res]()
-                                            {
+                                      {
                     if(res==ENOENT)
                     {
                         XLOGF(INFO, "Removing object '{}' not found", self->keyInfo.key);
@@ -6104,9 +6118,7 @@ void S3Handler::abortMultipartUpload(proxygen::HTTPMessage& headers, const std::
                             .status(204, "No Content")
                             .sendWithEOM();
                     }
-                    self->finished_ = true;
-                                            });
-
+                    self->finished_ = true; });
         });
 }
 
@@ -6119,24 +6131,24 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers, const bool bypassGo
         {
             XLOGF(INFO, "Removing object {}", self->keyInfo.key);
 
-            bool delNewest = false;            
+            bool delNewest = false;
 
-            if(self->keyInfo.withVersioning() && self->keyInfo.version==0)
+            if (self->keyInfo.withVersioning() && self->keyInfo.version == 0)
             {
                 self->keyInfo.version = std::numeric_limits<int64_t>::max();
                 delNewest = true;
             }
 
-            const auto currPath =  make_key(self->keyInfo);
+            const auto currPath = make_key(self->keyInfo);
             int res;
 
-            if(delNewest)
+            if (delNewest)
             {
                 const auto objRes = self->sfs().check_existence(currPath, SingleFileStorage::ReadNewest);
 
-                if(objRes.err==0)
+                if (objRes.err == 0)
                 {
-                    if(self->matchInfo)
+                    if (self->matchInfo)
                     {
                         self->matchInfo->readFn = currPath;
                         self->matchInfo->readNewest = true;
@@ -6154,20 +6166,21 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers, const bool bypassGo
             }
             else
             {
-                if(FLAGS_test_delay_before_modify_ms > 0)
+                if (FLAGS_test_delay_before_modify_ms > 0)
                     std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_test_delay_before_modify_ms));
 
                 self->addProtectedCheck(bypassGovernance);
 
-                if(FLAGS_test_delay_after_protected_check_ms > 0)
+                if (FLAGS_test_delay_after_protected_check_ms > 0)
                     std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_test_delay_after_protected_check_ms));
 
                 res = self->sfs().del(currPath, SingleFileStorage::DelAction::Del, false, nullptr, self->matchInfo.get());
             }
 
-            if(res==0 && self->matchInfo && !self->matchInfo->match)
+            if (res == 0 && self->matchInfo && !self->matchInfo->match)
             {
-                 evb->runInEventBaseThread([self = self, res]()                                            {
+                evb->runInEventBaseThread([self = self, res]()
+                                          {
                         if(self->matchInfo->isProtected)
                             ResponseBuilder(self->downstream_)
                                 .status(403, "Forbidden")
@@ -6178,18 +6191,17 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers, const bool bypassGo
                                 .status(412, "Precondition Failed")
                                 .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", self->fullKeyPath(), ""))
                                 .sendWithEOM();
-                        self->finished_ = true;
-                                            });
+                        self->finished_ = true; });
                 return;
             }
 
-            if(res==0)
+            if (res == 0)
             {
                 res = self->commit() ? 0 : 1;
             }
 
             evb->runInEventBaseThread([self = self, res]()
-                                            {
+                                      {
                     if(res==ENOENT)
                     {
                         // Does not happen since we use DelNoCheck, instead of Del
@@ -6211,16 +6223,14 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers, const bool bypassGo
                             .status(204, "No Content")
                             .sendWithEOM();
                     }
-                    self->finished_ = true;
-                                            });
-
+                    self->finished_ = true; });
         });
 }
 
 void S3Handler::putBucketVersioning(proxygen::HTTPMessage& headers)
 {
     xmlBody.init();
-    if(xmlBody.parser == nullptr)
+    if (xmlBody.parser == nullptr)
     {
         ResponseBuilder(downstream_)
             .status(500, "Internal error")
@@ -6240,7 +6250,7 @@ void S3Handler::putBucketVersioning(proxygen::HTTPMessage& headers)
 void S3Handler::putBucketCors(proxygen::HTTPMessage& headers)
 {
     xmlBody.init();
-    if(xmlBody.parser == nullptr)
+    if (xmlBody.parser == nullptr)
     {
         ResponseBuilder(downstream_)
             .status(500, "Internal error")
@@ -6260,7 +6270,7 @@ void S3Handler::putBucketCors(proxygen::HTTPMessage& headers)
 void S3Handler::putObjectLegalHold(proxygen::HTTPMessage& headers)
 {
     xmlBody.init();
-    if(xmlBody.parser == nullptr)
+    if (xmlBody.parser == nullptr)
     {
         ResponseBuilder(downstream_)
             .status(500, "Internal error")
@@ -6280,7 +6290,7 @@ void S3Handler::putObjectLegalHold(proxygen::HTTPMessage& headers)
 void S3Handler::putObjectRetention(proxygen::HTTPMessage& headers, const bool bypassGovernance)
 {
     xmlBody.init();
-    if(xmlBody.parser == nullptr)
+    if (xmlBody.parser == nullptr)
     {
         ResponseBuilder(downstream_)
             .status(500, "Internal error")
@@ -6301,15 +6311,15 @@ void S3Handler::putObjectRetention(proxygen::HTTPMessage& headers, const bool by
 bool S3Handler::bypassGovernanceRequested(proxygen::HTTPMessage& headers)
 {
     return asciiToLower(folly::trimWhitespace(
-        headers.getHeaders().getSingleOrEmpty("x-amz-bypass-governance-retention"))) == "true";
+               headers.getHeaders().getSingleOrEmpty("x-amz-bypass-governance-retention"))) == "true";
 }
 
 std::optional<bool> S3Handler::checkBypassGovernance(proxygen::HTTPMessage& headers, const std::string_view resource, const std::string_view accessKey)
 {
-    if(!bypassGovernanceRequested(headers))
+    if (!bypassGovernanceRequested(headers))
         return false;
 
-    if(!isAuthorized(resource, Action::BypassGovernanceRetention, accessKey))
+    if (!isAuthorized(resource, Action::BypassGovernanceRetention, accessKey))
     {
         XLOGF(INFO, "Unauthorized BypassGovernanceRetention: {}", resource);
         ResponseBuilder(downstream_)
@@ -6328,10 +6338,11 @@ bool S3Handler::parseObjectLockHeaders(proxygen::HTTPMessage& headers, const std
     const auto retainUntilStr = folly::trimWhitespace(headers.getHeaders().getSingleOrEmpty("x-amz-object-lock-retain-until-date"));
     const auto legalHoldStr = folly::trimWhitespace(headers.getHeaders().getSingleOrEmpty("x-amz-object-lock-legal-hold"));
 
-    if(modeStr.empty() && retainUntilStr.empty() && legalHoldStr.empty())
+    if (modeStr.empty() && retainUntilStr.empty() && legalHoldStr.empty())
         return true;
 
-    auto sendErr = [&](int code, const std::string_view status, const S3ErrorCode errCode, const std::string_view msg) {
+    auto sendErr = [&](int code, const std::string_view status, const S3ErrorCode errCode, const std::string_view msg)
+    {
         ResponseBuilder(downstream_)
             .status(code, std::string(status))
             .body(s3errorXml(errCode, msg, resource, ""))
@@ -6339,7 +6350,7 @@ bool S3Handler::parseObjectLockHeaders(proxygen::HTTPMessage& headers, const std
         return false;
     };
 
-    if(!buckets::isObjectLockEnabled(keyInfo.bucketId))
+    if (!buckets::isObjectLockEnabled(keyInfo.bucketId))
     {
         XLOGF(INFO, "Object lock headers for {} but object lock not enabled for bucket", resource);
         return sendErr(400, "Bad Request", S3ErrorCode::InvalidRequest, "Bucket is missing Object Lock Configuration");
@@ -6347,43 +6358,43 @@ bool S3Handler::parseObjectLockHeaders(proxygen::HTTPMessage& headers, const std
 
     std::optional<ObjMetadata::LockInfo> lockInfo;
 
-    if(modeStr.empty() != retainUntilStr.empty())
-        return sendErr(400, "Bad Request", S3ErrorCode::InvalidArgument, 
-            "x-amz-object-lock-retain-until-date and x-amz-object-lock-mode must both be supplied");
+    if (modeStr.empty() != retainUntilStr.empty())
+        return sendErr(400, "Bad Request", S3ErrorCode::InvalidArgument,
+                       "x-amz-object-lock-retain-until-date and x-amz-object-lock-mode must both be supplied");
 
-    if(!modeStr.empty())
+    if (!modeStr.empty())
     {
-        if(modeStr != "GOVERNANCE" && modeStr != "COMPLIANCE")
+        if (modeStr != "GOVERNANCE" && modeStr != "COMPLIANCE")
             return sendErr(400, "Bad Request", S3ErrorCode::InvalidArgument, "Unknown wormMode directive");
 
         const auto retainUntil = parse_iso8601(retainUntilStr);
-        if(!retainUntil)
+        if (!retainUntil)
             return sendErr(400, "Bad Request", S3ErrorCode::InvalidArgument, "Invalid retain until date");
 
-        if(*retainUntil <= std::chrono::system_clock::now())
+        if (*retainUntil <= std::chrono::system_clock::now())
             return sendErr(400, "Bad Request", S3ErrorCode::InvalidArgument, "The retain until date must be in the future!");
 
-        if(!isAuthorized(resource, Action::PutObjectRetention, accessKey))
+        if (!isAuthorized(resource, Action::PutObjectRetention, accessKey))
         {
             XLOGF(INFO, "Unauthorized PutObjectRetention via headers: {}", resource);
             return sendErr(403, "Forbidden", S3ErrorCode::AccessDenied, "");
         }
 
         lockInfo.emplace();
-        if(modeStr == "COMPLIANCE")
+        if (modeStr == "COMPLIANCE")
             lockInfo->flags |= lockinfo_flag_lock_mode_compliance;
         lockInfo->flags |= lockinfo_flag_retain_until;
         lockInfo->retainUntil = std::chrono::time_point_cast<std::chrono::seconds>(*retainUntil);
     }
 
-    if(!legalHoldStr.empty())
+    if (!legalHoldStr.empty())
     {
-        if(legalHoldStr != "ON" && legalHoldStr != "OFF")
+        if (legalHoldStr != "ON" && legalHoldStr != "OFF")
             return sendErr(400, "Bad Request", S3ErrorCode::InvalidArgument, "Legal Hold must be either of 'ON' or 'OFF'");
 
-        if(legalHoldStr == "ON")
+        if (legalHoldStr == "ON")
         {
-            if(!isAuthorized(resource, Action::PutObjectLegalHold, accessKey))
+            if (!isAuthorized(resource, Action::PutObjectLegalHold, accessKey))
             {
                 XLOGF(INFO, "Unauthorized PutObjectLegalHold via headers: {}", resource);
                 return sendErr(403, "Forbidden", S3ErrorCode::AccessDenied, "");
@@ -6392,10 +6403,10 @@ bool S3Handler::parseObjectLockHeaders(proxygen::HTTPMessage& headers, const std
     }
 
     const bool legalHold = legalHoldStr == "ON";
-    if(!lockInfo && !legalHold)
+    if (!lockInfo && !legalHold)
         return true;
 
-    if(!objMetadata)
+    if (!objMetadata)
         objMetadata = std::make_unique<ObjMetadata>();
 
     objMetadata->lockInfo = std::move(lockInfo);
@@ -6407,7 +6418,7 @@ bool S3Handler::parseObjectLockHeaders(proxygen::HTTPMessage& headers, const std
 void S3Handler::putObjectLockConfiguration(proxygen::HTTPMessage& headers)
 {
     xmlBody.init();
-    if(xmlBody.parser == nullptr)
+    if (xmlBody.parser == nullptr)
     {
         ResponseBuilder(downstream_)
             .status(500, "Internal error")
@@ -6428,7 +6439,7 @@ void S3Handler::optionsObject(proxygen::HTTPMessage& headers)
 {
     const auto bucketName = buckets::getBucketName(keyInfo.bucketId);
     const auto bucketInfoOpt = buckets::getBucketInfo(bucketName);
-    if(!bucketInfoOpt)
+    if (!bucketInfoOpt)
         return;
     const auto& bucketInfo = bucketInfoOpt.value();
 
@@ -6437,62 +6448,62 @@ void S3Handler::optionsObject(proxygen::HTTPMessage& headers)
     const auto origin = headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_ORIGIN);
 
     std::vector<std::string_view> allowHeaders;
-    if(!allowHeadersStr.empty())
+    if (!allowHeadersStr.empty())
         folly::split(",", allowHeadersStr, allowHeaders);
 
     const auto ruleMatch = [](const std::vector<std::string>& allowed, const std::string_view val) -> std::optional<std::string_view>
     {
-        if(val.empty())
+        if (val.empty())
             return std::nullopt;
 
         auto it = std::find(allowed.begin(), allowed.end(), "*");
-        if(it != allowed.end())
+        if (it != allowed.end())
             return *it;
 
         it = std::find(allowed.begin(), allowed.end(), val);
-        if(it != allowed.end())
+        if (it != allowed.end())
             return *it;
 
-        return std::nullopt;                
+        return std::nullopt;
     };
 
-    for(const auto& rule: bucketInfo.corsRules)
+    for (const auto& rule : bucketInfo.corsRules)
     {
         auto methodMatch = ruleMatch(rule.allowedMethods, requestMethod);
-        if(!methodMatch && !requestMethod.empty())
+        if (!methodMatch && !requestMethod.empty())
             continue;
 
         auto originMatch = ruleMatch(rule.allowedOrigins, origin);
-        if(!originMatch && !origin.empty())
+        if (!originMatch && !origin.empty())
             continue;
 
-        bool noAllowHeaderMatch=false;
+        bool noAllowHeaderMatch = false;
         std::optional<std::string_view> allowHeaderMatch;
-        for(const auto& allowHeader: allowHeaders)
+        for (const auto& allowHeader : allowHeaders)
         {
             allowHeaderMatch = ruleMatch(rule.allowedHeaders, asciiToLower(allowHeader));
-            if(!allowHeaderMatch)
+            if (!allowHeaderMatch)
             {
-                noAllowHeaderMatch=true;
+                noAllowHeaderMatch = true;
                 break;
             }
         }
 
-        if(noAllowHeaderMatch && !allowHeaders.empty())
+        if (noAllowHeaderMatch && !allowHeaders.empty())
             continue;
 
         ResponseBuilder resp(downstream_);
         resp.status(200, "OK");
 
-        if(!rule.allowedMethods.empty())
+        if (!rule.allowedMethods.empty())
             resp.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_ALLOW_METHODS, folly::join(", ", rule.allowedMethods));
-        if(originMatch)
+        if (originMatch)
             resp.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN, *originMatch);
-        if(!rule.allowedHeaders.empty())
+        if (!rule.allowedHeaders.empty())
             resp.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_ALLOW_HEADERS, folly::join(", ", rule.allowedHeaders));
-        if(!rule.exposeHeaders.empty())
+        if (!rule.exposeHeaders.empty())
             resp.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_EXPOSE_HEADERS, folly::join(", ", rule.exposeHeaders));
-        if(!rule.maxAgeSeconds.empty())
+        if (!rule.maxAgeSeconds.empty())
             resp.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_MAX_AGE, rule.maxAgeSeconds);
 
         resp.sendWithEOM();
@@ -6516,28 +6527,27 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
             const auto bucketId = buckets::getBucket(self->keyInfo.key);
             bool hasObjects = true;
             bool bucketNotFound = false;
-            if(bucketId)
+            if (bucketId)
             {
-                const auto iterStartVal = make_key({.key = {}, .version=std::numeric_limits<int64_t>::max(), .bucketId = *bucketId});
+                const auto iterStartVal = make_key({ .key = {}, .version = std::numeric_limits<int64_t>::max(), .bucketId = *bucketId });
                 SingleFileStorage::IterData iter_data = {};
 
                 self->sfs().list_commit();
-                
-                if(!self->sfs().iter_start(iterStartVal, false, iter_data))
+
+                if (!self->sfs().iter_start(iterStartVal, false, iter_data))
                 {
                     XLOGF(ERR, "Error starting listing during delete bucket");
                     evb->runInEventBaseThread([self = self]()
-                                                        {
-                                    ResponseBuilder(self->downstream_)
-                                        .status(500, "Internal error")
-                                        .sendWithEOM(); });
+                                              { ResponseBuilder(self->downstream_)
+                                                    .status(500, "Internal error")
+                                                    .sendWithEOM(); });
                     return;
                 }
 
                 std::string keyBin, md5sum;
                 int64_t offset, size, last_modified;
                 std::vector<SingleFileStorage::SPunchItem> extra_exts;
-                if(!self->sfs().iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
+                if (!self->sfs().iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
                 {
                     hasObjects = false;
                 }
@@ -6549,16 +6559,16 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
 
                 self->sfs().iter_stop(iter_data);
 
-                if(!hasObjects)
+                if (!hasObjects)
                 {
                     // TODO: Make sure there is no object currently being added and prevent adding new ones
-                    if(!buckets::deleteBucket(*bucketId))
+                    if (!buckets::deleteBucket(*bucketId))
                         bucketNotFound = true;
                 }
             }
 
             evb->runInEventBaseThread([self = self, bucketId, hasObjects, bucketNotFound]()
-                                            {
+                                      {
                     if(!bucketId || bucketNotFound)
                     {
                         XLOGF(INFO, "Bucket '{}' not found", self->keyInfo.key);
@@ -6578,21 +6588,18 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
                         ResponseBuilder(self->downstream_)
                             .status(204, "No Content")
                             .sendWithEOM();
-                    }
-                                            }
-                                        );
-        }
-    );
+                    } });
+        });
 }
 
 int S3Handler::seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents)
 {
-    if(multiPartDownloadData.exts.empty())
+    if (multiPartDownloadData.exts.empty())
     {
         XLOG(WARN, "No multi-part parts found in seek");
         return ENOENT;
     }
-    else if(multiPartDownloadData.extIdx!=std::string::npos)
+    else if (multiPartDownloadData.extIdx != std::string::npos)
     {
         XLOG(DBG0, "Multi-part ext already seeked");
         return 0;
@@ -6605,17 +6612,17 @@ int S3Handler::seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
 
     int64_t seekOffset = 0;
 
-    while(seekOffset<offset)
-    {        
+    while (seekOffset < offset)
+    {
         int64_t toSeek = offset - seekOffset;
-        int64_t numSeek = toSeek/multiPartDownloadData.currExt.size;
-        
-        if(numSeek>multiPartDownloadData.currExt.len)
+        int64_t numSeek = toSeek / multiPartDownloadData.currExt.size;
+
+        if (numSeek > multiPartDownloadData.currExt.len)
         {
-            seekOffset+=multiPartDownloadData.currExt.size*multiPartDownloadData.currExt.len;
-            XLOGF(DBG0, "Seeking forward to next multi-part ext seekOffset {}", seekOffset);            
+            seekOffset += multiPartDownloadData.currExt.size * multiPartDownloadData.currExt.len;
+            XLOGF(DBG0, "Seeking forward to next multi-part ext seekOffset {}", seekOffset);
             ++multiPartDownloadData.extIdx;
-            if(multiPartDownloadData.extIdx>=multiPartDownloadData.exts.size())
+            if (multiPartDownloadData.extIdx >= multiPartDownloadData.exts.size())
             {
                 XLOGF(WARN, "Out of multi-part parts size {} in seek", multiPartDownloadData.exts.size());
                 return ENOENT;
@@ -6627,7 +6634,7 @@ int S3Handler::seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
             XLOGF(DBG0, "Seeking forward {} exts in current multi-part ext", numSeek);
             multiPartDownloadData.currExt.start += numSeek;
             multiPartDownloadData.currExt.len -= numSeek;
-            seekOffset+=numSeek*multiPartDownloadData.currExt.size;
+            seekOffset += numSeek * multiPartDownloadData.currExt.size;
             break;
         }
     }
@@ -6635,17 +6642,17 @@ int S3Handler::seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
     return readMultipartExt(sfs, seekOffset, bucketId, true, multiPartDownloadData, extents, nullptr, nullptr, nullptr);
 }
 
-int S3Handler::seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData, 
-    std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen, std::unique_ptr<PayloadHashBase>& partHash, int64_t* partSize)
+int S3Handler::seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData,
+                             std::vector<SingleFileStorage::Ext>& extents, std::string& etag, int64_t& offset, int64_t& partLen, std::unique_ptr<PayloadHashBase>& partHash, int64_t* partSize)
 {
 
-    if(multiPartDownloadData.exts.empty())
+    if (multiPartDownloadData.exts.empty())
     {
         XLOG(WARN, "No multi-part parts found in seek to partNumber");
         return ENOENT;
     }
 
-    if(partNumber<0)
+    if (partNumber < 0)
     {
         XLOG(WARN, "Invalid partNumber {} in seek", partNumber);
         return EINVAL;
@@ -6658,14 +6665,14 @@ int S3Handler::seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t buc
 
     int currPart = 0;
     offset = 0;
-    while(currPart < partNumber)
-    {    
-        const auto toSeek = (std::min)(partNumber - currPart, multiPartDownloadData.currExt.len); 
+    while (currPart < partNumber)
+    {
+        const auto toSeek = (std::min)(partNumber - currPart, multiPartDownloadData.currExt.len);
 
         currPart += toSeek;
-        offset += toSeek*multiPartDownloadData.currExt.size;
+        offset += toSeek * multiPartDownloadData.currExt.size;
 
-        if(currPart == partNumber)
+        if (currPart == partNumber)
         {
             multiPartDownloadData.currExt.start += toSeek;
             multiPartDownloadData.currExt.len -= toSeek;
@@ -6673,7 +6680,7 @@ int S3Handler::seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t buc
         }
 
         ++multiPartDownloadData.extIdx;
-        if(multiPartDownloadData.extIdx>=multiPartDownloadData.exts.size())
+        if (multiPartDownloadData.extIdx >= multiPartDownloadData.exts.size())
         {
             XLOGF(WARN, "Out of multi-part parts size {} in seek", multiPartDownloadData.exts.size());
             return ENOENT;
@@ -6685,14 +6692,13 @@ int S3Handler::seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t buc
     return readMultipartExt(sfs, offset, bucketId, addReading, multiPartDownloadData, extents, &etag, &partHash, partSize);
 }
 
-int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, const bool addReading, 
-    MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string* etag, std::unique_ptr<PayloadHashBase>* partHash, int64_t* partSize)
+int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, const bool addReading,
+                                MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents, std::string* etag, std::unique_ptr<PayloadHashBase>* partHash, int64_t* partSize)
 {
     auto partNum = multiPartDownloadData.currExt.start;
     const auto partsBucketId = buckets::getPartsBucket(bucketId);
     auto res = sfs.read_prepare(
-        make_key({.key = uploadIdToStr(multiPartDownloadData.uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
-                    .bucketId = partsBucketId}), addReading ? 0 : SingleFileStorage::ReadSkipAddReading);
+        make_key({ .key = uploadIdToStr(multiPartDownloadData.uploadId) + "." + uploadIdToStr(partNum), .version = 0, .bucketId = partsBucketId }), addReading ? 0 : SingleFileStorage::ReadSkipAddReading);
     if (res.err != 0)
     {
         XLOGF(WARN, "Error reading next multipart object meta-information uploadid {} partnum {}", multiPartDownloadData.uploadId, partNum);
@@ -6707,50 +6713,50 @@ int S3Handler::readMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t 
 
     int64_t size = 0;
 
-    for(auto& ext: extents)
+    for (auto& ext : extents)
     {
-        ext.obj_offset+=offset;
+        ext.obj_offset += offset;
         size += ext.len;
     }
 
-    if(partSize)
+    if (partSize)
         *partSize = size;
 
-    if(etag)
+    if (etag)
         *etag = getEtag(res.md5sum);
 
-    if(partHash)
+    if (partHash)
     {
         CRData rdata(res.md5sum.data(), res.md5sum.size());
         int64_t flags = 0;
         rdata.getVarInt(&flags);
 
-        if(flags & metadata_flag_with_checksum)
+        if (flags & metadata_flag_with_checksum)
         {
             std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
             int64_t multiPartSize;
             std::unique_ptr<ObjMetadata> partObjMetadata;
-            if(!parseMultipartInfo(res.md5sum, multiPartSize, multiPartDownloadData, &partObjMetadata, partHash))
+            if (!parseMultipartInfo(res.md5sum, multiPartSize, multiPartDownloadData, &partObjMetadata, partHash))
             {
                 XLOGF(WARN, "Error parsing multi-part info for part hash");
-            }       
+            }
         }
     }
 
     XLOGF(DBG0, "Multi-part ext offset {} partNum {} extents {} size {} etag {} checksum {}", offset, partNum,
-        extents.size(), size, etag ? *etag : "null", (partHash && *partHash) ? folly::base64Encode((*partHash)->getExpectedHash()) : "null");
+          extents.size(), size, etag ? *etag : "null", (partHash && *partHash) ? folly::base64Encode((*partHash)->getExpectedHash()) : "null");
 
     return 0;
 }
 
 int S3Handler::readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData,
-    std::vector<SingleFileStorage::Ext>& extents, std::string* etag, std::unique_ptr<PayloadHashBase>* partHash, int64_t* partSize)
+                                    std::vector<SingleFileStorage::Ext>& extents, std::string* etag, std::unique_ptr<PayloadHashBase>* partHash, int64_t* partSize)
 {
     XLOGF(DBG0, "Reading next multi-part ext for offset {}", offset);
     int lastPartNum = -1;
-    if(multiPartDownloadData.extIdx == std::string::npos)
+    if (multiPartDownloadData.extIdx == std::string::npos)
     {
-        if(multiPartDownloadData.exts.empty())
+        if (multiPartDownloadData.exts.empty())
         {
             XLOG(WARN, "No multi-part parts found");
             return ENOENT;
@@ -6766,36 +6772,34 @@ int S3Handler::readNextMultipartExt(SingleFileStorage& sfs, int64_t offset, int6
         --multiPartDownloadData.currExt.len;
     }
 
-    while(multiPartDownloadData.currExt.len<=0)
+    while (multiPartDownloadData.currExt.len <= 0)
     {
-        if(multiPartDownloadData.extIdx + 1 >= multiPartDownloadData.exts.size())
+        if (multiPartDownloadData.extIdx + 1 >= multiPartDownloadData.exts.size())
         {
             XLOGF(WARN, "Out of multi-part parts size {} while seeking to offset {}", multiPartDownloadData.exts.size(), offset);
             return ENOENT;
         }
-        
+
         ++multiPartDownloadData.extIdx;
         multiPartDownloadData.currExt = multiPartDownloadData.exts[multiPartDownloadData.extIdx];
     }
 
-    
-    if(!extents.empty() && extents[0].len>0 && multiPartDownloadData.needsFinalize)
+    if (!extents.empty() && extents[0].len > 0 && multiPartDownloadData.needsFinalize)
     {
-        for(auto& ext: extents)
+        for (auto& ext : extents)
         {
-            assert(ext.obj_offset>=multiPartDownloadData.currOffset );
-            ext.obj_offset-=multiPartDownloadData.currOffset;
+            assert(ext.obj_offset >= multiPartDownloadData.currOffset);
+            ext.obj_offset -= multiPartDownloadData.currOffset;
         }
         const auto partsBucketId = buckets::getPartsBucket(bucketId);
         const auto rc = sfs.read_finalize(
-            make_key({.key = uploadIdToStr(multiPartDownloadData.uploadId)+"."+uploadIdToStr(lastPartNum), .version = 0, 
-                    .bucketId = partsBucketId}), extents, 0);
-        assert(rc==0);
+            make_key({ .key = uploadIdToStr(multiPartDownloadData.uploadId) + "." + uploadIdToStr(lastPartNum), .version = 0, .bucketId = partsBucketId }), extents, 0);
+        assert(rc == 0);
         multiPartDownloadData.needsFinalize = false;
     }
 
     const auto rc = readMultipartExt(sfs, offset, bucketId, addReading, multiPartDownloadData, extents, etag, partHash, partSize);
-    if(rc)
+    if (rc)
     {
         XLOGF(WARN, "Error reading next multipart extents code {}", rc);
         return rc;
@@ -6809,26 +6813,25 @@ int S3Handler::finalizeMultiPart(SingleFileStorage& sfs, const std::string& fn, 
     removeReadingMultipartObject(fn, sfs);
 
     // Not started yet
-    if(multiPartDownloadData.extIdx == std::string::npos)
+    if (multiPartDownloadData.extIdx == std::string::npos)
         return 0;
 
-    if(!multiPartDownloadData.needsFinalize)
+    if (!multiPartDownloadData.needsFinalize)
         return 0;
 
     const auto partsBucketId = buckets::getPartsBucket(bucketId);
     const auto partNum = multiPartDownloadData.currExt.start;
 
-    if(!extents.empty() && extents[0].len>0)
+    if (!extents.empty() && extents[0].len > 0)
     {
-        for(auto& ext: extents)
+        for (auto& ext : extents)
         {
-            assert(ext.obj_offset>=multiPartDownloadData.currOffset );
-            ext.obj_offset-=multiPartDownloadData.currOffset;
+            assert(ext.obj_offset >= multiPartDownloadData.currOffset);
+            ext.obj_offset -= multiPartDownloadData.currOffset;
         }
-        
-        const auto rc = sfs.read_finalize(make_key({.key = uploadIdToStr(multiPartDownloadData.uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
-                    .bucketId = partsBucketId}), extents, 0);
-        assert(rc==0);
+
+        const auto rc = sfs.read_finalize(make_key({ .key = uploadIdToStr(multiPartDownloadData.uploadId) + "." + uploadIdToStr(partNum), .version = 0, .bucketId = partsBucketId }), extents, 0);
+        assert(rc == 0);
     }
 
     multiPartDownloadData.needsFinalize = false;
@@ -6836,42 +6839,42 @@ int S3Handler::finalizeMultiPart(SingleFileStorage& sfs, const std::string& fn, 
     return 0;
 }
 
-void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> self, int64_t offset)
+void S3Handler::readObject(folly::EventBase* evb, std::shared_ptr<S3Handler> self, int64_t offset)
 {
     bool runReadCleanup = true;
-    SCOPE_EXIT {
-        if(!runReadCleanup)
+    SCOPE_EXIT
+    {
+        if (!runReadCleanup)
             return;
         int rc;
-        if(multiPartDownloadData)
+        if (multiPartDownloadData)
             rc = finalizeMultiPart(self->sfs(), make_key(self->keyInfo), self->keyInfo.bucketId, *self->multiPartDownloadData, self->extents);
         else
             rc = sfs().read_finalize(make_key(self->keyInfo), self->extents, 0);
-        assert(rc==0);
+        assert(rc == 0);
     };
 
     const size_t bufsize = FLAGS_get_buffer_size;
     folly::IOBufQueue buf;
 
-    if(multiPartDownloadData)
+    if (multiPartDownloadData)
     {
         const auto rc = seekMultipartExt(self->sfs(), offset, self->keyInfo.bucketId, *self->multiPartDownloadData, self->extents);
-        if(rc)
+        if (rc)
         {
             XLOGF(WARN, "Error seeking to part rc {}", rc);
             evb->runInEventBaseThread([self = self]() mutable
-                                {
+                                      {
                 self->downstream_->sendAbort();
                 self->finished_ = true;
-                self->running = false;
-                                    } );
+                self->running = false; });
             return;
         }
     }
 
     bool did_pause = false;
     bool has_error = false;
-    while(offset < put_remaining.load(std::memory_order_relaxed))
+    while (offset < put_remaining.load(std::memory_order_relaxed))
     {
         if (self->paused_)
         {
@@ -6881,23 +6884,22 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
         }
 
         auto it = std::upper_bound(extents.begin(), extents.end(), SingleFileStorage::Ext(offset, 0, 0));
-        if(!extents.empty())
+        if (!extents.empty())
             --it;
         assert(it != extents.end());
-        if(it==extents.end() || it->len==0 || it->obj_offset + it->len <= offset)
+        if (it == extents.end() || it->len == 0 || it->obj_offset + it->len <= offset)
         {
-            if(multiPartDownloadData)
+            if (multiPartDownloadData)
             {
                 const int rc = readNextMultipartExt(self->sfs(), offset, self->keyInfo.bucketId, true, *self->multiPartDownloadData, self->extents, nullptr, nullptr, nullptr);
-                if(rc)
+                if (rc)
                 {
                     XLOGF(WARN, "Error reading next part code {} while reading object {}", rc, self->keyInfo.key);
                     evb->runInEventBaseThread([self = self]() mutable
-                                      {
+                                              {
                         self->downstream_->sendAbort();
                         self->finished_ = true;
-                        self->running = false;
-                                            } );
+                        self->running = false; });
                     has_error = true;
                     break;
                 }
@@ -6907,41 +6909,40 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
         }
 
         assert(it->obj_offset <= offset && it->obj_offset + it->len > offset);
-        
+
         int64_t ext_offset = offset - it->obj_offset;
         auto curr_ext = SingleFileStorage::Ext(it->obj_offset + ext_offset, it->data_file_offset + ext_offset, it->len - ext_offset);
         int64_t rlen = std::min(static_cast<int64_t>(bufsize), put_remaining.load(std::memory_order_relaxed) - offset);
 
         auto res = sfs().read_ext(curr_ext, 0, static_cast<size_t>(rlen), buf);
 
-        if(res.err!=0)
+        if (res.err != 0)
         {
             XLOGF(WARN, "Error reading extent code {}", res.err);
             evb->runInEventBaseThread([self = self]() mutable
                                       {
                 self->downstream_->sendAbort();
                 self->finished_ = true;
-                self->running = false;
-                                      } );
+                self->running = false; });
             has_error = true;
             break;
         }
-    
-        if(multiPartDownloadData)
+
+        if (multiPartDownloadData)
         {
             XLOGF(DBG0, "Sending body off {} len {} of fpath {} total_len {} part {} data {}", offset, res.buf->length(), self->keyInfo.key, put_remaining.load(std::memory_order_relaxed), multiPartDownloadData->currExt.start,
-                folly::crc32c(reinterpret_cast<const uint8_t*>(res.buf->data()), res.buf->length()));
+                  folly::crc32c(reinterpret_cast<const uint8_t*>(res.buf->data()), res.buf->length()));
         }
         else
         {
             XLOGF(DBG0, "Sending body off {} len {} of fpath {} total_len {} data {}", offset, res.buf->length(), self->keyInfo.key, put_remaining.load(std::memory_order_relaxed),
-                folly::crc32c(reinterpret_cast<const uint8_t*>(res.buf->data()), res.buf->length()));
+                  folly::crc32c(reinterpret_cast<const uint8_t*>(res.buf->data()), res.buf->length()));
         }
 
         offset += res.buf->length();
 
         evb->runInEventBaseThread([self = self, body = std::move(res.buf), total_len = put_remaining.load(std::memory_order_relaxed)]() mutable
-                                      {
+                                  {
             if(self->finished_)
                 return;
 
@@ -6957,50 +6958,45 @@ void S3Handler::readObject(folly::EventBase *evb, std::shared_ptr<S3Handler> sel
             else
             {
                 resp.send();
-            }
-                                      });
-
-
+            } });
     }
 
-    if(!has_error && offset < put_remaining.load(std::memory_order_relaxed))
+    if (!has_error && offset < put_remaining.load(std::memory_order_relaxed))
     {
-        runReadCleanup=false;
+        runReadCleanup = false;
         evb->runInEventBaseThread([self = self, did_pause]
-                                {
-            if(self->finished_)
-            {
-                int rc;
-                if(self->multiPartDownloadData)
-                    rc = finalizeMultiPart(self->sfs(), make_key(self->keyInfo), self->keyInfo.bucketId, *self->multiPartDownloadData, self->extents);
-                else
-                    rc = self->sfs().read_finalize(make_key(self->keyInfo), self->extents, 0);
-                assert(rc==0);
-                return;
-            }
+                                  {
+                                      if (self->finished_)
+                                      {
+                                          int rc;
+                                          if (self->multiPartDownloadData)
+                                              rc = finalizeMultiPart(self->sfs(), make_key(self->keyInfo), self->keyInfo.bucketId, *self->multiPartDownloadData, self->extents);
+                                          else
+                                              rc = self->sfs().read_finalize(make_key(self->keyInfo), self->extents, 0);
+                                          assert(rc == 0);
+                                          return;
+                                      }
 
-            XLOG(DBG0) << "Setting running=false";
-            self->running = false;
+                                      XLOG(DBG0) << "Setting running=false";
+                                      self->running = false;
 
-            if (did_pause)
-            {
-                XLOG(DBG0) << "Resuming deferred readObject";
-                if(!self->paused_ && !self->running)
-                {
-                    XLOG(DBG0) << "Was unpaused. Resuming.";
-                    self->onEgressResumed();
-                }
-            }
-
-                                });
+                                      if (did_pause)
+                                      {
+                                          XLOG(DBG0) << "Resuming deferred readObject";
+                                          if (!self->paused_ && !self->running)
+                                          {
+                                              XLOG(DBG0) << "Was unpaused. Resuming.";
+                                              self->onEgressResumed();
+                                          }
+                                      } });
     }
 }
 
-void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> self, const std::string& marker,
-    const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter,
-    const std::string& delimiter, const int64_t bucketId,
-    const bool listV2, const std::string& bucketName, const std::string& markerVersionStr,
-    const bool urlEncode)
+void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> self, const std::string& marker,
+                            const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter,
+                            const std::string& delimiter, const int64_t bucketId,
+                            const bool listV2, const std::string& bucketName, const std::string& markerVersionStr,
+                            const bool urlEncode)
 {
     const bool listPartial = request_action == Action::ListMultipartUploads;
     const bool listVersions = request_action == Action::ListObjectVersions;
@@ -7012,47 +7008,46 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     int64_t lastOutputVersion = std::numeric_limits<int64_t>::max();
     std::string lastOutputUploadNonce;
     bool foundPrefix = true;
-    if(!marker.empty())
+    if (!marker.empty())
     {
-        if(startAfter && *startAfter>marker)
+        if (startAfter && *startAfter > marker)
         {
-            iterStartVal = make_key({.key = *startAfter, .version=markerVersion, .bucketId = listBucketId});
+            iterStartVal = make_key({ .key = *startAfter, .version = markerVersion, .bucketId = listBucketId });
             lastOutputKeyStr = *startAfter;
             lastOutputVersion = markerVersion;
         }
         else
         {
-            iterStartVal = make_key({.key = marker, .version=markerVersion, .bucketId = listBucketId});
+            iterStartVal = make_key({ .key = marker, .version = markerVersion, .bucketId = listBucketId });
             lastOutputKeyStr = marker;
             lastOutputVersion = markerVersion;
         }
     }
     else
     {
-        if(startAfter && !startAfter->empty())
+        if (startAfter && !startAfter->empty())
         {
-            iterStartVal = make_key({.key = *startAfter, .version=markerVersion, .bucketId = listBucketId});
+            iterStartVal = make_key({ .key = *startAfter, .version = markerVersion, .bucketId = listBucketId });
             lastOutputKeyStr = *startAfter;
             lastOutputVersion = markerVersion;
-            if(prefix)
+            if (prefix)
                 foundPrefix = false;
         }
-        else if(prefix)
-            iterStartVal = make_key({.key = *prefix, .version=markerVersion, .bucketId = listBucketId});
+        else if (prefix)
+            iterStartVal = make_key({ .key = *prefix, .version = markerVersion, .bucketId = listBucketId });
         else
-            iterStartVal = make_key({.key = {}, .version=markerVersion, .bucketId = listBucketId});
+            iterStartVal = make_key({ .key = {}, .version = markerVersion, .bucketId = listBucketId });
     }
 
     sfs().list_commit();
 
-    if(!sfs().iter_start(iterStartVal, false, iter_data))
+    if (!sfs().iter_start(iterStartVal, false, iter_data))
     {
         XLOGF(ERR, "Error starting listing");
         evb->runInEventBaseThread([self = self, bucketName]()
-                                              {
-                        self->responseBuilderWithCors(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, "Error starting listing", bucketName, ""))
-                            .sendWithEOM(); });
+                                  { self->responseBuilderWithCors(500, "Internal error")
+                                        .body(s3errorXml(S3ErrorCode::InternalError, "Error starting listing", bucketName, ""))
+                                        .sendWithEOM(); });
         return;
     }
 
@@ -7063,13 +7058,13 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
     const auto commonPrefix = [](const size_t prefixSize, const std::string_view delimiter, const std::string_view key) -> std::optional<std::string_view>
     {
-        if(delimiter.empty())
+        if (delimiter.empty())
             return {};
 
         const size_t delimPos = key.find_first_of(delimiter[0], prefixSize);
-        if(delimPos == std::string::npos)
+        if (delimPos == std::string::npos)
             return {};
-        
+
         return key.substr(0, delimPos + 1);
     };
 
@@ -7081,12 +7076,12 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     bool truncated = true;
     size_t keyCount = 0;
     int skippedKeys = 0;
-    for(i=0;;++i)
+    for (i = 0;; ++i)
     {
         std::string keyBin, md5sum;
         int64_t offset, size, last_modified;
         std::vector<SingleFileStorage::SPunchItem> extra_exts;
-        if(!sfs().iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
+        if (!sfs().iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
         {
             XLOGF(DBG0, "Finished listing with total keys {} truncated {}", i, truncated);
             truncated = false;
@@ -7097,11 +7092,11 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
         bool outputKey = true;
 
-        if(prefix)
+        if (prefix)
         {
-            if(!keyInfo.key.starts_with(*prefix))
+            if (!keyInfo.key.starts_with(*prefix))
             {
-                if(foundPrefix)
+                if (foundPrefix)
                 {
                     XLOGF(DBG0, "Key '{}' does not match prefix '{}', stopping listing with total keys {} truncated {}", keyInfo.key, *prefix, i, truncated);
                     truncated = false;
@@ -7119,36 +7114,36 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             }
         }
 
-        if(keyInfo.bucketId != listBucketId)
+        if (keyInfo.bucketId != listBucketId)
         {
             XLOGF(DBG0, "Key '{}' does not match bucketId {}, stopping listing with total keys {} truncated {}", keyInfo.key, listBucketId, i, truncated);
             truncated = false;
             break;
         }
 
-        if(keyInfo.key == lastOutputKeyStr &&
-            (lastOutputVersion == std::numeric_limits<int64_t>::max() || keyInfo.version == lastOutputVersion) )
+        if (keyInfo.key == lastOutputKeyStr &&
+            (lastOutputVersion == std::numeric_limits<int64_t>::max() || keyInfo.version == lastOutputVersion))
         {
             ++skippedKeys;
             outputKey = false;
         }
-        else if(!listVersions && md5sum.size() == 1 && md5sum[0] == metadata_tombstone)
+        else if (!listVersions && md5sum.size() == 1 && md5sum[0] == metadata_tombstone)
         {
             lastOutputKeyStr = keyInfo.key;
             ++skippedKeys;
             outputKey = false;
         }
 
-        if(outputKey)
+        if (outputKey)
         {
             const auto commonKey = commonPrefix(prefixSize, delimiter, keyInfo.key);
-            if(commonKey)
+            if (commonKey)
             {
-                if(*commonKey!=lastOutputKeyStr)
+                if (*commonKey != lastOutputKeyStr)
                 {
-                    if(i >= maxKeys + skippedKeys)
+                    if (i >= maxKeys + skippedKeys)
                         break;
-                        
+
                     commonPrefixes.push_back(std::string(*commonKey));
                     ++keyCount;
                 }
@@ -7156,40 +7151,41 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
                 {
                     ++skippedKeys;
                 }
-                
+
                 outputKey = false;
                 lastOutputKeyStr = *commonKey;
             }
         }
 
-        if(i >= maxKeys + skippedKeys)
+        if (i >= maxKeys + skippedKeys)
             break;
 
         if (outputKey && !listPartial && !listVersions)
         {
             lastOutputKeyStr = keyInfo.key;
 
-            for(const auto& ext: extra_exts)
+            for (const auto& ext : extra_exts)
             {
                 size += ext.len;
             }
 
             std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
-            if(!self->parseMultipartInfo(md5sum, size, multiPartDownloadData, nullptr, nullptr))
+            if (!self->parseMultipartInfo(md5sum, size, multiPartDownloadData, nullptr, nullptr))
             {
                 XLOGF(WARN, "Error parsing multipart info for key {} with md5sum {}", keyInfo.key, folly::hexlify(md5sum));
             }
 
             val_data += fmt::format("\t<Contents>\n"
-                "\t\t<Key>{}</Key>\n"
-                "\t\t<LastModified>{}</LastModified>\n"
-                "\t\t<ETag>{}</ETag>\n"
-                "\t\t<Size>{}</Size>\n"
-                "\t\t<StorageClass>STANDARD</StorageClass>\n"
-                "\t</Contents>\n", encode(urlEncode, keyInfo.key), format_last_modified(last_modified), getEtag(md5sum), size);
+                                    "\t\t<Key>{}</Key>\n"
+                                    "\t\t<LastModified>{}</LastModified>\n"
+                                    "\t\t<ETag>{}</ETag>\n"
+                                    "\t\t<Size>{}</Size>\n"
+                                    "\t\t<StorageClass>STANDARD</StorageClass>\n"
+                                    "\t</Contents>\n",
+                                    encode(urlEncode, keyInfo.key), format_last_modified(last_modified), getEtag(md5sum), size);
             ++keyCount;
         }
-        else if(outputKey && listPartial)
+        else if (outputKey && listPartial)
         {
             lastOutputKeyStr = keyInfo.key;
             lastOutputVersion = keyInfo.version;
@@ -7199,89 +7195,91 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
             rdata.getStr2(&lastOutputUploadNonce);
 
             val_data += fmt::format("\t<Upload>\n"
-                "\t\t<Initiated>{}</Initiated>\n"
-                "\t\t<Key>{}</Key>\n"
-                "\t\t<UploadId>{}</UploadId>\n"
-                "\t</Upload>\n", format_last_modified(last_modified), 
-                encode(urlEncode, keyInfo.key), encryptUploadId(keyInfo.version, lastOutputUploadNonce));
+                                    "\t\t<Initiated>{}</Initiated>\n"
+                                    "\t\t<Key>{}</Key>\n"
+                                    "\t\t<UploadId>{}</UploadId>\n"
+                                    "\t</Upload>\n",
+                                    format_last_modified(last_modified),
+                                    encode(urlEncode, keyInfo.key), encryptUploadId(keyInfo.version, lastOutputUploadNonce));
             ++keyCount;
         }
 
-        if(!sfs().iter_next(iter_data))
+        if (!sfs().iter_next(iter_data))
         {
             XLOGF(ERR, "Error iterating listing");
             evb->runInEventBaseThread([self = self, bucketName]()
-                                              {                        
-                        self->responseBuilderWithCors(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, "Error listing (in iteration)", bucketName, ""))
-                            .sendWithEOM(); });
+                                      { self->responseBuilderWithCors(500, "Internal error")
+                                            .body(s3errorXml(S3ErrorCode::InternalError, "Error listing (in iteration)", bucketName, ""))
+                                            .sendWithEOM(); });
             sfs().iter_stop(iter_data);
             return;
         }
 
-        if(outputKey && listVersions)
+        if (outputKey && listVersions)
         {
             bool isLatest = true;
             {
-                //TODO perf: Reading key twice...
+                // TODO perf: Reading key twice...
                 std::string keyBin, md5sum;
                 int64_t offset, size, last_modified;
                 std::vector<SingleFileStorage::SPunchItem> extra_exts;
-                if(sfs().iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
+                if (sfs().iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
                 {
                     const auto keyInfoNext = extractKeyInfoView(keyBin);
 
-                    if(keyInfoNext.key == keyInfo.key && keyInfoNext.bucketId == listBucketId)
+                    if (keyInfoNext.key == keyInfo.key && keyInfoNext.bucketId == listBucketId)
                     {
                         isLatest = false;
                     }
-                }                
+                }
             }
 
             lastOutputKeyStr = keyInfo.key;
             lastOutputVersion = keyInfo.version;
 
-            if(md5sum.size() == 1 && md5sum[0] == metadata_tombstone)
+            if (md5sum.size() == 1 && md5sum[0] == metadata_tombstone)
             {
                 val_data += fmt::format("\t<DeleteMarker>\n"
-                "\t\t<IsLatest>{}</IsLatest>\n"
-                "\t\t<Key>{}</Key>\n"
-                "\t\t<VersionId>{}</VersionId>\n"
-                "\t\t<LastModified>{}</LastModified>\n"
-                "\t</DeleteMarker>", isLatest ? "true" : "false", encode(urlEncode, keyInfo.key), sfs().encrypt_id(keyInfo.version), format_last_modified(last_modified));
+                                        "\t\t<IsLatest>{}</IsLatest>\n"
+                                        "\t\t<Key>{}</Key>\n"
+                                        "\t\t<VersionId>{}</VersionId>\n"
+                                        "\t\t<LastModified>{}</LastModified>\n"
+                                        "\t</DeleteMarker>",
+                                        isLatest ? "true" : "false", encode(urlEncode, keyInfo.key), sfs().encrypt_id(keyInfo.version), format_last_modified(last_modified));
                 ++keyCount;
             }
             else
             {
                 val_data += fmt::format("\t<Version>\n"
-                    "\t\t<Key>{}</Key>\n"
-                    "\t\t<VersionId>{}</VersionId>\n"
-                    "\t\t<IsLatest>{}</IsLatest>\n"
-                    "\t\t<LastModified>{}</LastModified>\n"
-                    "\t\t<ETag>{}</ETag>\n"
-                    "\t\t<Size>{}</Size>\n"
-                    "\t\t<StorageClass>STANDARD</StorageClass>\n"
-                    "\t</Version>", encode(urlEncode, keyInfo.key), sfs().encrypt_id(keyInfo.version), isLatest ? "true" : "false",
-                    format_last_modified(last_modified), getEtag(md5sum), size);
+                                        "\t\t<Key>{}</Key>\n"
+                                        "\t\t<VersionId>{}</VersionId>\n"
+                                        "\t\t<IsLatest>{}</IsLatest>\n"
+                                        "\t\t<LastModified>{}</LastModified>\n"
+                                        "\t\t<ETag>{}</ETag>\n"
+                                        "\t\t<Size>{}</Size>\n"
+                                        "\t\t<StorageClass>STANDARD</StorageClass>\n"
+                                        "\t</Version>",
+                                        encode(urlEncode, keyInfo.key), sfs().encrypt_id(keyInfo.version), isLatest ? "true" : "false",
+                                        format_last_modified(last_modified), getEtag(md5sum), size);
                 ++keyCount;
             }
         }
     }
 
-    if(maxKeys==0)
+    if (maxKeys == 0)
         truncated = false;
 
     std::string nextMarker;
     std::string nextVersionMarker;
-    if(truncated)
+    if (truncated)
     {
         nextMarker = lastOutputKeyStr;
-        
-        if(listPartial)
+
+        if (listPartial)
         {
             nextVersionMarker = encryptUploadId(lastOutputVersion, lastOutputUploadNonce);
         }
-        else if(listVersions)
+        else if (listVersions)
         {
             nextVersionMarker = sfs().encrypt_id(lastOutputVersion);
         }
@@ -7290,117 +7288,119 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
     sfs().iter_stop(iter_data);
 
     std::string resp;
-    
-    if(listPartial)
+
+    if (listPartial)
     {
-        resp+=fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-        "<ListMultipartUploadsResult>\n"
-        "\t<Bucket>{}</Bucket>\n"
-        "\t<KeyMarker>{}</KeyMarker>\n"
-        "\t<UploadIdMarker>{}</UploadIdMarker>\n"
-        "\t<NextKeyMarker>{}</NextKeyMarker>\n"
-        "\t<NextUploadIdMarker>{}</NextUploadIdMarker>\n"
-        "\t<IsTruncated>{}</IsTruncated>\n"
-        "\t<MaxUploads>{}</MaxUploads>\n", escapeXML(bucketName), escapeXML(marker), escapeXML(markerVersionStr),
-             escapeXML(nextMarker), nextVersionMarker, truncated ? "true" : "false", maxKeys);
+        resp += fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                            "<ListMultipartUploadsResult>\n"
+                            "\t<Bucket>{}</Bucket>\n"
+                            "\t<KeyMarker>{}</KeyMarker>\n"
+                            "\t<UploadIdMarker>{}</UploadIdMarker>\n"
+                            "\t<NextKeyMarker>{}</NextKeyMarker>\n"
+                            "\t<NextUploadIdMarker>{}</NextUploadIdMarker>\n"
+                            "\t<IsTruncated>{}</IsTruncated>\n"
+                            "\t<MaxUploads>{}</MaxUploads>\n",
+                            escapeXML(bucketName), escapeXML(marker), escapeXML(markerVersionStr),
+                            escapeXML(nextMarker), nextVersionMarker, truncated ? "true" : "false", maxKeys);
     }
-    else if(listVersions)
+    else if (listVersions)
     {
         resp = fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-        "<ListVersionsResult>\n"
-        "\t<Name>{}</Name>\n"
-        "\t<IsTruncated>{}</IsTruncated>\n"
-        "\t<KeyMarker>{}</KeyMarker>\n"
-        "\t<VersionIdMarker>{}</VersionIdMarker>\n"
-        "\t<MaxKeys>{}</MaxKeys>\n", escapeXML(bucketName), truncated ? "true" : "false", escapeXML(marker), markerVersionStr.empty() ? "" : escapeXML(markerVersionStr), maxKeys);
+                           "<ListVersionsResult>\n"
+                           "\t<Name>{}</Name>\n"
+                           "\t<IsTruncated>{}</IsTruncated>\n"
+                           "\t<KeyMarker>{}</KeyMarker>\n"
+                           "\t<VersionIdMarker>{}</VersionIdMarker>\n"
+                           "\t<MaxKeys>{}</MaxKeys>\n",
+                           escapeXML(bucketName), truncated ? "true" : "false", escapeXML(marker), markerVersionStr.empty() ? "" : escapeXML(markerVersionStr), maxKeys);
     }
     else
     {
         resp = fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-        "<ListBucketResult>\n"
-        "\t<Name>{}</Name>\n"
-        "\t<IsTruncated>{}</IsTruncated>\n"
-        "\t<MaxKeys>{}</MaxKeys>\n", escapeXML(bucketName), truncated ? "true" : "false", maxKeys);
+                           "<ListBucketResult>\n"
+                           "\t<Name>{}</Name>\n"
+                           "\t<IsTruncated>{}</IsTruncated>\n"
+                           "\t<MaxKeys>{}</MaxKeys>\n",
+                           escapeXML(bucketName), truncated ? "true" : "false", maxKeys);
     }
 
-
-    if(!listV2)
+    if (!listV2)
     {
-        resp+=fmt::format("\t<Marker>{}</Marker>\n", escapeXML(marker));
+        resp += fmt::format("\t<Marker>{}</Marker>\n", escapeXML(marker));
     }
-    else if(!marker.empty())
+    else if (!marker.empty())
     {
-        resp+=fmt::format("\t<ContinuationToken>{}</ContinuationToken>\n", folly::hexlify(marker));
-    }
-
-    if(listPartial && truncated)
-    {
-        resp+=fmt::format("\t<NextKeyMarker>{}</NextKeyMarker>\n", escapeXML(nextMarker));
-        resp+=fmt::format("\t<NextUploadIdMarker>{}</NextUploadIdMarker>\n", nextVersionMarker);
-    }
-    else if(listVersions && truncated)
-    {
-        resp+=fmt::format("\t<NextKeyMarker>{}</NextKeyMarker>\n", escapeXML(nextMarker));
-        resp+=fmt::format("\t<NextVersionIdMarker>{}</NextVersionIdMarker>\n", nextVersionMarker);
-    }
-    else if(listV2 && truncated)
-    {
-        resp+=fmt::format("\t<NextContinuationToken>{}</NextContinuationToken>\n", folly::hexlify(nextMarker));
-    }
-    else if(!listV2 && truncated && !delimiter.empty())
-    {
-        resp+=fmt::format("\t<NextMarker>{}</NextMarker>\n", escapeXML(nextMarker));
+        resp += fmt::format("\t<ContinuationToken>{}</ContinuationToken>\n", folly::hexlify(marker));
     }
 
-    resp+=val_data;
-
-    if(prefix)
+    if (listPartial && truncated)
     {
-        resp+=fmt::format("\t<Prefix>{}</Prefix>\n", encode(listV2 && urlEncode, *prefix));
+        resp += fmt::format("\t<NextKeyMarker>{}</NextKeyMarker>\n", escapeXML(nextMarker));
+        resp += fmt::format("\t<NextUploadIdMarker>{}</NextUploadIdMarker>\n", nextVersionMarker);
+    }
+    else if (listVersions && truncated)
+    {
+        resp += fmt::format("\t<NextKeyMarker>{}</NextKeyMarker>\n", escapeXML(nextMarker));
+        resp += fmt::format("\t<NextVersionIdMarker>{}</NextVersionIdMarker>\n", nextVersionMarker);
+    }
+    else if (listV2 && truncated)
+    {
+        resp += fmt::format("\t<NextContinuationToken>{}</NextContinuationToken>\n", folly::hexlify(nextMarker));
+    }
+    else if (!listV2 && truncated && !delimiter.empty())
+    {
+        resp += fmt::format("\t<NextMarker>{}</NextMarker>\n", escapeXML(nextMarker));
     }
 
-    if(!delimiter.empty())
+    resp += val_data;
+
+    if (prefix)
     {
-        resp+=fmt::format("\t<Delimiter>{}</Delimiter>\n", encode(listV2 && urlEncode, delimiter));
+        resp += fmt::format("\t<Prefix>{}</Prefix>\n", encode(listV2 && urlEncode, *prefix));
     }
 
-    if(listV2)
+    if (!delimiter.empty())
     {
-        resp+=fmt::format("\t<KeyCount>{}</KeyCount>\n", keyCount);
+        resp += fmt::format("\t<Delimiter>{}</Delimiter>\n", encode(listV2 && urlEncode, delimiter));
     }
 
-    if(startAfter)
+    if (listV2)
     {
-        resp+=fmt::format("\t<StartAfter>{}</StartAfter>\n", encode(listV2 && urlEncode, *startAfter));
+        resp += fmt::format("\t<KeyCount>{}</KeyCount>\n", keyCount);
     }
 
-    if(urlEncode)
+    if (startAfter)
     {
-        resp+=fmt::format("\t<EncodingType>url</EncodingType>\n");
+        resp += fmt::format("\t<StartAfter>{}</StartAfter>\n", encode(listV2 && urlEncode, *startAfter));
     }
 
-    if(!commonPrefixes.empty())
+    if (urlEncode)
     {
-        for(const auto commonPrefix: commonPrefixes)
+        resp += fmt::format("\t<EncodingType>url</EncodingType>\n");
+    }
+
+    if (!commonPrefixes.empty())
+    {
+        for (const auto commonPrefix : commonPrefixes)
         {
-            resp+=fmt::format("\t<CommonPrefixes>\n"
-                "\t\t<Prefix>{}</Prefix>\n"
-                "\t</CommonPrefixes>\n", encode(urlEncode, commonPrefix));
+            resp += fmt::format("\t<CommonPrefixes>\n"
+                                "\t\t<Prefix>{}</Prefix>\n"
+                                "\t</CommonPrefixes>\n",
+                                encode(urlEncode, commonPrefix));
         }
     }
 
-    if(listPartial)
-        resp+="</ListMultipartUploadsResult>";
-    else if(listVersions)
-        resp+="</ListVersionsResult>";
+    if (listPartial)
+        resp += "</ListMultipartUploadsResult>";
+    else if (listVersions)
+        resp += "</ListVersionsResult>";
     else
-        resp+="</ListBucketResult>";
+        resp += "</ListBucketResult>";
 
     evb->runInEventBaseThread([self = self, resp = std::move(resp)]()
-                                              {
-                        self->responseBuilderWithCors(200, "OK")
-                            .body(std::move(resp))
-                            .sendWithEOM(); });
+                              { self->responseBuilderWithCors(200, "OK")
+                                    .body(std::move(resp))
+                                    .sendWithEOM(); });
 }
 
 void S3Handler::onEgressPaused() noexcept
@@ -7415,7 +7415,7 @@ void S3Handler::onEgressResumed() noexcept
     XLOG(DBG0) << "S3Handler resumed";
     paused_ = false;
     // If readFileScheduled_, it will reschedule itself
-    if (!running && keyInfo.bucketId!=0 && !finished_)
+    if (!running && keyInfo.bucketId != 0 && !finished_)
     {
         running = true;
         XLOGF(DBG0, "Starting readObject of {} offset {}", keyInfo.key, done_bytes);
@@ -7431,9 +7431,9 @@ void S3Handler::onEgressResumed() noexcept
     }
 }
 
-void S3Handler::startReadBodyThread(folly::EventBase *evb)
+void S3Handler::startReadBodyThread(folly::EventBase* evb)
 {
-    if(!hasBodyThread)
+    if (!hasBodyThread)
     {
         hasBodyThread = true;
         folly::getGlobalCPUExecutor()->add(
@@ -7447,13 +7447,13 @@ void S3Handler::startReadBodyThread(folly::EventBase *evb)
 bool S3Handler::usesBodyThread() const
 {
     return request_action == Action::PutObject ||
-        request_action == Action::PutObjectPart ||
-        request_action == Action::PostObject;
+           request_action == Action::PutObjectPart ||
+           request_action == Action::PostObject;
 }
 
 void S3Handler::setFinished()
 {
-    if(!usesBodyThread())
+    if (!usesBodyThread())
     {
         finished_ = true;
         return;
@@ -7464,31 +7464,30 @@ void S3Handler::setFinished()
     extents_cond.notify_all();
 }
 
-void S3Handler::readBodyThread(folly::EventBase *evb)
+void S3Handler::readBodyThread(folly::EventBase* evb)
 {
-    std::unique_lock lock{bodyMutex};
+    std::unique_lock lock{ bodyMutex };
     bool unpause = false;
     size_t cnt = 0;
-    while(!bodyQueue.empty())
+    while (!bodyQueue.empty())
     {
-        if(cnt>2)
+        if (cnt > 2)
         {
             lock.unlock();
 
-            if(unpause)
+            if (unpause)
             {
                 evb->runInEventBaseThread([self = this->self]()
-                {
+                                          {
                     if(!self)
                         return;
 
-                    self->downstream_->resumeIngress();
-                });
+                    self->downstream_->resumeIngress(); });
             }
             folly::getGlobalCPUExecutor()->add(
                 [self = this->self, evb]() mutable
                 {
-                    if(!self)
+                    if (!self)
                         return;
 
                     self->readBodyThread(evb);
@@ -7500,72 +7499,71 @@ void S3Handler::readBodyThread(folly::EventBase *evb)
         bodyQueue.pop();
         lock.unlock();
         onBodyCPU(evb, obj.offset, std::move(obj.body));
-        if(obj.unpause)
+        if (obj.unpause)
             unpause = true;
         lock.lock();
 
-        if(bodyQueue.size()<4 && unpause)
+        if (bodyQueue.size() < 4 && unpause)
         {
             evb->runInEventBaseThread([self = this->self]()
-            {
+                                      {
                 if(!self)
                     return;
 
-                self->downstream_->resumeIngress();
-            });
-            unpause=false;
+                self->downstream_->resumeIngress(); });
+            unpause = false;
         }
     }
     hasBodyThread = false;
 
     lock.unlock();
 
-    if(unpause)
+    if (unpause)
     {
         evb->runInEventBaseThread([self = this->self]()
-        {
+                                  {
             if(!self)
                 return;
 
-            self->downstream_->resumeIngress();
-        });
+            self->downstream_->resumeIngress(); });
     }
 }
 
 void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 {
-    if(request_action == Action::Unknown)
+    if (request_action == Action::Unknown)
         return;
 
-    if(!awsChunkedEncoding)
+    if (!awsChunkedEncoding)
     {
         onBodyChunked(std::move(body));
         return;
     }
 
-    while(body->length() > 0)
+    while (body->length() > 0)
     {
-        switch(awsChunkedEncoding->state)
+        switch (awsChunkedEncoding->state)
         {
             case AwsChunkedEncoding::State::SizeCr:
-                {
-                    const auto ch = *body->data();
-                    body->trimStart(1);
+            {
+                const auto ch = *body->data();
+                body->trimStart(1);
 
-                    if(ch=='\r')
-                    {
-                        awsChunkedEncoding->state = AwsChunkedEncoding::State::SizeLf;
-                    }
-                    else
-                    {
-                        awsChunkedEncoding->header += ch;                       
-                    }
-                } break;
+                if (ch == '\r')
+                {
+                    awsChunkedEncoding->state = AwsChunkedEncoding::State::SizeLf;
+                }
+                else
+                {
+                    awsChunkedEncoding->header += ch;
+                }
+            }
+            break;
             case AwsChunkedEncoding::State::SizeLf:
             {
                 const auto ch = *body->data();
                 body->trimStart(1);
-                if(ch!='\n')
+                if (ch != '\n')
                 {
                     awsChunkedEncoding->state = AwsChunkedEncoding::State::SizeCr;
                     awsChunkedEncoding->header += ch;
@@ -7574,7 +7572,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
                 const auto sizeDataEnd = awsChunkedEncoding->header.find(";");
 
-                if(awsChunkedEncoding->header.empty())
+                if (awsChunkedEncoding->header.empty())
                 {
                     XLOGF(WARN, "Invalid chunked encoding body received");
                     ResponseBuilder(self->downstream_)
@@ -7587,7 +7585,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
                 std::string_view sizeData, paramsData;
 
-                if(sizeDataEnd!=std::string::npos)
+                if (sizeDataEnd != std::string::npos)
                 {
                     sizeData = std::string_view(awsChunkedEncoding->header.data(), sizeDataEnd);
                     paramsData = std::string_view(awsChunkedEncoding->header.data() + sizeDataEnd + 1, awsChunkedEncoding->header.size() - sizeDataEnd - 1);
@@ -7601,7 +7599,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                 {
                     awsChunkedEncoding->chunkSize = std::stoul(std::string(sizeData), nullptr, 16);
                 }
-                catch(const std::exception& ex)
+                catch (const std::exception& ex)
                 {
                     XLOGF(WARN, "Invalid chunk size in chunked encoding body received: {}. Exception: {}", sizeData, ex.what());
                     ResponseBuilder(self->downstream_)
@@ -7612,9 +7610,9 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                     return;
                 }
 
-                if(awsChunkedEncoding->isSigned )
+                if (awsChunkedEncoding->isSigned)
                 {
-                    if(paramsData.empty())
+                    if (paramsData.empty())
                     {
                         XLOGF(WARN, "Chunked encoding body is signed but no chunk signature found in parameters: {}", paramsData);
                         ResponseBuilder(self->downstream_)
@@ -7630,22 +7628,22 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
                     bool notFound = true;
 
-                    for(const auto& param: params)
+                    for (const auto& param : params)
                     {
                         const auto eqPos = param.find('=');
-                        if(eqPos==std::string::npos)
+                        if (eqPos == std::string::npos)
                             continue;
 
                         const auto paramName = param.substr(0, eqPos);
                         const auto paramValue = param.substr(eqPos + 1);
 
-                        if(paramName == "chunk-signature")
+                        if (paramName == "chunk-signature")
                         {
                             try
                             {
                                 awsChunkedEncoding->expectedSig = folly::unhexlify(paramValue);
                             }
-                            catch(const std::exception& ex)
+                            catch (const std::exception& ex)
                             {
                                 XLOGF(WARN, "Chunked encoding body chunk signature is not valid hex: {}. Exception: {}", paramValue, ex.what());
                                 ResponseBuilder(self->downstream_)
@@ -7660,7 +7658,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                         }
                     }
 
-                    if(notFound)
+                    if (notFound)
                     {
                         XLOGF(WARN, "Chunked encoding body is signed but no chunk signature found in parameters: {}", paramsData);
                         ResponseBuilder(self->downstream_)
@@ -7675,143 +7673,147 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                 XLOGF(DBG0, "Chunked encoding chunk size parsed: {} bytes", awsChunkedEncoding->chunkSize);
 
                 awsChunkedEncoding->header.clear();
-                if(awsChunkedEncoding->chunkSize>0)
+                if (awsChunkedEncoding->chunkSize > 0)
                     awsChunkedEncoding->state = AwsChunkedEncoding::State::Data;
                 else
                     awsChunkedEncoding->state = AwsChunkedEncoding::State::TrailerCr;
-            } break;
+            }
+            break;
             case AwsChunkedEncoding::State::Data:
+            {
+                if (body->length() < awsChunkedEncoding->chunkSize)
                 {
-                    if(body->length() < awsChunkedEncoding->chunkSize)
+                    awsChunkedEncoding->chunkSize -= body->length();
+                    if (awsChunkedEncoding->isSigned)
                     {
-                        awsChunkedEncoding->chunkSize -= body->length();
-                        if(awsChunkedEncoding->isSigned)
-                        {
-                            EVP_DigestUpdate(awsChunkedEncoding->evpMdCtx.ctx, body->data(), body->length());                            
-                        }
-                        onBodyChunked(std::move(body));
-                        return;
+                        EVP_DigestUpdate(awsChunkedEncoding->evpMdCtx.ctx, body->data(), body->length());
                     }
-                    else if(body->length() == awsChunkedEncoding->chunkSize)
+                    onBodyChunked(std::move(body));
+                    return;
+                }
+                else if (body->length() == awsChunkedEncoding->chunkSize)
+                {
+                    awsChunkedEncoding->state = AwsChunkedEncoding::State::DataEnd;
+                    awsChunkedEncoding->chunkSize = 2;
+                    if (awsChunkedEncoding->isSigned)
                     {
-                        awsChunkedEncoding->state = AwsChunkedEncoding::State::DataEnd;
-                        awsChunkedEncoding->chunkSize = 2;
-                        if(awsChunkedEncoding->isSigned)
-                        {
-                            EVP_DigestUpdate(awsChunkedEncoding->evpMdCtx.ctx, body->data(), body->length());                            
-                        }
-                        onBodyChunked(std::move(body));          
-                        return;
+                        EVP_DigestUpdate(awsChunkedEncoding->evpMdCtx.ctx, body->data(), body->length());
                     }
-                    else
+                    onBodyChunked(std::move(body));
+                    return;
+                }
+                else
+                {
+                    assert(!body->isChained());
+                    auto bodyForData = body->clone();
+                    bodyForData->trimEnd(body->length() - awsChunkedEncoding->chunkSize);
+                    if (awsChunkedEncoding->isSigned)
                     {
-                        assert(!body->isChained());
-                        auto bodyForData = body->clone();
-                        bodyForData->trimEnd(body->length() - awsChunkedEncoding->chunkSize);
-                        if(awsChunkedEncoding->isSigned)
-                        {
-                            EVP_DigestUpdate(awsChunkedEncoding->evpMdCtx.ctx, bodyForData->data(), bodyForData->length());                            
-                        }
-                        onBodyChunked(std::move(bodyForData));
+                        EVP_DigestUpdate(awsChunkedEncoding->evpMdCtx.ctx, bodyForData->data(), bodyForData->length());
+                    }
+                    onBodyChunked(std::move(bodyForData));
 
-                        body->trimStart(awsChunkedEncoding->chunkSize);
-                        awsChunkedEncoding->chunkSize = 2;
-                        awsChunkedEncoding->state = AwsChunkedEncoding::State::DataEnd;
-                        continue;
-                    }
-                }break;
+                    body->trimStart(awsChunkedEncoding->chunkSize);
+                    awsChunkedEncoding->chunkSize = 2;
+                    awsChunkedEncoding->state = AwsChunkedEncoding::State::DataEnd;
+                    continue;
+                }
+            }
+            break;
             case AwsChunkedEncoding::State::DataEnd:
             {
-                    if(body->length() <awsChunkedEncoding->chunkSize)
-                    {
-                        awsChunkedEncoding->chunkSize -= body->length();
-                        return;
-                    }
-                    else
-                    {
-                        body->trimStart(awsChunkedEncoding->chunkSize);
-                        awsChunkedEncoding->state = AwsChunkedEncoding::State::SizeCr;
+                if (body->length() < awsChunkedEncoding->chunkSize)
+                {
+                    awsChunkedEncoding->chunkSize -= body->length();
+                    return;
+                }
+                else
+                {
+                    body->trimStart(awsChunkedEncoding->chunkSize);
+                    awsChunkedEncoding->state = AwsChunkedEncoding::State::SizeCr;
 
-                        if(awsChunkedEncoding->isSigned)
+                    if (awsChunkedEncoding->isSigned)
+                    {
+                        std::string binHash;
+                        binHash.resize(SHA256_DIGEST_LENGTH);
+                        EVP_DigestFinal_ex(awsChunkedEncoding->evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&binHash[0]), nullptr);
+
+                        const auto stringToSign = fmt::format("AWS4-HMAC-SHA256-PAYLOAD\n{}{}\n{}\n{}",
+                                                              awsChunkedEncoding->stringToSignHeader, folly::hexlify(awsChunkedEncoding->currSig),
+                                                              emptyPayloadHash, folly::hexlify(binHash));
+
+                        const auto expectedSig = hmacSha256Binary(awsChunkedEncoding->signingKey, stringToSign);
+
+                        if (awsChunkedEncoding->expectedSig != expectedSig)
                         {
-                            std::string binHash;
-                            binHash.resize(SHA256_DIGEST_LENGTH);
-                            EVP_DigestFinal_ex(awsChunkedEncoding->evpMdCtx.ctx, reinterpret_cast<unsigned char*>(&binHash[0]), nullptr);
-
-                            const auto stringToSign = fmt::format("AWS4-HMAC-SHA256-PAYLOAD\n{}{}\n{}\n{}",
-                                awsChunkedEncoding->stringToSignHeader, folly::hexlify(awsChunkedEncoding->currSig),
-                                emptyPayloadHash, folly::hexlify(binHash));
-
-                            const auto expectedSig = hmacSha256Binary(awsChunkedEncoding->signingKey, stringToSign);
-
-                            if(awsChunkedEncoding->expectedSig != expectedSig)
-                            {
-                                XLOGF(WARN, "Chunk signature mismatch in chunked encoding body. Expected {}, got {}", folly::hexlify(expectedSig), folly::hexlify(awsChunkedEncoding->expectedSig));
-                                ResponseBuilder(self->downstream_)
-                                    .status(500, "Internal error")
-                                    .body("Chunk signature mismatch in chunked encoding body")
-                                    .sendWithEOM();
-                                setFinished();
-                                awsChunkedEncoding->state = AwsChunkedEncoding::State::Failed;
-                                return;
-                            }
-
-                            if(EVP_DigestInit(awsChunkedEncoding->evpMdCtx.ctx, EVP_sha256())!=1)
-                            {
-                                XLOGF(WARN, "Error initializing EVP digest context for chunked encoding body");
-                                ResponseBuilder(self->downstream_)
-                                    .status(500, "Internal error")
-                                    .body("Error initializing EVP digest context for chunked encoding body")
-                                    .sendWithEOM();
-                                setFinished();
-                                awsChunkedEncoding->state = AwsChunkedEncoding::State::Failed;
-                                return;
-                            }
-                            awsChunkedEncoding->currSig = expectedSig;
+                            XLOGF(WARN, "Chunk signature mismatch in chunked encoding body. Expected {}, got {}", folly::hexlify(expectedSig), folly::hexlify(awsChunkedEncoding->expectedSig));
+                            ResponseBuilder(self->downstream_)
+                                .status(500, "Internal error")
+                                .body("Chunk signature mismatch in chunked encoding body")
+                                .sendWithEOM();
+                            setFinished();
+                            awsChunkedEncoding->state = AwsChunkedEncoding::State::Failed;
+                            return;
                         }
 
-                        continue;
+                        if (EVP_DigestInit(awsChunkedEncoding->evpMdCtx.ctx, EVP_sha256()) != 1)
+                        {
+                            XLOGF(WARN, "Error initializing EVP digest context for chunked encoding body");
+                            ResponseBuilder(self->downstream_)
+                                .status(500, "Internal error")
+                                .body("Error initializing EVP digest context for chunked encoding body")
+                                .sendWithEOM();
+                            setFinished();
+                            awsChunkedEncoding->state = AwsChunkedEncoding::State::Failed;
+                            return;
+                        }
+                        awsChunkedEncoding->currSig = expectedSig;
                     }
-            }break;
+
+                    continue;
+                }
+            }
+            break;
             case AwsChunkedEncoding::State::TrailerCr:
             {
                 const auto ch = *body->data();
                 body->trimStart(1);
 
-                if(ch=='\r')
+                if (ch == '\r')
                 {
-                    awsChunkedEncoding->state = AwsChunkedEncoding::State::TrailerLf;                    
+                    awsChunkedEncoding->state = AwsChunkedEncoding::State::TrailerLf;
                 }
                 else
                 {
-                    awsChunkedEncoding->header += ch;                       
+                    awsChunkedEncoding->header += ch;
                 }
-            } break;
+            }
+            break;
             case AwsChunkedEncoding::State::TrailerLf:
             {
                 const auto ch = *body->data();
                 body->trimStart(1);
-                if(ch!='\n')
+                if (ch != '\n')
                 {
                     awsChunkedEncoding->state = AwsChunkedEncoding::State::TrailerCr;
                     awsChunkedEncoding->header += ch;
                     continue;
                 }
 
-                if(awsChunkedEncoding->header.empty())
+                if (awsChunkedEncoding->header.empty())
                 {
                     awsChunkedEncoding->state = AwsChunkedEncoding::State::Finished;
                     continue;
                 }
 
                 const auto headerNameEnd = awsChunkedEncoding->header.find(":");
-                if(headerNameEnd!=std::string::npos)
+                if (headerNameEnd != std::string::npos)
                 {
                     const auto headerName = awsChunkedEncoding->header.substr(0, headerNameEnd);
                     const auto headerValue = awsChunkedEncoding->header.substr(headerNameEnd + 1);
                     XLOGF(DBG0, "Received trailer header in chunked encoding body: {}: {}", headerName, headerValue);
 
-                    if(!payloadHash && !sdkChecksumHash)
+                    if (!payloadHash && !sdkChecksumHash)
                     {
                         XLOGF(WARN, "Received trailer header in chunked encoding body but no payload hash expected: {}: {}", headerName, headerValue);
                         ResponseBuilder(self->downstream_)
@@ -7824,12 +7826,12 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
                     try
                     {
-                        if(payloadHash)
+                        if (payloadHash)
                             payloadHash->setExpectedHash(folly::base64Decode(headerValue));
-                        if(sdkChecksumHash)
+                        if (sdkChecksumHash)
                             sdkChecksumHash->setExpectedHash(folly::base64Decode(headerValue));
                     }
-                    catch(const folly::base64_decode_error&)
+                    catch (const folly::base64_decode_error&)
                     {
                         XLOGF(WARN, "Received invalid base64 in payload hash in trailer: {}", headerValue);
                         ResponseBuilder(self->downstream_)
@@ -7840,8 +7842,8 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                         return;
                     }
 
-                    if((payloadHash && !payloadHash->checkSize()) ||
-                        (sdkChecksumHash && !sdkChecksumHash->checkSize()) )
+                    if ((payloadHash && !payloadHash->checkSize()) ||
+                        (sdkChecksumHash && !sdkChecksumHash->checkSize()))
                     {
                         XLOGF(WARN, "Received payload hash in trailer with invalid size");
                         ResponseBuilder(self->downstream_)
@@ -7863,10 +7865,10 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                     return;
                 }
 
-
                 awsChunkedEncoding->state = AwsChunkedEncoding::State::TrailerCr;
                 awsChunkedEncoding->header.clear();
-            } break;
+            }
+            break;
             case AwsChunkedEncoding::State::Finished:
             {
                 XLOGF(WARN, "Received body after finished chunked encoding body");
@@ -7876,12 +7878,14 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                     .sendWithEOM();
                 setFinished();
                 return;
-            } break;
+            }
+            break;
             case AwsChunkedEncoding::State::Failed:
             {
                 setFinished();
                 return;
-            } break;
+            }
+            break;
             default:
                 assert(false);
                 return;
@@ -7891,7 +7895,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
 void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
 {
-    if(request_action == Action::Unknown)
+    if (request_action == Action::Unknown)
         return;
 
     auto evb = folly::EventBaseManager::get()->getEventBase();
@@ -7900,7 +7904,7 @@ void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
 
     XLOGF(DBG0, "Received body of {} bytes for request type {} for obj {}", body_bytes, static_cast<int>(request_action), keyInfo.key);
 
-    if(request_action == Action::CompleteMultipartUpload ||
+    if (request_action == Action::CompleteMultipartUpload ||
         request_action == Action::DeleteObjects ||
         request_action == Action::PutBucketVersioning ||
         request_action == Action::PutBucketCors ||
@@ -7908,36 +7912,36 @@ void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
         request_action == Action::PutBucketObjectLockConfiguration ||
         request_action == Action::PutObjectRetention)
     {
-        if(payloadHash)
+        if (payloadHash)
             payloadHash->update(body->data(), body->length());
 
         done_bytes += body_bytes;
         const auto isFinal = put_remaining.fetch_sub(body->length(), std::memory_order_release) == body->length();
 
-        if(isFinal && payloadHash && !payloadHash->isFinalExpected())
+        if (isFinal && payloadHash && !payloadHash->isFinalExpected())
         {
             XLOGF(WARN, "Payload hash not as expected");
             ResponseBuilder(self->downstream_)
                 .status(500, "Internal error")
                 .body("Payload hash not as expected")
                 .sendWithEOM();
-            finished_ = true; 
+            finished_ = true;
             return;
         }
 
         auto rc = XML_Parse(xmlBody.parser, reinterpret_cast<const char*>(body->data()), body->length(), isFinal ? 1 : 0);
-        if(rc!=XML_STATUS_OK)
-        {             
-            XLOGF(WARN, "Error parsing XML body code {} exp {}", static_cast<int>(rc), static_cast<const char*>(XML_ErrorString(XML_GetErrorCode(xmlBody.parser))));    
+        if (rc != XML_STATUS_OK)
+        {
+            XLOGF(WARN, "Error parsing XML body code {} exp {}", static_cast<int>(rc), static_cast<const char*>(XML_ErrorString(XML_GetErrorCode(xmlBody.parser))));
             ResponseBuilder(self->downstream_)
                 .status(500, "Internal error")
                 .body("Write ext error")
                 .sendWithEOM();
-            finished_ = true; 
+            finished_ = true;
             return;
         }
 
-        if(request_action == Action::DeleteObjects && deleteObjectsData && deleteObjectsData->objects.size() > 1000)
+        if (request_action == Action::DeleteObjects && deleteObjectsData && deleteObjectsData->objects.size() > 1000)
         {
             XLOGF(WARN, "Too many objects in DeleteObjects request: {}", deleteObjectsData->objects.size());
             ResponseBuilder(self->downstream_)
@@ -7947,7 +7951,7 @@ void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
             finished_ = true;
         }
 
-        if(request_action == Action::PutBucketCors && putBucketCorsData && putBucketCorsData->rules.size() > 100)
+        if (request_action == Action::PutBucketCors && putBucketCorsData && putBucketCorsData->rules.size() > 100)
         {
             XLOGF(WARN, "Too many CORS rules in PutBucketCors request: {}", putBucketCorsData->rules.size());
             ResponseBuilder(self->downstream_)
@@ -7959,26 +7963,26 @@ void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
 
         return;
     }
-    else if(request_action == Action::CreateBucket)
+    else if (request_action == Action::CreateBucket)
     {
-        if(payloadHash)
+        if (payloadHash)
             payloadHash->update(body->data(), body->length());
 
         done_bytes += body_bytes;
         const auto isFinal = put_remaining.fetch_sub(body->length(), std::memory_order_release) == body->length();
 
-        if(isFinal && payloadHash && !payloadHash->isFinalExpected())
+        if (isFinal && payloadHash && !payloadHash->isFinalExpected())
         {
             XLOGF(WARN, "Payload hash not as expected");
             ResponseBuilder(self->downstream_)
                 .status(500, "Internal error")
                 .body("Payload hash not as expected")
                 .sendWithEOM();
-            finished_ = true; 
+            finished_ = true;
             return;
         }
-        
-        if(bodyData.size() < 10*1024)
+
+        if (bodyData.size() < 10 * 1024)
         {
             bodyData.append(reinterpret_cast<const char*>(body->data()), body->length());
         }
@@ -7989,40 +7993,40 @@ void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
                 .status(500, "Internal error")
                 .body("Body too long")
                 .sendWithEOM();
-            finished_ = true; 
+            finished_ = true;
         }
         return;
     }
-    else if(request_action == Action::PostObject)
+    else if (request_action == Action::PostObject)
     {
         auto& currBuf = postObjectData->bodyBuf ? postObjectData->bodyBuf : body;
 
-        if(postObjectData->bodyBuf)
+        if (postObjectData->bodyBuf)
             currBuf->appendChain(std::move(body));
 
         auto remainingBuf = postObjectData->rfc1867Codec.onIngress(std::move(currBuf));
         postObjectData->bodyBuf = remainingBuf ? std::move(remainingBuf) : nullptr;
         return;
     }
-    else if(request_action != Action::PutObject && request_action != Action::PutObjectPart)
+    else if (request_action != Action::PutObject && request_action != Action::PutObjectPart)
     {
         XLOGF(WARN, "Ignoring body received in request type {}", static_cast<int>(request_action));
         return;
     }
 
     {
-        std::scoped_lock lock{bodyMutex};
-        const bool pause = bodyQueue.size()>7;
-        if(pause)
+        std::scoped_lock lock{ bodyMutex };
+        const bool pause = bodyQueue.size() > 7;
+        if (pause)
             downstream_->pauseIngress();
-        bodyQueue.emplace(BodyObj{.offset = done_bytes, .body = std::move(body), .unpause = pause});
+        bodyQueue.emplace(BodyObj{ .offset = done_bytes, .body = std::move(body), .unpause = pause });
         startReadBodyThread(evb);
     }
 
     done_bytes += body_bytes;
 }
 
-void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr<folly::IOBuf> body)
+void S3Handler::onBodyCPU(folly::EventBase* evb, int64_t offset, std::unique_ptr<folly::IOBuf> body)
 {
     {
         std::unique_lock lock(extents_mutex);
@@ -8039,23 +8043,23 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
         }
     }
 
-    if(!body)
+    if (!body)
     {
-        if(request_action == Action::PostObject)
+        if (request_action == Action::PostObject)
         {
             // Size of form data file is only known at the end. All data before was written, so
             // remove the remaining unused space at the end of the extents
             auto toremove = put_remaining.load(std::memory_order_relaxed);
-            if(toremove>0)
+            if (toremove > 0)
             {
                 XLOGF(DBG0, "Finished receiving file data for PostObject but {} remaining bytes.", toremove);
                 std::vector<SingleFileStorage::Ext> to_remove_extents;
                 {
                     std::scoped_lock lock(extents_mutex);
-                    while(toremove>0 && !extents.empty())
+                    while (toremove > 0 && !extents.empty())
                     {
                         auto& ext = extents.back();
-                        if(ext.len <= toremove)
+                        if (ext.len <= toremove)
                         {
                             put_remaining.fetch_sub(ext.len, std::memory_order_relaxed);
                             toremove -= ext.len;
@@ -8066,95 +8070,95 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
                         {
                             ext.len -= toremove;
                             put_remaining.fetch_sub(toremove, std::memory_order_relaxed);
-                            sfs().remove_extent_end(ext.data_file_offset+ext.len, toremove);
+                            sfs().remove_extent_end(ext.data_file_offset + ext.len, toremove);
                             break;
                         }
                     }
                 }
 
-                if(!to_remove_extents.empty())
+                if (!to_remove_extents.empty())
                 {
                     sfs().free_extents(to_remove_extents);
                 }
             }
         }
 
-        if(put_remaining!=0)
+        if (put_remaining != 0)
         {
             XLOGF(WARN, "Key {}, remaining bytes {}. Returning error", keyInfo.key, put_remaining.load(std::memory_order_relaxed));
-            sfs().free_extents(extents);          
+            sfs().free_extents(extents);
             extents.clear();
 
             evb->runInEventBaseThread([self = this]()
-                                {           
+                                      {           
                     if(!self || self->finished_)
                         return;
                     ResponseBuilder(self->downstream_)
                         .status(500, "Internal error")
                         .body("Expecting more data")
                         .sendWithEOM();
-                    self->setFinished();
-                                });
+                    self->setFinished(); });
             return;
         }
 
         const auto tnow = std::chrono::system_clock::now();
         const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            tnow.time_since_epoch()).count();
+                                      tnow.time_since_epoch())
+                                      .count();
         finalizePutObject(evb, lastModified);
         return;
     }
 
-    if(extents.empty())
+    if (extents.empty())
     {
         XLOGF(INFO, "No extents for object {} for body size {}. Not writing", keyInfo.key, body->length());
         return;
     }
 
-    if(extents.size()>1)
+    if (extents.size() > 1)
     {
         assert(extents[0] < extents[1]);
     }
 
-    for(const auto& ext: extents)
+    for (const auto& ext : extents)
     {
-        assert(ext.len>0);
+        assert(ext.len > 0);
     }
 
-    const uint8_t *data = body->data();
+    const uint8_t* data = body->data();
     size_t data_size = body->length();
 
     EVP_DigestUpdate(evpMdCtx.ctx, data, data_size);
 
-    if(payloadHash)
+    if (payloadHash)
         payloadHash->update(data, data_size);
 
-    if(sdkChecksumHash)
+    if (sdkChecksumHash)
         sdkChecksumHash->update(data, data_size);
 
-    while(data_size > 0)
+    while (data_size > 0)
     {
         auto it = std::upper_bound(extents.begin(), extents.end(), SingleFileStorage::Ext(offset, 0, 0));
-        if(!extents.empty())
+        if (!extents.empty())
             --it;
         assert(it != extents.end());
-        if(it==extents.end())
+        if (it == extents.end())
             break;
 
-        if(!(it->obj_offset <= offset && it->obj_offset + it->len > offset))
+        if (!(it->obj_offset <= offset && it->obj_offset + it->len > offset))
         {
             XLOGF(DBG0, "Selected ext obj_offset={} len={} data_file_offset={} offset={} exts={}", it->obj_offset, it->len, it->data_file_offset, offset, extents.size());
             std::sort(extents.begin(), extents.end());
-            auto it2= std::upper_bound(extents.begin(), extents.end(), SingleFileStorage::Ext(offset, 0, 0));
+            auto it2 = std::upper_bound(extents.begin(), extents.end(), SingleFileStorage::Ext(offset, 0, 0));
             XLOGF(DBG0, "Selected ext obj_offset={} len={} data_file_offset={} offset={} exts={}", it2->obj_offset, it2->len, it2->data_file_offset, offset, extents.size());
             break;
         }
         assert(it->obj_offset <= offset && it->obj_offset + it->len > offset);
-        
+
         int64_t ext_offset = offset - it->obj_offset;
         auto curr_ext = SingleFileStorage::Ext(it->obj_offset + ext_offset, it->data_file_offset + ext_offset, it->len - ext_offset);
         int64_t wlen = std::min(static_cast<int64_t>(data_size), curr_ext.len);
-        const bool complete_obj = extents.size()==1 && extents[0].len==wlen;
+        const bool complete_obj = extents.size() == 1 && extents[0].len == wlen;
 
         auto rc = sfs().write_ext(curr_ext, reinterpret_cast<const char*>(data), wlen, complete_obj);
         if (rc != 0)
@@ -8165,7 +8169,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
             XLOGF(WARN, "Error obj {} code {}. Writing ext {} len {} failed", keyInfo.key, rc, curr_ext.obj_offset, curr_ext.len);
 
             evb->runInEventBaseThread([self = this->self]()
-                                  {  
+                                      {  
                     if(!self || self->finished_)
                         return;     
                     ResponseBuilder(self->downstream_)
@@ -8186,10 +8190,10 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
     put_remaining.fetch_sub(body->length(), std::memory_order_release);
 }
 
-void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModified)
+void S3Handler::finalizePutObject(folly::EventBase* evb, const int64_t lastModified)
 {
     int64_t itype = metadata_object;
-    if(objMetadata)
+    if (objMetadata)
         itype |= objMetadata->flags();
     if (sdkChecksumHash)
         itype |= metadata_flag_with_checksum;
@@ -8199,14 +8203,14 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
     std::string_view md5bufView(md5buf, MD5_DIGEST_LENGTH);
     EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(md5buf), nullptr);
     wmetadata.addBuffer(md5buf, MD5_DIGEST_LENGTH);
-    if(objMetadata)
+    if (objMetadata)
         objMetadata->serialize(wmetadata);
-    if(sdkChecksumHash)
+    if (sdkChecksumHash)
         serializeSdkChecksum(sdkChecksumHash->getExpectedHash(), sdkChecksumHash->getHashType(), wmetadata);
 
     std::string_view md5sum(wmetadata.getDataPtr(), wmetadata.getDataSize());
 
-    if(payloadHash && !payloadHash->isFinalExpected())
+    if (payloadHash && !payloadHash->isFinalExpected())
     {
         sfs().free_extents(extents);
         extents.clear();
@@ -8214,7 +8218,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         XLOGF(WARN, "Payload hash not as expected");
 
         evb->runInEventBaseThread([self = this]()
-                            {           
+                                  {           
             if(!self || self->finished_)
                 return;
             ResponseBuilder(self->downstream_)
@@ -8225,7 +8229,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         return;
     }
 
-    if(sdkChecksumHash && !sdkChecksumHash->isFinalExpected())
+    if (sdkChecksumHash && !sdkChecksumHash->isFinalExpected())
     {
         sfs().free_extents(extents);
         extents.clear();
@@ -8233,7 +8237,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         XLOGF(WARN, "SDK checksum hash not as expected");
 
         evb->runInEventBaseThread([self = this]()
-                            {           
+                                  {           
             if(!self || self->finished_)
                 return;
             ResponseBuilder(self->downstream_)
@@ -8244,7 +8248,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         return;
     }
 
-    if(!contentMd5.empty() && contentMd5 != md5bufView)
+    if (!contentMd5.empty() && contentMd5 != md5bufView)
     {
         sfs().free_extents(extents);
         extents.clear();
@@ -8252,7 +8256,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         XLOGF(WARN, "Content-MD5 mismatch. Expected {}, got {}. Object {}", folly::hexlify(contentMd5), folly::hexlify(md5bufView), keyInfo.key);
 
         evb->runInEventBaseThread([self = this]()
-                            {           
+                                  {           
             if(!self || self->finished_)
                 return;
             ResponseBuilder(self->downstream_)
@@ -8263,7 +8267,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         return;
     }
 
-    if(awsChunkedEncoding && awsChunkedEncoding->state != AwsChunkedEncoding::State::Finished)
+    if (awsChunkedEncoding && awsChunkedEncoding->state != AwsChunkedEncoding::State::Finished)
     {
         sfs().free_extents(extents);
         extents.clear();
@@ -8271,7 +8275,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         XLOGF(WARN, "Invalid chunked encoding body state at end of body: {}", static_cast<int>(awsChunkedEncoding->state));
 
         evb->runInEventBaseThread([self = this]()
-                            {           
+                                  {           
             if(!self || self->finished_)
                 return;
             ResponseBuilder(self->downstream_)
@@ -8282,54 +8286,53 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         return;
     }
 
-    if(!extents.empty())
+    if (!extents.empty())
         XLOGF(INFO, "Finalize object {} ext off {} len {} extents {}", keyInfo.key, extents[0].data_file_offset, extents[0].len, extents.size());
-    else 
+    else
         XLOGF(INFO, "Finalize empty object {}", keyInfo.key);
 
     // TODO: Check if multi-part upload is aborted here and synchronize
 
     std::unique_ptr<SingleFileStorage::SFragInfo> addPart;
-    if(request_action == Action::PutObjectPart ||
+    if (request_action == Action::PutObjectPart ||
         request_action == Action::UploadPartCopy)
     {
         int64_t partSize = 0;
-        for(const auto& ext: extents)
+        for (const auto& ext : extents)
         {
             partSize += ext.len;
         }
 
         const auto uploadId = uploadIdFromStrDot(bodyData);
-        assert(uploadId.second>=0);
+        assert(uploadId.second >= 0);
 
         addPart = std::make_unique<SingleFileStorage::SFragInfo>();
         addPart->action = SingleFileStorage::FragAction::ModifyData;
-        const auto parseParts = ParsePartRes{.parts = {MultiPartDownloadData::PartExt{.size=partSize, .start=static_cast<int>(uploadId.second), .len=1}}};
+        const auto parseParts = ParsePartRes{ .parts = { MultiPartDownloadData::PartExt{ .size = partSize, .start = static_cast<int>(uploadId.second), .len = 1 } } };
         addPart->md5sum = serializePartExts(parseParts);
-        addPart->fn = make_key({.key = keyInfo.key, .version = uploadId.first, 
-                .bucketId = buckets::getPartialUploadsBucket(keyInfo.bucketId)});
+        addPart->fn = make_key({ .key = keyInfo.key, .version = uploadId.first, .bucketId = buckets::getPartialUploadsBucket(keyInfo.bucketId) });
     }
 
     // TODO perf: With match info set it has to wait for the queue anyway, so we might as well link the commit if we want one.
     // Commit needs to happen after the parts update
 
-    if(request_action != Action::PutObjectPart &&
+    if (request_action != Action::PutObjectPart &&
         request_action != Action::UploadPartCopy &&
         !keyInfo.withVersioning())
     {
-        if(FLAGS_test_delay_before_modify_ms > 0)
+        if (FLAGS_test_delay_before_modify_ms > 0)
             std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_test_delay_before_modify_ms));
 
         addProtectedCheck(false);
     }
 
-    if(matchInfo && keyInfo.version != 0)
+    if (matchInfo && keyInfo.version != 0)
     {
         matchInfo->readFn = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
         matchInfo->readNewest = true;
     }
 
-    const auto writeFn = addPart ? make_key({.key = bodyData, .version = 0, .bucketId = buckets::getPartsBucket(keyInfo.bucketId)}) : make_key(keyInfo);
+    const auto writeFn = addPart ? make_key({ .key = bodyData, .version = 0, .bucketId = buckets::getPartsBucket(keyInfo.bucketId) }) : make_key(keyInfo);
     auto rc = sfs().write_finalize(writeFn, extents, lastModified, md5sum, false, true, std::move(addPart), matchInfo.get());
 
     if (rc != 0)
@@ -8337,7 +8340,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         extents.clear();
         XLOGF(WARN, "Error obj {} finalizing write code {}", keyInfo.key, rc);
         evb->runInEventBaseThread([self = this]()
-                            {           
+                                  {           
                 if(!self || self->finished_)
                     return;
                 ResponseBuilder(self->downstream_)
@@ -8348,14 +8351,14 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         return;
     }
 
-    if(matchInfo && !matchInfo->match)
+    if (matchInfo && !matchInfo->match)
     {
         sfs().free_extents(extents);
         extents.clear();
 
         XLOGF(WARN, "Object {} match condition not met (protected: {}). Returning error", keyInfo.key, matchInfo->isProtected);
-        evb->runInEventBaseThread([ this]()
-                            {           
+        evb->runInEventBaseThread([this]()
+                                  {           
                 if(finished_)
                     return;
                 setFinished();
@@ -8368,8 +8371,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
                     ResponseBuilder(downstream_)
                         .status(409 , "ConditionalRequestConflict")
                         .body(s3errorXml(S3ErrorCode::ConditionalRequestConflict, "", fullKeyPath(), ""))
-                        .sendWithEOM();
-                    });
+                        .sendWithEOM(); });
         return;
     }
     else
@@ -8377,12 +8379,11 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         extents.clear();
     }
 
-
-    if(!commit())
+    if (!commit())
     {
         XLOGF(WARN, "Commit obj {} failed", keyInfo.key);
         evb->runInEventBaseThread([this]()
-                            {           
+                                  {           
                 if(finished_)
                     return;
                 setFinished();
@@ -8396,7 +8397,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
     XLOGF(DBG0, "Successfully wrote object {} etag {}", keyInfo.key, folly::hexlify(md5sumBinFromData(md5sum)));
 
     evb->runInEventBaseThread([this, md5buf, lastModified]()
-                            {      
+                              {      
                 setFinished();
                 ResponseBuilder resp(downstream_);
                 const auto etag = fmt::format("\"{}\"", folly::hexlify(std::string_view(md5buf, MD5_DIGEST_LENGTH)));
@@ -8424,32 +8425,30 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
                                     "</CopyObjectResult>", etag, format_last_modified(lastModified));
                     resp.body(bodyStr);
                 }
-                resp.sendWithEOM();
-                    });
-
+                resp.sendWithEOM(); });
 }
 
 void S3Handler::onEOM() noexcept
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
-    if(request_action == Action::CompleteMultipartUpload)
+    if (request_action == Action::CompleteMultipartUpload)
     {
-        if(finished_)
+        if (finished_)
             return;
 
-        if(put_remaining!=0)
+        if (put_remaining != 0)
         {
             XLOGF(WARN, "Key {}, remaining bytes {} while completing multipart upload. Returning error", keyInfo.key, put_remaining.load(std::memory_order_relaxed));
             ResponseBuilder(self->downstream_)
                 .status(500, "Internal error")
                 .body(s3errorXml(S3ErrorCode::InternalError, "Expecting more data", fullKeyPath(), ""))
                 .sendWithEOM();
-            finished_ = true; 
+            finished_ = true;
             return;
         }
 
-        switch(multiPartUploadData->parseState)
+        switch (multiPartUploadData->parseState)
         {
             case MultiPartUploadData::ParseState::InvalidPartOrder:
             {
@@ -8458,7 +8457,7 @@ void S3Handler::onEOM() noexcept
                     .status(400, "Bad request")
                     .body(s3errorXml(S3ErrorCode::InvalidPartOrder, "", fullKeyPath(), ""))
                     .sendWithEOM();
-                finished_ = true; 
+                finished_ = true;
                 return;
             }
             case MultiPartUploadData::ParseState::Unknown:
@@ -8468,7 +8467,7 @@ void S3Handler::onEOM() noexcept
                     .status(500, "Internal error")
                     .body(s3errorXml(S3ErrorCode::InternalError, "Error parsing XML", fullKeyPath(), ""))
                     .sendWithEOM();
-                finished_ = true; 
+                finished_ = true;
                 return;
             }
             case MultiPartUploadData::ParseState::Finished:
@@ -8488,12 +8487,12 @@ void S3Handler::onEOM() noexcept
         finalizeMultipartUpload();
         return;
     }
-    else if(request_action == Action::PutObject || request_action == Action::PutObjectPart || request_action == Action::PostObject)
+    else if (request_action == Action::PutObject || request_action == Action::PutObjectPart || request_action == Action::PostObject)
     {
-        if(finished_)
+        if (finished_)
             return;
 
-        if(request_action == Action::PostObject && postObjectData->state != PostObjectState::Done)
+        if (request_action == Action::PostObject && postObjectData->state != PostObjectState::Done)
         {
             XLOGF(WARN, "Received EOM for PostObject but not finished parsing form data for obj {}", keyInfo.key);
             ResponseBuilder(self->downstream_)
@@ -8506,72 +8505,72 @@ void S3Handler::onEOM() noexcept
 
         XLOGF(DBG0, "Received EOM for PutObject {} done_bytes {} put_remaining {}", keyInfo.key, done_bytes, put_remaining.load(std::memory_order_relaxed));
 
-        std::scoped_lock lock{bodyMutex};
-        bodyQueue.emplace(BodyObj{.offset = done_bytes, .body = {}, .unpause = false});
+        std::scoped_lock lock{ bodyMutex };
+        bodyQueue.emplace(BodyObj{ .offset = done_bytes, .body = {}, .unpause = false });
         startReadBodyThread(evb);
     }
-    else if(request_action == Action::CreateBucket)
+    else if (request_action == Action::CreateBucket)
     {
-        if(finished_)
+        if (finished_)
             return;
 
         finalizeCreateBucket();
         return;
     }
-    else if(request_action == Action::DeleteObjects)
+    else if (request_action == Action::DeleteObjects)
     {
-        if(finished_)
+        if (finished_)
             return;
 
-        if(put_remaining!=0)
+        if (put_remaining != 0)
         {
             XLOGF(WARN, "Key {}, remaining bytes {} while deleting objects. Returning error", keyInfo.key, put_remaining.load(std::memory_order_relaxed));
             ResponseBuilder(self->downstream_)
                 .status(500, "Internal error")
                 .body("Expecting more data")
                 .sendWithEOM();
-            finished_ = true; 
+            finished_ = true;
             return;
         }
 
         deleteObjects();
         return;
     }
-    else if(request_action == Action::PutBucketVersioning)
+    else if (request_action == Action::PutBucketVersioning)
     {
-        if(finished_)
+        if (finished_)
             return;
 
         finalizePutBucketVersioning();
         return;
     }
-    else if(request_action == Action::PutBucketCors)
+    else if (request_action == Action::PutBucketCors)
     {
-        if(finished_)
+        if (finished_)
             return;
 
         finalizePutBucketCors();
         return;
     }
-    else if(request_action == Action::PutObjectLegalHold)
+    else if (request_action == Action::PutObjectLegalHold)
     {
-        if(finished_)
+        if (finished_)
             return;
 
         finalizePutObjectLegalHold();
         return;
     }
-    else if(request_action == Action::PutBucketObjectLockConfiguration)
+    else if (request_action == Action::PutBucketObjectLockConfiguration)
     {
-        if(finished_)
+        if (finished_)
             return;
 
         finalizePutObjectLockConfiguration();
         return;
     }
-    else if(request_action == Action::PutObjectRetention)
+    else if (request_action == Action::PutObjectRetention)
     {
-        if(finished_)
+        if (finished_)
             return;
 
         finalizePutObjectRetention();
@@ -8603,27 +8602,26 @@ void S3Handler::onError(ProxygenError err) noexcept
     {
         XLOGF(WARN, "Error obj {} stopping put: {}", keyInfo.key, getErrorString(err));
 
-        std::scoped_lock lock{bodyMutex};
+        std::scoped_lock lock{ bodyMutex };
         std::queue<BodyObj> emptyQueue;
         bodyQueue.swap(emptyQueue);
-        bodyQueue.emplace(BodyObj{.offset = 0, .body = {}, .unpause = false});
+        bodyQueue.emplace(BodyObj{ .offset = 0, .body = {}, .unpause = false });
         startReadBodyThread(folly::EventBaseManager::get()->getEventBase());
     }
 
     self.reset();
 }
 
-
 std::vector<SingleFileStorage::SFragInfo> S3Handler::onDeleteCallback(const std::string& fn, const std::string& md5sum)
 {
     const auto keyInfo = extractKeyInfoView(fn);
-    if(buckets::isPartialUploadsBucket(keyInfo.bucketId))
+    if (buckets::isPartialUploadsBucket(keyInfo.bucketId))
     {
         const auto parts = parsePartExtsFromStr(md5sum);
 
         int numParts = 0;
         int64_t totalLength = 0;
-        for(const auto& ext: parts.parts)
+        for (const auto& ext : parts.parts)
         {
             numParts += ext.len;
             totalLength += ext.size * ext.len;
@@ -8634,14 +8632,13 @@ std::vector<SingleFileStorage::SFragInfo> S3Handler::onDeleteCallback(const std:
         XLOGF(INFO, "Abort multi-part upload found for object {} with total length {}. Deleting {} parts", keyInfo.key, totalLength, numParts);
 
         std::vector<SingleFileStorage::SFragInfo> ret;
-        for(const auto& ext: parts.parts)
+        for (const auto& ext : parts.parts)
         {
-            for(auto partNum=ext.start; partNum<ext.start+ext.len; ++partNum)
+            for (auto partNum = ext.start; partNum < ext.start + ext.len; ++partNum)
             {
                 SingleFileStorage::SFragInfo fragInfo;
                 fragInfo.action = SingleFileStorage::FragAction::Del;
-                fragInfo.fn = make_key({.key = uploadIdToStr(keyInfo.version)+"."+uploadIdToStr(partNum), .version = 0, 
-                            .bucketId = partsBucketId});
+                fragInfo.fn = make_key({ .key = uploadIdToStr(keyInfo.version) + "." + uploadIdToStr(partNum), .version = 0, .bucketId = partsBucketId });
                 ret.push_back(std::move(fragInfo));
             }
         }
@@ -8650,7 +8647,7 @@ std::vector<SingleFileStorage::SFragInfo> S3Handler::onDeleteCallback(const std:
 
     int64_t totalLen;
     std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
-    if(!parseMultipartInfo(md5sum, totalLen, multiPartDownloadData, nullptr, nullptr))
+    if (!parseMultipartInfo(md5sum, totalLen, multiPartDownloadData, nullptr, nullptr))
     {
         XLOGF(WARN, "Error parsing multi-part upload for file {}", fn);
         return {};
@@ -8658,32 +8655,31 @@ std::vector<SingleFileStorage::SFragInfo> S3Handler::onDeleteCallback(const std:
 
     std::vector<SingleFileStorage::SFragInfo> ret;
 
-    if(multiPartDownloadData)
+    if (multiPartDownloadData)
     {
         int parts = 0;
-        for(const auto& ext: multiPartDownloadData->exts)
+        for (const auto& ext : multiPartDownloadData->exts)
         {
-            parts+= ext.len;
+            parts += ext.len;
         }
 
         const auto partsBucketId = buckets::getPartsBucket(keyInfo.bucketId);
         const auto isReading = isReadingMultipartObjectAndMarkDel(fn, multiPartDownloadData->uploadId, partsBucketId, multiPartDownloadData->exts);
 
-        if(isReading)
+        if (isReading)
             XLOGF(INFO, "Multipart object {} is currently being read. Marked for deletion after reading completed", fn);
         else
-             XLOGF(INFO, "Multi-part upload found for object {} with total length {}. Deleting {} parts", keyInfo.key, totalLen, parts);
+            XLOGF(INFO, "Multi-part upload found for object {} with total length {}. Deleting {} parts", keyInfo.key, totalLen, parts);
 
         ret.reserve(parts);
 
-        for(const auto& ext: multiPartDownloadData->exts)
+        for (const auto& ext : multiPartDownloadData->exts)
         {
-            for(auto partNum=ext.start; partNum<ext.start+ext.len; ++partNum)
+            for (auto partNum = ext.start; partNum < ext.start + ext.len; ++partNum)
             {
                 SingleFileStorage::SFragInfo fragInfo;
                 fragInfo.action = isReading ? SingleFileStorage::FragAction::QueueDel : SingleFileStorage::FragAction::Del;
-                fragInfo.fn = make_key({.key = uploadIdToStr(multiPartDownloadData->uploadId)+"."+uploadIdToStr(partNum), .version = 0, 
-                            .bucketId = partsBucketId});
+                fragInfo.fn = make_key({ .key = uploadIdToStr(multiPartDownloadData->uploadId) + "." + uploadIdToStr(partNum), .version = 0, .bucketId = partsBucketId });
                 ret.push_back(std::move(fragInfo));
             }
         }
@@ -8697,9 +8693,9 @@ std::optional<std::string> S3Handler::onModifyCallback(const std::string& fn, st
     const auto addParts = parsePartExtsFromStr(md5sumParam);
     auto existingParts = parsePartExtsFromStr(md5sum);
 
-    for(const auto& part: addParts.parts)
+    for (const auto& part : addParts.parts)
     {
-        assert(part.len==1);
+        assert(part.len == 1);
         existingParts.parts = addPartExt(std::move(existingParts.parts), part.size, part.start);
     }
 
@@ -8709,39 +8705,39 @@ std::optional<std::string> S3Handler::onModifyCallback(const std::string& fn, st
 // Locates the serialized ObjMetadata in an object's md5sum and deserializes it.
 // The metadata is at [objMetadataStart, objMetadataEnd)
 static bool locateObjMetadata(const std::string_view md5sum, int64_t& itype, ObjMetadata& objMetadata,
-    unsigned int& objMetadataStart, unsigned int& objMetadataEnd)
+                              unsigned int& objMetadataStart, unsigned int& objMetadataEnd)
 {
     CRData rdata(md5sum.data(), md5sum.size());
-    if(!rdata.getVarInt(&itype))
+    if (!rdata.getVarInt(&itype))
         return false;
 
     const auto baseType = itype & ~metadata_known_flags;
-    if(baseType == metadata_object)
+    if (baseType == metadata_object)
     {
-        if(!rdata.incrementPtr(MD5_DIGEST_LENGTH))
+        if (!rdata.incrementPtr(MD5_DIGEST_LENGTH))
             return false;
     }
-    else if(baseType == metadata_multipart_object)
+    else if (baseType == metadata_multipart_object)
     {
         // Same layout as in parseMultipartInfo
-        if(rdata.getLeft()>=MD5_DIGEST_LENGTH)
+        if (rdata.getLeft() >= MD5_DIGEST_LENGTH)
             rdata.incrementPtr(MD5_DIGEST_LENGTH);
 
         int64_t uploadId, numParts;
-        if(!rdata.getVarInt(&uploadId) || !rdata.getVarInt(&numParts) || numParts<0)
+        if (!rdata.getVarInt(&uploadId) || !rdata.getVarInt(&numParts) || numParts < 0)
             return false;
 
         int64_t currNumParts = 0;
         int64_t size, start, len;
-        while(currNumParts < numParts &&
-            rdata.getVarInt(&size) &&
-            rdata.getVarInt(&start) &&
-            rdata.getVarInt(&len))
+        while (currNumParts < numParts &&
+               rdata.getVarInt(&size) &&
+               rdata.getVarInt(&start) &&
+               rdata.getVarInt(&len))
         {
             currNumParts += len;
         }
 
-        if(currNumParts != numParts)
+        if (currNumParts != numParts)
             return false;
     }
     else
@@ -8751,7 +8747,7 @@ static bool locateObjMetadata(const std::string_view md5sum, int64_t& itype, Obj
 
     objMetadataStart = rdata.getStreampos();
 
-    if((itype & metadata_flag_has_obj_metadata) && 
+    if ((itype & metadata_flag_has_obj_metadata) &&
         !objMetadata.deserialize(rdata, itype))
         return false;
 
@@ -8765,16 +8761,16 @@ static int applyRetention(std::optional<ObjMetadata::LockInfo>& lockInfo, CRData
     int64_t nowSec;
     char bypassGovernance;
     char hasLockInfo;
-    if(!rparam.getVarInt(&nowSec) || !rparam.getChar(&bypassGovernance) || !rparam.getChar(&hasLockInfo))
+    if (!rparam.getVarInt(&nowSec) || !rparam.getChar(&bypassGovernance) || !rparam.getChar(&hasLockInfo))
         return EINVAL;
 
     const auto now = std::chrono::system_clock::time_point(std::chrono::seconds(nowSec));
 
     std::optional<ObjMetadata::LockInfo> newLockInfo;
-    if(hasLockInfo)
+    if (hasLockInfo)
     {
         int64_t flags, retainUntilSec, days, years;
-        if(!rparam.getVarInt(&flags) || !rparam.getVarInt(&retainUntilSec) ||
+        if (!rparam.getVarInt(&flags) || !rparam.getVarInt(&retainUntilSec) ||
             !rparam.getVarInt(&days) || !rparam.getVarInt(&years))
             return EINVAL;
 
@@ -8784,38 +8780,38 @@ static int applyRetention(std::optional<ObjMetadata::LockInfo>& lockInfo, CRData
         newLockInfo->eventDurationDays = static_cast<unsigned int>(days);
         newLockInfo->eventDurationYears = static_cast<unsigned short>(years);
 
-        if(lockInfo && lockInfo->eventHold() && !newLockInfo->eventHold())
+        if (lockInfo && lockInfo->eventHold() && !newLockInfo->eventHold())
         {
             // Event hold released. Object stays protected for the event hold duration set while the hold was active
             const auto releaseUntil = std::chrono::time_point_cast<std::chrono::seconds>(now + lockInfo->eventHoldDuration());
-            if(!newLockInfo->retainUntilSet() || newLockInfo->retainUntil < releaseUntil)
+            if (!newLockInfo->retainUntilSet() || newLockInfo->retainUntil < releaseUntil)
             {
                 newLockInfo->flags |= lockinfo_flag_retain_until;
                 newLockInfo->retainUntil = releaseUntil;
             }
         }
 
-        if(!newLockInfo->retainUntilSet() && !newLockInfo->eventHold())
+        if (!newLockInfo->retainUntilSet() && !newLockInfo->eventHold())
             return ERANGE;
     }
 
     const bool restricted = lockInfo && lockInfo->isActive(now) &&
-        (lockInfo->complianceMode() || !bypassGovernance);
+                            (lockInfo->complianceMode() || !bypassGovernance);
 
-    if(restricted)
+    if (restricted)
     {
         // Protection can only be extended
-        if(!newLockInfo)
+        if (!newLockInfo)
             return EACCES;
 
-        if(lockInfo->complianceMode() && !newLockInfo->complianceMode())
+        if (lockInfo->complianceMode() && !newLockInfo->complianceMode())
             return EACCES;
 
-        if(lockInfo->retainUntilSet() && lockInfo->retainUntil > now &&
+        if (lockInfo->retainUntilSet() && lockInfo->retainUntil > now &&
             (!newLockInfo->retainUntilSet() || newLockInfo->retainUntil < lockInfo->retainUntil))
             return EACCES;
 
-        if(lockInfo->eventHold() && newLockInfo->eventHold() &&
+        if (lockInfo->eventHold() && newLockInfo->eventHold() &&
             newLockInfo->eventHoldDuration() < lockInfo->eventHoldDuration())
             return EACCES;
     }
@@ -8828,43 +8824,44 @@ nonstd::expected<std::string, int> S3Handler::onModifyMetadataCallback(const std
 {
     CRData rparam(param.data(), param.size());
     char modifyType;
-    if(!rparam.getChar(&modifyType))
+    if (!rparam.getChar(&modifyType))
         return nonstd::make_unexpected(EINVAL);
 
     CRData rdata(md5sum.data(), md5sum.size());
     int64_t itype;
-    if(!rdata.getVarInt(&itype))
+    if (!rdata.getVarInt(&itype))
         return nonstd::make_unexpected(EINVAL);
 
     const auto baseType = itype & ~metadata_known_flags;
-    if(baseType != metadata_object && baseType != metadata_multipart_object)
+    if (baseType != metadata_object && baseType != metadata_multipart_object)
         return nonstd::make_unexpected(EINVAL);
 
-    switch(modifyType)
+    switch (modifyType)
     {
-    case metadata_modify_legal_hold:
+        case metadata_modify_legal_hold:
         {
             // Legal hold has no serialized data, so only the flag needs to change
             char legalHold;
-            if(!rparam.getChar(&legalHold))
+            if (!rparam.getChar(&legalHold))
                 return nonstd::make_unexpected(EINVAL);
-            if(legalHold)
+            if (legalHold)
                 itype |= metadata_flag_with_legal_hold;
             else
                 itype &= ~metadata_flag_with_legal_hold;
-        } break;
-    case metadata_modify_retention:
+        }
+        break;
+        case metadata_modify_retention:
         {
             ObjMetadata objMetadata;
             unsigned int objMetadataStart, objMetadataEnd;
-            if(!locateObjMetadata(md5sum, itype, objMetadata, objMetadataStart, objMetadataEnd))
+            if (!locateObjMetadata(md5sum, itype, objMetadata, objMetadataStart, objMetadataEnd))
             {
                 XLOGF(ERR, "Error parsing object metadata of {} for retention modification", fn);
                 return nonstd::make_unexpected(EIO);
             }
 
             const auto rc = applyRetention(objMetadata.lockInfo, rparam);
-            if(rc != 0)
+            if (rc != 0)
                 return nonstd::make_unexpected(rc);
 
             CRData rvarint(md5sum.data(), md5sum.size());
@@ -8879,9 +8876,9 @@ nonstd::expected<std::string, int> S3Handler::onModifyMetadataCallback(const std
             wdata.addBuffer(md5sum.data() + objMetadataEnd, md5sum.size() - objMetadataEnd);
             return std::string(wdata.getDataPtr(), wdata.getDataSize());
         }
-    default:
-        XLOGF(ERR, "Unknown modify type: {}", static_cast<int>(modifyType));
-        abort();
+        default:
+            XLOGF(ERR, "Unknown modify type: {}", static_cast<int>(modifyType));
+            abort();
     }
 
     CWData wdata;
@@ -8895,20 +8892,19 @@ std::string S3Handler::fullKeyPath() const
     return buckets::getBucketName(keyInfo.bucketId) + "/" + keyInfo.key;
 }
 
-
 void S3Handler::onAddReadingCallback(const std::string_view fn, const SingleFileStorage::SFragInfo& fragInfo)
 {
     CRData rdata(fragInfo.md5sum.data(), fragInfo.md5sum.size());
     int64_t itype;
-    if(!rdata.getVarInt(&itype))
+    if (!rdata.getVarInt(&itype))
         return;
 
     const auto itypeFlags = itype;
     itype = itype & ~metadata_known_flags;
 
-    if(itype == metadata_multipart_object)
+    if (itype == metadata_multipart_object)
     {
-        std::scoped_lock lock{readingMultipartObjectsMutex};
+        std::scoped_lock lock{ readingMultipartObjectsMutex };
         auto& obj = readingMultipartObjects[std::string(fn)];
         obj.refs++;
     }
@@ -8918,30 +8914,29 @@ void S3Handler::removeReadingMultipartObject(const std::string& key, SingleFileS
 {
     ReadingMultipartObject obj;
     {
-        std::scoped_lock lock{readingMultipartObjectsMutex};
+        std::scoped_lock lock{ readingMultipartObjectsMutex };
         auto it = readingMultipartObjects.find(key);
-        assert(it!=readingMultipartObjects.end());
-        if(it==readingMultipartObjects.end())
+        assert(it != readingMultipartObjects.end());
+        if (it == readingMultipartObjects.end())
             return;
 
-        assert(it->second.refs>0);
-        if(--it->second.refs!=0)
+        assert(it->second.refs > 0);
+        if (--it->second.refs != 0)
             return;
 
         obj = std::move(it->second);
         readingMultipartObjects.erase(it);
     }
 
-    if(obj.delUploadId != -1)
+    if (obj.delUploadId != -1)
     {
         XLOGF(INFO, "Deleting multi-part upload object {} after reading completed delUploadId={} delParts.size()={}", key, obj.delUploadId, obj.delParts.size());
-        for(const auto& ext: obj.delParts)
+        for (const auto& ext : obj.delParts)
         {
-            for(auto partNum=ext.start; partNum<ext.start+ext.len; ++partNum)
+            for (auto partNum = ext.start; partNum < ext.start + ext.len; ++partNum)
             {
-                const auto rc = sfs.del(make_key({.key = uploadIdToStr(obj.delUploadId)+"."+uploadIdToStr(partNum), .version = 0,
-                            .bucketId = obj.delBucketId}), SingleFileStorage::DelAction::DelWithQueued, false);
-                assert(rc==0);
+                const auto rc = sfs.del(make_key({ .key = uploadIdToStr(obj.delUploadId) + "." + uploadIdToStr(partNum), .version = 0, .bucketId = obj.delBucketId }), SingleFileStorage::DelAction::DelWithQueued, false);
+                assert(rc == 0);
             }
         }
     }
@@ -8949,9 +8944,9 @@ void S3Handler::removeReadingMultipartObject(const std::string& key, SingleFileS
 
 bool S3Handler::isReadingMultipartObjectAndMarkDel(const std::string& key, const int64_t delUploadId, const int64_t delBucketId, const std::vector<MultiPartDownloadData::PartExt>& delParts)
 {
-    std::scoped_lock lock{readingMultipartObjectsMutex};
+    std::scoped_lock lock{ readingMultipartObjectsMutex };
     auto it = readingMultipartObjects.find(key);
-    if(it==readingMultipartObjects.end())
+    if (it == readingMultipartObjects.end())
         return false;
 
     it->second.delUploadId = delUploadId;
@@ -8963,15 +8958,16 @@ bool S3Handler::isReadingMultipartObjectAndMarkDel(const std::string& key, const
 void S3Handler::stopChecks()
 {
     {
-        std::scoped_lock lock{readingMultipartObjectsMutex};
-        if(!readingMultipartObjects.empty())
+        std::scoped_lock lock{ readingMultipartObjectsMutex };
+        if (!readingMultipartObjects.empty())
         {
             XLOGF(ERR, "There are still {} multipart objects being read at shutdown", readingMultipartObjects.size());
-            for(const auto& [key, obj]: readingMultipartObjects)
+            for (const auto& [key, obj] : readingMultipartObjects)
             {
                 XLOGF(ERR, "Multipart object {} with {} refs is still being read "
-                    "at shutdown delUploadId={} refs={} delParts.size()={}", key, obj.refs, 
-                    obj.delUploadId, obj.refs, obj.delParts.size());
+                           "at shutdown delUploadId={} refs={} delParts.size()={}",
+                      key, obj.refs,
+                      obj.delUploadId, obj.refs, obj.delParts.size());
             }
         }
         assert(readingMultipartObjects.empty());
@@ -8986,11 +8982,11 @@ void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const S
 {
     const auto etag = etagOverride ? *etagOverride : getEtag(fragInfo.md5sum);
 
-    if(!matchInfo.ifMatch.empty())
+    if (!matchInfo.ifMatch.empty())
     {
-        for(const auto ifMatch: matchInfo.ifMatch)
+        for (const auto ifMatch : matchInfo.ifMatch)
         {
-            if(etag == ifMatch || folly::trimWhitespace(ifMatch) == "*")
+            if (etag == ifMatch || folly::trimWhitespace(ifMatch) == "*")
             {
                 matchInfo.match = true;
                 break;
@@ -9002,16 +8998,16 @@ void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const S
         matchInfo.match = true;
     }
 
-    if(matchInfo.ifModifiedSince)
+    if (matchInfo.ifModifiedSince)
     {
         std::chrono::seconds lastModifiedSec(*matchInfo.ifModifiedSince);
         matchInfo.match = fragInfo.last_modified > std::chrono::nanoseconds(lastModifiedSec).count();
     }
-    else if(!matchInfo.ifNoneMatch.empty())
+    else if (!matchInfo.ifNoneMatch.empty())
     {
-        for(const auto ifNoneMatch: matchInfo.ifNoneMatch)
+        for (const auto ifNoneMatch : matchInfo.ifNoneMatch)
         {
-            if(etag == ifNoneMatch || folly::trimWhitespace(ifNoneMatch) == "*")
+            if (etag == ifNoneMatch || folly::trimWhitespace(ifNoneMatch) == "*")
             {
                 matchInfo.match = false;
                 break;
@@ -9019,22 +9015,20 @@ void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const S
         }
     }
 
-    if(matchInfo.ifUnmodifiedSince)
+    if (matchInfo.ifUnmodifiedSince)
     {
         std::chrono::seconds lastModifiedSec(*matchInfo.ifUnmodifiedSince);
-        if(fragInfo.last_modified > std::chrono::nanoseconds(lastModifiedSec).count())
+        if (fragInfo.last_modified > std::chrono::nanoseconds(lastModifiedSec).count())
         {
             matchInfo.match = false;
         }
     }
 
-    if(matchInfo.checkProtected)
+    if (matchInfo.checkProtected)
     {
-        const auto now = matchInfo.protectedCheckTime != 0 ? 
-            std::chrono::system_clock::time_point(std::chrono::seconds(matchInfo.protectedCheckTime)) :
-            std::chrono::system_clock::now();
+        const auto now = matchInfo.protectedCheckTime != 0 ? std::chrono::system_clock::time_point(std::chrono::seconds(matchInfo.protectedCheckTime)) : std::chrono::system_clock::now();
         matchInfo.isProtected = isProtected(fragInfo.md5sum, now, matchInfo.bypassGovernance);
-        if(matchInfo.isProtected)
+        if (matchInfo.isProtected)
             matchInfo.match = false;
     }
 }
@@ -9043,85 +9037,86 @@ bool S3Handler::isProtected(const std::string_view md5sum, const std::chrono::sy
 {
     CRData rdata(md5sum.data(), md5sum.size());
     int64_t itype;
-    if(!rdata.getVarInt(&itype))
+    if (!rdata.getVarInt(&itype))
         return false;
 
     const auto baseType = itype & ~metadata_known_flags;
-    if(baseType != metadata_object && baseType != metadata_multipart_object)
+    if (baseType != metadata_object && baseType != metadata_multipart_object)
         return false;
 
-    if(itype & metadata_flag_with_legal_hold)
+    if (itype & metadata_flag_with_legal_hold)
         return true;
 
-    if(!(itype & metadata_flag_with_lock_info))
+    if (!(itype & metadata_flag_with_lock_info))
         return false;
 
     ObjMetadata objMetadata;
     unsigned int objMetadataStart, objMetadataEnd;
-    if(!locateObjMetadata(md5sum, itype, objMetadata, objMetadataStart, objMetadataEnd))
+    if (!locateObjMetadata(md5sum, itype, objMetadata, objMetadataStart, objMetadataEnd))
     {
         // Fail safe
         XLOGF(ERR, "Error parsing object metadata for protection check");
         return true;
     }
 
-    if(!objMetadata.lockInfo)
+    if (!objMetadata.lockInfo)
         return false;
 
     return objMetadata.lockInfo->isActive(now) &&
-        (objMetadata.lockInfo->complianceMode() || !bypassGovernance);
+           (objMetadata.lockInfo->complianceMode() || !bypassGovernance);
 }
 
 void S3Handler::addProtectedCheck(const bool bypassGovernance)
 {
-    if(!buckets::isObjectLockEnabled(keyInfo.bucketId))
+    if (!buckets::isObjectLockEnabled(keyInfo.bucketId))
         return;
 
-    if(!matchInfo)
+    if (!matchInfo)
         matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
     matchInfo->checkProtected = true;
     matchInfo->bypassGovernance = bypassGovernance;
     matchInfo->protectedCheckTime = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
+                                        std::chrono::system_clock::now().time_since_epoch())
+                                        .count();
 }
 
 void S3Handler::parseMatchInfo(proxygen::HTTPMessage& headers, const bool ifModifiedSince, const bool ifUnmodifiedSince)
 {
-    auto ifMatchStr =  headers.getHeaders().getSingleOrEmpty("If-Match");
-    if(!ifMatchStr.empty())
+    auto ifMatchStr = headers.getHeaders().getSingleOrEmpty("If-Match");
+    if (!ifMatchStr.empty())
     {
         matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
-        
+
         std::vector<std::string_view> ifMatchVec;
         folly::split(",", ifMatchStr, ifMatchVec);
-        for(auto& ifMatch: ifMatchVec)
+        for (auto& ifMatch : ifMatchVec)
         {
             ifMatch = folly::trimWhitespace(ifMatch);
             matchInfo->ifMatch.push_back(std::string(ifMatch));
         }
     }
 
-    auto ifNoneMatchStr =  headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_IF_NONE_MATCH);
-    if(!ifNoneMatchStr.empty())
+    auto ifNoneMatchStr = headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_IF_NONE_MATCH);
+    if (!ifNoneMatchStr.empty())
     {
-        if(!matchInfo)
+        if (!matchInfo)
         {
             matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
         }
         std::vector<std::string_view> ifNoneMatchVec;
         folly::split(",", ifNoneMatchStr, ifNoneMatchVec);
-        for(auto& ifNoneMatch: ifNoneMatchVec)
+        for (auto& ifNoneMatch : ifNoneMatchVec)
         {
             ifNoneMatch = folly::trimWhitespace(ifNoneMatch);
             matchInfo->ifNoneMatch.push_back(std::string(ifNoneMatch));
         }
     }
-    else if(ifModifiedSince)
+    else if (ifModifiedSince)
     {
         auto ifModifiedSinceStr = headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_IF_MODIFIED_SINCE);
-        if(!ifModifiedSinceStr.empty())
+        if (!ifModifiedSinceStr.empty())
         {
-            if(!matchInfo)
+            if (!matchInfo)
             {
                 matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
             }
@@ -9129,12 +9124,12 @@ void S3Handler::parseMatchInfo(proxygen::HTTPMessage& headers, const bool ifModi
         }
     }
 
-    if(ifUnmodifiedSince)
+    if (ifUnmodifiedSince)
     {
         auto ifUnmodifiedSinceStr = headers.getHeaders().getSingleOrEmpty("If-Unmodified-Since");
-        if(!ifUnmodifiedSinceStr.empty())
+        if (!ifUnmodifiedSinceStr.empty())
         {
-            if(!matchInfo)
+            if (!matchInfo)
             {
                 matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
             }
@@ -9145,24 +9140,24 @@ void S3Handler::parseMatchInfo(proxygen::HTTPMessage& headers, const bool ifModi
 
 void S3Handler::parseSourceMatchInfo(proxygen::HTTPMessage& headers, SingleFileStorage::MatchInfo& matchInfo)
 {
-    auto ifMatchStr =  headers.getHeaders().getSingleOrEmpty("If-Match");
-    if(!ifMatchStr.empty())
-    {       
+    auto ifMatchStr = headers.getHeaders().getSingleOrEmpty("If-Match");
+    if (!ifMatchStr.empty())
+    {
         std::vector<std::string_view> ifMatchVec;
         folly::split(",", ifMatchStr, ifMatchVec);
-        for(auto& ifMatch: ifMatchVec)
+        for (auto& ifMatch : ifMatchVec)
         {
             ifMatch = folly::trimWhitespace(ifMatch);
             matchInfo.ifMatch.push_back(std::string(ifMatch));
         }
     }
 
-    auto ifNoneMatchStr =  headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_IF_NONE_MATCH);
-    if(!ifNoneMatchStr.empty())
+    auto ifNoneMatchStr = headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_IF_NONE_MATCH);
+    if (!ifNoneMatchStr.empty())
     {
         std::vector<std::string_view> ifNoneMatchVec;
         folly::split(",", ifNoneMatchStr, ifNoneMatchVec);
-        for(auto& ifNoneMatch: ifNoneMatchVec)
+        for (auto& ifNoneMatch : ifNoneMatchVec)
         {
             ifNoneMatch = folly::trimWhitespace(ifNoneMatch);
             matchInfo.ifNoneMatch.push_back(std::string(ifNoneMatch));
@@ -9171,14 +9166,14 @@ void S3Handler::parseSourceMatchInfo(proxygen::HTTPMessage& headers, SingleFileS
     else
     {
         auto ifModifiedSinceStr = headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_IF_MODIFIED_SINCE);
-        if(!ifModifiedSinceStr.empty())
+        if (!ifModifiedSinceStr.empty())
         {
             matchInfo.ifModifiedSince = proxygen::parseHTTPDateTime(ifModifiedSinceStr);
         }
     }
 
     auto ifUnmodifiedSinceStr = headers.getHeaders().getSingleOrEmpty("If-Unmodified-Since");
-    if(!ifUnmodifiedSinceStr.empty())
+    if (!ifUnmodifiedSinceStr.empty())
     {
         matchInfo.ifUnmodifiedSince = proxygen::parseHTTPDateTime(ifUnmodifiedSinceStr);
     }
@@ -9190,43 +9185,39 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
     try
     {
         const auto bucketSep = copyObjectInfo.source.find('/');
-        if(bucketSep == std::string::npos || bucketSep == 0)
+        if (bucketSep == std::string::npos || bucketSep == 0)
             throw ObjectReadError("Copy source needs to contain bucket and key");
 
         sourceFile = std::make_unique<ObjectReader>(sfs(), copyObjectInfo.source.substr(0, bucketSep), copyObjectInfo.source.substr(bucketSep + 1));
     }
-    catch(const std::exception& e)
+    catch (const std::exception& e)
     {
         const auto readError = dynamic_cast<const ObjectReadError*>(&e);
-        if(readError && readError->notFound())
+        if (readError && readError->notFound())
         {
             XLOGF(WARN, "Source object {} not found for copy", copyObjectInfo.source);
             evb->runInEventBaseThread([self = this->self, copyObjectInfo]()
-                                    {           
-                        if(self->finished_)
-                            return;
-                        ResponseBuilder(self->downstream_)
-                            .status(404, "Not found")
-                            .body(s3errorXml(S3ErrorCode::NoSuchKey, "", copyObjectInfo.source, ""))
-                            .sendWithEOM();
-                        self-> finished_ = true; 
-                        
-                                    });
+                                      {
+                                          if (self->finished_)
+                                              return;
+                                          ResponseBuilder(self->downstream_)
+                                              .status(404, "Not found")
+                                              .body(s3errorXml(S3ErrorCode::NoSuchKey, "", copyObjectInfo.source, ""))
+                                              .sendWithEOM();
+                                          self->finished_ = true; });
             return;
         }
 
         XLOGF(WARN, "Error opening source object {} for copy: {}", copyObjectInfo.source, e.what());
         evb->runInEventBaseThread([self = this->self, copyObjectInfo, e]()
-                                {           
-                    if(self->finished_)
-                        return;
-                    ResponseBuilder(self->downstream_)
-                        .status(500, "Internal error")
-                        .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error opening source object for copy: {}", e.what()), copyObjectInfo.source, ""))
-                        .sendWithEOM();
-                    self-> finished_ = true; 
-                    
-                                });
+                                  {
+                                      if (self->finished_)
+                                          return;
+                                      ResponseBuilder(self->downstream_)
+                                          .status(500, "Internal error")
+                                          .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error opening source object for copy: {}", e.what()), copyObjectInfo.source, ""))
+                                          .sendWithEOM();
+                                      self->finished_ = true; });
         return;
     }
 
@@ -9234,37 +9225,34 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
     int64_t readOffset = 0;
     int64_t writeStart = 0;
 
-    if(request_action == Action::CopyObject && sourceFileSize>5ULL*1024*1024*1024)
+    if (request_action == Action::CopyObject && sourceFileSize > 5ULL * 1024 * 1024 * 1024)
     {
         XLOGF(WARN, "Source object {} too large for copy with size {}", copyObjectInfo.source, folly::prettyPrint(sourceFileSize, folly::PRETTY_BYTES));
         evb->runInEventBaseThread([self = this->self]()
-                                {           
-                    if(self->finished_)
-                        return;
-                    ResponseBuilder(self->downstream_)
-                        .status(400, "Bad request")
-                        .body("Source object too large for copy")
-                        .sendWithEOM();
-                    self-> finished_ = true; 
-                    
-                                });
+                                  {
+                                      if (self->finished_)
+                                          return;
+                                      ResponseBuilder(self->downstream_)
+                                          .status(400, "Bad request")
+                                          .body("Source object too large for copy")
+                                          .sendWithEOM();
+                                      self->finished_ = true; });
         return;
     }
-    if(request_action == Action::UploadPartCopy)
+    if (request_action == Action::UploadPartCopy)
     {
         const auto [rangeStart, rangeEnd] = parseRange(copyObjectInfo.range, sourceFileSize);
-        if(!copyObjectInfo.range.empty() && 
-                    (rangeStart<0 || rangeEnd<0 || rangeStart>=rangeEnd || rangeEnd > sourceFileSize) )
+        if (!copyObjectInfo.range.empty() &&
+            (rangeStart < 0 || rangeEnd < 0 || rangeStart >= rangeEnd || rangeEnd > sourceFileSize))
         {
             evb->runInEventBaseThread([self = this->self]()
-                {
+                                      {
                     if(self->finished_)
                         return;
                     ResponseBuilder(self->downstream_)
                             .status(416, "Range Not Satisfiable")
                             .sendWithEOM();
-                            self-> finished_ = true; 
-                });
+                            self-> finished_ = true; });
             return;
         }
 
@@ -9272,53 +9260,47 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
         sourceFileSize = rangeEnd;
         writeStart = rangeStart;
 
-        if(sourceFileSize - writeStart >5ULL*1024*1024*1024)
+        if (sourceFileSize - writeStart > 5ULL * 1024 * 1024 * 1024)
         {
             XLOGF(WARN, "Source object {} range too large for copy with size {}", copyObjectInfo.source, folly::prettyPrint(sourceFileSize, folly::PRETTY_BYTES));
             evb->runInEventBaseThread([self = this->self]()
-                                    {           
-                        if(self->finished_)
-                            return;
-                        ResponseBuilder(self->downstream_)
-                            .status(400, "Bad request")
-                            .body("Source object range too large for copy")
-                            .sendWithEOM();
-                        self-> finished_ = true; 
-                        
-                                    });
+                                      {
+                                          if (self->finished_)
+                                              return;
+                                          ResponseBuilder(self->downstream_)
+                                              .status(400, "Bad request")
+                                              .body("Source object range too large for copy")
+                                              .sendWithEOM();
+                                          self->finished_ = true; });
             return;
         }
     }
-
 
     SingleFileStorage::SFragInfo sourceFragInfo;
     sourceFragInfo.last_modified = sourceFile->LastModifiedTimeNs();
     onMatchCallback(copyObjectInfo.sourceMatchInfo, sourceFragInfo, sourceFile->ETag());
 
-    if(!copyObjectInfo.sourceMatchInfo.match)
+    if (!copyObjectInfo.sourceMatchInfo.match)
     {
         XLOGF(INFO, "Source object {} match condition not met for copy. Returning 412", copyObjectInfo.source);
         evb->runInEventBaseThread([self = this->self, copyObjectInfo]()
-                                {           
-                    if(self->finished_)
-                        return;
-                    ResponseBuilder(self->downstream_)
-                        .status(412, "Precondition Failed")
-                        .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", copyObjectInfo.source, ""))
-                        .sendWithEOM();
-                    self-> finished_ = true; 
-                    
-                                });
+                                  {
+                                      if (self->finished_)
+                                          return;
+                                      ResponseBuilder(self->downstream_)
+                                          .status(412, "Precondition Failed")
+                                          .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", copyObjectInfo.source, ""))
+                                          .sendWithEOM();
+                                      self->finished_ = true; });
         return;
     }
 
-
     const auto res = self->sfs().write_prepare(targetFn, sourceFileSize - writeStart);
     if (res.err != 0)
-    {            
-        XLOGF(WARN, "Write object prepare failed for key {} err {}", self->keyInfo.key, res.err);        
+    {
+        XLOGF(WARN, "Write object prepare failed for key {} err {}", self->keyInfo.key, res.err);
         evb->runInEventBaseThread([self = self, res]()
-                                    {
+                                  {
             if(self->finished_)
                 return;
             ResponseBuilder(self->downstream_)
@@ -9330,8 +9312,9 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
     }
 
     bool cleanupExtents = true;
-    SCOPE_EXIT {
-        if(cleanupExtents)
+    SCOPE_EXIT
+    {
+        if (cleanupExtents)
         {
             sfs().free_extents(extents);
         }
@@ -9340,9 +9323,9 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
     extents = res.extents;
 
     std::vector<char> buf;
-    buf.resize(128*1024*1024);
+    buf.resize(128 * 1024 * 1024);
 
-    while(readOffset < sourceFileSize)
+    while (readOffset < sourceFileSize)
     {
         const auto toRead = std::min<int64_t>(static_cast<int64_t>(buf.size()), sourceFileSize - readOffset);
 
@@ -9350,19 +9333,17 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
         {
             sourceFile->Read(buf.data(), toRead, readOffset);
         }
-        catch(const ObjectReadError& e)
+        catch (const ObjectReadError& e)
         {
             evb->runInEventBaseThread([self = this->self, copyObjectInfo, e]()
-                                    {           
-                        if(self->finished_)
-                            return;
-                        ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error reading source object for copy: {}", e.what()), copyObjectInfo.source, ""))
-                            .sendWithEOM();
-                        self-> finished_ = true; 
-                        
-                                    });
+                                      {
+                                          if (self->finished_)
+                                              return;
+                                          ResponseBuilder(self->downstream_)
+                                              .status(500, "Internal error")
+                                              .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error reading source object for copy: {}", e.what()), copyObjectInfo.source, ""))
+                                              .sendWithEOM();
+                                          self->finished_ = true; });
             return;
         }
 
@@ -9372,21 +9353,21 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
         readOffset += toRead;
         auto bufPtr = buf.data();
         auto writeRemaining = toRead;
-        while(writeRemaining > 0)
+        while (writeRemaining > 0)
         {
             auto it = std::upper_bound(extents.begin(), extents.end(), SingleFileStorage::Ext(writeOffset, 0, 0));
-            if(!extents.empty())
+            if (!extents.empty())
                 --it;
             assert(it != extents.end());
-            if(it==extents.end())
+            if (it == extents.end())
                 break;
 
             assert(it->obj_offset <= writeOffset && it->obj_offset + it->len > writeOffset);
-            
+
             const auto ext_offset = writeOffset - it->obj_offset;
             const auto curr_ext = SingleFileStorage::Ext(it->obj_offset + ext_offset, it->data_file_offset + ext_offset, it->len - ext_offset);
             const int64_t wlen = std::min(static_cast<int64_t>(writeRemaining), curr_ext.len);
-            const bool complete_obj = extents.size()==1 && extents[0].len==wlen;
+            const bool complete_obj = extents.size() == 1 && extents[0].len == wlen;
 
             const auto rc = sfs().write_ext(curr_ext, bufPtr, wlen, complete_obj);
             if (rc != 0)
@@ -9394,7 +9375,7 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
                 XLOGF(WARN, "Error obj {} code {}. Writing ext {} len {} failed", keyInfo.key, rc, curr_ext.obj_offset, curr_ext.len);
 
                 evb->runInEventBaseThread([self = this->self]()
-                                    {  
+                                          {  
                         if(!self || self->finished_)
                             return;     
                         ResponseBuilder(self->downstream_)
@@ -9405,16 +9386,16 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
                 return;
             }
 
-            writeRemaining-= wlen;
-            writeOffset+= wlen;
-            bufPtr+= wlen;
+            writeRemaining -= wlen;
+            writeOffset += wlen;
+            bufPtr += wlen;
         }
     }
 
-    if(copyObjectInfo.metadataDirective == CopyObjectInfo::MetadataDirective::Copy)
+    if (copyObjectInfo.metadataDirective == CopyObjectInfo::MetadataDirective::Copy)
     {
         auto sourceObjMetadata = sourceFile->GetObjMetadata();
-        if(sourceObjMetadata)
+        if (sourceObjMetadata)
         {
             auto newObjMetadata = std::make_unique<ObjMetadata>(*sourceObjMetadata);
             // Object lock settings are not copied from the source object, but taken from the request headers
@@ -9443,40 +9424,40 @@ void S3Handler::sigCheckFailed()
 }
 
 int S3Handler::onFieldStart(const std::string& name,
-                             folly::Optional<std::string> filename,
-                             std::unique_ptr<proxygen::HTTPMessage> msg,
-                             uint64_t postBytesProcessed)
+                            folly::Optional<std::string> filename,
+                            std::unique_ptr<proxygen::HTTPMessage> msg,
+                            uint64_t postBytesProcessed)
 {
     XLOGF(DBG0, "onFieldStart name {} filename {} postBytesProcessed {}", name, filename ? *filename : "nullopt", postBytesProcessed);
 
-    if(name=="success_action_status")
+    if (name == "success_action_status")
     {
-        if(postObjectData->state != PostObjectState::Init)
+        if (postObjectData->state != PostObjectState::Init)
         {
             XLOGF(WARN, "Multipart form data field 'success_action_status' received in invalid state {}", static_cast<int>(postObjectData->state));
             postObjectData->state = PostObjectState::MultipartParsingError;
             return -1;
         }
 
-        postObjectData->state = PostObjectState::ParseSuccessActionStatus;        
+        postObjectData->state = PostObjectState::ParseSuccessActionStatus;
     }
-    else if(name=="file")
+    else if (name == "file")
     {
-        if(postObjectData->state != PostObjectState::Init)
+        if (postObjectData->state != PostObjectState::Init)
         {
             XLOGF(WARN, "Multipart form data field 'file' received in invalid state {}", static_cast<int>(postObjectData->state));
             postObjectData->state = PostObjectState::MultipartParsingError;
             return -1;
         }
 
-        if(!filename)
+        if (!filename)
         {
             XLOGF(WARN, "Multipart form data field 'file' is missing filename");
             postObjectData->state = PostObjectState::MultipartParsingError;
             return 0;
         }
 
-        if(postBytesProcessed>put_remaining)
+        if (postBytesProcessed > put_remaining)
         {
             XLOGF(WARN, "Multipart form data field 'file' has already received more data than expected. postBytesProcessed {} put_remaining {}", postBytesProcessed, put_remaining.load(std::memory_order_relaxed));
             postObjectData->state = PostObjectState::MultipartParsingError;
@@ -9493,29 +9474,29 @@ int S3Handler::onFieldStart(const std::string& name,
 }
 
 int S3Handler::onFieldData(std::unique_ptr<folly::IOBuf> data,
-                        uint64_t postBytesProcessed)
+                           uint64_t postBytesProcessed)
 {
     XLOGF(DBG0, "onFieldData postBytesProcessed {} state {}", postBytesProcessed, static_cast<int>(postObjectData->state));
-    switch(postObjectData->state)
+    switch (postObjectData->state)
     {
         case PostObjectState::ParseSuccessActionStatus:
         {
             auto str = data->moveToFbString().toStdString();
-            if(!postObjectData->successActionStatus)
+            if (!postObjectData->successActionStatus)
                 postObjectData->successActionStatus = str;
             else
                 postObjectData->successActionStatus.value() += str;
             break;
         }
         case PostObjectState::File:
-        {            
+        {
             auto evb = folly::EventBaseManager::get()->getEventBase();
             const auto body_bytes = data->computeChainDataLength();
-            std::scoped_lock lock{bodyMutex};
-            const bool pause = bodyQueue.size()>7;
-            if(pause)
+            std::scoped_lock lock{ bodyMutex };
+            const bool pause = bodyQueue.size() > 7;
+            if (pause)
                 downstream_->pauseIngress();
-            bodyQueue.emplace(BodyObj{.offset = done_bytes, .body = std::move(data), .unpause = pause});
+            bodyQueue.emplace(BodyObj{ .offset = done_bytes, .body = std::move(data), .unpause = pause });
             startReadBodyThread(evb);
             done_bytes += body_bytes;
         }
@@ -9526,19 +9507,19 @@ int S3Handler::onFieldData(std::unique_ptr<folly::IOBuf> data,
 }
 
 void S3Handler::onFieldEnd(bool endedOnBoundary,
-                        uint64_t postBytesProcessed) 
+                           uint64_t postBytesProcessed)
 {
     XLOGF(DBG0, "onFieldEnd postBytesProcessed {} endedOnBoundary {} state {}", postBytesProcessed, endedOnBoundary, static_cast<int>(postObjectData->state));
 
-    if(postObjectData->state == PostObjectState::File)
+    if (postObjectData->state == PostObjectState::File)
     {
         // Unused space at the end of extents is removed in onBodyCPU, as extents may not be
         // initialized yet and are used by the body thread
         XLOGF(DBG0, "PostObject done. Received {} of {} expected bytes", done_bytes, postObjectData->expectedLength);
         postObjectData->state = PostObjectState::Done;
     }
-    else if(postObjectData->state != PostObjectState::MultipartParsingError &&
-        postObjectData->state != PostObjectState::Error)
+    else if (postObjectData->state != PostObjectState::MultipartParsingError &&
+             postObjectData->state != PostObjectState::Error)
         postObjectData->state = PostObjectState::Init;
 }
 
@@ -9555,7 +9536,7 @@ void S3Handler::postObject()
 
     // TODO: Use Signature param
 
-    if(!isAuthorized(resource, Action::PostObject, -1))
+    if (!isAuthorized(resource, Action::PostObject, -1))
     {
         XLOGF(WARN, "Unauthorized PostObject request for bucket {} key {}", bucketName, keyInfo.key);
         ResponseBuilder(self->downstream_)
@@ -9571,13 +9552,13 @@ void S3Handler::postObject()
 
     auto evb = folly::EventBaseManager::get()->getEventBase();
     folly::getGlobalCPUExecutor()->add(
-            [self = this->self, evb]()
+        [self = this->self, evb]()
+        {
+            if (!self->evpMdCtx.init(EVP_md5()))
             {
-                if(!self->evpMdCtx.init(EVP_md5()))
-                {
-                    XLOGF(ERR, "Failed to initialize md5 context");
-                    evb->runInEventBaseThread([self = self]()
-                                                {
+                XLOGF(ERR, "Failed to initialize md5 context");
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         self->postObjectData->state = PostObjectState::Error;
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
@@ -9586,17 +9567,17 @@ void S3Handler::postObject()
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
                         self->extents_cond.notify_all(); });
-                    return;
-                }
+                return;
+            }
 
-                if(self->keyInfo.withVersioning())
-                    self->keyInfo.version = self->sfs().get_next_version();
+            if (self->keyInfo.withVersioning())
+                self->keyInfo.version = self->sfs().get_next_version();
 
-                if(self->keyInfo.key.size()>1024)
-                {
-                    XLOGF(WARN, "Key too long. Size {}", self->keyInfo.key.size());
-                    evb->runInEventBaseThread([self = self]()
-                                                {
+            if (self->keyInfo.key.size() > 1024)
+            {
+                XLOGF(WARN, "Key too long. Size {}", self->keyInfo.key.size());
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         self->postObjectData->state = PostObjectState::Error;
                         ResponseBuilder(self->downstream_)
                             .status(400, "Bad Request")
@@ -9605,14 +9586,14 @@ void S3Handler::postObject()
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
                         self->extents_cond.notify_all(); });
-                    return;
-                }
+                return;
+            }
 
-                if(self->put_remaining>5ULL*1024*1024*1024)
-                {
-                    XLOGF(WARN, "Object too large. Size {}", self->put_remaining.load(std::memory_order_relaxed));
-                    evb->runInEventBaseThread([self = self]()
-                                                {
+            if (self->put_remaining > 5ULL * 1024 * 1024 * 1024)
+            {
+                XLOGF(WARN, "Object too large. Size {}", self->put_remaining.load(std::memory_order_relaxed));
+                evb->runInEventBaseThread([self = self]()
+                                          {
                         self->postObjectData->state = PostObjectState::Error;
                         ResponseBuilder(self->downstream_)
                             .status(400, "Bad request")
@@ -9621,17 +9602,17 @@ void S3Handler::postObject()
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
                         self->extents_cond.notify_all(); });
-                    return;
-                }
+                return;
+            }
 
-                const auto fpath = make_key(self->keyInfo);
+            const auto fpath = make_key(self->keyInfo);
 
-                auto res = self->sfs().write_prepare(fpath, self->put_remaining);
-                if (res.err != 0)
-                {            
-                    XLOGF(WARN, "Write object prepare failed for key {} err {}", self->keyInfo.key, res.err);        
-                    evb->runInEventBaseThread([self = self, res]()
-                                              {
+            auto res = self->sfs().write_prepare(fpath, self->put_remaining);
+            if (res.err != 0)
+            {
+                XLOGF(WARN, "Write object prepare failed for key {} err {}", self->keyInfo.key, res.err);
+                evb->runInEventBaseThread([self = self, res]()
+                                          {
                         ResponseBuilder(self->downstream_)
                             .status(500, "Internal error")
                             .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error preparing writing. Errno {}", res.err), self->fullKeyPath(), ""))
@@ -9639,37 +9620,36 @@ void S3Handler::postObject()
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
                         self->extents_cond.notify_all(); });
-                    return;
-                }
-
-                bool freeExtents = false;
-                {
-                    std::lock_guard lock(self->extents_mutex);
-                    if(!self->finished_)
-                    {
-                        if(!res.extents.empty())
-                            self->extents = std::move(res.extents);
-
-                        self->extentsInitialized = true;
-                        self->extents_cond.notify_all();
-                    }
-                    else
-                    {
-                        freeExtents = true;
-                    }
-                }
-
-                // Request finished while preparing (e.g. onError). onBodyCPU already gave up, so free here
-                if(freeExtents && !res.extents.empty())
-                    self->sfs().free_extents(res.extents);
+                return;
             }
-        );
+
+            bool freeExtents = false;
+            {
+                std::lock_guard lock(self->extents_mutex);
+                if (!self->finished_)
+                {
+                    if (!res.extents.empty())
+                        self->extents = std::move(res.extents);
+
+                    self->extentsInitialized = true;
+                    self->extents_cond.notify_all();
+                }
+                else
+                {
+                    freeExtents = true;
+                }
+            }
+
+            // Request finished while preparing (e.g. onError). onBodyCPU already gave up, so free here
+            if (freeExtents && !res.extents.empty())
+                self->sfs().free_extents(res.extents);
+        });
 }
 
 void S3Handler::setCorsAllowOrigin(proxygen::HTTPMessage& headers, const std::string_view bucketName)
 {
     const auto bucketInfoOpt = buckets::getBucketInfo(bucketName);
-    if(!bucketInfoOpt)
+    if (!bucketInfoOpt)
         return;
 
     setCorsAllowOrigin(headers, *bucketInfoOpt);
@@ -9678,32 +9658,32 @@ void S3Handler::setCorsAllowOrigin(proxygen::HTTPMessage& headers, const std::st
 void S3Handler::setCorsAllowOrigin(proxygen::HTTPMessage& headers, const buckets::BucketInfo& bucketInfo)
 {
     const auto origin = headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_ORIGIN);
-    if(origin.empty())
+    if (origin.empty())
         return;
 
     const auto ruleMatch = [](const std::vector<std::string>& allowed, const std::string_view val) -> std::optional<std::string_view>
     {
-        if(val.empty())
+        if (val.empty())
             return std::nullopt;
 
         auto it = std::find(allowed.begin(), allowed.end(), "*");
-        if(it != allowed.end())
+        if (it != allowed.end())
             return *it;
 
         it = std::find(allowed.begin(), allowed.end(), val);
-        if(it != allowed.end())
+        if (it != allowed.end())
             return *it;
 
         return std::nullopt;
     };
 
-    for(const auto& corsRule: bucketInfo.corsRules)
+    for (const auto& corsRule : bucketInfo.corsRules)
     {
         auto allowedOrigin = ruleMatch(corsRule.allowedOrigins, origin);
-        if(!allowedOrigin)
+        if (!allowedOrigin)
             continue;
 
-        if(!ruleMatch(corsRule.allowedMethods, headers.getMethodString()))
+        if (!ruleMatch(corsRule.allowedMethods, headers.getMethodString()))
             continue;
 
         corsAllowOrigin = *allowedOrigin;
@@ -9715,7 +9695,7 @@ proxygen::ResponseBuilder S3Handler::responseBuilderWithCors(uint16_t code, cons
 {
     auto builder = ResponseBuilder(downstream_);
     builder.status(code, message);
-    if(!corsAllowOrigin.empty())
+    if (!corsAllowOrigin.empty())
         builder.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN, corsAllowOrigin);
     return builder;
 }

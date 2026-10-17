@@ -1,19 +1,19 @@
 #pragma once
+#include "os_functions.h"
 #include <fcntl.h>
-#include <folly/File.h>
 #include <folly/Exception.h>
+#include <folly/File.h>
 #include <folly/FileUtil.h>
 #include <folly/Format.h>
-#include <mutex>
-#include <vector>
-#include <folly/logging/xlog.h>
 #include <folly/String.h>
+#include <folly/logging/xlog.h>
+#include <mutex>
 #include <shared_mutex>
-#include "os_functions.h"
+#include <vector>
 
 constexpr int64_t fillPageSize = 4096;
 
-char *zeroBuf();
+char* zeroBuf();
 
 class File : public folly::File
 {
@@ -23,11 +23,10 @@ public:
     File(folly::File&& other)
         : folly::File::File(std::move(other))
     {
-
     }
 
     int64_t size() const
-    { 
+    {
         struct stat64 st;
         folly::checkUnixError(fstat64(fd(), &st), "fstat() failed");
         return st.st_size;
@@ -38,7 +37,7 @@ public:
         int rc = fallocate64(fd(), FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, spos, size);
         return rc == 0;
     }
-    
+
     void truncate(__off64_t len) const
     {
         folly::checkUnixError(ftruncate64(fd(), len), "Truncate failed");
@@ -65,7 +64,7 @@ public:
     }
 
     int fadvise(off64_t offset, off64_t len,
-			    int advise) const
+                int advise) const
     {
         return posix_fadvise64(fd(), offset, len, advise);
     }
@@ -73,7 +72,7 @@ public:
     int64_t sizeFull() const
     {
         struct stat64 st;
-        if(fstat64(fd(), &st) != 0)
+        if (fstat64(fd(), &st) != 0)
             return -1;
         return st.st_blocks * 512;
     }
@@ -84,25 +83,26 @@ class MultiFile
 public:
     MultiFile()
         : maxSize(std::string::npos), flags(O_RDONLY), mode(0666)
-    {}
+    {
+    }
 
     MultiFile(std::string namePrefixParam, int64_t maxSize, int flags = O_RDONLY, mode_t mode = 0666)
-     : namePrefix(std::move(namePrefixParam)), flags(flags), mode(mode), maxSize(maxSize)
+        : namePrefix(std::move(namePrefixParam)), flags(flags), mode(mode), maxSize(maxSize)
     {
-        size_t idx=0;
+        size_t idx = 0;
         int64_t lastSize = -1;
-        while(true)
+        while (true)
         {
             const auto fn = namePrefix + std::to_string(idx);
 
-            if(os_get_file_type(fn)==0)
+            if (os_get_file_type(fn) == 0)
                 break;
 
             auto file = File(fn, (flags & ~O_CREAT), mode);
 
-            if(idx>0 && lastSize!=maxSize)
+            if (idx > 0 && lastSize != maxSize)
             {
-                XLOGF(ERR, "While opening multi-file {}{} is {} != expected {}", namePrefix, idx-1, lastSize, maxSize);
+                XLOGF(ERR, "While opening multi-file {}{} is {} != expected {}", namePrefix, idx - 1, lastSize, maxSize);
                 chunks.clear();
                 return;
             }
@@ -113,11 +113,10 @@ public:
             ++idx;
         }
 
-        if( ((flags& O_RDWR) || (flags & O_WRONLY) )
-            && chunks.empty())
+        if (((flags & O_RDWR) || (flags & O_WRONLY)) && chunks.empty())
         {
             auto file = File(namePrefix + "0", flags | O_CREAT, mode);
-            if(!file)
+            if (!file)
                 return;
             chunks.push_back(std::move(file));
         }
@@ -127,9 +126,8 @@ public:
 
     MultiFile(MultiFile&& other) noexcept
         : namePrefix(other.namePrefix), flags(other.flags), mode(other.mode), maxSize(other.maxSize),
-        chunks(std::exchange(other.chunks, {}))
+          chunks(std::exchange(other.chunks, {}))
     {
-
     }
 
     MultiFile& operator=(const MultiFile& other) = delete;
@@ -144,21 +142,21 @@ public:
         return *this;
     }
 
-    template<typename T>
+    template <typename T>
     ssize_t mapOp(T op, size_t count, int64_t offset, bool extend)
     {
         std::shared_lock readLock(mutex);
 
-         ssize_t ret = 0;
-        while(count>0)
+        ssize_t ret = 0;
+        while (count > 0)
         {
             size_t part = static_cast<size_t>(offset / maxSize);
             int64_t partOffset = offset % maxSize;
 
-            if(part>=chunks.size())
+            if (part >= chunks.size())
             {
-                if(!extend)
-                    return ret==0 ? -1 : ret;
+                if (!extend)
+                    return ret == 0 ? -1 : ret;
 
                 readLock.unlock();
 
@@ -166,13 +164,13 @@ public:
                     std::unique_lock lock(mutex);
 
                     auto nextIdx = chunks.size();
-                    while(part>=chunks.size())
+                    while (part >= chunks.size())
                     {
                         auto file = File(namePrefix + std::to_string(nextIdx), flags | O_CREAT, mode);
-                        if(!file)
+                        if (!file)
                         {
                             XLOGF(ERR, "Error opening next multifile {}{} errno {}", namePrefix, nextIdx, folly::errnoStr(errno));
-                            return ret==0 ? -1 : ret;
+                            return ret == 0 ? -1 : ret;
                         }
 
                         XLOGF(DBG0, "Created next multifile {}{}", namePrefix, nextIdx);
@@ -191,19 +189,19 @@ public:
 
             const auto rc = op(file, currCount, partOffset);
 
-            if(rc<=0)
-                return ret==0 ? rc : ret;
+            if (rc <= 0)
+                return ret == 0 ? rc : ret;
 
-            count-=rc;
-            offset+=rc;
-            ret+=rc;
+            count -= rc;
+            offset += rc;
+            ret += rc;
         }
 
         return ret;
     }
 
     explicit operator bool() const
-    { 
+    {
         std::shared_lock readLock(mutex);
 
         return !chunks.empty();
@@ -211,27 +209,28 @@ public:
 
     ssize_t preadFull(char* buf, size_t count, off64_t offset)
     {
-        return mapOp([&](const File& file, size_t count, size_t offset) {
+        return mapOp([&](const File& file, size_t count, size_t offset)
+                     {
             const auto rc = file.preadFull(buf, count, offset);
             if(rc>0)
                 buf+=rc;
-            return rc;
-        }, count, offset, false);
+            return rc; }, count, offset, false);
     }
 
     ssize_t pwriteFull(const char* buf, size_t count, off64_t offset)
     {
-        return mapOp([&](const File& file, size_t count, size_t offset) {
+        return mapOp([&](const File& file, size_t count, size_t offset)
+                     {
             const auto rc = file.pwriteFull(buf, count, offset);
             if(rc>0)
                 buf+=rc;
-            return rc;
-        }, count, offset, true);
+            return rc; }, count, offset, true);
     }
 
     ssize_t pwriteFullFillPage(const char* buf, size_t count, off64_t offset)
     {
-        return mapOp([&](const File& file, size_t mapCount, size_t offset) {
+        return mapOp([&](const File& file, size_t mapCount, size_t offset)
+                     {
             
             if(mapCount==count && 
                 offset % fillPageSize == 0 &&
@@ -253,19 +252,18 @@ public:
             const auto rc = file.pwriteFull(buf, mapCount, offset);
             if(rc>0)
                 buf+=rc;
-            return rc;
-        }, count, offset, true);
+            return rc; }, count, offset, true);
     }
 
     int64_t size() const
     {
         std::shared_lock readLock(mutex);
 
-        if(chunks.empty())
+        if (chunks.empty())
             return 0;
 
         const auto& lastFile = chunks.back();
-        return lastFile.size() + (chunks.size()-1)*maxSize;
+        return lastFile.size() + (chunks.size() - 1) * maxSize;
     }
 
     int64_t sizeFull() const
@@ -273,9 +271,9 @@ public:
         std::shared_lock readLock(mutex);
 
         int64_t totalSize = 0;
-        for(const auto& file: chunks)
+        for (const auto& file : chunks)
         {
-            totalSize+=file.sizeFull();
+            totalSize += file.sizeFull();
         }
         return totalSize;
     }
@@ -285,10 +283,10 @@ public:
         std::shared_lock readLock(mutex);
 
         int rc = 0;
-        for(const auto& file: chunks)
+        for (const auto& file : chunks)
         {
             auto currRc = file.fsyncNoInt();
-            if(currRc!=0)
+            if (currRc != 0)
                 rc = currRc;
         }
         return rc;
@@ -296,32 +294,29 @@ public:
 
     bool punchHole(__off64_t spos, __off64_t size)
     {
-        return mapOp([](const File& file, size_t count, size_t offset) {
-            return file.punchHole(offset, count) ? count : -1;
-        }, size, spos, false) == size;
+        return mapOp([](const File& file, size_t count, size_t offset)
+                     { return file.punchHole(offset, count) ? count : -1; }, size, spos, false) == size;
     }
 
-    
     bool alloc(__off64_t len)
     {
-        if(len<=0)
+        if (len <= 0)
             return false;
 
-        return mapOp([&](const File& file, size_t count, size_t offset) {
-            return posix_fallocate(file.fd(), 0, offset+count) == 0 ? 1 : -1;
-        }, 1, len-1, true) == 1;
+        return mapOp([&](const File& file, size_t count, size_t offset)
+                     { return posix_fallocate(file.fd(), 0, offset + count) == 0 ? 1 : -1; }, 1, len - 1, true) == 1;
     }
 
     void truncate(__off64_t len)
     {
         const auto csize = size();
 
-        if(len>csize)
+        if (len > csize)
         {
-            mapOp([](const File& file, size_t count, size_t offset) {
+            mapOp([](const File& file, size_t count, size_t offset)
+                  {
                 file.truncate(offset+count);
-                return count;
-            }, len - csize, csize, true);
+                return count; }, len - csize, csize, true);
         }
         else
         {
@@ -329,9 +324,9 @@ public:
 
             auto toTruncate = csize - len;
 
-            while(toTruncate>0)
+            while (toTruncate > 0)
             {
-                if(chunks.empty())
+                if (chunks.empty())
                     return;
 
                 auto& lastChunk = chunks.back();
@@ -340,24 +335,23 @@ public:
 
                 const auto currTrunc = std::min(chunkSize, toTruncate);
 
-                if(currTrunc==chunkSize)
+                if (currTrunc == chunkSize)
                 {
-                    std::string fn = namePrefix + std::to_string(chunks.size()-1);
+                    std::string fn = namePrefix + std::to_string(chunks.size() - 1);
                     folly::checkUnixError(unlink(fn.c_str()), fmt::format("Error unlinking {} during truncation", fn));
                     chunks.pop_back();
                 }
                 else
                 {
-                    lastChunk.truncate(chunkSize-currTrunc);
+                    lastChunk.truncate(chunkSize - currTrunc);
                 }
 
                 toTruncate -= currTrunc;
             }
-        }                
+        }
     }
 
 private:
-
     std::string namePrefix;
     int flags;
     mode_t mode;

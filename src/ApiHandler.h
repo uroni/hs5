@@ -1,83 +1,82 @@
 #pragma once
 
-#include <string>
 #include <stdexcept>
+#include <string>
 
 #include "DbDao.h"
-#include "apigen/AddUserParams.hpp"
-#include "apigen/AddUserResp.hpp"
-#include "apigen/RemoveUserParams.hpp"
-#include "apigen/RemoveUserResp.hpp"
-#include "apigen/ListUsersParams.hpp"
-#include "apigen/ListUsersResp.hpp"
+#include "Session.h"
 #include "apigen/AddAccessKeyParams.hpp"
 #include "apigen/AddAccessKeyResp.hpp"
-#include "apigen/ListAccessKeysParams.hpp"
-#include "apigen/ListAccessKeysResp.hpp"
-#include "apigen/RemoveAccessKeyParams.hpp"
-#include "apigen/RemoveAccessKeyResp.hpp"
+#include "apigen/AddBucketParams.hpp"
+#include "apigen/AddBucketPermissionParams.hpp"
+#include "apigen/AddBucketPermissionResp.hpp"
+#include "apigen/AddBucketResp.hpp"
 #include "apigen/AddPolicyParams.hpp"
 #include "apigen/AddPolicyResp.hpp"
-#include "apigen/RemovePolicyParams.hpp"
-#include "apigen/RemovePolicyResp.hpp"
-#include "apigen/ListPoliciesParams.hpp"
-#include "apigen/ListPoliciesResp.hpp"
 #include "apigen/AddRoleParams.hpp"
-#include "apigen/AddRoleResp.hpp"
-#include "apigen/RemoveRoleParams.hpp"
-#include "apigen/RemoveRoleResp.hpp"
-#include "apigen/ListRolesParams.hpp"
-#include "apigen/ListRolesResp.hpp"
-#include "apigen/AddUserRoleParams.hpp"
-#include "apigen/AddUserRoleResp.hpp"
-#include "apigen/RemoveUserRoleParams.hpp"
-#include "apigen/RemoveUserRoleResp.hpp"
-#include "apigen/ListUserRolesParams.hpp"
-#include "apigen/ListUserRolesResp.hpp"
 #include "apigen/AddRolePolicyParams.hpp"
 #include "apigen/AddRolePolicyResp.hpp"
-#include "apigen/RemoveRolePolicyParams.hpp"
-#include "apigen/RemoveRolePolicyResp.hpp"
-#include "apigen/ListRolePoliciesParams.hpp"
-#include "apigen/ListRolePoliciesResp.hpp"
-#include "apigen/Herror.hpp"
-#include "apigen/LoginParams.hpp"
-#include "apigen/LoginResp.hpp"
-#include "apigen/HapiError.hpp"
-#include "apigen/ListResp.hpp"
-#include "apigen/ListParams.hpp"
-#include "apigen/AddBucketResp.hpp"
-#include "apigen/AddBucketParams.hpp"
-#include "apigen/StatsParams.hpp"
-#include "apigen/StatsResp.hpp"
+#include "apigen/AddRoleResp.hpp"
+#include "apigen/AddUserParams.hpp"
+#include "apigen/AddUserResp.hpp"
+#include "apigen/AddUserRoleParams.hpp"
+#include "apigen/AddUserRoleResp.hpp"
+#include "apigen/ChangePasswordParams.hpp"
+#include "apigen/ChangePasswordResp.hpp"
 #include "apigen/ChangePolicyParams.hpp"
 #include "apigen/ChangePolicyResp.hpp"
 #include "apigen/DeleteBucketParams.hpp"
 #include "apigen/DeleteBucketResp.hpp"
-#include "apigen/ChangePasswordParams.hpp"
-#include "apigen/ChangePasswordResp.hpp"
-#include "apigen/LogoutParams.hpp"
-#include "apigen/LogoutResp.hpp"
+#include "apigen/HapiError.hpp"
+#include "apigen/Herror.hpp"
+#include "apigen/ListAccessKeysParams.hpp"
+#include "apigen/ListAccessKeysResp.hpp"
 #include "apigen/ListBucketPermissionsParams.hpp"
 #include "apigen/ListBucketPermissionsResp.hpp"
-#include "apigen/AddBucketPermissionParams.hpp"
-#include "apigen/AddBucketPermissionResp.hpp"
+#include "apigen/ListParams.hpp"
+#include "apigen/ListPoliciesParams.hpp"
+#include "apigen/ListPoliciesResp.hpp"
+#include "apigen/ListResp.hpp"
+#include "apigen/ListRolePoliciesParams.hpp"
+#include "apigen/ListRolePoliciesResp.hpp"
+#include "apigen/ListRolesParams.hpp"
+#include "apigen/ListRolesResp.hpp"
+#include "apigen/ListUserRolesParams.hpp"
+#include "apigen/ListUserRolesResp.hpp"
+#include "apigen/ListUsersParams.hpp"
+#include "apigen/ListUsersResp.hpp"
+#include "apigen/LoginParams.hpp"
+#include "apigen/LoginResp.hpp"
+#include "apigen/LogoutParams.hpp"
+#include "apigen/LogoutResp.hpp"
+#include "apigen/RemoveAccessKeyParams.hpp"
+#include "apigen/RemoveAccessKeyResp.hpp"
 #include "apigen/RemoveBucketPermissionParams.hpp"
 #include "apigen/RemoveBucketPermissionResp.hpp"
+#include "apigen/RemovePolicyParams.hpp"
+#include "apigen/RemovePolicyResp.hpp"
+#include "apigen/RemoveRoleParams.hpp"
+#include "apigen/RemoveRolePolicyParams.hpp"
+#include "apigen/RemoveRolePolicyResp.hpp"
+#include "apigen/RemoveRoleResp.hpp"
+#include "apigen/RemoveUserParams.hpp"
+#include "apigen/RemoveUserResp.hpp"
+#include "apigen/RemoveUserRoleParams.hpp"
+#include "apigen/RemoveUserRoleResp.hpp"
 #include "apigen/SessionCheckParams.hpp"
 #include "apigen/SessionCheckResp.hpp"
 #include "apigen/SetBucketPublicParams.hpp"
 #include "apigen/SetBucketPublicResp.hpp"
-#include "Session.h"
+#include "apigen/StatsParams.hpp"
+#include "apigen/StatsResp.hpp"
 #include <proxygen/httpserver/RequestHandler.h>
-
 
 class SingleFileStorage;
 
 class ApiHandler : public proxygen::RequestHandler
 {
 public:
-    ApiHandler(SingleFileStorage &sfs);
+    ApiHandler(SingleFileStorage& sfs);
 
     void onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexcept override;
 
@@ -144,7 +143,7 @@ private:
     std::string authHeader;
     std::string cookieSes;
 
-    SingleFileStorage &sfs;
+    SingleFileStorage& sfs;
 
     static thread_local DbDao dao;
 
@@ -160,13 +159,15 @@ private:
 class ApiError : std::runtime_error
 {
     Api::Herror error;
+
 public:
     ApiError(Api::Herror error, std::string msg)
-        :error(error), std::runtime_error(std::move(msg)) {}
+        : error(error), std::runtime_error(std::move(msg)) {}
 
-    ApiError(Api::Herror error) 
-        : error(error), std::runtime_error("ApiError "+std::to_string(static_cast<int>(error)))
-        {}
+    ApiError(Api::Herror error)
+        : error(error), std::runtime_error("ApiError " + std::to_string(static_cast<int>(error)))
+    {
+    }
 
     Api::HapiError response() const
     {

@@ -15,8 +15,11 @@ import requests
 from mypy_boto3_s3.client import S3Client
 import sh
 
+
 def get_next_port(testrun_uid: str) -> int:
-    with portalocker.Lock(f"/tmp/hs5-ports-{testrun_uid}/garage", mode="r+", flags=portalocker.LOCK_EX) as f:
+    with portalocker.Lock(
+        f"/tmp/hs5-ports-{testrun_uid}/garage", mode="r+", flags=portalocker.LOCK_EX
+    ) as f:
         cp = f.read()
         p = int(cp)
         p += 3
@@ -27,6 +30,7 @@ def get_next_port(testrun_uid: str) -> int:
         f.flush()
 
         return p
+
 
 def calculate_sha256(file_path: Path) -> str:
     """
@@ -41,6 +45,7 @@ def calculate_sha256(file_path: Path) -> str:
             sha256_hash.update(chunk)
     return sha256_hash.hexdigest().lower()
 
+
 class GarageRunner:
     """
     A class that provides a fixture for running a Garage server in a test environment.
@@ -49,36 +54,41 @@ class GarageRunner:
     def _garage_url(self) -> tuple[str, str]:
         # if arm64
         if os.uname().machine == "aarch64":
-            return ("https://garagehq.deuxfleurs.fr/_releases/v2.2.0/aarch64-unknown-linux-musl/garage",
-                    "3922bd3524e5267587a27fec91e4d8447353113ea3a55e2d1786a53d7529d1da")
+            return (
+                "https://garagehq.deuxfleurs.fr/_releases/v2.2.0/aarch64-unknown-linux-musl/garage",
+                "3922bd3524e5267587a27fec91e4d8447353113ea3a55e2d1786a53d7529d1da",
+            )
         else:
-            return ("https://garagehq.deuxfleurs.fr/_releases/v2.2.0/x86_64-unknown-linux-musl/garage",
-                     "ec761bb996e8453e86fe68ccc1cf222c73bb1ef05ae0b540bd4827e7d1931aab")
+            return (
+                "https://garagehq.deuxfleurs.fr/_releases/v2.2.0/x86_64-unknown-linux-musl/garage",
+                "ec761bb996e8453e86fe68ccc1cf222c73bb1ef05ae0b540bd4827e7d1931aab",
+            )
 
     def _download_garage(self):
         loc = Path("garage")
         loc_new = Path("garage.new")
-        if not loc.exists():  
-            print("Downloading Garage server...")          
+        if not loc.exists():
+            print("Downloading Garage server...")
             url, expected_sha256 = self._garage_url()
             with requests.get(url, stream=True) as r:
                 r.raise_for_status()
-                with open(loc_new, 'wb') as f:
+                with open(loc_new, "wb") as f:
                     for chunk in r.iter_content(chunk_size=8192):
                         f.write(chunk)
 
             if calculate_sha256(loc_new) != expected_sha256:
-                raise ValueError(f"SHA256 checksum {calculate_sha256(loc_new)} does not match expected value {expected_sha256}.")
-            
+                raise ValueError(
+                    f"SHA256 checksum {calculate_sha256(loc_new)} does not match expected value {expected_sha256}."
+                )
+
             loc_new.rename(loc)
 
             # Enable execute permissions
-            loc.chmod(0o755)                       
+            loc.chmod(0o755)
 
-
-    def __init__(self, datapath : Path, dbengine: str, testrun_uid: str):
+    def __init__(self, datapath: Path, dbengine: str, testrun_uid: str):
         """
-        Initializes the GarageRunner 
+        Initializes the GarageRunner
         """
         self._port = get_next_port(testrun_uid)
         self._root_key = uuid.uuid4().hex
@@ -87,7 +97,7 @@ class GarageRunner:
         if sqlite_full:
             dbengine = "sqlite"
 
-        self._download_garage()           
+        self._download_garage()
 
         self._config_path = datapath / "config.toml"
 
@@ -100,7 +110,7 @@ class GarageRunner:
         self._secret = uuid.uuid4().hex + uuid.uuid4().hex
 
         self._config_path.write_text(
-f"""metadata_dir = "{meta_path}"
+            f"""metadata_dir = "{meta_path}"
 data_dir = "{data_path}"
 db_engine = "{dbengine}"
 replication_factor = 1
@@ -117,13 +127,15 @@ api_bind_addr = "[::]:{self._port}"
 api_bind_addr = "[::]:{self._port+2}"
 admin_token = "{self._secret}"
 metrics_token = "{self._secret}"
-""", encoding="utf-8")
-        
+""",
+            encoding="utf-8",
+        )
+
         executable = "./garage" if not sqlite_full else "./sqlite_full_garage"
 
         self._process = subprocess.Popen(
             [executable, "-c", str(self._config_path), "server"],
-             stdout=sys.stdout,
+            stdout=sys.stdout,
             stderr=sys.stderr,
         )
 
@@ -135,12 +147,21 @@ metrics_token = "{self._secret}"
         garage("layout", "apply", "--version", "1")
 
         garage("bucket", "create", self.testbucketname())
-        key_info_lines = garage("key", "create", "root").splitlines() # type: ignore
+        key_info_lines = garage("key", "create", "root").splitlines()  # type: ignore
         self._access_key = key_info_lines[1].split(": ", 1)[1].strip()
         self._secret_key = key_info_lines[3].split(": ", 1)[1].strip()
 
         garage("key", "allow", "--create-bucket", "root")
-        garage("bucket", "allow", "--read", "--write", "--owner", self.testbucketname(), "--key", "root")
+        garage(
+            "bucket",
+            "allow",
+            "--read",
+            "--write",
+            "--owner",
+            self.testbucketname(),
+            "--key",
+            "root",
+        )
 
         self._wait_for_startup()
 
@@ -153,10 +174,10 @@ metrics_token = "{self._secret}"
 
     def testbucketname(self):
         return "testbucket"
-    
+
     def get_url(self) -> str:
         return f"http://127.0.0.1:{self._port}"
-    
+
     def _wait_for_startup(self) -> None:
         while True:
             try:
@@ -166,27 +187,31 @@ metrics_token = "{self._secret}"
                 time.sleep(0.01)
 
     def get_s3_client(self, sig_v2: bool = False) -> S3Client:
-        return boto3.client('s3', endpoint_url=self.get_url(), aws_access_key_id=self._access_key, aws_secret_access_key=self._secret_key)
-
+        return boto3.client(
+            "s3",
+            endpoint_url=self.get_url(),
+            aws_access_key_id=self._access_key,
+            aws_secret_access_key=self._secret_key,
+        )
 
     def get_node_id(self) -> str:
         garage = sh.Command("./garage")
         starttime = time.monotonic()
         while time.monotonic() - starttime < 5:
             try:
-                for line in garage("-c", str(self._config_path), "status", _iter=True): # type: ignore
-                    line : str
+                for line in garage("-c", str(self._config_path), "status", _iter=True):  # type: ignore
+                    line: str
                     print(f"Got line: {line}")
                     if not line.startswith("==") and not line.startswith("ID"):
                         return line.split(" ", 1)[0].strip()
-                    
+
             except:
                 pass
 
             time.sleep(0.01)
 
         raise TimeoutError("Garage server did not start within 5 seconds")
-    
+
 
 @pytest.fixture
 def garage(tmpdir: Path, testrun_uid: str):
@@ -194,11 +219,13 @@ def garage(tmpdir: Path, testrun_uid: str):
     yield runner
     runner.stop()
 
+
 @pytest.fixture
 def garage_sqlite(tmpdir: Path, testrun_uid: str):
     runner = GarageRunner(tmpdir, "sqlite", testrun_uid)
     yield runner
     runner.stop()
+
 
 @pytest.fixture
 def garage_sqlite_full(tmpdir: Path, testrun_uid: str):
