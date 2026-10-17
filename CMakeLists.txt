@@ -84,6 +84,24 @@ set(APIGEN_SCHEMAS
 )
 
 
+find_program(CLANG_FORMAT_EXECUTABLE clang-format HINTS "${CMAKE_CURRENT_LIST_DIR}/.venv/bin")
+find_program(BLACK_EXECUTABLE black HINTS "${CMAKE_CURRENT_LIST_DIR}/.venv/bin")
+if(CLANG_FORMAT_EXECUTABLE AND BLACK_EXECUTABLE)
+  set(HS5_FORMAT_CPP_FILES "git ls-files -z 'src/*.cpp' 'src/*.h' ':!src/apigen/*' | xargs -0 \"${CLANG_FORMAT_EXECUTABLE}\"")
+  add_custom_target(format
+    COMMAND sh -c "${HS5_FORMAT_CPP_FILES} -i"
+    COMMAND "${BLACK_EXECUTABLE}" .
+    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+    VERBATIM
+  )
+  add_custom_target(format-check
+    COMMAND sh -c "${HS5_FORMAT_CPP_FILES} --dry-run --Werror"
+    COMMAND "${BLACK_EXECUTABLE}" --check --diff .
+    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+    VERBATIM
+  )
+endif()
+
 add_custom_target(apigen)
 foreach(SCHEMA ${APIGEN_SCHEMAS})
   add_custom_command(

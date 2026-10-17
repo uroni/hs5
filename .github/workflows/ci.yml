@@ -37,7 +37,7 @@ jobs:
           python-version: 3.11
 
       - name: Install formatters
-        run: pip install clang-format==18.1.8 black==25.1.0
+        run: grep -E '^(black|clang-format)==' test/requirements.txt | xargs pip install
 
       - name: Check C++ formatting
         run: git ls-files 'src/*.cpp' 'src/*.h' ':!src/apigen/*' | xargs clang-format --dry-run --Werror
