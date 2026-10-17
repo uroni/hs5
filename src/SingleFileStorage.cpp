@@ -804,7 +804,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	}
 
 	if(key_compare_func)
-	{
+	{		
 		rc = mdb_set_compare(txn, dbi_main, key_compare_func);
 		if (rc)
 		{
@@ -3056,16 +3056,6 @@ bool SingleFileStorage::iter_start(std::string fn, bool compressed, IterData& it
 	{
 		XLOG(ERR) << "LMDB: Failed to open transaction handle for iteration (" << mdb_strerror(rc) << ") sfs " << db_path;
 		return false;
-	}
-
-	if(key_compare_func)
-	{
-		rc = mdb_set_compare(iter_data.iter_txn, dbi_main, key_compare_func);
-		if (rc)
-		{
-			XLOG(ERR) << "LMDB: Error setting main compare func in iter_start (" << mdb_strerror(rc) << ") sfs " << db_path;
-			return false;
-		}
 	}
 
 	rc = mdb_cursor_open(iter_data.iter_txn, dbi_main, &iter_data.iter_cur);
@@ -6555,16 +6545,6 @@ SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, cons
 			clear_mmap_read_error(tid);
 			return SFragInfo();
 		}
-
-		if(key_compare_func)
-		{
-			rc = mdb_set_compare(txn, dbi_main, key_compare_func);
-			if (rc)
-			{
-				XLOG(ERR) << "LMDB: Error setting main compare func in get_frag_info (" << mdb_strerror(rc) << ") sfs " << db_path;
-				return SFragInfo();
-			}
-		}
 	}
 
 	SCOPE_EXIT {
@@ -7122,16 +7102,6 @@ void SingleFileStorage::operator()()
 	{
 		XLOG(ERR) << "Error setting holes comparison function (" << mdb_strerror(rc) << ") sfs " << db_path;
 		++commit_errors;
-	}
-
-	if(key_compare_func)
-	{
-		rc = mdb_set_compare(txn, dbi_main, key_compare_func);
-		if (rc)
-		{
-			XLOG(ERR) << "Error setting main comparison function (" << mdb_strerror(rc) << ") sfs " << db_path;
-			++commit_errors;
-		}	
 	}
 
 	if (!regen_freespace_cache
@@ -8797,16 +8767,6 @@ bool SingleFileStorage::setup_compare_funcs(MDB_txn* txn, MDB_txn* freespace_txn
 		ret = false;
 	}
 
-	if(key_compare_func)
-	{
-		rc = mdb_set_compare(txn, dbi_main, key_compare_func);
-		if (rc)
-		{
-			XLOG(ERR) << "Error setting main comparison function (2) (" << mdb_strerror(rc) << ") sfs " << db_path;
-			ret = false;
-		}
-	}
-
 	rc = mdb_set_compare(txn, dbi_new_objects, mdb_cmp_varint);
 	if (rc)
 	{
@@ -9428,20 +9388,6 @@ void SingleFileStorage::defrag(str_map& params, relaxed_atomic<int64_t>& defrag_
 		return;
 	}
 
-	if(key_compare_func)
-	{
-		rc = mdb_set_compare(txn, dbi_main, key_compare_func);
-		if (rc)
-		{
-			XLOG(ERR) << "LMDB: Error setting main compare func (2) (" << mdb_strerror(rc) << ") sfs " << db_path;
-			std::scoped_lock lock(mutex);
-			is_defragging = false;
-			defrag_skip_items.clear();
-			curr_free_skip_extents.clear();
-			return;
-		}
-	}
-
 	XLOG(INFO) << "Defragging using txn id " << std::to_string(mdb_get_txnid(txn));
 
 	size_t defrag_write_errors = 0;
@@ -9644,16 +9590,6 @@ void SingleFileStorage::defrag(str_map& params, relaxed_atomic<int64_t>& defrag_
 					{
 						XLOG(ERR) << "LMDB: Error starting transaction for read (4) (SIGBUS) sfs " << db_path;
 						break;
-					}
-
-					if(key_compare_func)
-					{
-						rc = mdb_set_compare(txn, dbi_main, key_compare_func);
-						if (rc)
-						{
-							XLOG(ERR) << "LMDB: Error setting main compare func (3) (" << mdb_strerror(rc) << ") sfs " << db_path;
-							break;
-						}
 					}
 
 					XLOG(INFO) << "Defragging using txn id " + std::to_string(mdb_get_txnid(txn));
