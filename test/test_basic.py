@@ -1306,9 +1306,11 @@ def test_upload_long_key(hs5: Hs5Runner, tmp_path: Path):
 
     s3_client.upload_file(upload_file.name, hs5.testbucketname(), key)
 
-    with pytest.raises(ClientError):
+    with pytest.raises(ClientError) as exc_info:
         with io.FileIO(tmp_path / "upload.txt", "rb") as upload_file:
             s3_client.put_object(Bucket=hs5.testbucketname(), Key= "a" * 1025, Body=upload_file)
+    assert exc_info.value.response["Error"]["Code"] == "KeyTooLongError"
+    assert exc_info.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
 
     dl_path = tmp_path / "download.txt"
     s3_client.download_file(hs5.testbucketname(), key, str(dl_path))

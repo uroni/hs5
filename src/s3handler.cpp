@@ -1613,7 +1613,8 @@ enum class S3ErrorCode
     InvalidRequest,
     InvalidBucketState,
     NotImplemented,
-    ObjectLockConfigurationNotFoundError
+    ObjectLockConfigurationNotFoundError,
+    KeyTooLongError
 };
 
 std::string_view s3errorCodeToStr(const S3ErrorCode code)
@@ -1656,6 +1657,8 @@ std::string_view s3errorCodeToStr(const S3ErrorCode code)
             return "NotImplemented";
         case S3ErrorCode::ObjectLockConfigurationNotFoundError:
             return "ObjectLockConfigurationNotFoundError";
+        case S3ErrorCode::KeyTooLongError:
+            return "KeyTooLongError";
         default:
             return "InternalError";
     }
@@ -1697,6 +1700,8 @@ std::string_view s3errorMsg(const S3ErrorCode code)
             return "A header or query you provided implies functionality that is not implemented.";
         case S3ErrorCode::ObjectLockConfigurationNotFoundError:
             return "Object Lock configuration does not exist for this bucket";
+        case S3ErrorCode::KeyTooLongError:
+            return "Your key is too long";
         default:
             return "We encountered an internal error. Please try again.";
     }
@@ -4457,8 +4462,8 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                     evb->runInEventBaseThread([self = self]()
                                               {
                         ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, "Key too long", self->fullKeyPath(), ""))
+                            .status(400, "Bad Request")
+                            .body(s3errorXml(S3ErrorCode::KeyTooLongError, "Your key is too long", self->fullKeyPath(), ""))
                             .sendWithEOM();
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
@@ -9594,8 +9599,8 @@ void S3Handler::postObject()
                                                 {
                         self->postObjectData->state = PostObjectState::Error;
                         ResponseBuilder(self->downstream_)
-                            .status(500, "Internal error")
-                            .body(s3errorXml(S3ErrorCode::InternalError, "Key too long", self->fullKeyPath(), ""))
+                            .status(400, "Bad Request")
+                            .body(s3errorXml(S3ErrorCode::KeyTooLongError, "Your key is too long", self->fullKeyPath(), ""))
                             .sendWithEOM();
                         std::lock_guard lock(self->extents_mutex);
                         self->finished_ = true;
