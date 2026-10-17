@@ -2484,8 +2484,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            const auto bucketId = buckets::getBucket(bucketName);
-            if(!bucketId)
+            const auto bucketInfo = buckets::getBucketInfo(bucketName);
+            if(!bucketInfo)
             {
                 XLOGF(INFO, "Bucket {} not found", bucketName);
                 ResponseBuilder(downstream_)
@@ -2495,7 +2495,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            keyInfo.bucketId = *bucketId;
+            keyInfo.bucketId = bucketInfo->id;
+            keyInfo.versioning = bucketInfo->versioning;
 
             if(!evpMdCtx.init(EVP_md5()) )
             {
@@ -5181,11 +5182,8 @@ void S3Handler::deleteObjects()
                     }
                     else if(withVersioning && !obj.versionId.empty())
                     {
-                        try
-                        {
-                            version = std::stoll(obj.versionId);
-                        }
-                        catch(const std::exception&)
+                        version = self->sfs().decrypt_id(obj.versionId);
+                        if(version<0)
                         {
                             resp += fmt::format("\t<Error>\n"
                                 "\t\t<Code>InvalidArgument</Code>\n"
