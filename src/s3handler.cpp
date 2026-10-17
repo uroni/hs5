@@ -8681,21 +8681,21 @@ static int applyRetention(std::optional<ObjMetadata::LockInfo>& lockInfo, CRData
     return 0;
 }
 
-std::expected<std::string, int> S3Handler::onModifyMetadataCallback(const std::string& fn, const std::string& md5sum, const std::string& param)
+nonstd::expected<std::string, int> S3Handler::onModifyMetadataCallback(const std::string& fn, const std::string& md5sum, const std::string& param)
 {
     CRData rparam(param.data(), param.size());
     char modifyType;
     if(!rparam.getChar(&modifyType))
-        return std::unexpected(EINVAL);
+        return nonstd::make_unexpected(EINVAL);
 
     CRData rdata(md5sum.data(), md5sum.size());
     int64_t itype;
     if(!rdata.getVarInt(&itype))
-        return std::unexpected(EINVAL);
+        return nonstd::make_unexpected(EINVAL);
 
     const auto baseType = itype & ~metadata_known_flags;
     if(baseType != metadata_object && baseType != metadata_multipart_object)
-        return std::unexpected(EINVAL);
+        return nonstd::make_unexpected(EINVAL);
 
     switch(modifyType)
     {
@@ -8704,7 +8704,7 @@ std::expected<std::string, int> S3Handler::onModifyMetadataCallback(const std::s
             // Legal hold has no serialized data, so only the flag needs to change
             char legalHold;
             if(!rparam.getChar(&legalHold))
-                return std::unexpected(EINVAL);
+                return nonstd::make_unexpected(EINVAL);
             if(legalHold)
                 itype |= metadata_flag_with_legal_hold;
             else
@@ -8717,12 +8717,12 @@ std::expected<std::string, int> S3Handler::onModifyMetadataCallback(const std::s
             if(!locateObjMetadata(md5sum, itype, objMetadata, objMetadataStart, objMetadataEnd))
             {
                 XLOGF(ERR, "Error parsing object metadata of {} for retention modification", fn);
-                return std::unexpected(EIO);
+                return nonstd::make_unexpected(EIO);
             }
 
             const auto rc = applyRetention(objMetadata.lockInfo, rparam);
             if(rc != 0)
-                return std::unexpected(rc);
+                return nonstd::make_unexpected(rc);
 
             CRData rvarint(md5sum.data(), md5sum.size());
             int64_t dummy;

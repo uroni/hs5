@@ -266,7 +266,7 @@ int realMain(int argc, char* argv[])
     sfsoptions.modify_data_callback = [](const std::string& fn, std::string md5sum, std::string md5sumParam) -> std::optional<std::string> {
       return S3Handler::onModifyCallback(fn, md5sum, md5sumParam);
     };
-    sfsoptions.modify_metadata_callback = [](const std::string& fn, const std::string& md5sum, const std::string& param) -> std::expected<std::string, int> {
+    sfsoptions.modify_metadata_callback = [](const std::string& fn, const std::string& md5sum, const std::string& param) -> nonstd::expected<std::string, int> {
       return S3Handler::onModifyMetadataCallback(fn, md5sum, param);
     };
     sfsoptions.match_callback = [](SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo) {

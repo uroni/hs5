@@ -328,7 +328,7 @@ public:
 
     static std::vector<SingleFileStorage::SFragInfo> onDeleteCallback(const std::string& fn, const std::string& md5sum);
     static std::optional<std::string> onModifyCallback(const std::string& fn, std::string md5sum, std::string md5sumParam);
-    static std::expected<std::string, int> onModifyMetadataCallback(const std::string& fn, const std::string& md5sum, const std::string& param);
+    static nonstd::expected<std::string, int> onModifyMetadataCallback(const std::string& fn, const std::string& md5sum, const std::string& param);
     static void onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride);
     // Object is protected from deletion by legal hold or object lock retention at time 'now'
     static bool isProtected(const std::string_view md5sum, const std::chrono::system_clock::time_point now, const bool bypassGovernance);

@@ -8176,7 +8176,7 @@ void SingleFileStorage::operator()()
 			{
 				const auto mod_data = modify_metadata_callback ? 
 					modify_metadata_callback(frag_info.fn, read_frag_info.md5sum, frag_info.md5sum) :
-					std::expected<std::string, int>(std::unexpected(EINVAL));
+					nonstd::expected<std::string, int>(nonstd::make_unexpected(EINVAL));
 				if(!mod_data)
 				{
 					modify_result = mod_data.error();

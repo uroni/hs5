@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <memory>
-#include <expected>
+#include <quic/common/Expected.h>
 #include <queue>
 #include <memory.h>
 #include "../external/lmdb/lmdb.h"
@@ -171,7 +171,7 @@ public:
 	using on_delete_callback_t = std::function<std::vector<SingleFileStorage::SFragInfo>(const std::string&, const std::string&)>;
 	using modify_data_callback_t = std::function<std::optional<std::string>(const std::string&, std::string, std::string)>;
 	// Returns the new md5sum or an error code
-	using modify_metadata_callback_t = std::function<std::expected<std::string, int>(const std::string&, const std::string&, const std::string&)>;
+	using modify_metadata_callback_t = std::function<nonstd::expected<std::string, int>(const std::string&, const std::string&, const std::string&)>;
 	using match_callback_t = std::function<void(MatchInfo&, const SingleFileStorage::SFragInfo&)>;
 	using add_reading_callback_t = std::function<void(const std::string_view fn, const SingleFileStorage::SFragInfo&)>;
 	
