@@ -150,13 +150,12 @@ const int64_t metadata_known_flags = metadata_flag_with_content_type | metadata_
 const char metadata_modify_legal_hold = 1;
 const char metadata_modify_retention = 2;
 
-class DuckDbFs;
 
 class S3Handler : public proxygen::RequestHandler, public proxygen::RFC1867Codec::Callback
 {
 public:
-    S3Handler(SingleFileStorage &sfs, const std::string& serverUrl, DuckDbFs& duckDbFs) : 
-        _sfs(sfs), self(this), serverUrl(serverUrl), _duckDbFs(duckDbFs) {}
+    S3Handler(SingleFileStorage &sfs, const std::string& serverUrl) : 
+        _sfs(sfs), self(this), serverUrl(serverUrl) {}
 
     void
     onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexcept override;
@@ -529,7 +528,6 @@ private:
 
     
 
-    DuckDbFs& _duckDbFs;
     SingleFileStorage &_sfs;
 
     SingleFileStorage& sfs() {
@@ -537,12 +535,6 @@ private:
         sfsWasUsed = true;
 #endif
         return _sfs;
-    }
-    DuckDbFs& duckDbFs() {
-#ifndef NDEBUG
-        sfsWasUsed = true;
-#endif
-        return _duckDbFs;
     }
 
 #ifndef NDEBUG

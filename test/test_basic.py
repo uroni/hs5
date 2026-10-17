@@ -1033,6 +1033,17 @@ def test_copy_object(hs5_large: Hs5Runner, tmp_path: Path, objsize: int):
         s3_client.download_file(hs5_large.testbucketname(), "upload_copy2.dat", str(dl_path))
         assert filecmp.cmp(tmpfile, dl_path)
 
+def test_copy_object_missing_source(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    with pytest.raises(ClientError) as e:
+        s3_client.copy_object(Bucket=hs5.testbucketname(), Key="copy.dat",
+                              CopySource={"Bucket": hs5.testbucketname(), "Key": "missing.dat"})
+    assert e.value.response["Error"]["Code"] == "NoSuchKey"
+
+    with pytest.raises(ClientError):
+        s3_client.head_object(Bucket=hs5.testbucketname(), Key="copy.dat")
+
 
 @pytest.mark.ci_only
 @pytest.mark.parametrize("size", [512*1024, 5*1024*1024+12, 101, 51*1024*1024])

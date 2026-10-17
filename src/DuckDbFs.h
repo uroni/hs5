@@ -3,18 +3,13 @@
 #include <duckdb/common/file_system.hpp>
 #include <string>
 #include "SingleFileStorage.h"
-#include "ObjMetadata.h"
-#include "PayloadHash.h"
-
-struct MultiPartDownloadData;
+#include "ObjectReader.h"
 
 class DuckDbFileHandle : public duckdb::FileHandle {
 public:
-    DuckDbFileHandle(duckdb::FileSystem &fs, std::string path, duckdb::FileOpenFlags flags);
+    DuckDbFileHandle(duckdb::FileSystem &fs, std::string path, duckdb::FileOpenFlags flags, std::unique_ptr<ObjectReader> reader);
 
-    ~DuckDbFileHandle();;
-
-    void Initialize();
+    ~DuckDbFileHandle();
 
     void Read(char* buffer, int64_t bsize, int64_t offset);
 
@@ -23,54 +18,18 @@ public:
     void Close() override ;
 
     int64_t FileSize() {
-        return fsize;
+        return reader ? reader->FileSize() : 0;
     }
 
-    time_t LastModifiedTime();
-
-    int64_t LastModifiedTimeNs() const {
-        return lastModified;
-    }
-
-    std::string ETag() const;
-
-    ObjMetadata* GetObjMetadata() {
-        return objMetadata.get();
-    }
-
-    PayloadHashBase* GetSdkChecksumHash() {
-        return sdkChecksumHash.get();
+    time_t LastModifiedTime() {
+        return reader ? reader->LastModifiedTime() : 0;
     }
 
 private:
-    struct PartExt
-    {
-        int64_t size;
-        int start;
-        int len;
-    };
+    ObjectReader& readerOrThrow();
 
-    int64_t bucketId = 0;
-
-    int64_t fsize = 0;
-
-    int64_t lastModified = 0;
-
-    std::string etag;
-
-    int64_t pos = 0;
-
-    std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
-
-    SingleFileStorage& sfs();
-
-    std::vector<SingleFileStorage::Ext> extents;
-
-    bool open = false;
-    std::string s3key;
-
-    std::unique_ptr<ObjMetadata> objMetadata;
-    std::unique_ptr<PayloadHashBase> sdkChecksumHash;
+    // Only set if opened for reading
+    std::unique_ptr<ObjectReader> reader;
 };
 
 struct ParsedHs5Url {
@@ -81,8 +40,6 @@ struct ParsedHs5Url {
 
 class DuckDbFs : public duckdb::FileSystem {
 public:
-    friend DuckDbFileHandle;
-
     DuckDbFs(SingleFileStorage& sfs) : sfs(sfs) {
     }
 

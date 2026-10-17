@@ -87,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [debug, benchmark, asan]
+        variant: [debug, benchmark, asan, tsan]
         os: [ubuntu-latest]
 
     steps:
@@ -141,6 +141,21 @@ jobs:
           buildPreset: 'ninja-vcpkg-debug-asan'
           testPreset: 'test-debug-asan'
 
+      # The TSan runtime cannot map its shadow memory with the default ASLR entropy of the runner kernel
+      - name: Reduce ASLR entropy for ThreadSanitizer
+        if: matrix.variant == 'tsan'
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Run CMake+vcpkg+Ninja+CTest to build packages with ThreadSanitizer and generate/build/test the code.
+        if: matrix.variant == 'tsan'
+        uses: lukka/run-cmake@v10
+        env:
+          VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org,readwrite"
+        with:
+          configurePreset: 'ninja-multi-vcpkg-tsan'
+          buildPreset: 'ninja-vcpkg-relwithdebinfo-tsan'
+          testPreset: 'test-relwithdebinfo-tsan'
+
       - name: Cleaning
         run: bash clean.sh
 
@@ -172,6 +187,15 @@ jobs:
         with:
           emoji: false
           custom-arguments: -p no:sugar -p no:threadexception --benchmark-skip test --timeout=600 -n auto
+
+      - uses: pavelzw/pytest-action@v2
+        if: matrix.variant == 'tsan'
+        env:
+          HS5_BINARY: builds/ninja-multi-vcpkg-tsan/RelWithDebInfo/hs5
+          TSAN_OPTIONS: "halt_on_error=1:second_deadlock_stack=1"
+        with:
+          emoji: false
+          custom-arguments: -p no:sugar -p no:threadexception --benchmark-skip test --timeout=1200 -n auto
 
       - uses: pavelzw/pytest-action@v2
         if: matrix.variant == 'benchmark'

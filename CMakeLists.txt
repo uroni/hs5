@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.21...4.0)
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/BootstrapVcpkg.cmake")
 
+# Has to be decided before project(), where the vcpkg toolchain installs the manifest dependencies
+option(HS5_WITH_DUCKDB "Build with DuckDB UI support" ON)
+if(NOT HS5_WITH_DUCKDB)
+  set(VCPKG_MANIFEST_NO_DEFAULT_FEATURES ON)
+endif()
+
 project(hs5 VERSION 1.1.0 LANGUAGES CXX C)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -155,7 +161,7 @@ add_executable(hs5
     src/StaticHandler.cpp
     src/WalFile.cpp
     wwwgen/www_files.cpp
-    src/DuckDbFs.cpp
+    src/ObjectReader.cpp
     src/Action.cpp
     src/ContentType.cpp
     src/PayloadHash.cpp
@@ -182,10 +188,18 @@ find_package(expat CONFIG REQUIRED)
 find_package(unofficial-sodium CONFIG REQUIRED)
 find_package(sqlite-cpp-sqlgen CONFIG REQUIRED)
 find_package(nlohmann_json  CONFIG REQUIRED)
-find_package(DuckDB CONFIG REQUIRED)
+if(HS5_WITH_DUCKDB)
+  find_package(DuckDB CONFIG REQUIRED)
+  target_sources(hs5 PRIVATE src/DuckDbFs.cpp)
+  target_compile_definitions(hs5 PRIVATE HS5_WITH_DUCKDB)
+  target_link_libraries(hs5 PRIVATE $<IF:$<TARGET_EXISTS:duckdb_static>,duckdb_static,duckdb>)
+endif()
 find_package(aws-c-common CONFIG REQUIRED)
 find_package(aws-checksums CONFIG REQUIRED)
-find_library(JEMALLOC_LIBRARY NAMES jemalloc REQUIRED)
+option(HS5_USE_JEMALLOC "Link jemalloc as the memory allocator" ON)
+if(HS5_USE_JEMALLOC)
+  find_library(JEMALLOC_LIBRARY NAMES jemalloc REQUIRED)
+endif()
 find_path(TCLAP_INCLUDE_DIRS "tclap/Arg.h")
 target_include_directories(hs5 PRIVATE ${TCLAP_INCLUDE_DIRS})
 target_link_directories(hs5 PRIVATE ${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib)
@@ -199,9 +213,11 @@ target_link_libraries(hs5 PRIVATE $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zst
   Folly::folly Folly::folly_deps Folly::follybenchmark Folly::folly_test_util
   proxygen::proxygen proxygen::proxygenhttpserver
   expat::expat unofficial-sodium::sodium SqliteCppGen::SqliteCppGen nlohmann_json::nlohmann_json fmt::fmt
-  $<IF:$<TARGET_EXISTS:duckdb_static>,duckdb_static,duckdb> AWS::aws-c-common AWS::aws-checksums ${JEMALLOC_LIBRARY})
+  AWS::aws-c-common AWS::aws-checksums $<$<BOOL:${HS5_USE_JEMALLOC}>:${JEMALLOC_LIBRARY}>)
 
 target_compile_features(hs5 PUBLIC cxx_std_23)
-target_compile_definitions(hs5 PRIVATE USE_JEMALLOC)
+if(HS5_USE_JEMALLOC)
+  target_compile_definitions(hs5 PRIVATE USE_JEMALLOC)
+endif()
 # mvfst's expected-lite would otherwise alias std::expected, which lacks make_unexpected
 target_compile_definitions(hs5 PRIVATE nsel_CONFIG_SELECT_EXPECTED=nsel_EXPECTED_NONSTD)

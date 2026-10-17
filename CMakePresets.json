@@ -22,7 +22,7 @@
         {
             "name": "ninja-multi-vcpkg-lld",
             "displayName": "Ninja Multi-Config using lld",
-            "description": "Configure with vcpkg toolchain and generate Ninja project files for all configurations",
+            "description": "Configure with vcpkg toolchain, without DuckDB, and generate Ninja project files for all configurations",
             "binaryDir": "${sourceDir}/builds/${presetName}",
             "generator": "Ninja Multi-Config",
             "cacheVariables": {
@@ -37,6 +37,10 @@
                 "CMAKE_SHARED_LINKER_FLAGS": {
                     "type": "STRING",
                     "value": "-fuse-ld=lld"
+                },
+                "HS5_WITH_DUCKDB": {
+                    "type": "BOOL",
+                    "value": "OFF"
                 }
             }
         },
@@ -66,6 +70,51 @@
                 "CMAKE_SHARED_LINKER_FLAGS": {
                     "type": "STRING",
                     "value": "-fuse-ld=lld -fsanitize=address,undefined"
+                },
+                "HS5_USE_JEMALLOC": {
+                    "type": "BOOL",
+                    "value": "OFF"
+                }
+            }
+        },
+        {
+            "name": "ninja-multi-vcpkg-tsan",
+            "displayName": "Ninja Multi-Config with ThreadSanitizer",
+            "description": "Configure with vcpkg toolchain using the x64-linux-tsan triplet (dependencies also instrumented), without DuckDB, generate Ninja project files, and enable ThreadSanitizer",
+            "binaryDir": "${sourceDir}/builds/${presetName}",
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": {
+                    "type": "FILEPATH",
+                    "value": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+                },
+                "VCPKG_TARGET_TRIPLET": {
+                    "type": "STRING",
+                    "value": "x64-linux-tsan"
+                },
+                "HS5_USE_JEMALLOC": {
+                    "type": "BOOL",
+                    "value": "OFF"
+                },
+                "CMAKE_CXX_FLAGS": {
+                    "type": "STRING",
+                    "value": "-fsanitize=thread -fno-omit-frame-pointer -g"
+                },
+                "CMAKE_C_FLAGS": {
+                    "type": "STRING",
+                    "value": "-fsanitize=thread -fno-omit-frame-pointer -g"
+                },
+                "CMAKE_EXE_LINKER_FLAGS": {
+                    "type": "STRING",
+                    "value": "-fuse-ld=lld -fsanitize=thread"
+                },
+                "CMAKE_SHARED_LINKER_FLAGS": {
+                    "type": "STRING",
+                    "value": "-fuse-ld=lld -fsanitize=thread"
+                },
+                "HS5_WITH_DUCKDB": {
+                    "type": "BOOL",
+                    "value": "OFF"
                 }
             }
         }
@@ -118,6 +167,13 @@
             "displayName": "Build (Release with ASAN)",
             "description": "Build with Ninja/vcpkg (Release with AddressSanitizer)",
             "configuration": "Release"
+        },
+        {
+            "name": "ninja-vcpkg-relwithdebinfo-tsan",
+            "configurePreset": "ninja-multi-vcpkg-tsan",
+            "displayName": "Build (Release with debug info with TSAN)",
+            "description": "Build with Ninja/vcpkg (Release with debug info with ThreadSanitizer)",
+            "configuration": "RelWithDebInfo"
         }
     ],
     "testPresets": [
@@ -156,6 +212,20 @@
             "configuration": "Debug",
             "inherits": [
                 "test-ninja-vcpkg-asan"
+            ]
+        },
+        {
+            "name": "test-ninja-vcpkg-tsan",
+            "configurePreset": "ninja-multi-vcpkg-tsan",
+            "hidden": true
+        },
+        {
+            "name": "test-relwithdebinfo-tsan",
+            "description": "Test (Release with debug info with TSAN)",
+            "displayName": "Test (Release with debug info with TSAN)",
+            "configuration": "RelWithDebInfo",
+            "inherits": [
+                "test-ninja-vcpkg-tsan"
             ]
         }
     ]

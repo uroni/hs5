@@ -25,7 +25,9 @@
 #include <proxygen/httpserver/HTTPServer.h>
 #include <proxygen/httpserver/RequestHandlerFactory.h>
 #include <proxygen/lib/http/session/HTTPSessionBase.h>
+#ifdef HS5_WITH_DUCKDB
 #include <duckdb.hpp>
+#endif
 #include "Auth.h"
 #include "s3handler.h"
 #include "SingleFileStorage.h"
@@ -35,6 +37,7 @@
 #include "Buckets.h"
 #include "config.h"
 #include "StaticHandler.h"
+#ifdef HS5_WITH_DUCKDB
 #include "DuckDbFs.h"
 
 duckdb::DuckDB& getDuckDb()
@@ -44,6 +47,7 @@ duckdb::DuckDB& getDuckDb()
     static duckdb::DuckDB db(nullptr, &config);
     return db;
 }
+#endif
 
 using namespace std::chrono_literals;
 
@@ -77,10 +81,9 @@ namespace {
 
 class S3HandlerFactory : public proxygen::RequestHandlerFactory {
    SingleFileStorage& sfs;
-   DuckDbFs& duckDbFs;
  public:
-  S3HandlerFactory(SingleFileStorage& sfs, DuckDbFs& duckDbFs)
-   : sfs(sfs), duckDbFs(duckDbFs)
+  S3HandlerFactory(SingleFileStorage& sfs)
+   : sfs(sfs)
   {
     sfs.start_thread(sfs.get_transid() + 1);
     sfs.wait_for_wal_startup_finished();
@@ -144,7 +147,7 @@ class S3HandlerFactory : public proxygen::RequestHandlerFactory {
         isStaticFile(path))
       return new StaticHandler();
 
-    return new S3Handler(sfs, FLAGS_server_url, duckDbFs);
+    return new S3Handler(sfs, FLAGS_server_url);
   }
 
   SingleFileStorage& getSfs()
@@ -177,6 +180,14 @@ int realMain(int argc, char* argv[])
     folly::Init init(&argc, &argv, true);
 
     XLOGF(INFO, "HS5 {} rev {}", PACKAGE_VERSION, GIT_REVISION);
+
+#ifndef HS5_WITH_DUCKDB
+    if(FLAGS_run_duckdb)
+    {
+      XLOGF(ERR, "DuckDB UI requested, but hs5 was built without DuckDB support");
+      return 1;
+    }
+#endif
 
     try {
       bool background_thread = true;
@@ -273,7 +284,6 @@ int realMain(int argc, char* argv[])
     proxygen::HTTPSessionBase::setMaxReadBufferSize(FLAGS_max_put_buffer_size);
 
     SingleFileStorage sfs(sfsoptions);
-    auto duckDbFs = duckdb::make_uniq<DuckDbFs>(sfs);
   
     proxygen::HTTPServerOptions options;
     options.threads = static_cast<size_t>(FLAGS_http_worker_threads);
@@ -281,7 +291,7 @@ int realMain(int argc, char* argv[])
     options.shutdownOn = {SIGINT, SIGTERM};
     options.enableContentCompression = false;
     options.handlerFactories =
-        proxygen::RequestHandlerChain().addThen<S3HandlerFactory>(sfs, *duckDbFs).build();
+        proxygen::RequestHandlerChain().addThen<S3HandlerFactory>(sfs).build();
 
     server = std::make_unique<proxygen::HTTPServer>(std::move(options));
     server->bind(IPs);
@@ -299,6 +309,7 @@ int realMain(int argc, char* argv[])
       server.reset();
       });
 
+#ifdef HS5_WITH_DUCKDB
     if(FLAGS_run_duckdb)
     {
       XLOGF(INFO, "Starting DuckDB...");
@@ -329,6 +340,7 @@ int realMain(int argc, char* argv[])
           XLOGF(INFO, "DuckDB UI server started successfully {}", res->ToString());
       }
     }
+#endif
     
     t.join();
     return 0;

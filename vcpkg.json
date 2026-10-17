@@ -15,10 +15,20 @@
     "aws-checksums",
     "aws-c-common",
     "frozen",
-    "jemalloc",
-    {
-     "name": "duckdb-custom",
-     "features": ["autocomplete", "excel", "httpfs", "json", "tpcds", "tpch","ui","ducklake"]
+    "jemalloc"
+  ],
+  "default-features": [
+    "duckdb"
+  ],
+  "features": {
+    "duckdb": {
+      "description": "DuckDB UI with access to hs5 objects",
+      "dependencies": [
+        {
+         "name": "duckdb-custom",
+         "features": ["autocomplete", "excel", "httpfs", "json", "tpcds", "tpch","ui","ducklake"]
+        }
+      ]
     }
-  ]
+  }
 }

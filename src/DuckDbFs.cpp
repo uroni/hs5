@@ -13,18 +13,9 @@ namespace duckdb {
     DUCKDB_API bool Glob(const char *s, idx_t slen, const char *pattern, idx_t plen, bool allow_question_mark = true);
 }
 
-DuckDbFileHandle::DuckDbFileHandle(duckdb::FileSystem &fs, std::string path, duckdb::FileOpenFlags flags)
- : duckdb::FileHandle(fs, path, flags)
+DuckDbFileHandle::DuckDbFileHandle(duckdb::FileSystem &fs, std::string path, duckdb::FileOpenFlags flags, std::unique_ptr<ObjectReader> reader)
+ : duckdb::FileHandle(fs, path, flags), reader(std::move(reader))
 {
-    if (flags.OpenForReading() && flags.OpenForWriting()) {
-        throw duckdb::NotImplementedException("Cannot open an HS5 file for both reading and writing");
-    } else if (flags.OpenForAppending()) {
-        throw duckdb::NotImplementedException("Cannot open an HS5 file for appending");
-    }
-
-    Initialize();
-
-    open = true;
 }
 
 DuckDbFileHandle::~DuckDbFileHandle()
@@ -34,180 +25,39 @@ DuckDbFileHandle::~DuckDbFileHandle()
 
 void DuckDbFileHandle::Close()
 {
-    if(!open)
-        return;
-    
-    if(flags.OpenForReading())
-    {
-        if(multiPartDownloadData)
-        {
-            const auto rc = S3Handler::finalizeMultiPart(sfs(), s3key, bucketId, *multiPartDownloadData, extents);
-            if(rc)
-                XLOGF(WARN, "Error finalizing multipart download: {}", rc);
-        }
-        else
-        {
-            sfs().read_finalize(s3key, extents, 0);
-        }
-    }
-
-    open = false;
+    if(reader)
+        reader->Close();
 }
 
-void DuckDbFileHandle::Initialize()
+ObjectReader& DuckDbFileHandle::readerOrThrow()
 {
-    const auto parsedUrl = DuckDbFs::Hs5UrlParse(path);
-
-    const auto bucketInfoOpt = buckets::getBucketInfo(parsedUrl.bucket);
-    if(!bucketInfoOpt)
-    {
-        throw duckdb::IOException("Bucket not found");
-    }
-
-    const auto& bucketInfo = bucketInfoOpt.value();
-
-    bucketId = bucketInfo.id;
-
-    unsigned int readPrepFlags = SingleFileStorage::ReadAddReadingCallback;
-
-    const auto withVersioning = bucketInfo.versioning == buckets::VersioningState::Enabled || bucketInfo.versioning == buckets::VersioningState::Suspended;
-    if(withVersioning)
-    {
-        s3key = make_key(parsedUrl.key, bucketId, std::numeric_limits<int64_t>::max());
-        readPrepFlags |= SingleFileStorage::ReadNewest;
-    }
-    else
-    {
-        s3key = make_key(parsedUrl.key, bucketId, 0);
-    }
-
-    if (flags.OpenForReading())
-    {
-        auto res = sfs().read_prepare(s3key, readPrepFlags);
-
-        if (res.err != 0)
-        {
-            if(res.err==ENOENT)
-            {
-                throw duckdb::IOException("File not found: " + path);
-            }
-            throw duckdb::IOException("Failed to prepare read: " + std::to_string(res.err));
-        }
-
-        if(withVersioning)
-            s3key = res.key;
-
-        if(!S3Handler::parseMultipartInfo(res.md5sum, res.total_len, multiPartDownloadData, &objMetadata, &sdkChecksumHash))
-        {
-            throw duckdb::IOException("Failed to parse multipart info for file: " + path);
-        }
-
-        if(res.md5sum.size()==1 && res.md5sum[0] == metadata_tombstone)
-        {
-            throw duckdb::IOException("File not found: " + path);
-        }
-
-        extents = std::move(res.extents);
-        fsize = res.total_len;
-        lastModified = res.last_modified;
-
-        if(!multiPartDownloadData)
-            etag = S3Handler::md5sumBinFromData(res.md5sum);
-    }
-}
-
-SingleFileStorage& DuckDbFileHandle::sfs()
-{
-    return static_cast<DuckDbFs&>(file_system).sfs;
+    if(!reader)
+        throw duckdb::IOException("HS5 file not opened for reading: " + path);
+    return *reader;
 }
 
 void DuckDbFileHandle::Read(char* buffer, int64_t bsize, int64_t offset)
 {
-    if(multiPartDownloadData)
+    try
     {
-        const auto rc = S3Handler::seekMultipartExt(sfs(), offset, bucketId, *multiPartDownloadData, extents);
-        if(rc)
-        {
-            throw duckdb::IOException("Error seeking to part rc " + std::to_string(rc));
-        }
+        readerOrThrow().Read(buffer, bsize, offset);
     }
-
-    while(offset < fsize && bsize > 0)
+    catch(const ObjectReadError& e)
     {
-        auto it = std::upper_bound(extents.begin(), extents.end(), SingleFileStorage::Ext(offset, 0, 0));
-        if(!extents.empty())
-            --it;
-        assert(it != extents.end());
-        if(it==extents.end() || it->len==0 || it->obj_offset + it->len <= offset)
-        {
-            if(multiPartDownloadData)
-            {
-                const int rc = S3Handler::readNextMultipartExt(sfs(), offset, bucketId, true, *multiPartDownloadData, extents, nullptr, nullptr, nullptr);
-                if(rc)
-                {
-                    throw duckdb::IOException("Error reading next part code " + std::to_string(rc));
-                }
-                continue;
-            }
-            break;
-        }
-
-        assert(it->obj_offset <= offset && it->obj_offset + it->len > offset);
-        
-        int64_t ext_offset = offset - it->obj_offset;
-        auto curr_ext = SingleFileStorage::Ext(it->obj_offset + ext_offset, it->data_file_offset + ext_offset, it->len - ext_offset);
-        int64_t rlen = std::min(static_cast<int64_t>(bsize), fsize - offset);
-
-        ssize_t read;
-        auto res = sfs().read_ext(curr_ext, 0, static_cast<size_t>(rlen), buffer, read);
-
-        if(res!=0)
-        {
-            throw duckdb::IOException("Error reading extent code " + std::to_string(res));
-        }
-    
-        if(multiPartDownloadData)
-        {
-            XLOGF(DBG0, "Reading off {} len {} of fpath {} total_len {} part {}", offset, read, path, fsize, multiPartDownloadData->currExt.start);
-        }
-        else
-        {
-            XLOGF(DBG0, "Reading off {} len {} of fpath {} total_len {}", offset, read, path, fsize);
-        }
-
-        offset += read;
-        buffer += read;
-        bsize -= read;
-    }
-
-    pos = offset;
-
-    if(bsize>0)
-    {
-        throw duckdb::IOException("Could not read " + std::to_string(bsize) + " bytes from file: " + path);
+        throw duckdb::IOException(e.what());
     }
 }
 
 int64_t DuckDbFileHandle::Read(char *buffer, int64_t bsize)
 {
-    const auto toread = (std::min)(bsize, fsize - pos);
-    Read(buffer, toread, pos);
-    return toread;
-}
-
-time_t DuckDbFileHandle::LastModifiedTime()
-{
-    constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
-    const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(lastModified));
-    return lastModifiedTp;
-}
-
-std::string DuckDbFileHandle::ETag() const
-{
-    if(multiPartDownloadData)
-        return fmt::format("\"{}-{}\"", folly::hexlify(multiPartDownloadData->etag), multiPartDownloadData->numParts);
-    else
-        return fmt::format("\"{}\"", folly::hexlify(etag));
+    try
+    {
+        return readerOrThrow().Read(buffer, bsize);
+    }
+    catch(const ObjectReadError& e)
+    {
+        throw duckdb::IOException(e.what());
+    }
 }
 
 void DuckDbFs::RemoveDirectory(const std::string &path, duckdb::optional_ptr<duckdb::FileOpener> opener)
@@ -415,21 +265,34 @@ bool DuckDbFs::CanHandleFile(const std::string &fpath)
 duckdb::unique_ptr<duckdb::FileHandle> DuckDbFs::OpenFile(const std::string &path, duckdb::FileOpenFlags flags,
     duckdb::optional_ptr<duckdb::FileOpener> opener)
 {
-    if (flags.ReturnNullIfNotExists()) 
+    if (flags.OpenForReading() && flags.OpenForWriting()) {
+        throw duckdb::NotImplementedException("Cannot open an HS5 file for both reading and writing");
+    } else if (flags.OpenForAppending()) {
+        throw duckdb::NotImplementedException("Cannot open an HS5 file for appending");
+    }
+
+    const auto parsedUrl = Hs5UrlParse(path);
+
+    std::unique_ptr<ObjectReader> reader;
+    if (flags.OpenForReading())
     {
         try
         {
-            return duckdb::make_uniq<DuckDbFileHandle>(*this, path, flags);
+            reader = std::make_unique<ObjectReader>(sfs, parsedUrl.bucket, parsedUrl.key);
         }
-        catch (duckdb::IOException &e)
+        catch (const ObjectReadError& e)
         {
-            if (std::string(e.what()).starts_with("File not found"))
+            if (e.notFound() && flags.ReturnNullIfNotExists())
                 return nullptr;
-            throw;
+            throw duckdb::IOException(e.what());
         }
     }
+    else if (!buckets::getBucketInfo(parsedUrl.bucket))
+    {
+        throw duckdb::IOException("Bucket not found");
+    }
 
-    return duckdb::make_uniq<DuckDbFileHandle>(*this, path, flags);
+    return duckdb::make_uniq<DuckDbFileHandle>(*this, path, flags, std::move(reader));
 }
 
 int64_t DuckDbFs::GetFileSize(duckdb::FileHandle &handle)

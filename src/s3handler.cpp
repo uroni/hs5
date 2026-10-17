@@ -49,7 +49,7 @@
 #include "Auth.h"
 #include "main.h"
 #include "Buckets.h"
-#include "DuckDbFs.h"
+#include "ObjectReader.h"
 
 using namespace proxygen;
 
@@ -8953,11 +8953,19 @@ void S3Handler::parseSourceMatchInfo(proxygen::HTTPMessage& headers, SingleFileS
 
 void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, CopyObjectInfo& copyObjectInfo)
 {
-    duckdb::unique_ptr<duckdb::FileHandle> sourceFile;
+    std::unique_ptr<ObjectReader> sourceFile;
     try
     {
-        sourceFile = duckDbFs().OpenFile("hs5://"+copyObjectInfo.source, duckdb::FileOpenFlags::FILE_FLAGS_READ | duckdb::FileOpenFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS );
-        if(!sourceFile)
+        const auto bucketSep = copyObjectInfo.source.find('/');
+        if(bucketSep == std::string::npos || bucketSep == 0)
+            throw ObjectReadError("Copy source needs to contain bucket and key");
+
+        sourceFile = std::make_unique<ObjectReader>(sfs(), copyObjectInfo.source.substr(0, bucketSep), copyObjectInfo.source.substr(bucketSep + 1));
+    }
+    catch(const std::exception& e)
+    {
+        const auto readError = dynamic_cast<const ObjectReadError*>(&e);
+        if(readError && readError->notFound())
         {
             XLOGF(WARN, "Source object {} not found for copy", copyObjectInfo.source);
             evb->runInEventBaseThread([self = this->self, copyObjectInfo]()
@@ -8973,9 +8981,7 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
                                     });
             return;
         }
-    }
-    catch(std::exception& e)
-    {
+
         XLOGF(WARN, "Error opening source object {} for copy: {}", copyObjectInfo.source, e.what());
         evb->runInEventBaseThread([self = this->self, copyObjectInfo, e]()
                                 {           
@@ -8991,9 +8997,7 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
         return;
     }
 
-    auto sourceFileHs5 = static_cast<DuckDbFileHandle*>(sourceFile.get());
-
-    auto sourceFileSize = sourceFile->GetFileSize();
+    auto sourceFileSize = sourceFile->FileSize();
     int64_t readOffset = 0;
     int64_t writeStart = 0;
 
@@ -9055,8 +9059,8 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
 
 
     SingleFileStorage::SFragInfo sourceFragInfo;
-    sourceFragInfo.last_modified = sourceFileHs5->LastModifiedTimeNs();
-    onMatchCallback(copyObjectInfo.sourceMatchInfo, sourceFragInfo, sourceFileHs5->ETag());
+    sourceFragInfo.last_modified = sourceFile->LastModifiedTimeNs();
+    onMatchCallback(copyObjectInfo.sourceMatchInfo, sourceFragInfo, sourceFile->ETag());
 
     if(!copyObjectInfo.sourceMatchInfo.match)
     {
@@ -9113,7 +9117,7 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
         {
             sourceFile->Read(buf.data(), toRead, readOffset);
         }
-        catch(const duckdb::IOException& e)
+        catch(const ObjectReadError& e)
         {
             evb->runInEventBaseThread([self = this->self, copyObjectInfo, e]()
                                     {           
@@ -9176,7 +9180,7 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
 
     if(copyObjectInfo.metadataDirective == CopyObjectInfo::MetadataDirective::Copy)
     {
-        auto sourceObjMetadata = sourceFileHs5->GetObjMetadata();
+        auto sourceObjMetadata = sourceFile->GetObjMetadata();
         if(sourceObjMetadata)
         {
             objMetadata = std::make_unique<ObjMetadata>(*sourceObjMetadata);
@@ -9184,7 +9188,7 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
     }
 
     cleanupExtents = false;
-    finalizePutObject(evb, sourceFileHs5->LastModifiedTimeNs());
+    finalizePutObject(evb, sourceFile->LastModifiedTimeNs());
 }
 
 void S3Handler::sigCheckOk()
