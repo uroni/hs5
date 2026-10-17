@@ -8,6 +8,7 @@
 #include <gflags/gflags.h>
 
 DEFINE_string(db_path, "./hs5.db", "Path where to put the database");
+DEFINE_bool(test_db_no_sync, false, "Do not fsync the database (PRAGMA synchronous=OFF). For testing only, database may get corrupted on power loss!");
 
 typedef void(upgrade_func_t)(sqlgen::Database&);
 
@@ -236,7 +237,12 @@ const std::map<int64_t, upgrade_func_t*> upgrade_funcs {
 
 sqlgen::Database& DbDao::getStaticDb()
 {
-	static thread_local sqlgen::Database db(FLAGS_db_path);
+	static thread_local sqlgen::Database db = [] {
+		sqlgen::Database ret(FLAGS_db_path);
+		if(FLAGS_test_db_no_sync)
+			ret.write("PRAGMA synchronous=OFF");
+		return ret;
+	}();
 	return db;
 }
 
@@ -1343,14 +1349,15 @@ int64_t DbDao::addPolicyStatementResource(int64_t statement_id, const std::strin
 * @-SQLGenAccess
 * @func void DbDao::changeUserPassword
 * @sql
-*      UPDATE users SET password=:password(string) WHERE id=:user_id(int64)
+*      UPDATE users SET password_state=:password_state(int), password=:password(string) WHERE id=:user_id(int64)
 */
-void DbDao::changeUserPassword(const std::string& password, int64_t user_id)
+void DbDao::changeUserPassword(int password_state, const std::string& password, int64_t user_id)
 {
 	if(!_changeUserPassword.prepared())
 	{
-		_changeUserPassword=db.prepare("UPDATE users SET password=? WHERE id=?");
+		_changeUserPassword=db.prepare("UPDATE users SET password_state=?, password=? WHERE id=?");
 	}
+	_changeUserPassword.bind(password_state);
 	_changeUserPassword.bind(password);
 	_changeUserPassword.bind(user_id);
 	_changeUserPassword.write();

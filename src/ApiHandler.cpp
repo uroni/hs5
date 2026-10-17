@@ -74,6 +74,7 @@
 #include "apigen/GeneratorsSetBucketPublicParams.hpp"
 #include "apigen/GeneratorsSetBucketPublicResp.hpp"
 #include <argon2.h>
+#include <sodium.h>
 #include <folly/Random.h>
 #include <iostream>
 #include <gflags/gflags.h>
@@ -97,6 +98,7 @@ DEFINE_string(init_root_password, "", "Initial password of root account");
 DEFINE_string(init_root_access_key, "", "Initial name of access key of root account. Default: root");
 DEFINE_string(init_root_secret_access_key, "", "Initial secret access key of root account. Default: Password of root account");
 DEFINE_string(init_create_bucket, "", "Comma separated list of buckets to create on initialization. Example: \"bucket1,bucket2\"");
+DEFINE_bool(test_disable_password_hashing, false, "Store user passwords unhashed instead of using argon2i. For testing only (speeds up debug builds)!");
 DECLARE_bool(pre_sync_commit);
 
 using json = nlohmann::json;
@@ -105,8 +107,23 @@ thread_local DbDao ApiHandler::dao;
 
 namespace
 {
-    std::string getEncodedPassword(const std::string& password)
+    enum PasswordState
     {
+        PasswordStateArgon2i = 0,
+        PasswordStateUnhashed = 1
+    };
+
+    struct EncodedPassword
+    {
+        int state;
+        std::string encoded;
+    };
+
+    EncodedPassword getEncodedPassword(const std::string& password)
+    {
+        if(FLAGS_test_disable_password_hashing)
+            return {PasswordStateUnhashed, password};
+
         char salt[16];
         folly::Random::secureRandom(salt, sizeof(salt));
         char encoded[200];
@@ -115,12 +132,24 @@ namespace
         if(rc!=ARGON2_OK)
             throw ApiError(Api::Herror::argonEncoding, "Error encoding password via argon2i");
 
-        return std::string(encoded);
+        return {PasswordStateArgon2i, std::string(encoded)};
     }
 
     void verifyPassword(const DbDao::User& user, const std::string& password)
     {
-        if(user.password_state!=0)
+        if(user.password_state==PasswordStateUnhashed)
+        {
+            // Only accept unhashed passwords if running in test mode
+            if(!FLAGS_test_disable_password_hashing)
+                throw ApiError(Api::Herror::unknownPasswordHashing);
+
+            if(user.password.size() != password.size() ||
+                sodium_memcmp(user.password.data(), password.data(), password.size()) != 0)
+                throw ApiError(Api::Herror::passwordWrong, fmt::format("Supplied password for user {} wrong", user.name));
+            return;
+        }
+
+        if(user.password_state!=PasswordStateArgon2i)
             throw ApiError(Api::Herror::unknownPasswordHashing);
 
         const auto rc = argon2i_verify(user.password.c_str(), password.data(), password.size());
@@ -204,7 +233,7 @@ void ApiHandler::init()
 
         const auto encoded = getEncodedPassword(password);
 
-        const auto rootUserId = dao.addUser("root", 0, encoded, 1);
+        const auto rootUserId = dao.addUser("root", encoded.state, encoded.encoded, 1);
 
         std::string initRootAccessKey = "root";
         if(!FLAGS_init_root_access_key.empty())
@@ -504,7 +533,8 @@ Api::AddUserResp ApiHandler::addUser(const Api::AddUserParams& params, const Api
     if(dao.getUserByName(params.username).exists)
         throw ApiError(Api::Herror::userAlreadyExists, fmt::format("User {} already exists", params.username));
 
-    const auto userId = dao.addUser(params.username, 0, getEncodedPassword(params.password), 0);
+    const auto encoded = getEncodedPassword(params.password);
+    const auto userId = dao.addUser(params.username, encoded.state, encoded.encoded, 0);
 
     if(!userId)
         throw ApiError(Api::Herror::internalDbError, fmt::format("Error adding user with name {}", params.username));
@@ -1359,7 +1389,8 @@ Api::ChangePasswordResp ApiHandler::changePassword(const Api::ChangePasswordPara
 
     verifyPassword(*user, params.oldPassword);
 
-    dao.changeUserPassword(getEncodedPassword(params.password), sessionStorage.userId);
+    const auto encoded = getEncodedPassword(params.password);
+    dao.changeUserPassword(encoded.state, encoded.encoded, sessionStorage.userId);
 
     if(dao.getDb().getLastChanges() != 1)
         throw ApiError(Api::Herror::internalDbError, "Error changing password");

@@ -250,7 +250,7 @@ public:
 	int64_t addPolicyStatement(int64_t policy_id, const std::string& sid, int effect);
 	int64_t addPolicyStatementAction(int64_t statement_id, int action);
 	int64_t addPolicyStatementResource(int64_t statement_id, const std::string& resource);
-	void changeUserPassword(const std::string& password, int64_t user_id);
+	void changeUserPassword(int password_state, const std::string& password, int64_t user_id);
 	std::vector<BucketPermissionWithUsername> getBucketPermissionsWithUsername(int64_t bucket_id);
 	std::vector<BucketPermissionWithUsername> getBucketPermissionsOfUser(int64_t user_id);
 	std::optional<int64_t> addBucketPermission(int64_t bucket_id, int64_t user_id, int permissions);

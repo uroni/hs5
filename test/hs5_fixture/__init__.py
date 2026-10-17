@@ -135,6 +135,14 @@ class Hs5Runner:
 
         self.args.append("--enable_core_dumps")
 
+        if os.environ.get("ENABLE_PASSWORD_HASHING") != "1":
+            self.args.append("--test_disable_password_hashing")
+
+        if os.environ.get("ENABLE_DB_SYNC") != "1":
+            self.args.append("--test_db_no_sync")
+
+        self.args.append(f"--http_worker_threads={os.environ.get('HS5_HTTP_WORKER_THREADS', '4')}")
+
         self.args.extend(extra_args)
 
         self.start()
