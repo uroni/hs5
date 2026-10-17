@@ -2,5 +2,5 @@
 pythonpath = ["test/hs5_api_client"]
 testpaths = ["test"]
 markers = [
-    "ci_only: slow test that only runs if the CI environment variable is set (set automatically by GitHub Actions)",
+    "slow: slow test that only runs if the CI environment variable is set (set automatically by GitHub Actions)",
 ]

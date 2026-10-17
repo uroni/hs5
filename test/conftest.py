@@ -9,10 +9,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     if os.getenv("CI"):
         return
 
-    skip_ci_only = pytest.mark.skip(reason="Only runs in CI (set CI=1 to run)")
+    skip_slow = pytest.mark.skip(reason="Slow test, only runs in CI (set CI=1 to run)")
     for item in items:
-        if "ci_only" in item.keywords:
-            item.add_marker(skip_ci_only)
+        if "slow" in item.keywords:
+            item.add_marker(skip_slow)
 
 @pytest.fixture(scope="session", autouse=True)
 def init_port(testrun_uid: str):

@@ -938,7 +938,7 @@ def test_list_partial_uploads(tmp_path: Path, hs5: Hs5Runner):
     assert hs5.get_stats().used == 0
 
 
-@pytest.mark.ci_only
+@pytest.mark.slow
 def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
     testfilesize = 1*1024*1024*1024
 
@@ -1045,7 +1045,7 @@ def test_copy_object_missing_source(hs5: Hs5Runner):
         s3_client.head_object(Bucket=hs5.testbucketname(), Key="copy.dat")
 
 
-@pytest.mark.ci_only
+@pytest.mark.slow
 @pytest.mark.parametrize("size", [512*1024, 5*1024*1024+12, 101, 51*1024*1024])
 @pytest.mark.parametrize("checksum_algorithm", ["CRC32", "CRC32C", "SHA1", "SHA256", "CRC64NVME"])
 def test_put_chunked(hs5_large: Hs5Runner, tmp_path: Path, size: int, checksum_algorithm: str):
@@ -1075,7 +1075,7 @@ def test_put_chunked(hs5_large: Hs5Runner, tmp_path: Path, size: int, checksum_a
 
             assert filecmp.cmp(tmpfile, dl_path)
 
-@pytest.mark.ci_only
+@pytest.mark.slow
 def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
 
@@ -2128,6 +2128,7 @@ def test_put_object_retention_compliance(hs5: Hs5Runner):
     assert s3_client.get_object(Bucket=bucket, Key="ret.txt", VersionId=v1)["Body"].read() == b"version1"
 
 
+@pytest.mark.slow
 def test_put_object_retention_expires(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = create_object_lock_bucket(s3_client, "lockbucket")
