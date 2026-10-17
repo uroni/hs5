@@ -9274,6 +9274,9 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
         if(sourceObjMetadata)
         {
             objMetadata = std::make_unique<ObjMetadata>(*sourceObjMetadata);
+            // Object lock settings are not copied from the source object
+            objMetadata->lockInfo.reset();
+            objMetadata->legalHold = false;
         }
     }
 
