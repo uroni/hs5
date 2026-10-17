@@ -10,7 +10,7 @@ namespace buckets
 
 void refreshBucketCache();
 
-int64_t addBucket(const std::string_view bucketName, bool failIfAlreadyExists);
+int64_t addBucket(const std::string_view bucketName, const bool failIfAlreadyExists, const bool objectLockEnabled = false);
 
 bool isValidBucketName(const std::string_view bucketName);
 
@@ -44,6 +44,8 @@ struct BucketInfo
     int publicPerms = 0;
     VersioningState versioning = VersioningState::Disabled;
     std::vector<BucketCorsRule> corsRules;
+    // Object lock is enabled for the bucket, so it may have locked objects (legal hold). Cannot be disabled.
+    bool objectLockEnabled = false;
 };
 
 std::optional<BucketInfo> getBucketInfo(const std::string_view bucketName);
@@ -62,7 +64,28 @@ std::string getBucketName(int64_t bucketId);
 
 Api::ListResp getBucketNames();
 
-bool setVersioning(const std::string_view bucketName, VersioningState versioningState);
+enum class SetVersioningResult
+{
+    Ok,
+    NotFound,
+    ObjectLockEnabled,
+    Error
+};
+
+SetVersioningResult setVersioning(const std::string_view bucketName, VersioningState versioningState);
+
+bool isObjectLockEnabled(int64_t bucketId);
+
+enum class EnableObjectLockResult
+{
+    Ok,
+    NotFound,
+    VersioningNotEnabled,
+    Error
+};
+
+// Enables object lock. Requires versioning to be enabled.
+EnableObjectLockResult enableObjectLock(int64_t bucketId);
 
 bool validateCorsRule(BucketCorsRule& rule);
 

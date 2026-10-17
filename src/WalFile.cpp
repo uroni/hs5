@@ -15,6 +15,10 @@ const char dataTypeDataFileData = 1;
 const char dataTypeInit = 2;
 const char dataTypeSync = 3;
 
+// Flags of serialized match info
+const char matchInfoFlagReadNewest = 1 << 0;
+const char matchInfoFlagCheckProtected = 1 << 1;
+
 const int64_t waitBlockSize = 64 * 1024;
 const int64_t dirtyBlockSize = 64*1024;
 
@@ -92,7 +96,12 @@ bool serializeMatchInfo(const SingleFileStorage::MatchInfo& matchInfo, CWData& d
     {
         data.addChar(0);
     }
-    data.addChar(matchInfo.readNewest ? 1 : 0);
+    char flags = 0;
+    if(matchInfo.readNewest)
+        flags |= matchInfoFlagReadNewest;
+    if(matchInfo.checkProtected)
+        flags |= matchInfoFlagCheckProtected;
+    data.addChar(flags);
     data.addVarInt(matchInfo.ifMatch.size());
     for(const auto& s : matchInfo.ifMatch)
         data.addString2(s);
@@ -131,9 +140,10 @@ bool deserializeMatchInfo(CRData& data, SingleFileStorage::MatchInfo& matchInfo)
         b &= data.getStr2(&readFn);
         matchInfo.readFn = readFn;
     }
-    char readNewest;
-    b &= data.getChar(&readNewest);
-    matchInfo.readNewest = readNewest != 0;
+    char flags;
+    b &= data.getChar(&flags);
+    matchInfo.readNewest = (flags & matchInfoFlagReadNewest) != 0;
+    matchInfo.checkProtected = (flags & matchInfoFlagCheckProtected) != 0;
     int64_t ifMatchSize = 0;
     b &= data.getVarInt(&ifMatchSize);
     for(size_t i = 0; i < ifMatchSize; ++i)

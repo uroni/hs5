@@ -3,6 +3,15 @@ from pathlib import Path
 import pytest
 import os
 
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]):
+    if os.getenv("CI"):
+        return
+
+    skip_ci_only = pytest.mark.skip(reason="Only runs in CI (set CI=1 to run)")
+    for item in items:
+        if "ci_only" in item.keywords:
+            item.add_marker(skip_ci_only)
+
 @pytest.fixture(scope="session", autouse=True)
 def init_port(testrun_uid: str):
     port_path = Path(f"/tmp/hs5-ports-{testrun_uid}")

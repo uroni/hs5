@@ -244,6 +244,24 @@ public:
         std::string buf;
     };
 
+    struct PutObjectLockConfigurationData
+    {
+        enum class ParseState
+        {
+            Init,
+            InRoot,
+            InObjectLockEnabled,
+            Unknown,
+            Finished
+        };
+
+        ParseState parseState = ParseState::Init;
+        std::string objectLockEnabled;
+        bool hasRule = false;
+        // Depth of unknown/ignored elements below the root
+        int unknownDepth = 0;
+    };
+
     struct PutBucketCorsData
     {
         enum class ParseState
@@ -284,6 +302,7 @@ public:
     static std::optional<std::string> onModifyCallback(const std::string& fn, std::string md5sum, std::string md5sumParam);
     static std::optional<std::string> onModifyMetadataCallback(const std::string& fn, const std::string& md5sum, const std::string& param);
     static void onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride);
+    static bool hasLegalHold(const std::string_view md5sum);
     static void onAddReadingCallback(const std::string_view fn, const SingleFileStorage::SFragInfo& fragInfo);
 
     static std::string md5sumBinFromData(const std::string_view md5sumData);
@@ -328,6 +347,7 @@ private:
     void putBucketVersioning(proxygen::HTTPMessage& headers);
     void putBucketCors(proxygen::HTTPMessage& headers);
     void putObjectLegalHold(proxygen::HTTPMessage& headers);
+    void putObjectLockConfiguration(proxygen::HTTPMessage& headers);
     void optionsObject(proxygen::HTTPMessage& headers);
     void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const std::string_view bucketName);
     void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const buckets::BucketInfo& bucketInfo);
@@ -342,6 +362,7 @@ private:
     void finalizePutBucketVersioning();
     void finalizePutBucketCors();
     void finalizePutObjectLegalHold();
+    void finalizePutObjectLockConfiguration();
     std::string getEtagParsedMultipart(const std::string& md5sum);
     
     void readBodyThread(folly::EventBase *evb);
@@ -360,6 +381,9 @@ private:
     void stopChecks();
     void parseMatchInfo(proxygen::HTTPMessage& headers, const bool ifModifiedSince, const bool ifUnmodifiedSince);
     void parseSourceMatchInfo(proxygen::HTTPMessage& headers, SingleFileStorage::MatchInfo& matchInfo);
+    // Fail overwrite/delete of the current object if it is protected (legal hold).
+    // Only if object lock is enabled for the bucket. Call right before queueing the overwrite/delete.
+    void addProtectedCheck();
     int checkMatchInfo();
     void finalizePutObject(folly::EventBase *evb, const int64_t lastModified);
     
@@ -405,6 +429,8 @@ private:
     std::unique_ptr<ObjMetadata> objMetadata;
     std::unique_ptr<PostObjectData> postObjectData;
     std::unique_ptr<PutBucketCorsData> putBucketCorsData;
+    std::unique_ptr<PutObjectLockConfigurationData> putObjectLockConfigurationData;
+    bool createBucketObjectLockEnabled = false;
 
 	std::mutex extents_mutex;
 	std::condition_variable extents_cond;

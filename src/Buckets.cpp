@@ -56,7 +56,8 @@ void refreshBucketCache()
             .id = bucket.id,
             .created = std::chrono::seconds(bucket.created),
             .publicPerms = bucket.publicPerms,
-            .versioning = static_cast<VersioningState>(bucket.versioning)
+            .versioning = static_cast<VersioningState>(bucket.versioning),
+            .objectLockEnabled = bucket.objectLockEnabled != 0
         };
 
         const auto corsRules = dao.getCorsRules(bucket.id);
@@ -98,7 +99,7 @@ void refreshBucketCache()
     }   
 }
 
-int64_t addBucket(const std::string_view bucketName, bool failIfAlreadyExists)
+int64_t addBucket(const std::string_view bucketName, const bool failIfAlreadyExists, const bool objectLockEnabled)
 {
     DbDao dao;
 
@@ -119,10 +120,13 @@ int64_t addBucket(const std::string_view bucketName, bool failIfAlreadyExists)
         .id = id,
         .created = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()),
         .publicPerms = 0,
-        .versioning = VersioningState::Disabled
+        // Object lock requires versioning
+        .versioning = objectLockEnabled ? VersioningState::Enabled : VersioningState::Disabled,
+        .objectLockEnabled = objectLockEnabled
     };
 
-    dao.addBucket(id, std::string(bucketName), info.created.count());
+    dao.addBucket(id, std::string(bucketName), info.created.count(), 
+        static_cast<int>(info.versioning), info.objectLockEnabled ? 1 : 0);
 
     auto ins = buckets.insert(std::make_pair(std::string(bucketName), info));
     bucketNames.insert(std::make_pair(id, ins.first));
@@ -283,7 +287,45 @@ std::string versioningStateToStr(VersioningState state)
     return {};
 }
 
-bool setVersioning(const std::string_view bucketName, VersioningState versioningState)
+bool isObjectLockEnabled(int64_t bucketId)
+{
+    std::scoped_lock lock{mutex};
+
+    auto it = bucketNames.find(bucketId);
+    if(it==bucketNames.end())
+        return false;
+
+    return it->second->second.objectLockEnabled;
+}
+
+EnableObjectLockResult enableObjectLock(int64_t bucketId)
+{
+    DbDao dao;
+
+    std::scoped_lock lock{mutex};
+
+    auto it = bucketNames.find(bucketId);
+    if(it==bucketNames.end())
+        return EnableObjectLockResult::NotFound;
+
+    auto& bucketInfo = it->second->second;
+    if(bucketInfo.objectLockEnabled)
+        return EnableObjectLockResult::Ok;
+
+    if(bucketInfo.versioning != VersioningState::Enabled)
+        return EnableObjectLockResult::VersioningNotEnabled;
+
+    dao.setBucketObjectLockEnabled(1, bucketId);
+
+    if(dao.getDb().getLastChanges() != 1)
+        return EnableObjectLockResult::Error;
+
+    bucketInfo.objectLockEnabled = true;
+
+    return EnableObjectLockResult::Ok;
+}
+
+SetVersioningResult setVersioning(const std::string_view bucketName, VersioningState versioningState)
 {
     DbDao dao;
     
@@ -291,16 +333,20 @@ bool setVersioning(const std::string_view bucketName, VersioningState versioning
 
     auto it = buckets.find(std::string(bucketName));
     if(it==buckets.end())
-        return false;
+        return SetVersioningResult::NotFound;
+
+    // Versioning cannot be suspended once object lock is enabled
+    if(it->second.objectLockEnabled && versioningState != VersioningState::Enabled)
+        return SetVersioningResult::ObjectLockEnabled;
 
     dao.setBucketVersioning(static_cast<int>(versioningState), it->second.id);
 
     if(dao.getDb().getLastChanges() != 1)
-        return false;
+        return SetVersioningResult::Error;
 
     it->second.versioning = versioningState;
 
-    return true;
+    return SetVersioningResult::Ok;
 }
 
 bool validateCorsRule(BucketCorsRule& rule)

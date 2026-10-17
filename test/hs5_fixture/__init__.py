@@ -49,7 +49,7 @@ class Hs5Runner:
     manual_commit_list_consistent = True
     with_heaptrack = False
 
-    def __init__(self, workdir : Path, data_file_size_limit_mb: int, testrun_uid: str, perf: bool = False, data_file_alloc_chunk_size: Optional[int] = None, precheck_conditional_headers = True) -> None:
+    def __init__(self, workdir : Path, data_file_size_limit_mb: int, testrun_uid: str, perf: bool = False, data_file_alloc_chunk_size: Optional[int] = None, extra_args: list[str] = []) -> None:
         self._port = get_next_port(testrun_uid)
         self._workdir = workdir
         self._root_key = uuid.uuid4().hex
@@ -127,10 +127,9 @@ class Hs5Runner:
         if not perf:
             self.args.append("--wal_write_delay")
 
-        if not precheck_conditional_headers:
-            self.args.append("--nocheck_conditional_headers_before_upload")
-
         self.args.append("--enable_core_dumps")
+
+        self.args.extend(extra_args)
 
         self.start()
 
@@ -371,10 +370,34 @@ def hs5_large_small_alloc_chunksize(tmpdir: Path, testrun_uid: str):
         pass
 
 @pytest.fixture
+def hs5_modify_delay(tmpdir: Path, testrun_uid: str):
+    loc = tmpdir / uuid.uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(loc, data_file_size_limit_mb=100, testrun_uid=testrun_uid, extra_args=["--test_delay_before_modify_ms=2000"])
+    yield runner
+    runner.stop(cleanup=True, kill=False)
+    try:
+        rmtree(loc)
+    except:
+        pass
+
+@pytest.fixture
+def hs5_protected_check_delay(tmpdir: Path, testrun_uid: str):
+    loc = tmpdir / uuid.uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(loc, data_file_size_limit_mb=100, testrun_uid=testrun_uid, extra_args=["--test_delay_after_protected_check_ms=2000"])
+    yield runner
+    runner.stop(cleanup=True, kill=False)
+    try:
+        rmtree(loc)
+    except:
+        pass
+
+@pytest.fixture
 def hs5_no_precheck(tmpdir: Path, testrun_uid: str):
     loc = tmpdir / uuid.uuid4().hex
     loc.mkdir()
-    runner = Hs5Runner(loc, data_file_size_limit_mb=100, precheck_conditional_headers=False, testrun_uid=testrun_uid)
+    runner = Hs5Runner(loc, data_file_size_limit_mb=100, testrun_uid=testrun_uid, extra_args=["--nocheck_conditional_headers_before_upload"])
     yield runner
     runner.stop(cleanup=True, kill=False)
     try:

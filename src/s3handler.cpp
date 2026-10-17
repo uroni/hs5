@@ -67,6 +67,8 @@ DEFINE_string(host_override, "", "Override host for s3 requests");
 DEFINE_bool(pre_sync_commit, false, "Pre-sync data and index files before commit for potential performance gain");
 DEFINE_int64(commit_after_ms, 30000, "If manual commit is enabled, wait this amount of milliseconds before automatically committing. 0 means not commiting automatically at all.");
 DEFINE_bool(check_conditional_headers_before_upload, true, "Check conditional HTTP headers like If-Match before upload on PUT (for testing)");
+DEFINE_int32(test_delay_before_modify_ms, 0, "Sleep before queueing an object overwrite/delete (for testing)");
+DEFINE_int32(test_delay_after_protected_check_ms, 0, "Sleep after deciding if an object overwrite/delete needs a protected check and before queueing it (for testing)");
 DEFINE_int32(get_buffer_size, 1*1024*1024, "Buffer size to use for reading objects for GET requests");
 
 std::string hashSha256Hex(const std::string_view payload)
@@ -1235,6 +1237,84 @@ static void putObjectLegalHoldXmlCharData(void *userData,
     }
 }
 
+static void putObjectLockConfigurationXmlElementStart(void *userData,
+                                                const XML_Char *name,
+                                                const XML_Char **atts)
+{
+    auto data = reinterpret_cast<S3Handler::PutObjectLockConfigurationData*>(userData);
+
+    switch(data->parseState)
+    {
+    case S3Handler::PutObjectLockConfigurationData::ParseState::Init:
+        {
+            if(strcmp(name, "ObjectLockConfiguration")==0)
+                data->parseState = S3Handler::PutObjectLockConfigurationData::ParseState::InRoot;
+            else
+                data->parseState = S3Handler::PutObjectLockConfigurationData::ParseState::Unknown;
+        } break;
+    case S3Handler::PutObjectLockConfigurationData::ParseState::InRoot:
+        {
+            if(data->unknownDepth > 0)
+            {
+                ++data->unknownDepth;
+            }
+            else if(strcmp(name, "ObjectLockEnabled")==0)
+            {
+                data->parseState = S3Handler::PutObjectLockConfigurationData::ParseState::InObjectLockEnabled;
+            }
+            else
+            {
+                if(strcmp(name, "Rule")==0)
+                    data->hasRule = true;
+                ++data->unknownDepth;
+            }
+        } break;
+    case S3Handler::PutObjectLockConfigurationData::ParseState::InObjectLockEnabled:
+        {
+            data->parseState = S3Handler::PutObjectLockConfigurationData::ParseState::Unknown;
+        } break;
+    default:
+        break;
+    }
+}
+
+static void putObjectLockConfigurationXmlElementEnd(void *userData,
+                                               const XML_Char *name)
+{
+    auto data = reinterpret_cast<S3Handler::PutObjectLockConfigurationData*>(userData);
+
+    switch(data->parseState)
+    {
+    case S3Handler::PutObjectLockConfigurationData::ParseState::InRoot:
+        {
+            if(data->unknownDepth > 0)
+                --data->unknownDepth;
+            else if(strcmp(name, "ObjectLockConfiguration")==0)
+                data->parseState = S3Handler::PutObjectLockConfigurationData::ParseState::Finished;
+            else
+                data->parseState = S3Handler::PutObjectLockConfigurationData::ParseState::Unknown;
+        } break;
+    case S3Handler::PutObjectLockConfigurationData::ParseState::InObjectLockEnabled:
+        {
+            data->parseState = S3Handler::PutObjectLockConfigurationData::ParseState::InRoot;
+        } break;
+    default:
+        break;
+    }
+}
+
+static void putObjectLockConfigurationXmlCharData(void *userData,
+                                               const XML_Char *s, int len)
+{
+    auto data = reinterpret_cast<S3Handler::PutObjectLockConfigurationData*>(userData);
+
+    if(data->parseState == S3Handler::PutObjectLockConfigurationData::ParseState::InObjectLockEnabled &&
+        data->objectLockEnabled.size() < 100)
+    {
+        data->objectLockEnabled += std::string(s, len);
+    }
+}
+
 static void putBucketCorsXmlElementStart(void *userData,
                                                 const XML_Char *name,
                                                 const XML_Char **atts)
@@ -1427,7 +1507,10 @@ enum class S3ErrorCode
     ConditionalRequestConflict,
     BadDigest,
     MalformedXML,
-    MethodNotAllowed
+    MethodNotAllowed,
+    InvalidRequest,
+    InvalidBucketState,
+    NotImplemented
 };
 
 std::string_view s3errorCodeToStr(const S3ErrorCode code)
@@ -1462,6 +1545,12 @@ std::string_view s3errorCodeToStr(const S3ErrorCode code)
             return "MalformedXML";
         case S3ErrorCode::MethodNotAllowed:
             return "MethodNotAllowed";
+        case S3ErrorCode::InvalidRequest:
+            return "InvalidRequest";
+        case S3ErrorCode::InvalidBucketState:
+            return "InvalidBucketState";
+        case S3ErrorCode::NotImplemented:
+            return "NotImplemented";
         default:
             return "InternalError";
     }
@@ -1495,6 +1584,12 @@ std::string_view s3errorMsg(const S3ErrorCode code)
             return "The XML you provided was not well-formed or did not validate against our published schema.";
         case S3ErrorCode::MethodNotAllowed:
             return "The specified method is not allowed against this resource.";
+        case S3ErrorCode::InvalidRequest:
+            return "Invalid Request";
+        case S3ErrorCode::InvalidBucketState:
+            return "The request is not valid with the current state of the bucket.";
+        case S3ErrorCode::NotImplemented:
+            return "A header or query you provided implies functionality that is not implemented.";
         default:
             return "We encountered an internal error. Please try again.";
     }
@@ -2067,7 +2162,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         bool createBucket = false;
         const auto nextSlash = path.empty() ? std::string::npos : path.find('/', 1);
         const bool onlyBucketInPath = !path.empty() && (nextSlash==std::string::npos || nextSlash == path.size()-1) ;
-        if(onlyBucketInPath && (xid.empty() || xid == "CreateBucket" || xid == "PutBucketVersioning" || xid == "PutBucketCors") )
+        if(onlyBucketInPath && (xid.empty() || xid == "CreateBucket" || xid == "PutBucketVersioning" || xid == "PutBucketCors" || xid == "PutObjectLockConfiguration") )
         {
             createBucket = true;
             const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
@@ -2226,6 +2321,25 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             putBucketCors(*headers);
             return;
         }
+        else if(createBucket && headers->hasQueryParam("object-lock") && (xid.empty() || xid=="PutObjectLockConfiguration") )
+        {
+            const auto action = Action::PutBucketObjectLockConfiguration;
+
+            if(!checkSig(this, *headers, payload, resource, action, false, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
+                || ( currSigPtr != nullptr && currSigPtr->empty()))
+            {
+                XLOGF(INFO, "Unauthorized PutObjectLockConfiguration: {}", path);
+                ResponseBuilder(downstream_)
+                    .status(403, "Forbidden")
+                    .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
+                    .sendWithEOM();
+                return;
+            }
+
+            request_action = action;
+            putObjectLockConfiguration(*headers);
+            return;
+        }
         else if(!createBucket && headers->hasQueryParam("legal-hold") && (xid.empty() || xid=="PutObjectLegalHold") )
         {
             const auto action = Action::PutObjectLegalHold;
@@ -2273,6 +2387,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                     .sendWithEOM();
                 return;
             }
+
+            createBucketObjectLockEnabled = folly::trimWhitespace(
+                headers->getHeaders().getSingleOrEmpty("x-amz-bucket-object-lock-enabled")) == "true";
 
             request_action = Action::CreateBucket;
             return;
@@ -2362,6 +2479,10 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         }
         
         parseMatchInfo(*headers, false, false);
+
+        // Early check before upload. Decided again before queueing
+        if(!keyInfo.withVersioning())
+            addProtectedCheck();
 
         XLOGF(DBG0, "PutObject {} length {}", path, remaining);
 
@@ -2636,6 +2757,10 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             XML_SetCharacterDataHandler(xmlBody.parser, multiPartUploadXmlCharData);
 
             parseMatchInfo(*headers, false, false);
+
+            // Early check before upload. Decided again before queueing
+            if(!keyInfo.withVersioning())
+                addProtectedCheck();
 
             XLOGF(INFO, "Complete multi-part upload of {} uploadId {}", keyInfo.key, uploadId.id);
         }
@@ -4172,10 +4297,16 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                     {
                         evb->runInEventBaseThread([self = self]()
                                                 {
-                            ResponseBuilder(self->downstream_)
-                                .status(412, "Precondition Failed")
-                                .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", self->fullKeyPath(), ""))
-                                .sendWithEOM();
+                            if(self->matchInfo->isProtected)
+                                ResponseBuilder(self->downstream_)
+                                    .status(403, "Forbidden")
+                                    .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by legal hold", self->fullKeyPath(), ""))
+                                    .sendWithEOM();
+                            else
+                                ResponseBuilder(self->downstream_)
+                                    .status(412, "Precondition Failed")
+                                    .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", self->fullKeyPath(), ""))
+                                    .sendWithEOM();
                             std::lock_guard lock(self->extents_mutex);
                             self->finished_ = true;
                             self->extents_cond.notify_all(); });
@@ -4475,10 +4606,16 @@ void S3Handler::finalizeMultipartUpload()
                     {
                         evb->runInEventBaseThread([self = self]()
                                                 {
-                            ResponseBuilder(self->downstream_)
-                                .status(412, "Precondition Failed")
-                                .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", self->fullKeyPath(), ""))
-                                .sendWithEOM();
+                            if(self->matchInfo->isProtected)
+                                ResponseBuilder(self->downstream_)
+                                    .status(403, "Forbidden")
+                                    .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by legal hold", self->fullKeyPath(), ""))
+                                    .sendWithEOM();
+                            else
+                                ResponseBuilder(self->downstream_)
+                                    .status(412, "Precondition Failed")
+                                    .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", self->fullKeyPath(), ""))
+                                    .sendWithEOM();
                             self->finished_ = true; });
                         return;
                     }
@@ -4767,6 +4904,9 @@ void S3Handler::finalizeMultipartUpload()
                 const auto partFn = make_key({.key = self->keyInfo.key, .version = multiPartData->uploadId.id, 
                         .bucketId = partialUploadsBucketId});
 
+                if(!self->keyInfo.withVersioning())
+                    self->addProtectedCheck();
+
                 if(self->matchInfo)
                 {
                     if(self->keyInfo.withVersioning() && self->keyInfo.version != 0)
@@ -4799,10 +4939,16 @@ void S3Handler::finalizeMultipartUpload()
                 {
                     evb->runInEventBaseThread([self = self]()
                                               {
-                        ResponseBuilder(self->downstream_)
-                            .status(409, "Conflict")
-                            .body(s3errorXml(S3ErrorCode::ConditionalRequestConflict, "", self->fullKeyPath(), ""))
-                            .sendWithEOM();
+                        if(self->matchInfo->isProtected)
+                            ResponseBuilder(self->downstream_)
+                                .status(403, "Forbidden")
+                                .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by legal hold", self->fullKeyPath(), ""))
+                                .sendWithEOM();
+                        else
+                            ResponseBuilder(self->downstream_)
+                                .status(409, "Conflict")
+                                .body(s3errorXml(S3ErrorCode::ConditionalRequestConflict, "", self->fullKeyPath(), ""))
+                                .sendWithEOM();
                         self->finished_ = true; });
                     return;
                 }
@@ -4916,7 +5062,7 @@ void S3Handler::finalizeCreateBucket()
                     return;
                 }
 
-                const auto bucketId = buckets::addBucket(self->keyInfo.key, true);
+                const auto bucketId = buckets::addBucket(self->keyInfo.key, true, self->createBucketObjectLockEnabled);
 
                 if(bucketId < 0)
                 {
@@ -4967,7 +5113,21 @@ void S3Handler::finalizePutBucketVersioning()
                     return;
                 }
 
-                if(!buckets::setVersioning(self->keyInfo.key, versioningState.value()))
+                const auto setVersioningRes = buckets::setVersioning(self->keyInfo.key, versioningState.value());
+                if(setVersioningRes == buckets::SetVersioningResult::ObjectLockEnabled)
+                {
+                    XLOGF(INFO, "Cannot change versioning of bucket {} with object lock enabled", self->keyInfo.key);
+                    evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(409, "Conflict")
+                            .body(s3errorXml(S3ErrorCode::InvalidBucketState, "An Object Lock configuration is present on this bucket, so the versioning state cannot be changed.", self->fullKeyPath(), ""))
+                            .sendWithEOM();
+                        self->finished_ = true;
+                                              });
+                    return;
+                }
+                else if(setVersioningRes != buckets::SetVersioningResult::Ok)
                 {
                     XLOGF(ERR, "Failed to set bucket versioning for bucket {}", self->keyInfo.key);
                     evb->runInEventBaseThread([self = self]()
@@ -5032,6 +5192,77 @@ void S3Handler::finalizePutBucketCors()
         );
 }
 
+void S3Handler::finalizePutObjectLockConfiguration()
+{
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+    folly::getGlobalCPUExecutor()->add(
+            [self = this->self, evb]()
+            {
+                auto sendError = [&self, evb](const uint16_t code, const std::string& message, const S3ErrorCode errorCode, const std::string& errorMsg)
+                {
+                    evb->runInEventBaseThread([self = self, code, message, errorCode, errorMsg]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(code, message)
+                            .body(s3errorXml(errorCode, errorMsg, self->keyInfo.key, ""))
+                            .sendWithEOM();
+                        self->finished_ = true;
+                                              });
+                };
+
+                const auto& data = *self->putObjectLockConfigurationData;
+
+                if(data.parseState != PutObjectLockConfigurationData::ParseState::Finished ||
+                    folly::trimWhitespace(data.objectLockEnabled) != "Enabled")
+                {
+                    XLOGF(WARN, "Invalid object lock configuration for bucket {}", self->keyInfo.key);
+                    sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "");
+                    return;
+                }
+
+                if(data.hasRule)
+                {
+                    XLOGF(INFO, "Object lock default retention rule for bucket {} not supported", self->keyInfo.key);
+                    sendError(501, "Not Implemented", S3ErrorCode::NotImplemented, "Object lock default retention rules are not supported");
+                    return;
+                }
+
+                const auto bucketId = buckets::getBucket(self->keyInfo.key);
+                if(!bucketId)
+                {
+                    sendError(404, "Not found", S3ErrorCode::NoSuchBucket, "");
+                    return;
+                }
+
+                switch(buckets::enableObjectLock(*bucketId))
+                {
+                case buckets::EnableObjectLockResult::Ok:
+                    break;
+                case buckets::EnableObjectLockResult::NotFound:
+                    sendError(404, "Not found", S3ErrorCode::NoSuchBucket, "");
+                    return;
+                case buckets::EnableObjectLockResult::VersioningNotEnabled:
+                    sendError(409, "Conflict", S3ErrorCode::InvalidBucketState, "Versioning must be 'Enabled' on the bucket to apply a Object Lock configuration");
+                    return;
+                default:
+                    XLOGF(ERR, "Failed to enable object lock for bucket {}", self->keyInfo.key);
+                    sendError(500, "Internal error", S3ErrorCode::InternalError, "Failed to enable object lock");
+                    return;
+                }
+
+                XLOGF(INFO, "Enabled object lock for bucket {}", self->keyInfo.key);
+
+                evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(200, "OK")
+                            .sendWithEOM();
+                        self->finished_ = true;
+                });
+            }
+        );
+}
+
 void S3Handler::finalizePutObjectLegalHold()
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
@@ -5061,6 +5292,13 @@ void S3Handler::finalizePutObjectLegalHold()
                 }
 
                 const bool legalHold = statusStr == "ON";
+
+                if(!buckets::isObjectLockEnabled(self->keyInfo.bucketId))
+                {
+                    XLOGF(INFO, "Object lock not enabled for bucket of object {}", self->keyInfo.key);
+                    sendError(400, "Bad Request", S3ErrorCode::InvalidRequest, "Bucket is missing Object Lock Configuration");
+                    return;
+                }
 
                 std::string fn;
                 if(self->keyInfo.withVersioning() && self->keyInfo.version==0)
@@ -5201,6 +5439,7 @@ void S3Handler::deleteObjects()
                     {
                         objMatchInfo = *self->matchInfo;
                         objMatchInfo->match = false;
+                        objMatchInfo->isProtected = false;
                     }
 
                     int res;
@@ -5229,6 +5468,12 @@ void S3Handler::deleteObjects()
                     }
                     else
                     {
+                        if(buckets::isObjectLockEnabled(self->keyInfo.bucketId))
+                        {
+                            if(!objMatchInfo)
+                                objMatchInfo.emplace();
+                            objMatchInfo->checkProtected = true;
+                        }
                         res = self->sfs().del(currPath, SingleFileStorage::DelAction::Del, false, nullptr, objMatchInfo ? &*objMatchInfo : nullptr);
                     }
 
@@ -5239,7 +5484,15 @@ void S3Handler::deleteObjects()
 
                     if(res==0 || res==ENOENT)
                     {
-                        if(objMatchInfo && !objMatchInfo->match)
+                        if(objMatchInfo && objMatchInfo->isProtected)
+                        {
+                            resp += fmt::format("\t<Error>\n"
+                                "\t\t<Code>AccessDenied</Code>\n"
+                                "\t\t<Message>Object is protected by legal hold</Message>\n"
+                                "\t\t<Key>{}</Key>\n"
+                                "\t</Error>\n",  escapeXML(obj.key));
+                        }
+                        else if(objMatchInfo && !objMatchInfo->match)
                         {
                             resp += fmt::format("\t<Error>\n"
                                 "\t\t<Code>PreconditionFailed</Code>\n"
@@ -5438,16 +5691,30 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
             }
             else
             {
+                if(FLAGS_test_delay_before_modify_ms > 0)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_test_delay_before_modify_ms));
+
+                self->addProtectedCheck();
+
+                if(FLAGS_test_delay_after_protected_check_ms > 0)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_test_delay_after_protected_check_ms));
+
                 res = self->sfs().del(currPath, SingleFileStorage::DelAction::Del, false, nullptr, self->matchInfo.get());
             }
 
             if(res==0 && self->matchInfo && !self->matchInfo->match)
             {
                  evb->runInEventBaseThread([self = self, res]()                                            {
-                        ResponseBuilder(self->downstream_)
-                            .status(412, "Precondition Failed")
-                            .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", self->fullKeyPath(), ""))
-                            .sendWithEOM();
+                        if(self->matchInfo->isProtected)
+                            ResponseBuilder(self->downstream_)
+                                .status(403, "Forbidden")
+                                .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by legal hold", self->fullKeyPath(), ""))
+                                .sendWithEOM();
+                        else
+                            ResponseBuilder(self->downstream_)
+                                .status(412, "Precondition Failed")
+                                .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", self->fullKeyPath(), ""))
+                                .sendWithEOM();
                         self->finished_ = true;
                                             });
                 return;
@@ -5545,6 +5812,26 @@ void S3Handler::putObjectLegalHold(proxygen::HTTPMessage& headers)
 
     XML_SetElementHandler(xmlBody.parser, putObjectLegalHoldXmlElementStart, putObjectLegalHoldXmlElementEnd);
     XML_SetCharacterDataHandler(xmlBody.parser, putObjectLegalHoldXmlCharData);
+}
+
+void S3Handler::putObjectLockConfiguration(proxygen::HTTPMessage& headers)
+{
+    xmlBody.init();
+    if(xmlBody.parser == nullptr)
+    {
+        ResponseBuilder(downstream_)
+            .status(500, "Internal error")
+            .body(s3errorXml(S3ErrorCode::InternalError, "Could not init XML parser", keyInfo.key, ""))
+            .sendWithEOM();
+        return;
+    }
+
+    putObjectLockConfigurationData = std::make_unique<PutObjectLockConfigurationData>();
+
+    XML_SetUserData(xmlBody.parser, putObjectLockConfigurationData.get());
+
+    XML_SetElementHandler(xmlBody.parser, putObjectLockConfigurationXmlElementStart, putObjectLockConfigurationXmlElementEnd);
+    XML_SetCharacterDataHandler(xmlBody.parser, putObjectLockConfigurationXmlCharData);
 }
 
 void S3Handler::optionsObject(proxygen::HTTPMessage& headers)
@@ -7010,7 +7297,8 @@ void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
         request_action == Action::DeleteObjects ||
         request_action == Action::PutBucketVersioning ||
         request_action == Action::PutBucketCors ||
-        request_action == Action::PutObjectLegalHold)
+        request_action == Action::PutObjectLegalHold ||
+        request_action == Action::PutBucketObjectLockConfiguration)
     {
         if(payloadHash)
             payloadHash->update(body->data(), body->length());
@@ -7379,6 +7667,16 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
     // TODO perf: With match info set it has to wait for the queue anyway, so we might as well link the commit if we want one.
     // Commit needs to happen after the parts update
 
+    if(request_action != Action::PutObjectPart &&
+        request_action != Action::UploadPartCopy &&
+        !keyInfo.withVersioning())
+    {
+        if(FLAGS_test_delay_before_modify_ms > 0)
+            std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_test_delay_before_modify_ms));
+
+        addProtectedCheck();
+    }
+
     if(matchInfo && keyInfo.version != 0)
     {
         matchInfo->readFn = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
@@ -7408,16 +7706,22 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         sfs().free_extents(extents);
         extents.clear();
 
-        XLOGF(WARN, "Object {} match condition not met. Returning 409 ", keyInfo.key);
+        XLOGF(WARN, "Object {} match condition not met (protected: {}). Returning error", keyInfo.key, matchInfo->isProtected);
         evb->runInEventBaseThread([ this]()
                             {           
                 if(finished_)
                     return;
                 finished_ = true;
-                ResponseBuilder(downstream_)
-                    .status(409 , "ConditionalRequestConflict")
-                    .body(s3errorXml(S3ErrorCode::ConditionalRequestConflict, "", fullKeyPath(), ""))
-                    .sendWithEOM();
+                if(matchInfo->isProtected)
+                    ResponseBuilder(downstream_)
+                        .status(403, "Forbidden")
+                        .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by legal hold", fullKeyPath(), ""))
+                        .sendWithEOM();
+                else
+                    ResponseBuilder(downstream_)
+                        .status(409 , "ConditionalRequestConflict")
+                        .body(s3errorXml(S3ErrorCode::ConditionalRequestConflict, "", fullKeyPath(), ""))
+                        .sendWithEOM();
                     });
         return;
     }
@@ -7608,6 +7912,14 @@ void S3Handler::onEOM() noexcept
             return;
 
         finalizePutObjectLegalHold();
+        return;
+    }
+    else if(request_action == Action::PutBucketObjectLockConfiguration)
+    {
+        if(finished_)
+            return;
+
+        finalizePutObjectLockConfiguration();
         return;
     }
 }
@@ -7911,6 +8223,37 @@ void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const S
             matchInfo.match = false;
         }
     }
+
+    if(matchInfo.checkProtected)
+    {
+        matchInfo.isProtected = hasLegalHold(fragInfo.md5sum);
+        if(matchInfo.isProtected)
+            matchInfo.match = false;
+    }
+}
+
+bool S3Handler::hasLegalHold(const std::string_view md5sum)
+{
+    CRData rdata(md5sum.data(), md5sum.size());
+    int64_t itype;
+    if(!rdata.getVarInt(&itype))
+        return false;
+
+    const auto baseType = itype & ~metadata_known_flags;
+    if(baseType != metadata_object && baseType != metadata_multipart_object)
+        return false;
+
+    return (itype & metadata_flag_with_legal_hold) != 0;
+}
+
+void S3Handler::addProtectedCheck()
+{
+    if(!buckets::isObjectLockEnabled(keyInfo.bucketId))
+        return;
+
+    if(!matchInfo)
+        matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
+    matchInfo->checkProtected = true;
 }
 
 void S3Handler::parseMatchInfo(proxygen::HTTPMessage& headers, const bool ifModifiedSince, const bool ifUnmodifiedSince)

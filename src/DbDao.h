@@ -59,6 +59,7 @@ class DbDao
 	sqlgen::DatabaseQuery _getBucketPermission;
 	sqlgen::DatabaseQuery _setBucketPublicPerms;
 	sqlgen::DatabaseQuery _setBucketVersioning;
+	sqlgen::DatabaseQuery _setBucketObjectLockEnabled;
 	sqlgen::DatabaseQuery _addCorsRule;
 	sqlgen::DatabaseQuery _addCorsAllowedOrigin;
 	sqlgen::DatabaseQuery _addCorsAllowedMethod;
@@ -118,6 +119,7 @@ public:
 		int64_t created;
 		int publicPerms;
 		int versioning;
+		int objectLockEnabled;
 	};
 	struct BucketPermission
 	{
@@ -227,7 +229,7 @@ public:
 	std::vector<AccessKey> getAccessKeysOfUser(int64_t user_id);
 	void removeAccessKey(int64_t id);
 	std::vector<Bucket> getBuckets();
-	void addBucket(int64_t id, const std::string& name, int64_t created);
+	void addBucket(int64_t id, const std::string& name, int64_t created, int versioning, int objectLockEnabled);
 	int64_t getMaxBucketId();
 	void deleteBucket(int64_t id);
 	std::vector<PolicyStatement> getPolicyStatements(int64_t policy_id);
@@ -256,6 +258,7 @@ public:
 	std::optional<BucketPermission> getBucketPermission(int64_t id);
 	void setBucketPublicPerms(int publicPerms, int64_t id);
 	void setBucketVersioning(int versioning, int64_t id);
+	void setBucketObjectLockEnabled(int objectLockEnabled, int64_t id);
 	std::optional<int64_t> addCorsRule(int64_t bucket_id, int max_age_seconds, const std::string& cors_id);
 	std::optional<int64_t> addCorsAllowedOrigin(int64_t bucket_cors_id, const std::string& allowed_origin);
 	std::optional<int64_t> addCorsAllowedMethod(int64_t bucket_cors_id, const std::string& allowed_method);
