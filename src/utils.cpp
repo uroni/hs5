@@ -89,7 +89,9 @@ std::string format_last_modified(const std::chrono::system_clock::time_point las
     const auto lastModifiedTp = std::chrono::system_clock::to_time_t(lastModified);
 
     char datebuf[sizeof("2011-10-08T07:07:09Z")];
-    std::strftime(datebuf, sizeof(datebuf), "%FT%TZ", std::gmtime(&lastModifiedTp));
+    std::tm tm;
+    gmtime_r(&lastModifiedTp, &tm);
+    std::strftime(datebuf, sizeof(datebuf), "%FT%TZ", &tm);
     return datebuf;
 }
 
@@ -99,7 +101,9 @@ std::string format_last_modified_rfc1123(const int64_t lastModified)
     const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(lastModified));
 
     char datebuf[sizeof("Fri, 08 Oct 2011 07:07:09 GMT")];
-    std::strftime(datebuf, sizeof(datebuf), "%a, %d %b %Y %H:%M:%S GMT", std::gmtime(&lastModifiedTp));
+    std::tm tm;
+    gmtime_r(&lastModifiedTp, &tm);
+    std::strftime(datebuf, sizeof(datebuf), "%a, %d %b %Y %H:%M:%S GMT", &tm);
     return datebuf;
 }
 
@@ -108,7 +112,9 @@ std::string format_last_modified_rfc1123(const std::chrono::system_clock::time_p
     const auto lastModifiedTp = std::chrono::system_clock::to_time_t(lastModified);
 
     char datebuf[sizeof("Fri, 08 Oct 2011 07:07:09 GMT")];
-    std::strftime(datebuf, sizeof(datebuf), "%a, %d %b %Y %H:%M:%S GMT", std::gmtime(&lastModifiedTp));
+    std::tm tm;
+    gmtime_r(&lastModifiedTp, &tm);
+    std::strftime(datebuf, sizeof(datebuf), "%a, %d %b %Y %H:%M:%S GMT", &tm);
     return datebuf;
 }
 

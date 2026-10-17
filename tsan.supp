@@ -1,0 +1,3 @@
+# ThreadSanitizer suppressions
+# libevent unconditionally writes this flag from every event loop thread (event_debug_note_*). Harmless.
+race:event_debug_mode_too_late

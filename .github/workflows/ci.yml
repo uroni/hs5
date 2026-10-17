@@ -192,7 +192,7 @@ jobs:
         if: matrix.variant == 'tsan'
         env:
           HS5_BINARY: builds/ninja-multi-vcpkg-tsan/RelWithDebInfo/hs5
-          TSAN_OPTIONS: "halt_on_error=1:second_deadlock_stack=1"
+          TSAN_OPTIONS: "halt_on_error=1:second_deadlock_stack=1:suppressions=${{ github.workspace }}/tsan.supp"
         with:
           emoji: false
           custom-arguments: -p no:sugar -p no:threadexception --benchmark-skip test --timeout=1200 -n auto
