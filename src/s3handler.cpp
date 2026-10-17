@@ -4490,13 +4490,26 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                     return;
                 }
 
-                std::lock_guard lock(self->extents_mutex);
-                
-                if(!res.extents.empty())
-                    self->extents = std::move(res.extents);
+                bool freeExtents = false;
+                {
+                    std::lock_guard lock(self->extents_mutex);
+                    if(!self->finished_)
+                    {
+                        if(!res.extents.empty())
+                            self->extents = std::move(res.extents);
 
-                self->extentsInitialized = true;
-                self->extents_cond.notify_all();
+                        self->extentsInitialized = true;
+                        self->extents_cond.notify_all();
+                    }
+                    else
+                    {
+                        freeExtents = true;
+                    }
+                }
+
+                // Request finished while preparing (e.g. onError)
+                if(freeExtents && !res.extents.empty())
+                    self->sfs().free_extents(res.extents);
             });
 }
 
@@ -4618,10 +4631,24 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                 if(!res.extents.empty())
                     XLOGF(INFO, "Write object prepare done partNumber {} size {} ext offset={} len={}", partNumber, self->put_remaining.load(std::memory_order_relaxed), res.extents[0].data_file_offset, res.extents[0].len);
 
-                std::lock_guard lock(self->extents_mutex);
-                self->extents = std::move(res.extents);
-                self->extentsInitialized = true;
-                self->extents_cond.notify_all();
+                bool freeExtents = false;
+                {
+                    std::lock_guard lock(self->extents_mutex);
+                    if(!self->finished_)
+                    {
+                        self->extents = std::move(res.extents);
+                        self->extentsInitialized = true;
+                        self->extents_cond.notify_all();
+                    }
+                    else
+                    {
+                        freeExtents = true;
+                    }
+                }
+
+                // Request finished while preparing (e.g. onError). onBodyCPU already gave up, so free here
+                if(freeExtents && !res.extents.empty())
+                    self->sfs().free_extents(res.extents);
             });
 }
 
@@ -9460,13 +9487,26 @@ void S3Handler::postObject()
                     return;
                 }
 
-                std::lock_guard lock(self->extents_mutex);
-                
-                if(!res.extents.empty())
-                    self->extents = std::move(res.extents);
+                bool freeExtents = false;
+                {
+                    std::lock_guard lock(self->extents_mutex);
+                    if(!self->finished_)
+                    {
+                        if(!res.extents.empty())
+                            self->extents = std::move(res.extents);
 
-                self->extentsInitialized = true;
-                self->extents_cond.notify_all();
+                        self->extentsInitialized = true;
+                        self->extents_cond.notify_all();
+                    }
+                    else
+                    {
+                        freeExtents = true;
+                    }
+                }
+
+                // Request finished while preparing (e.g. onError). onBodyCPU already gave up, so free here
+                if(freeExtents && !res.extents.empty())
+                    self->sfs().free_extents(res.extents);
             }
         );
 }
