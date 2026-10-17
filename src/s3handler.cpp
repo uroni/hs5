@@ -1609,7 +1609,8 @@ enum class S3ErrorCode
     MethodNotAllowed,
     InvalidRequest,
     InvalidBucketState,
-    NotImplemented
+    NotImplemented,
+    ObjectLockConfigurationNotFoundError
 };
 
 std::string_view s3errorCodeToStr(const S3ErrorCode code)
@@ -1650,6 +1651,8 @@ std::string_view s3errorCodeToStr(const S3ErrorCode code)
             return "InvalidBucketState";
         case S3ErrorCode::NotImplemented:
             return "NotImplemented";
+        case S3ErrorCode::ObjectLockConfigurationNotFoundError:
+            return "ObjectLockConfigurationNotFoundError";
         default:
             return "InternalError";
     }
@@ -1689,6 +1692,8 @@ std::string_view s3errorMsg(const S3ErrorCode code)
             return "The request is not valid with the current state of the bucket.";
         case S3ErrorCode::NotImplemented:
             return "A header or query you provided implies functionality that is not implemented.";
+        case S3ErrorCode::ObjectLockConfigurationNotFoundError:
+            return "Object Lock configuration does not exist for this bucket";
         default:
             return "We encountered an internal error. Please try again.";
     }
@@ -2055,6 +2060,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const auto versions = headers->hasQueryParam("versions");
             const auto versioning = headers->hasQueryParam("versioning");
             const auto cors = headers->hasQueryParam("cors");
+            const auto objectLock = headers->hasQueryParam("object-lock");
 
             const auto bucketName = header_path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
 
@@ -2063,7 +2069,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const auto action = bucketName.empty() ? Action::ListBuckets : 
                     (location ? Action::GetBucketLocation : (partial ? Action::ListMultipartUploads : (versions ? Action::ListObjectVersions : 
                         (versioning ? Action::GetBucketVersioning : 
-                            (cors ? Action::GetBucketCors : Action::ListObjects)))));
+                            (cors ? Action::GetBucketCors : 
+                                (objectLock ? Action::GetBucketObjectLockConfiguration : Action::ListObjects))))));
 
             const auto resource = bucketName.empty() ? std::string() : fmt::format("arn:aws:s3:::{}", bucketName);
             auto accessKey = checkSig(this, *headers, "", resource, action, true);
@@ -2096,6 +2103,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 XLOGF(INFO, "Get bucket versioning {}", bucketName);
             else if(action == Action::GetBucketCors)
                 XLOGF(INFO, "Get bucket CORS {}", bucketName);
+            else if(action == Action::GetBucketObjectLockConfiguration)
+                XLOGF(INFO, "Get bucket object lock configuration {}", bucketName);
             else
                 XLOGF(INFO, "List bucket {}", bucketName);
 
@@ -2107,6 +2116,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 getBucketVersioning(*headers, std::string(bucketName));
             else if(action == Action::GetBucketCors)
                 getBucketCors(*headers, std::string(bucketName));
+            else if(action == Action::GetBucketObjectLockConfiguration)
+                getBucketObjectLockConfiguration(*headers, std::string(bucketName));
             else
                 listObjects(*headers, std::string(bucketName));
             return;
@@ -3285,6 +3296,34 @@ void S3Handler::getBucketVersioning(proxygen::HTTPMessage& headers, const std::s
                                 "</VersioningConfiguration>", buckets::versioningStateToStr(bucketInfo.versioning)))
                             .sendWithEOM();
 
+}
+
+void S3Handler::getBucketObjectLockConfiguration(proxygen::HTTPMessage& headers, const std::string& bucket)
+{
+    const auto bucketInfoOpt = buckets::getBucketInfo(bucket);
+    if(!bucketInfoOpt)
+    {
+        responseBuilderWithCors(404, "Not found")
+                            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucket, ""))
+                            .sendWithEOM();
+        return;
+    }
+
+    if(!bucketInfoOpt->objectLockEnabled)
+    {
+        responseBuilderWithCors(404, "Not found")
+                            .body(s3errorXml(S3ErrorCode::ObjectLockConfigurationNotFoundError, "", bucket, ""))
+                            .sendWithEOM();
+        return;
+    }
+
+    responseBuilderWithCors(200, "OK")
+                            .header(proxygen::HTTP_HEADER_CONTENT_TYPE, "application/xml")
+                            .body("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                                "<ObjectLockConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n"
+                                "\t<ObjectLockEnabled>Enabled</ObjectLockEnabled>\n"
+                                "</ObjectLockConfiguration>")
+                            .sendWithEOM();
 }
 
 void S3Handler::getBucketCors(proxygen::HTTPMessage& headers, const std::string& bucket)

@@ -1725,6 +1725,10 @@ def test_object_lock_configuration(hs5: Hs5Runner):
 
     lock_config = {"ObjectLockEnabled": "Enabled"}
 
+    # No object lock configuration yet
+    assert_client_error(lambda: s3_client.get_object_lock_configuration(Bucket=bucket), "ObjectLockConfigurationNotFoundError")
+    assert_client_error(lambda: s3_client.get_object_lock_configuration(Bucket="doesnotexist"), "NoSuchBucket")
+
     # Object lock requires versioning
     assert_client_error(lambda: s3_client.put_object_lock_configuration(Bucket=bucket, ObjectLockConfiguration=lock_config), "InvalidBucketState")
 
@@ -1737,6 +1741,7 @@ def test_object_lock_configuration(hs5: Hs5Runner):
     s3_client.put_object_lock_configuration(Bucket=bucket, ObjectLockConfiguration=lock_config)
     # Enabling again is fine
     s3_client.put_object_lock_configuration(Bucket=bucket, ObjectLockConfiguration=lock_config)
+    assert s3_client.get_object_lock_configuration(Bucket=bucket)["ObjectLockConfiguration"] == lock_config
 
     v1 = s3_client.put_object(Bucket=bucket, Key="hold.txt", Body=b"abc")["VersionId"]
     s3_client.put_object_legal_hold(Bucket=bucket, Key="hold.txt", VersionId=v1, LegalHold={"Status": "ON"})
@@ -1750,10 +1755,12 @@ def test_object_lock_configuration(hs5: Hs5Runner):
 
     assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="hold.txt", VersionId=v1), "AccessDenied")
     assert_client_error(lambda: s3_client.put_bucket_versioning(Bucket=bucket, VersioningConfiguration={"Status": "Suspended"}), "InvalidBucketState")
+    assert s3_client.get_object_lock_configuration(Bucket=bucket)["ObjectLockConfiguration"] == lock_config
 
     # Bucket created with object lock enabled has versioning enabled
     lock_bucket = create_object_lock_bucket(s3_client, "lockbucket")
     assert s3_client.get_bucket_versioning(Bucket=lock_bucket)["Status"] == "Enabled"
+    assert s3_client.get_object_lock_configuration(Bucket=lock_bucket)["ObjectLockConfiguration"] == lock_config
     s3_client.put_object(Bucket=lock_bucket, Key="hold.txt", Body=b"abc")
     s3_client.put_object_legal_hold(Bucket=lock_bucket, Key="hold.txt", LegalHold={"Status": "ON"})
 

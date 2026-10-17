@@ -364,6 +364,7 @@ private:
     void getBucketLocation(proxygen::HTTPMessage& headers, const std::string& bucket);
     void getBucketVersioning(proxygen::HTTPMessage& headers, const std::string& bucket);
     void getBucketCors(proxygen::HTTPMessage& headers, const std::string& bucket);
+    void getBucketObjectLockConfiguration(proxygen::HTTPMessage& headers, const std::string& bucket);
     void getCommitObject(proxygen::HTTPMessage& headers);
     void getObject(proxygen::HTTPMessage& headers, const std::string& accessKey);
     void getObjectAttributes(proxygen::HTTPMessage& headers, const std::string& accessKey);

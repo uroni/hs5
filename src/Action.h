@@ -60,7 +60,8 @@ enum class Action
     PutBucketObjectLockConfiguration=53,
     PutObjectRetention=54,
     BypassGovernanceRetention=55,
-    LastDummyAction=56,
+    GetBucketObjectLockConfiguration=56,
+    LastDummyAction=57,
 };
 
 Action actionFromStr(const std::string_view action);
