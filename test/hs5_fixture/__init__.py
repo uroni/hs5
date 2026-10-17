@@ -159,9 +159,10 @@ class Hs5Runner:
         if not perf and os.environ.get("ENABLE_DB_SYNC") != "1":
             self.args.append("--test_db_no_sync")
 
-        self.args.append(
-            f"--http_worker_threads={os.environ.get('HS5_HTTP_WORKER_THREADS', '4')}"
-        )
+        if not perf:
+            self.args.append(
+                f"--http_worker_threads={os.environ.get('HS5_HTTP_WORKER_THREADS', '4')}"
+            )
 
         self.args.extend(extra_args)
 
