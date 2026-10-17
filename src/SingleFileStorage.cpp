@@ -5321,6 +5321,14 @@ bool SingleFileStorage::freespace_check(MDB_txn* source_txn, MDB_txn* freespace_
 {
 	XLOGF(INFO, "Freespace check sfs {} started...", db_path);
 
+	int64_t curr_data_file_offset;
+	int64_t curr_data_file_offset_end;
+	{
+		std::scoped_lock lock(datafileoffset_mutex);
+		curr_data_file_offset = data_file_offset;
+		curr_data_file_offset_end = data_file_offset_end;
+	}
+
 	THREAD_ID tid = gettid();
 
 	MDB_val tkey;
@@ -5688,18 +5696,18 @@ bool SingleFileStorage::freespace_check(MDB_txn* source_txn, MDB_txn* freespace_
 		ret = false;
 	}
 
-	if(data_file_offset_end>0)
+	if(curr_data_file_offset_end>0)
 	{
-		int64_t curr_end = (std::min)(data_size, data_file_offset_end);
-		int64_t start_bit = data_file_offset/4096;
-		int64_t len_bits = div_up(curr_end - data_file_offset, 4096);
+		int64_t curr_end = (std::min)(data_size, curr_data_file_offset_end);
+		int64_t start_bit = curr_data_file_offset/4096;
+		int64_t len_bits = div_up(curr_end - curr_data_file_offset, 4096);
 
 		XLOGF(INFO, "Setting bitmap using data_file_offset+end offset={} len={} data_size={} data_file_offset_end={}",
-			 data_file_offset, curr_end - data_file_offset, data_size, data_file_offset_end);
+			 curr_data_file_offset, curr_end - curr_data_file_offset, data_size, curr_data_file_offset_end);
 
 		if(bmap.get_range(start_bit, start_bit + len_bits))
 		{
-			XLOG(ERR) << "Range of data_file_offset+end already set offset=" << std::to_string(data_file_offset) << " len=" << std::to_string(curr_end - data_file_offset);
+			XLOG(ERR) << "Range of data_file_offset+end already set offset=" << std::to_string(curr_data_file_offset) << " len=" << std::to_string(curr_end - curr_data_file_offset);
 			ret=false;
 		}
 
