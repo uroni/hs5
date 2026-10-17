@@ -383,6 +383,9 @@ private:
     // Returns if governance retention should be bypassed (requested via header).
     // Sends error response and returns std::nullopt if bypass is requested but not authorized
     std::optional<bool> checkBypassGovernance(proxygen::HTTPMessage& headers, const std::string_view resource, const std::string_view accessKey);
+    // Parses x-amz-object-lock-* headers of object writes into objMetadata.
+    // Sends error response and returns false if headers are invalid or not authorized
+    bool parseObjectLockHeaders(proxygen::HTTPMessage& headers, const std::string_view resource, const std::string_view accessKey);
     void optionsObject(proxygen::HTTPMessage& headers);
     void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const std::string_view bucketName);
     void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const buckets::BucketInfo& bucketInfo);

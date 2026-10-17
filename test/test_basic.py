@@ -2391,6 +2391,124 @@ def test_object_lock_copy_does_not_inherit(hs5: Hs5Runner):
     s3_client.delete_object(Bucket=other_bucket, Key="dst.txt")
 
 
+def test_object_lock_headers_put_object(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    # Object lock headers require object lock
+    assert_client_error(lambda: s3_client.put_object(Bucket=hs5.testbucketname(), Key="ret.txt", Body=b"abc",
+                                                     ObjectLockLegalHoldStatus="ON"), "InvalidRequest")
+
+    bucket = create_object_lock_bucket(s3_client, "lockbucket")
+
+    # Mode and retain until date have to be supplied together
+    assert_client_error(lambda: s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc",
+                                                     ObjectLockMode="GOVERNANCE"), "InvalidArgument")
+    assert_client_error(lambda: s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc",
+                                                     ObjectLockRetainUntilDate=utc_in(3600)), "InvalidArgument")
+    # Retain until date has to be in the future
+    assert_client_error(lambda: s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc",
+                                                     ObjectLockMode="GOVERNANCE", ObjectLockRetainUntilDate=utc_in(-60)), "InvalidArgument")
+    assert "Versions" not in s3_client.list_object_versions(Bucket=bucket, Prefix="ret.txt")
+
+    retain_until = utc_in(3600).replace(microsecond=0)
+    v1 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc", Metadata={"foo": "bar"},
+                              ObjectLockMode="COMPLIANCE", ObjectLockRetainUntilDate=retain_until,
+                              ObjectLockLegalHoldStatus="ON")["VersionId"]
+    v2 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"def",
+                              ObjectLockMode="GOVERNANCE", ObjectLockRetainUntilDate=retain_until)["VersionId"]
+    v3 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"ghi", ObjectLockLegalHoldStatus="OFF")["VersionId"]
+
+    hs5.restart()
+    s3_client = hs5.get_s3_client()
+
+    obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)
+    assert obj_info["ObjectLockMode"] == "COMPLIANCE"
+    assert obj_info["ObjectLockRetainUntilDate"] == retain_until
+    assert obj_info["ObjectLockLegalHoldStatus"] == "ON"
+    assert obj_info["Metadata"] == {"foo": "bar"}
+
+    obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v2)
+    assert obj_info["ObjectLockMode"] == "GOVERNANCE"
+    assert obj_info["ObjectLockRetainUntilDate"] == retain_until
+    assert "ObjectLockLegalHoldStatus" not in obj_info
+
+    assert_no_object_lock(s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v3))
+
+    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1,
+                                                        BypassGovernanceRetention=True), "AccessDenied")
+    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v2), "AccessDenied")
+    s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v2, BypassGovernanceRetention=True)
+    s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v3)
+
+
+def test_object_lock_headers_multipart(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    assert_client_error(lambda: s3_client.create_multipart_upload(Bucket=hs5.testbucketname(), Key="mp.txt",
+                                                                  ObjectLockLegalHoldStatus="ON"), "InvalidRequest")
+
+    bucket = create_object_lock_bucket(s3_client, "lockbucket")
+
+    retain_until = utc_in(3600).replace(microsecond=0)
+    upload_id = s3_client.create_multipart_upload(Bucket=bucket, Key="mp.txt", ContentType="text/plain",
+                                                  ObjectLockMode="GOVERNANCE", ObjectLockRetainUntilDate=retain_until,
+                                                  ObjectLockLegalHoldStatus="ON")["UploadId"]
+    part1 = os.urandom(5*1024*1024)
+    part2 = os.urandom(1024)
+    etag1 = s3_client.upload_part(Bucket=bucket, Key="mp.txt", UploadId=upload_id, PartNumber=1, Body=part1)["ETag"]
+    etag2 = s3_client.upload_part(Bucket=bucket, Key="mp.txt", UploadId=upload_id, PartNumber=2, Body=part2)["ETag"]
+    s3_client.complete_multipart_upload(Bucket=bucket, Key="mp.txt", UploadId=upload_id,
+                                        MultipartUpload={"Parts": [{"PartNumber": 1, "ETag": etag1},
+                                                                   {"PartNumber": 2, "ETag": etag2}]})
+    version_id = s3_client.list_object_versions(Bucket=bucket, Prefix="mp.txt")["Versions"][0]["VersionId"]
+
+    obj = s3_client.get_object(Bucket=bucket, Key="mp.txt", VersionId=version_id)
+    assert obj["ObjectLockMode"] == "GOVERNANCE"
+    assert obj["ObjectLockRetainUntilDate"] == retain_until
+    assert obj["ObjectLockLegalHoldStatus"] == "ON"
+    assert obj["ContentType"] == "text/plain"
+    assert obj["Body"].read() == part1 + part2
+
+    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="mp.txt", VersionId=version_id,
+                                                        BypassGovernanceRetention=True), "AccessDenied")
+
+    # Aborting a multipart upload with object lock headers works
+    upload_id = s3_client.create_multipart_upload(Bucket=bucket, Key="mp2.txt", ObjectLockLegalHoldStatus="ON",
+                                                  ObjectLockMode="COMPLIANCE", ObjectLockRetainUntilDate=retain_until)["UploadId"]
+    s3_client.upload_part(Bucket=bucket, Key="mp2.txt", UploadId=upload_id, PartNumber=1, Body=b"abc")
+    s3_client.abort_multipart_upload(Bucket=bucket, Key="mp2.txt", UploadId=upload_id)
+    assert "Uploads" not in s3_client.list_multipart_uploads(Bucket=bucket)
+    assert "Versions" not in s3_client.list_object_versions(Bucket=bucket, Prefix="mp2.txt")
+
+
+def test_object_lock_headers_copy_object(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    bucket = create_object_lock_bucket(s3_client, "lockbucket")
+
+    s3_client.put_object(Bucket=bucket, Key="src.txt", Body=b"abc", Metadata={"foo": "bar"})
+
+    retain_until = utc_in(3600).replace(microsecond=0)
+    for directive in ["COPY", "REPLACE"]:
+        key = f"dst-{directive}.txt"
+        version_id = s3_client.copy_object(Bucket=bucket, Key=key, CopySource={"Bucket": bucket, "Key": "src.txt"},
+                                           MetadataDirective=directive, ObjectLockMode="GOVERNANCE",
+                                           ObjectLockRetainUntilDate=retain_until, ObjectLockLegalHoldStatus="ON")["VersionId"]
+        obj_info = s3_client.head_object(Bucket=bucket, Key=key, VersionId=version_id)
+        assert obj_info["ObjectLockMode"] == "GOVERNANCE"
+        assert obj_info["ObjectLockRetainUntilDate"] == retain_until
+        assert obj_info["ObjectLockLegalHoldStatus"] == "ON"
+        if directive == "COPY":
+            assert obj_info["Metadata"] == {"foo": "bar"}
+        assert s3_client.get_object(Bucket=bucket, Key=key, VersionId=version_id)["Body"].read() == b"abc"
+        assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key=key, VersionId=version_id,
+                                                            BypassGovernanceRetention=True), "AccessDenied")
+
+    # Copy into bucket without object lock
+    assert_client_error(lambda: s3_client.copy_object(Bucket=hs5.testbucketname(), Key="dst.txt",
+                                                      CopySource={"Bucket": bucket, "Key": "src.txt"},
+                                                      ObjectLockLegalHoldStatus="ON"), "InvalidRequest")
+
+
 def test_object_lock_delete_bucket(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = create_object_lock_bucket(s3_client, "lockbucket")

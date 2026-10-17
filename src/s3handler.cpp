@@ -2498,8 +2498,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         const bool allowPresigned = action == Action::PutObject;
 
-        if(!checkSig(this, *headers, payload, resource, action, allowPresigned, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
-            || ( currSigPtr != nullptr && currSigPtr->empty()))
+        const auto accessKey = checkSig(this, *headers, payload, resource, action, allowPresigned, currSigPtr, stringToSignHeaderPtr, signingKeyOutput);
+        if(!accessKey || ( currSigPtr != nullptr && currSigPtr->empty()))
         {
             XLOGF(INFO, "Unauthorized putObject: {}", path);
             ResponseBuilder(downstream_)
@@ -2614,6 +2614,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 .sendWithEOM();
             return;
         }
+
+        if(!parseObjectLockHeaders(*headers, resource, *accessKey))
+            return;
         
         parseMatchInfo(*headers, false, false);
 
@@ -2811,7 +2814,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
             const auto action = Action::CreateMultipartUpload;
 
-            if(!checkSig(this, *headers, "", resource, action, true))
+            const auto accessKey = checkSig(this, *headers, "", resource, action, true);
+            if(!accessKey)
             {
                 XLOGF(INFO, "Unauthorized create multi-part upload: {}", path);
                 ResponseBuilder(downstream_)
@@ -2831,6 +2835,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                     .sendWithEOM();
                 return;
             }
+
+            if(!parseObjectLockHeaders(*headers, resource, *accessKey))
+                return;
 
             if(!initSdkChecksum(*headers, action))
                 return;
@@ -6298,6 +6305,88 @@ std::optional<bool> S3Handler::checkBypassGovernance(proxygen::HTTPMessage& head
     return true;
 }
 
+bool S3Handler::parseObjectLockHeaders(proxygen::HTTPMessage& headers, const std::string_view resource, const std::string_view accessKey)
+{
+    const auto modeStr = folly::trimWhitespace(headers.getHeaders().getSingleOrEmpty("x-amz-object-lock-mode"));
+    const auto retainUntilStr = folly::trimWhitespace(headers.getHeaders().getSingleOrEmpty("x-amz-object-lock-retain-until-date"));
+    const auto legalHoldStr = folly::trimWhitespace(headers.getHeaders().getSingleOrEmpty("x-amz-object-lock-legal-hold"));
+
+    if(modeStr.empty() && retainUntilStr.empty() && legalHoldStr.empty())
+        return true;
+
+    auto sendErr = [&](int code, const std::string_view status, const S3ErrorCode errCode, const std::string_view msg) {
+        ResponseBuilder(downstream_)
+            .status(code, std::string(status))
+            .body(s3errorXml(errCode, msg, resource, ""))
+            .sendWithEOM();
+        return false;
+    };
+
+    if(!buckets::isObjectLockEnabled(keyInfo.bucketId))
+    {
+        XLOGF(INFO, "Object lock headers for {} but object lock not enabled for bucket", resource);
+        return sendErr(400, "Bad Request", S3ErrorCode::InvalidRequest, "Bucket is missing Object Lock Configuration");
+    }
+
+    std::optional<ObjMetadata::LockInfo> lockInfo;
+
+    if(modeStr.empty() != retainUntilStr.empty())
+        return sendErr(400, "Bad Request", S3ErrorCode::InvalidArgument, 
+            "x-amz-object-lock-retain-until-date and x-amz-object-lock-mode must both be supplied");
+
+    if(!modeStr.empty())
+    {
+        if(modeStr != "GOVERNANCE" && modeStr != "COMPLIANCE")
+            return sendErr(400, "Bad Request", S3ErrorCode::InvalidArgument, "Unknown wormMode directive");
+
+        const auto retainUntil = parse_iso8601(retainUntilStr);
+        if(!retainUntil)
+            return sendErr(400, "Bad Request", S3ErrorCode::InvalidArgument, "Invalid retain until date");
+
+        if(*retainUntil <= std::chrono::system_clock::now())
+            return sendErr(400, "Bad Request", S3ErrorCode::InvalidArgument, "The retain until date must be in the future!");
+
+        if(!isAuthorized(resource, Action::PutObjectRetention, accessKey))
+        {
+            XLOGF(INFO, "Unauthorized PutObjectRetention via headers: {}", resource);
+            return sendErr(403, "Forbidden", S3ErrorCode::AccessDenied, "");
+        }
+
+        lockInfo.emplace();
+        if(modeStr == "COMPLIANCE")
+            lockInfo->flags |= lockinfo_flag_lock_mode_compliance;
+        lockInfo->flags |= lockinfo_flag_retain_until;
+        lockInfo->retainUntil = std::chrono::time_point_cast<std::chrono::seconds>(*retainUntil);
+    }
+
+    if(!legalHoldStr.empty())
+    {
+        if(legalHoldStr != "ON" && legalHoldStr != "OFF")
+            return sendErr(400, "Bad Request", S3ErrorCode::InvalidArgument, "Legal Hold must be either of 'ON' or 'OFF'");
+
+        if(legalHoldStr == "ON")
+        {
+            if(!isAuthorized(resource, Action::PutObjectLegalHold, accessKey))
+            {
+                XLOGF(INFO, "Unauthorized PutObjectLegalHold via headers: {}", resource);
+                return sendErr(403, "Forbidden", S3ErrorCode::AccessDenied, "");
+            }
+        }
+    }
+
+    const bool legalHold = legalHoldStr == "ON";
+    if(!lockInfo && !legalHold)
+        return true;
+
+    if(!objMetadata)
+        objMetadata = std::make_unique<ObjMetadata>();
+
+    objMetadata->lockInfo = std::move(lockInfo);
+    objMetadata->legalHold = legalHold;
+
+    return true;
+}
+
 void S3Handler::putObjectLockConfiguration(proxygen::HTTPMessage& headers)
 {
     xmlBody.init();
@@ -9313,10 +9402,11 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
         auto sourceObjMetadata = sourceFile->GetObjMetadata();
         if(sourceObjMetadata)
         {
-            objMetadata = std::make_unique<ObjMetadata>(*sourceObjMetadata);
-            // Object lock settings are not copied from the source object
-            objMetadata->lockInfo.reset();
-            objMetadata->legalHold = false;
+            auto newObjMetadata = std::make_unique<ObjMetadata>(*sourceObjMetadata);
+            // Object lock settings are not copied from the source object, but taken from the request headers
+            newObjMetadata->lockInfo = objMetadata ? objMetadata->lockInfo : std::nullopt;
+            newObjMetadata->legalHold = objMetadata ? objMetadata->legalHold : false;
+            objMetadata = std::move(newObjMetadata);
         }
     }
 
