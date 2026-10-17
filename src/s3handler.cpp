@@ -2000,7 +2000,7 @@ bool S3Handler::initSdkChecksum(proxygen::HTTPMessage& message, const Action act
         {
             XLOGF(WARN, "Received invalid base64 in payload hash in {}: {}", checksumHeaderKey, checksumHeaderVal);
             ResponseBuilder(self->downstream_)
-                .status(500, "Internal error")
+                .status(400, "Bad request")
                 .body(s3errorXml(S3ErrorCode::InvalidArgument, fmt::format("Invalid base64 in checksum header {}: {}", checksumHeaderKey, checksumHeaderVal), "", ""))
                 .sendWithEOM();
             return false;
