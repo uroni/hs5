@@ -3952,6 +3952,9 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
                     ObjMetadata::addRespHeaders(self->objMetadata.get(), resp);
 
+                    if(self->keyInfo.version!=0)
+                        resp.header("x-amz-version-id", self->sfs().encrypt_id(self->keyInfo.version));
+
                     if(checksumModeEnabled && self->sdkChecksumHash &&
                         (fullRange || returnPart) )
                     {

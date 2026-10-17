@@ -1657,6 +1657,10 @@ def test_enable_bucket_versioning(hs5: Hs5Runner):
     assert "VersionId" in res
     obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=res["VersionId"])
     assert obj["Body"].read() == b"version3"
+    for vid in (obj["VersionId"],
+                s3_client.get_object(Bucket=hs5.testbucketname(), Key="versioned.txt")["VersionId"],
+                s3_client.head_object(Bucket=hs5.testbucketname(), Key="versioned.txt")["VersionId"]):
+        assert s3_client.get_object(Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=vid)["Body"].read() == b"version3"
 
 
 def test_get_object_attributes(hs5: Hs5Runner, tmp_path: Path):
