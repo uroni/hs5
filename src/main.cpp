@@ -25,6 +25,8 @@
 #include <proxygen/httpserver/HTTPServer.h>
 #include <proxygen/httpserver/RequestHandlerFactory.h>
 #include <proxygen/lib/http/session/HTTPSessionBase.h>
+#include <aws/checksums/checksums.h>
+#include <aws/common/allocator.h>
 #ifdef HS5_WITH_DUCKDB
 #include <duckdb.hpp>
 #endif
@@ -215,6 +217,7 @@ int realMain(int argc, char* argv[])
     }
 
     SingleFileStorage::init_mutex();
+    aws_checksums_library_init(aws_default_allocator());
     try
     {
       DbDao::init();
