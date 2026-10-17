@@ -1968,6 +1968,229 @@ def test_object_lock_enable_race_with_delete(hs5_protected_check_delay: Hs5Runne
         s3_client.head_object(Bucket=bucket, Key="race.txt", VersionId=v1)
 
 
+def utc_in(seconds: float) -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=seconds)
+
+
+def test_put_object_retention_governance(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="ret.txt", Body=b"abc")
+    # Retention requires object lock
+    assert_client_error(lambda: s3_client.put_object_retention(Bucket=hs5.testbucketname(), Key="ret.txt",
+                                                               Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)}), "InvalidRequest")
+
+    bucket = create_object_lock_bucket(s3_client, "lockbucket")
+    v1 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc", Metadata={"foo": "bar"})["VersionId"]
+
+    obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt")
+    assert "ObjectLockMode" not in obj_info
+
+    # Retain until date has to be in the future
+    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt",
+                                                               Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(-60)}), "InvalidArgument")
+
+    retain_until = utc_in(24*3600).replace(microsecond=0)
+    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until})
+
+    obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)
+    assert obj_info["ObjectLockMode"] == "GOVERNANCE"
+    assert obj_info["ObjectLockRetainUntilDate"] == retain_until
+    assert obj_info["Metadata"] == {"foo": "bar"}
+
+    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1), "AccessDenied")
+    res = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": "ret.txt", "VersionId": v1}]})
+    assert len(res["Errors"]) == 1 and res["Errors"][0]["Code"] == "AccessDenied"
+
+    # Shortening or removing requires bypass
+    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt",
+                                                               Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)}), "AccessDenied")
+    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={}), "AccessDenied")
+
+    # Extending is allowed
+    retain_until = utc_in(2*24*3600).replace(microsecond=0)
+    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until})
+
+    hs5.restart()
+    s3_client = hs5.get_s3_client()
+
+    obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)
+    assert obj_info["ObjectLockMode"] == "GOVERNANCE"
+    assert obj_info["ObjectLockRetainUntilDate"] == retain_until
+    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1), "AccessDenied")
+
+    # Shortening with bypass
+    retain_until = utc_in(3600).replace(microsecond=0)
+    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until},
+                                   BypassGovernanceRetention=True)
+    assert s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)["ObjectLockRetainUntilDate"] == retain_until
+
+    # Delete with bypass
+    res = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": "ret.txt", "VersionId": v1}]}, BypassGovernanceRetention=True)
+    assert "Errors" not in res or len(res["Errors"]) == 0
+    with pytest.raises(ClientError):
+        s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)
+
+    # Removing with bypass
+    v2 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc")["VersionId"]
+    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)})
+    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={}, BypassGovernanceRetention=True)
+    assert "ObjectLockMode" not in s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v2)
+    s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v2)
+
+    # Delete with bypass
+    v3 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc")["VersionId"]
+    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)})
+    s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v3, BypassGovernanceRetention=True)
+
+    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="nonexistent.txt",
+                                                               Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3600)}), "NoSuchKey")
+
+
+def test_put_object_retention_compliance(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    bucket = create_object_lock_bucket(s3_client, "lockbucket")
+
+    v1 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"version1")["VersionId"]
+    v2 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"version2")["VersionId"]
+
+    retain_until = utc_in(24*3600).replace(microsecond=0)
+    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v1, Retention={"Mode": "COMPLIANCE", "RetainUntilDate": retain_until})
+
+    obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)
+    assert obj_info["ObjectLockMode"] == "COMPLIANCE"
+    assert obj_info["ObjectLockRetainUntilDate"] == retain_until
+    assert "ObjectLockMode" not in s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v2)
+
+    # Cannot be shortened, removed or changed to governance, even with bypass
+    for bypass in [False, True]:
+        assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v1,
+                                                                   Retention={"Mode": "COMPLIANCE", "RetainUntilDate": utc_in(3600)},
+                                                                   BypassGovernanceRetention=bypass), "AccessDenied")
+        assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v1,
+                                                                   Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3*24*3600)},
+                                                                   BypassGovernanceRetention=bypass), "AccessDenied")
+        assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v1, Retention={},
+                                                                   BypassGovernanceRetention=bypass), "AccessDenied")
+        assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1,
+                                                            BypassGovernanceRetention=bypass), "AccessDenied")
+        res = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": "ret.txt", "VersionId": v1}]},
+                                       BypassGovernanceRetention=bypass)
+        assert len(res["Errors"]) == 1 and res["Errors"][0]["Code"] == "AccessDenied"
+
+    # Extending is allowed
+    retain_until = utc_in(2*24*3600).replace(microsecond=0)
+    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", VersionId=v1, Retention={"Mode": "COMPLIANCE", "RetainUntilDate": retain_until})
+
+    # New versions and delete markers are allowed
+    s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"version3")
+    s3_client.delete_object(Bucket=bucket, Key="ret.txt")
+    s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v2)
+
+    hs5.restart()
+    s3_client = hs5.get_s3_client()
+
+    assert s3_client.head_object(Bucket=bucket, Key="ret.txt", VersionId=v1)["ObjectLockRetainUntilDate"] == retain_until
+    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1, BypassGovernanceRetention=True), "AccessDenied")
+    assert s3_client.get_object(Bucket=bucket, Key="ret.txt", VersionId=v1)["Body"].read() == b"version1"
+
+
+def test_put_object_retention_expires(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    bucket = create_object_lock_bucket(s3_client, "lockbucket")
+
+    v1 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc")["VersionId"]
+    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "COMPLIANCE", "RetainUntilDate": utc_in(3)})
+
+    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1), "AccessDenied")
+
+    time.sleep(4)
+
+    # Expired retention can be changed
+    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": utc_in(3)})
+    time.sleep(4)
+    s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1)
+
+
+def test_put_object_retention_event_hold(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    bucket = create_object_lock_bucket(s3_client, "lockbucket")
+
+    v1 = s3_client.put_object(Bucket=bucket, Key="ret.txt", Body=b"abc")["VersionId"]
+
+    # Days or years, not both
+    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt",
+                                                               Retention={"Mode": "COMPLIANCE", "EventHold": "ON",
+                                                                          "EventHoldDuration": {"Days": 1, "Years": 1}}), "MalformedXML")
+
+    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt",
+                                   Retention={"Mode": "COMPLIANCE", "EventHold": "ON", "EventHoldDuration": {"Days": 2}})
+
+    obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt")
+    assert obj_info["ObjectLockMode"] == "COMPLIANCE"
+    assert obj_info["ObjectLockEventHold"] == "ON"
+    assert obj_info["ObjectLockEventHoldDurationDays"] == 2
+    assert "ObjectLockRetainUntilDate" not in obj_info
+
+    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1), "AccessDenied")
+
+    # Duration cannot be shortened
+    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret.txt",
+                                                               Retention={"Mode": "COMPLIANCE", "EventHold": "ON", "EventHoldDuration": {"Days": 1}}), "AccessDenied")
+
+    # Release event hold. Object stays protected for the duration
+    before_release = utc_in(0)
+    s3_client.put_object_retention(Bucket=bucket, Key="ret.txt", Retention={"Mode": "COMPLIANCE", "EventHold": "OFF"})
+
+    obj_info = s3_client.head_object(Bucket=bucket, Key="ret.txt")
+    assert obj_info["ObjectLockMode"] == "COMPLIANCE"
+    assert "ObjectLockEventHold" not in obj_info
+    retain_until = obj_info["ObjectLockRetainUntilDate"]
+    assert before_release + datetime.timedelta(days=2) - datetime.timedelta(seconds=5) <= retain_until <= utc_in(2*24*3600 + 5)
+
+    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v1), "AccessDenied")
+
+    # Releasing on object without event hold requires retain until date
+    v2 = s3_client.put_object(Bucket=bucket, Key="ret2.txt", Body=b"abc")["VersionId"]
+    assert_client_error(lambda: s3_client.put_object_retention(Bucket=bucket, Key="ret2.txt",
+                                                               Retention={"Mode": "COMPLIANCE", "EventHold": "OFF"}), "InvalidRequest")
+    s3_client.delete_object(Bucket=bucket, Key="ret2.txt", VersionId=v2)
+
+
+def test_put_object_retention_multipart(hs5: Hs5Runner, tmp_path: Path):
+    s3_client = hs5.get_s3_client()
+    bucket = create_object_lock_bucket(s3_client, "lockbucket")
+
+    fdata = os.urandom(10*1024*1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+
+    config = TransferConfig(multipart_chunksize=5*1024*1024)
+    s3_client.upload_file(str(tmp_path / "upload.txt"), bucket, "upload.txt", Config=config,
+                          ExtraArgs={"ContentType": "text/plain", "Metadata": {"foo": "bar"}, "ChecksumAlgorithm": "CRC32"})
+    etag = s3_client.head_object(Bucket=bucket, Key="upload.txt")["ETag"]
+    version_id = s3_client.list_object_versions(Bucket=bucket, Prefix="upload.txt")["Versions"][0]["VersionId"]
+
+    retain_until = utc_in(3600).replace(microsecond=0)
+    s3_client.put_object_retention(Bucket=bucket, Key="upload.txt", Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until})
+    s3_client.put_object_legal_hold(Bucket=bucket, Key="upload.txt", LegalHold={"Status": "ON"})
+
+    obj = s3_client.get_object(Bucket=bucket, Key="upload.txt", ChecksumMode="ENABLED")
+    assert obj["ObjectLockMode"] == "GOVERNANCE"
+    assert obj["ObjectLockRetainUntilDate"] == retain_until
+    assert obj["ObjectLockLegalHoldStatus"] == "ON"
+    assert obj["ETag"] == etag
+    assert obj["ContentType"] == "text/plain"
+    assert obj["Metadata"] == {"foo": "bar"}
+    assert "ChecksumCRC32" in obj
+    assert obj["Body"].read() == fdata
+
+    # Legal hold protects even with governance bypass
+    s3_client.put_object_retention(Bucket=bucket, Key="upload.txt", Retention={}, BypassGovernanceRetention=True)
+    assert_client_error(lambda: s3_client.delete_object(Bucket=bucket, Key="upload.txt",
+                                                        VersionId=version_id, BypassGovernanceRetention=True), "AccessDenied")
+
+
 def test_post_form_upload_public(hs5: Hs5Runner, tmp_path: Path):
     s3_client = hs5.get_s3_client()
 

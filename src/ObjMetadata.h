@@ -10,7 +10,7 @@
 
 const uint32_t lockinfo_flag_lock_mode_compliance = 1 << 0;
 const uint32_t lockinfo_flag_retain_until= 1 << 1;
-const uint32_t lockinfo_flag_event_hold = 1 << 1;
+const uint32_t lockinfo_flag_event_hold = 1 << 2;
 
 
 class ObjMetadata
@@ -42,6 +42,16 @@ public:
 
         bool eventHold() const {
             return flags & lockinfo_flag_event_hold;
+        }
+
+        // How long the object stays protected after the event hold is released
+        std::chrono::seconds eventHoldDuration() const {
+            return std::chrono::days(eventDurationDays) + std::chrono::years(eventDurationYears);
+        }
+
+        // Object is protected from deletion at time 'now'
+        bool isActive(const std::chrono::system_clock::time_point now) const {
+            return eventHold() || (retainUntilSet() && retainUntil > now);
         }
     };
 

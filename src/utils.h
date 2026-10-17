@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <folly/String.h>
 #include <chrono>
+#include <optional>
+#include <string_view>
 
 static bool next(const std::string &pData, const size_t & doff, const std::string &pStr)
 {
@@ -124,6 +126,10 @@ String uriEscapeUpper(folly::StringPiece str, folly::UriEscapeMode mode = folly:
 }
 
 std::string format_last_modified(const int64_t lastModified);
+std::string format_last_modified(const std::chrono::system_clock::time_point lastModified);
 
 std::string format_last_modified_rfc1123(const int64_t lastModified);
 std::string format_last_modified_rfc1123(const std::chrono::system_clock::time_point lastModified);
+
+// Parses an ISO 8601 timestamp, e.g. 2011-10-08T07:07:09.000Z
+std::optional<std::chrono::system_clock::time_point> parse_iso8601(const std::string_view str);

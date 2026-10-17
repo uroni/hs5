@@ -6,6 +6,7 @@
 #include <folly/Random.h>
 #include <folly/String.h>
 #include <folly/base64.h>
+#include <sstream>
 
 std::string random_uuid()
 {
@@ -80,7 +81,12 @@ std::string asciiToLower(const std::string_view str)
 std::string format_last_modified(const int64_t lastModified)
 {
     constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
-    const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(lastModified));
+    return format_last_modified(std::chrono::time_point_cast<std::chrono::system_clock::duration>(epoch + std::chrono::nanoseconds(lastModified)));
+}
+
+std::string format_last_modified(const std::chrono::system_clock::time_point lastModified)
+{
+    const auto lastModifiedTp = std::chrono::system_clock::to_time_t(lastModified);
 
     char datebuf[sizeof("2011-10-08T07:07:09Z")];
     std::strftime(datebuf, sizeof(datebuf), "%FT%TZ", std::gmtime(&lastModifiedTp));
@@ -104,4 +110,16 @@ std::string format_last_modified_rfc1123(const std::chrono::system_clock::time_p
     char datebuf[sizeof("Fri, 08 Oct 2011 07:07:09 GMT")];
     std::strftime(datebuf, sizeof(datebuf), "%a, %d %b %Y %H:%M:%S GMT", std::gmtime(&lastModifiedTp));
     return datebuf;
+}
+
+std::optional<std::chrono::system_clock::time_point> parse_iso8601(const std::string_view str)
+{
+    for(const auto fmt: {"%FT%T%Ez", "%FT%TZ"})
+    {
+        std::istringstream in{std::string(str)};
+        std::chrono::sys_time<std::chrono::microseconds> tp;
+        if(in >> std::chrono::parse(fmt, tp) && in.peek() == EOF)
+            return tp;
+    }
+    return std::nullopt;
 }

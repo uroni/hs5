@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <memory>
+#include <expected>
 #include <queue>
 #include <memory.h>
 #include "../external/lmdb/lmdb.h"
@@ -124,6 +125,10 @@ public:
 		// If set, the match callback sets match=false and isProtected=true if the current object is protected from modification
 		bool checkProtected = false;
 		bool isProtected = false;
+		// Governance mode retention does not protect the object (with checkProtected)
+		bool bypassGovernance = false;
+		// Time (seconds since epoch) at which protection is checked (with checkProtected). Current time if 0
+		int64_t protectedCheckTime = 0;
 	};
 
 	struct SCommitInfo
@@ -165,7 +170,8 @@ public:
 	typedef size_t(*common_prefix_hash_func_t)(const std::string_view);
 	using on_delete_callback_t = std::function<std::vector<SingleFileStorage::SFragInfo>(const std::string&, const std::string&)>;
 	using modify_data_callback_t = std::function<std::optional<std::string>(const std::string&, std::string, std::string)>;
-	using modify_metadata_callback_t = std::function<std::optional<std::string>(const std::string&, const std::string&, const std::string&)>;
+	// Returns the new md5sum or an error code
+	using modify_metadata_callback_t = std::function<std::expected<std::string, int>(const std::string&, const std::string&, const std::string&)>;
 	using match_callback_t = std::function<void(MatchInfo&, const SingleFileStorage::SFragInfo&)>;
 	using add_reading_callback_t = std::function<void(const std::string_view fn, const SingleFileStorage::SFragInfo&)>;
 	
@@ -272,7 +278,7 @@ public:
 
 	// Replaces the md5sum (metadata) of an existing object with the result of modify_metadata_callback
 	// called with the current md5sum and param. Waits until the modification was applied.
-	// Returns ENOENT if the object does not exist and EINVAL if the callback rejected the modification.
+	// Returns ENOENT if the object does not exist, otherwise the error code returned by the callback.
 	int modify_metadata(const std::string& fn, const std::string_view param);
 
 	bool restore_old(const std::string& fn);

@@ -148,6 +148,7 @@ const int64_t metadata_known_flags = metadata_flag_with_content_type | metadata_
 
 // Modification types for SingleFileStorage::modify_metadata
 const char metadata_modify_legal_hold = 1;
+const char metadata_modify_retention = 2;
 
 class DuckDbFs;
 
@@ -242,6 +243,34 @@ public:
         bool quiet = false;
         std::string accessKey;
         std::string buf;
+        bool bypassGovernanceRequested = false;
+    };
+
+    struct PutObjectRetentionData
+    {
+        enum class ParseState
+        {
+            Init,
+            InRoot,
+            InMode,
+            InRetainUntilDate,
+            InEventHold,
+            InEventHoldDuration,
+            InDays,
+            InYears,
+            Unknown,
+            Finished
+        };
+
+        ParseState parseState = ParseState::Init;
+        std::string mode;
+        std::string retainUntilDate;
+        std::string eventHold;
+        std::string days;
+        std::string years;
+        bool hasEventHoldDuration = false;
+        // x-amz-bypass-governance-retention set and authorized
+        bool bypassGovernance = false;
     };
 
     struct PutObjectLockConfigurationData
@@ -300,9 +329,10 @@ public:
 
     static std::vector<SingleFileStorage::SFragInfo> onDeleteCallback(const std::string& fn, const std::string& md5sum);
     static std::optional<std::string> onModifyCallback(const std::string& fn, std::string md5sum, std::string md5sumParam);
-    static std::optional<std::string> onModifyMetadataCallback(const std::string& fn, const std::string& md5sum, const std::string& param);
+    static std::expected<std::string, int> onModifyMetadataCallback(const std::string& fn, const std::string& md5sum, const std::string& param);
     static void onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride);
-    static bool hasLegalHold(const std::string_view md5sum);
+    // Object is protected from deletion by legal hold or object lock retention at time 'now'
+    static bool isProtected(const std::string_view md5sum, const std::chrono::system_clock::time_point now, const bool bypassGovernance);
     static void onAddReadingCallback(const std::string_view fn, const SingleFileStorage::SFragInfo& fragInfo);
 
     static std::string md5sumBinFromData(const std::string_view md5sumData);
@@ -341,13 +371,18 @@ private:
     void putObject(proxygen::HTTPMessage& headers);
     void putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId);
     void manualCommit(proxygen::HTTPMessage& headers);
-    void deleteObject(proxygen::HTTPMessage& headers);
+    void deleteObject(proxygen::HTTPMessage& headers, const bool bypassGovernance);
     void abortMultipartUpload(proxygen::HTTPMessage& headers, const std::string& uploadIdStr);
     void deleteBucket(proxygen::HTTPMessage& headers);
     void putBucketVersioning(proxygen::HTTPMessage& headers);
     void putBucketCors(proxygen::HTTPMessage& headers);
     void putObjectLegalHold(proxygen::HTTPMessage& headers);
     void putObjectLockConfiguration(proxygen::HTTPMessage& headers);
+    void putObjectRetention(proxygen::HTTPMessage& headers, const bool bypassGovernance);
+    static bool bypassGovernanceRequested(proxygen::HTTPMessage& headers);
+    // Returns if governance retention should be bypassed (requested via header).
+    // Sends error response and returns std::nullopt if bypass is requested but not authorized
+    std::optional<bool> checkBypassGovernance(proxygen::HTTPMessage& headers, const std::string_view resource, const std::string_view accessKey);
     void optionsObject(proxygen::HTTPMessage& headers);
     void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const std::string_view bucketName);
     void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const buckets::BucketInfo& bucketInfo);
@@ -363,6 +398,7 @@ private:
     void finalizePutBucketCors();
     void finalizePutObjectLegalHold();
     void finalizePutObjectLockConfiguration();
+    void finalizePutObjectRetention();
     std::string getEtagParsedMultipart(const std::string& md5sum);
     
     void readBodyThread(folly::EventBase *evb);
@@ -383,7 +419,7 @@ private:
     void parseSourceMatchInfo(proxygen::HTTPMessage& headers, SingleFileStorage::MatchInfo& matchInfo);
     // Fail overwrite/delete of the current object if it is protected (legal hold).
     // Only if object lock is enabled for the bucket. Call right before queueing the overwrite/delete.
-    void addProtectedCheck();
+    void addProtectedCheck(const bool bypassGovernance);
     int checkMatchInfo();
     void finalizePutObject(folly::EventBase *evb, const int64_t lastModified);
     
@@ -430,6 +466,7 @@ private:
     std::unique_ptr<PostObjectData> postObjectData;
     std::unique_ptr<PutBucketCorsData> putBucketCorsData;
     std::unique_ptr<PutObjectLockConfigurationData> putObjectLockConfigurationData;
+    std::unique_ptr<PutObjectRetentionData> putObjectRetentionData;
     bool createBucketObjectLockEnabled = false;
 
 	std::mutex extents_mutex;

@@ -163,7 +163,7 @@ void ObjMetadata::addRespHeaders(proxygen::ResponseBuilder& resp)
             resp.header("x-amz-object-lock-mode", "GOVERNANCE");
 
         if(lockInfo->retainUntilSet())
-            resp.header("x-amz-object-lock-retain-until-date", format_last_modified_rfc1123(lockInfo->retainUntil));
+            resp.header("x-amz-object-lock-retain-until-date", format_last_modified(lockInfo->retainUntil));
 
         if(lockInfo->eventHold())
         {

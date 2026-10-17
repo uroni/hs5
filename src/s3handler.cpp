@@ -1237,6 +1237,105 @@ static void putObjectLegalHoldXmlCharData(void *userData,
     }
 }
 
+static void putObjectRetentionXmlElementStart(void *userData,
+                                                const XML_Char *name,
+                                                const XML_Char **atts)
+{
+    using ParseState = S3Handler::PutObjectRetentionData::ParseState;
+    auto data = reinterpret_cast<S3Handler::PutObjectRetentionData*>(userData);
+
+    switch(data->parseState)
+    {
+    case ParseState::Init:
+        {
+            if(strcmp(name, "Retention")==0)
+                data->parseState = ParseState::InRoot;
+            else
+                data->parseState = ParseState::Unknown;
+        } break;
+    case ParseState::InRoot:
+        {
+            if(strcmp(name, "Mode")==0)
+                data->parseState = ParseState::InMode;
+            else if(strcmp(name, "RetainUntilDate")==0)
+                data->parseState = ParseState::InRetainUntilDate;
+            else if(strcmp(name, "EventHold")==0)
+                data->parseState = ParseState::InEventHold;
+            else if(strcmp(name, "EventHoldDuration")==0)
+            {
+                data->hasEventHoldDuration = true;
+                data->parseState = ParseState::InEventHoldDuration;
+            }
+            else
+                data->parseState = ParseState::Unknown;
+        } break;
+    case ParseState::InEventHoldDuration:
+        {
+            if(strcmp(name, "Days")==0)
+                data->parseState = ParseState::InDays;
+            else if(strcmp(name, "Years")==0)
+                data->parseState = ParseState::InYears;
+            else
+                data->parseState = ParseState::Unknown;
+        } break;
+    case ParseState::Unknown:
+    case ParseState::Finished:
+        break;
+    default:
+        data->parseState = ParseState::Unknown;
+        break;
+    }
+}
+
+static void putObjectRetentionXmlElementEnd(void *userData,
+                                               const XML_Char *name)
+{
+    using ParseState = S3Handler::PutObjectRetentionData::ParseState;
+    auto data = reinterpret_cast<S3Handler::PutObjectRetentionData*>(userData);
+
+    const auto endElement = [&](const char* expectedName, const ParseState nextState)
+    {
+        if(strcmp(name, expectedName)==0)
+            data->parseState = nextState;
+        else
+            data->parseState = ParseState::Unknown;
+    };
+
+    switch(data->parseState)
+    {
+    case ParseState::InRoot: endElement("Retention", ParseState::Finished); break;
+    case ParseState::InMode: endElement("Mode", ParseState::InRoot); break;
+    case ParseState::InRetainUntilDate: endElement("RetainUntilDate", ParseState::InRoot); break;
+    case ParseState::InEventHold: endElement("EventHold", ParseState::InRoot); break;
+    case ParseState::InEventHoldDuration: endElement("EventHoldDuration", ParseState::InRoot); break;
+    case ParseState::InDays: endElement("Days", ParseState::InEventHoldDuration); break;
+    case ParseState::InYears: endElement("Years", ParseState::InEventHoldDuration); break;
+    default:
+        break;
+    }
+}
+
+static void putObjectRetentionXmlCharData(void *userData,
+                                               const XML_Char *s, int len)
+{
+    using ParseState = S3Handler::PutObjectRetentionData::ParseState;
+    auto data = reinterpret_cast<S3Handler::PutObjectRetentionData*>(userData);
+
+    std::string* buf = nullptr;
+    switch(data->parseState)
+    {
+    case ParseState::InMode: buf = &data->mode; break;
+    case ParseState::InRetainUntilDate: buf = &data->retainUntilDate; break;
+    case ParseState::InEventHold: buf = &data->eventHold; break;
+    case ParseState::InDays: buf = &data->days; break;
+    case ParseState::InYears: buf = &data->years; break;
+    default: break;
+    }
+
+    if(buf != nullptr && buf->size() < 100)
+        *buf += std::string(s, len);
+}
+
 static void putObjectLockConfigurationXmlElementStart(void *userData,
                                                 const XML_Char *name,
                                                 const XML_Char **atts)
@@ -2169,7 +2268,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             keyInfo.key = bucketName;
         }
         else if(!setKeyInfoFromPath(*headers, path, 
-                    headers->hasQueryParam("legal-hold") ? headers->getQueryParamPtr("versionId") : nullptr, false))
+                    (headers->hasQueryParam("legal-hold") || headers->hasQueryParam("retention")) ? headers->getQueryParamPtr("versionId") : nullptr, false))
             return;
 
         const auto copySource = headers->getHeaders().getSingleOrEmpty("x-amz-copy-source");
@@ -2359,6 +2458,29 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             putObjectLegalHold(*headers);
             return;
         }
+        else if(!createBucket && headers->hasQueryParam("retention") && (xid.empty() || xid=="PutObjectRetention") )
+        {
+            const auto action = Action::PutObjectRetention;
+
+            const auto accessKey = checkSig(this, *headers, payload, resource, action, false, currSigPtr, stringToSignHeaderPtr, signingKeyOutput);
+            if(!accessKey || ( currSigPtr != nullptr && currSigPtr->empty()))
+            {
+                XLOGF(INFO, "Unauthorized PutObjectRetention: {}", path);
+                ResponseBuilder(downstream_)
+                    .status(403, "Forbidden")
+                    .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
+                    .sendWithEOM();
+                return;
+            }
+
+            const auto bypassGovernance = checkBypassGovernance(*headers, resource, *accessKey);
+            if(!bypassGovernance)
+                return;
+
+            request_action = action;
+            putObjectRetention(*headers, *bypassGovernance);
+            return;
+        }
 
         const auto action = createBucket ? Action::CreateBucket : 
                     (copyObject ? Action::CopyObject : Action::PutObject);
@@ -2482,7 +2604,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
         // Early check before upload. Decided again before queueing
         if(!keyInfo.withVersioning())
-            addProtectedCheck();
+            addProtectedCheck(false);
 
         XLOGF(DBG0, "PutObject {} length {}", path, remaining);
 
@@ -2521,7 +2643,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 : (isDeleteBucket ? Action::DeleteBucket : Action::DeleteObject);
 
         //TODO: Double-check that pre-signed delete is possible
-        if(!checkSig(this, *headers, "", resource, action, true))
+        const auto accessKey = checkSig(this, *headers, "", resource, action, true);
+        if(!accessKey)
         {
             XLOGF(INFO, "Unauthorized delete object: {}", path);
             ResponseBuilder(downstream_)
@@ -2529,6 +2652,15 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
                 .sendWithEOM();
             return;
+        }
+
+        bool bypassGovernance = false;
+        if(action == Action::DeleteObject)
+        {
+            const auto bypass = checkBypassGovernance(*headers, resource, *accessKey);
+            if(!bypass)
+                return;
+            bypassGovernance = *bypass;
         }
 
         request_action = action;
@@ -2542,7 +2674,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         else if(isDeleteBucket)
             deleteBucket(*headers);
         else
-            deleteObject(*headers);
+            deleteObject(*headers, bypassGovernance);
     }
     else if(headers->getMethod() == HTTPMethod::POST)
     {
@@ -2643,6 +2775,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             deleteObjectsData = std::make_unique<DeleteObjectsData>();
             deleteObjectsData->accessKey = *accessKey;
+            deleteObjectsData->bypassGovernanceRequested = bypassGovernanceRequested(*headers);
             XML_SetUserData(xmlBody.parser, deleteObjectsData.get());
 
             XML_SetElementHandler(xmlBody.parser, deleteObjectsXmlElementStart, deleteObjectsXmlElementEnd);
@@ -2760,7 +2893,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             // Early check before upload. Decided again before queueing
             if(!keyInfo.withVersioning())
-                addProtectedCheck();
+                addProtectedCheck(false);
 
             XLOGF(INFO, "Complete multi-part upload of {} uploadId {}", keyInfo.key, uploadId.id);
         }
@@ -4300,7 +4433,7 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                             if(self->matchInfo->isProtected)
                                 ResponseBuilder(self->downstream_)
                                     .status(403, "Forbidden")
-                                    .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by legal hold", self->fullKeyPath(), ""))
+                                    .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by object lock", self->fullKeyPath(), ""))
                                     .sendWithEOM();
                             else
                                 ResponseBuilder(self->downstream_)
@@ -4609,7 +4742,7 @@ void S3Handler::finalizeMultipartUpload()
                             if(self->matchInfo->isProtected)
                                 ResponseBuilder(self->downstream_)
                                     .status(403, "Forbidden")
-                                    .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by legal hold", self->fullKeyPath(), ""))
+                                    .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by object lock", self->fullKeyPath(), ""))
                                     .sendWithEOM();
                             else
                                 ResponseBuilder(self->downstream_)
@@ -4905,7 +5038,7 @@ void S3Handler::finalizeMultipartUpload()
                         .bucketId = partialUploadsBucketId});
 
                 if(!self->keyInfo.withVersioning())
-                    self->addProtectedCheck();
+                    self->addProtectedCheck(false);
 
                 if(self->matchInfo)
                 {
@@ -4942,7 +5075,7 @@ void S3Handler::finalizeMultipartUpload()
                         if(self->matchInfo->isProtected)
                             ResponseBuilder(self->downstream_)
                                 .status(403, "Forbidden")
-                                .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by legal hold", self->fullKeyPath(), ""))
+                                .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by object lock", self->fullKeyPath(), ""))
                                 .sendWithEOM();
                         else
                             ResponseBuilder(self->downstream_)
@@ -5263,6 +5396,210 @@ void S3Handler::finalizePutObjectLockConfiguration()
         );
 }
 
+void S3Handler::finalizePutObjectRetention()
+{
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+    folly::getGlobalCPUExecutor()->add(
+            [self = this->self, evb]()
+            {
+                const auto sendError = [&](const uint16_t code, const std::string& message, const S3ErrorCode errorCode, const std::string& errorMsg)
+                {
+                    evb->runInEventBaseThread([self = self, code, message, errorCode, errorMsg]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(code, message)
+                            .body(s3errorXml(errorCode, errorMsg, self->fullKeyPath(), ""))
+                            .sendWithEOM();
+                        self->finished_ = true;
+                                              });
+                };
+
+                const auto& data = *self->putObjectRetentionData;
+
+                if(data.parseState != PutObjectRetentionData::ParseState::Finished)
+                {
+                    XLOGF(WARN, "Invalid retention XML for object {}", self->keyInfo.key);
+                    sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "");
+                    return;
+                }
+
+                const auto modeStr = folly::trimWhitespace(data.mode);
+                const auto retainUntilStr = folly::trimWhitespace(data.retainUntilDate);
+                const auto eventHoldStr = folly::trimWhitespace(data.eventHold);
+
+                if(!modeStr.empty() && modeStr != "GOVERNANCE" && modeStr != "COMPLIANCE")
+                {
+                    sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Invalid retention mode");
+                    return;
+                }
+
+                if(!eventHoldStr.empty() && eventHoldStr != "ON" && eventHoldStr != "OFF")
+                {
+                    sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Invalid event hold status");
+                    return;
+                }
+
+                const auto now = std::chrono::system_clock::now();
+
+                std::optional<ObjMetadata::LockInfo> lockInfo;
+                if(!modeStr.empty())
+                {
+                    lockInfo.emplace();
+                    if(modeStr == "COMPLIANCE")
+                        lockInfo->flags |= lockinfo_flag_lock_mode_compliance;
+
+                    if(!retainUntilStr.empty())
+                    {
+                        const auto retainUntil = parse_iso8601(retainUntilStr);
+                        if(!retainUntil)
+                        {
+                            sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Invalid retain until date");
+                            return;
+                        }
+                        if(*retainUntil <= now)
+                        {
+                            sendError(400, "Bad Request", S3ErrorCode::InvalidArgument, "The retain until date must be in the future!");
+                            return;
+                        }
+                        lockInfo->flags |= lockinfo_flag_retain_until;
+                        lockInfo->retainUntil = std::chrono::time_point_cast<std::chrono::seconds>(*retainUntil);
+                    }
+
+                    if(eventHoldStr == "ON")
+                        lockInfo->flags |= lockinfo_flag_event_hold;
+
+                    if(data.hasEventHoldDuration)
+                    {
+                        const auto daysStr = folly::trimWhitespace(data.days);
+                        const auto yearsStr = folly::trimWhitespace(data.years);
+                        const auto days = daysStr.empty() ? folly::Expected<int, folly::ConversionCode>(0) : folly::tryTo<int>(daysStr);
+                        const auto years = yearsStr.empty() ? folly::Expected<int, folly::ConversionCode>(0) : folly::tryTo<int>(yearsStr);
+                        if(!days || !years || (daysStr.empty() == yearsStr.empty()) ||
+                            (!daysStr.empty() && (*days < 1 || *days > 36500)) ||
+                            (!yearsStr.empty() && (*years < 1 || *years > 100)))
+                        {
+                            sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Event hold duration must specify either Days (1-36500) or Years (1-100)");
+                            return;
+                        }
+                        lockInfo->eventDurationDays = *days;
+                        lockInfo->eventDurationYears = static_cast<unsigned short>(*years);
+                    }
+
+                    // EventHold OFF without retain until date releases an event hold
+                    if(!lockInfo->retainUntilSet() && eventHoldStr.empty())
+                    {
+                        sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Retention mode requires RetainUntilDate or EventHold");
+                        return;
+                    }
+                }
+                else if(!retainUntilStr.empty() || !eventHoldStr.empty() || data.hasEventHoldDuration)
+                {
+                    sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "Retention mode is required");
+                    return;
+                }
+
+                if(!buckets::isObjectLockEnabled(self->keyInfo.bucketId))
+                {
+                    XLOGF(INFO, "Object lock not enabled for bucket of object {}", self->keyInfo.key);
+                    sendError(400, "Bad Request", S3ErrorCode::InvalidRequest, "Bucket is missing Object Lock Configuration");
+                    return;
+                }
+
+                std::string fn;
+                if(self->keyInfo.withVersioning() && self->keyInfo.version==0)
+                {
+                    const auto res = self->sfs().read_prepare(make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max()), 
+                        SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading | SingleFileStorage::ReadNewest);
+
+                    if(res.err == ENOENT)
+                    {
+                        sendError(404, "Not found", S3ErrorCode::NoSuchKey, "");
+                        return;
+                    }
+                    else if(res.err != 0)
+                    {
+                        XLOGF(WARN, "Reading object metadata of {} failed for PutObjectRetention: {}", self->keyInfo.key, res.err);
+                        sendError(500, "Internal error", S3ErrorCode::InternalError, fmt::format("Error code: {}", res.err));
+                        return;
+                    }
+
+                    fn = res.key;
+                }
+                else
+                {
+                    fn = make_key(self->keyInfo);
+                }
+
+                // Current time and bypass are part of the parameter so that the result
+                // is the same if the modification is replayed from the WAL
+                CWData param;
+                param.addChar(metadata_modify_retention);
+                param.addVarInt(std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count());
+                param.addChar(data.bypassGovernance ? 1 : 0);
+                if(lockInfo)
+                {
+                    param.addChar(1);
+                    param.addVarInt(lockInfo->flags);
+                    param.addVarInt(std::chrono::duration_cast<std::chrono::seconds>(lockInfo->retainUntil.time_since_epoch()).count());
+                    param.addVarInt(lockInfo->eventDurationDays);
+                    param.addVarInt(lockInfo->eventDurationYears);
+                }
+                else
+                {
+                    param.addChar(0);
+                }
+
+                const auto rc = self->sfs().modify_metadata(fn, std::string_view(param.getDataPtr(), param.getDataSize()));
+
+                if(rc == ENOENT)
+                {
+                    sendError(404, "Not found", S3ErrorCode::NoSuchKey, "");
+                    return;
+                }
+                else if(rc == EINVAL)
+                {
+                    // Delete marker
+                    sendError(405, "Method Not Allowed", S3ErrorCode::MethodNotAllowed, "");
+                    return;
+                }
+                else if(rc == EACCES)
+                {
+                    sendError(403, "Forbidden", S3ErrorCode::AccessDenied, "Object is protected by object lock. Retention cannot be shortened or removed");
+                    return;
+                }
+                else if(rc == ERANGE)
+                {
+                    sendError(400, "Bad Request", S3ErrorCode::InvalidRequest, "Object has no event hold to release. RetainUntilDate is required");
+                    return;
+                }
+                else if(rc != 0)
+                {
+                    XLOGF(WARN, "Setting retention of object {} failed: {}", self->keyInfo.key, rc);
+                    sendError(500, "Internal error", S3ErrorCode::InternalError, fmt::format("Error code: {}", rc));
+                    return;
+                }
+
+                if(!self->commit())
+                {
+                    XLOGF(WARN, "Commit after setting retention of object {} failed", self->keyInfo.key);
+                    sendError(500, "Internal error", S3ErrorCode::InternalError, "Commit error");
+                    return;
+                }
+
+                XLOGF(INFO, "Set retention of object {} to mode {} retain until {} event hold {}", self->keyInfo.key, 
+                    modeStr, retainUntilStr, eventHoldStr);
+
+                evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(200, "OK")
+                            .sendWithEOM();
+                        self->finished_ = true;
+                });
+            }
+        );
+}
+
 void S3Handler::finalizePutObjectLegalHold()
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
@@ -5473,6 +5810,10 @@ void S3Handler::deleteObjects()
                             if(!objMatchInfo)
                                 objMatchInfo.emplace();
                             objMatchInfo->checkProtected = true;
+                            objMatchInfo->protectedCheckTime = std::chrono::duration_cast<std::chrono::seconds>(
+                                std::chrono::system_clock::now().time_since_epoch()).count();
+                            objMatchInfo->bypassGovernance = deleteObjectsData->bypassGovernanceRequested &&
+                                isAuthorized(resource, Action::BypassGovernanceRetention, deleteObjectsData->accessKey);
                         }
                         res = self->sfs().del(currPath, SingleFileStorage::DelAction::Del, false, nullptr, objMatchInfo ? &*objMatchInfo : nullptr);
                     }
@@ -5488,7 +5829,7 @@ void S3Handler::deleteObjects()
                         {
                             resp += fmt::format("\t<Error>\n"
                                 "\t\t<Code>AccessDenied</Code>\n"
-                                "\t\t<Message>Object is protected by legal hold</Message>\n"
+                                "\t\t<Message>Object is protected by object lock</Message>\n"
                                 "\t\t<Key>{}</Key>\n"
                                 "\t</Error>\n",  escapeXML(obj.key));
                         }
@@ -5647,12 +5988,12 @@ void S3Handler::abortMultipartUpload(proxygen::HTTPMessage& headers, const std::
         });
 }
 
-void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
+void S3Handler::deleteObject(proxygen::HTTPMessage& headers, const bool bypassGovernance)
 {
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     folly::getGlobalCPUExecutor()->add(
-        [self = this->self, evb]()
+        [self = this->self, evb, bypassGovernance]()
         {
             XLOGF(INFO, "Removing object {}", self->keyInfo.key);
 
@@ -5694,7 +6035,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                 if(FLAGS_test_delay_before_modify_ms > 0)
                     std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_test_delay_before_modify_ms));
 
-                self->addProtectedCheck();
+                self->addProtectedCheck(bypassGovernance);
 
                 if(FLAGS_test_delay_after_protected_check_ms > 0)
                     std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_test_delay_after_protected_check_ms));
@@ -5708,7 +6049,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers)
                         if(self->matchInfo->isProtected)
                             ResponseBuilder(self->downstream_)
                                 .status(403, "Forbidden")
-                                .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by legal hold", self->fullKeyPath(), ""))
+                                .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by object lock", self->fullKeyPath(), ""))
                                 .sendWithEOM();
                         else
                             ResponseBuilder(self->downstream_)
@@ -5812,6 +6153,51 @@ void S3Handler::putObjectLegalHold(proxygen::HTTPMessage& headers)
 
     XML_SetElementHandler(xmlBody.parser, putObjectLegalHoldXmlElementStart, putObjectLegalHoldXmlElementEnd);
     XML_SetCharacterDataHandler(xmlBody.parser, putObjectLegalHoldXmlCharData);
+}
+
+void S3Handler::putObjectRetention(proxygen::HTTPMessage& headers, const bool bypassGovernance)
+{
+    xmlBody.init();
+    if(xmlBody.parser == nullptr)
+    {
+        ResponseBuilder(downstream_)
+            .status(500, "Internal error")
+            .body(s3errorXml(S3ErrorCode::InternalError, "Could not init XML parser", keyInfo.key, ""))
+            .sendWithEOM();
+        return;
+    }
+
+    putObjectRetentionData = std::make_unique<PutObjectRetentionData>();
+    putObjectRetentionData->bypassGovernance = bypassGovernance;
+
+    XML_SetUserData(xmlBody.parser, putObjectRetentionData.get());
+
+    XML_SetElementHandler(xmlBody.parser, putObjectRetentionXmlElementStart, putObjectRetentionXmlElementEnd);
+    XML_SetCharacterDataHandler(xmlBody.parser, putObjectRetentionXmlCharData);
+}
+
+bool S3Handler::bypassGovernanceRequested(proxygen::HTTPMessage& headers)
+{
+    return asciiToLower(folly::trimWhitespace(
+        headers.getHeaders().getSingleOrEmpty("x-amz-bypass-governance-retention"))) == "true";
+}
+
+std::optional<bool> S3Handler::checkBypassGovernance(proxygen::HTTPMessage& headers, const std::string_view resource, const std::string_view accessKey)
+{
+    if(!bypassGovernanceRequested(headers))
+        return false;
+
+    if(!isAuthorized(resource, Action::BypassGovernanceRetention, accessKey))
+    {
+        XLOGF(INFO, "Unauthorized BypassGovernanceRetention: {}", resource);
+        ResponseBuilder(downstream_)
+            .status(403, "Forbidden")
+            .body(s3errorXml(S3ErrorCode::AccessDenied, "Not authorized to bypass governance retention", resource, ""))
+            .sendWithEOM();
+        return std::nullopt;
+    }
+
+    return true;
 }
 
 void S3Handler::putObjectLockConfiguration(proxygen::HTTPMessage& headers)
@@ -7298,7 +7684,8 @@ void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
         request_action == Action::PutBucketVersioning ||
         request_action == Action::PutBucketCors ||
         request_action == Action::PutObjectLegalHold ||
-        request_action == Action::PutBucketObjectLockConfiguration)
+        request_action == Action::PutBucketObjectLockConfiguration ||
+        request_action == Action::PutObjectRetention)
     {
         if(payloadHash)
             payloadHash->update(body->data(), body->length());
@@ -7674,7 +8061,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         if(FLAGS_test_delay_before_modify_ms > 0)
             std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_test_delay_before_modify_ms));
 
-        addProtectedCheck();
+        addProtectedCheck(false);
     }
 
     if(matchInfo && keyInfo.version != 0)
@@ -7715,7 +8102,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
                 if(matchInfo->isProtected)
                     ResponseBuilder(downstream_)
                         .status(403, "Forbidden")
-                        .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by legal hold", fullKeyPath(), ""))
+                        .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by object lock", fullKeyPath(), ""))
                         .sendWithEOM();
                 else
                     ResponseBuilder(downstream_)
@@ -7922,6 +8309,14 @@ void S3Handler::onEOM() noexcept
         finalizePutObjectLockConfiguration();
         return;
     }
+    else if(request_action == Action::PutObjectRetention)
+    {
+        if(finished_)
+            return;
+
+        finalizePutObjectRetention();
+        return;
+    }
 }
 
 void S3Handler::onUpgrade(UpgradeProtocol /*protocol*/) noexcept
@@ -8051,21 +8446,139 @@ std::optional<std::string> S3Handler::onModifyCallback(const std::string& fn, st
     return serializePartExts(existingParts);
 }
 
-std::optional<std::string> S3Handler::onModifyMetadataCallback(const std::string& fn, const std::string& md5sum, const std::string& param)
+// Locates the serialized ObjMetadata in an object's md5sum and deserializes it.
+// The metadata is at [objMetadataStart, objMetadataEnd)
+static bool locateObjMetadata(const std::string_view md5sum, int64_t& itype, ObjMetadata& objMetadata,
+    unsigned int& objMetadataStart, unsigned int& objMetadataEnd)
+{
+    CRData rdata(md5sum.data(), md5sum.size());
+    if(!rdata.getVarInt(&itype))
+        return false;
+
+    const auto baseType = itype & ~metadata_known_flags;
+    if(baseType == metadata_object)
+    {
+        if(!rdata.incrementPtr(MD5_DIGEST_LENGTH))
+            return false;
+    }
+    else if(baseType == metadata_multipart_object)
+    {
+        // Same layout as in parseMultipartInfo
+        if(rdata.getLeft()>=MD5_DIGEST_LENGTH)
+            rdata.incrementPtr(MD5_DIGEST_LENGTH);
+
+        int64_t uploadId, numParts;
+        if(!rdata.getVarInt(&uploadId) || !rdata.getVarInt(&numParts) || numParts<0)
+            return false;
+
+        int64_t currNumParts = 0;
+        int64_t size, start, len;
+        while(currNumParts < numParts &&
+            rdata.getVarInt(&size) &&
+            rdata.getVarInt(&start) &&
+            rdata.getVarInt(&len))
+        {
+            currNumParts += len;
+        }
+
+        if(currNumParts != numParts)
+            return false;
+    }
+    else
+    {
+        return false;
+    }
+
+    objMetadataStart = rdata.getStreampos();
+
+    if((itype & metadata_flag_has_obj_metadata) && 
+        !objMetadata.deserialize(rdata, itype))
+        return false;
+
+    objMetadataEnd = rdata.getStreampos();
+    return true;
+}
+
+// Applies a retention modification to the current lock info. Returns 0 on success or an error code
+static int applyRetention(std::optional<ObjMetadata::LockInfo>& lockInfo, CRData& rparam)
+{
+    int64_t nowSec;
+    char bypassGovernance;
+    char hasLockInfo;
+    if(!rparam.getVarInt(&nowSec) || !rparam.getChar(&bypassGovernance) || !rparam.getChar(&hasLockInfo))
+        return EINVAL;
+
+    const auto now = std::chrono::system_clock::time_point(std::chrono::seconds(nowSec));
+
+    std::optional<ObjMetadata::LockInfo> newLockInfo;
+    if(hasLockInfo)
+    {
+        int64_t flags, retainUntilSec, days, years;
+        if(!rparam.getVarInt(&flags) || !rparam.getVarInt(&retainUntilSec) ||
+            !rparam.getVarInt(&days) || !rparam.getVarInt(&years))
+            return EINVAL;
+
+        newLockInfo.emplace();
+        newLockInfo->flags = static_cast<unsigned int>(flags);
+        newLockInfo->retainUntil = std::chrono::system_clock::time_point(std::chrono::seconds(retainUntilSec));
+        newLockInfo->eventDurationDays = static_cast<unsigned int>(days);
+        newLockInfo->eventDurationYears = static_cast<unsigned short>(years);
+
+        if(lockInfo && lockInfo->eventHold() && !newLockInfo->eventHold())
+        {
+            // Event hold released. Object stays protected for the event hold duration set while the hold was active
+            const auto releaseUntil = std::chrono::time_point_cast<std::chrono::seconds>(now + lockInfo->eventHoldDuration());
+            if(!newLockInfo->retainUntilSet() || newLockInfo->retainUntil < releaseUntil)
+            {
+                newLockInfo->flags |= lockinfo_flag_retain_until;
+                newLockInfo->retainUntil = releaseUntil;
+            }
+        }
+
+        if(!newLockInfo->retainUntilSet() && !newLockInfo->eventHold())
+            return ERANGE;
+    }
+
+    const bool restricted = lockInfo && lockInfo->isActive(now) &&
+        (lockInfo->complianceMode() || !bypassGovernance);
+
+    if(restricted)
+    {
+        // Protection can only be extended
+        if(!newLockInfo)
+            return EACCES;
+
+        if(lockInfo->complianceMode() && !newLockInfo->complianceMode())
+            return EACCES;
+
+        if(lockInfo->retainUntilSet() && lockInfo->retainUntil > now &&
+            (!newLockInfo->retainUntilSet() || newLockInfo->retainUntil < lockInfo->retainUntil))
+            return EACCES;
+
+        if(lockInfo->eventHold() && newLockInfo->eventHold() &&
+            newLockInfo->eventHoldDuration() < lockInfo->eventHoldDuration())
+            return EACCES;
+    }
+
+    lockInfo = newLockInfo;
+    return 0;
+}
+
+std::expected<std::string, int> S3Handler::onModifyMetadataCallback(const std::string& fn, const std::string& md5sum, const std::string& param)
 {
     CRData rparam(param.data(), param.size());
     char modifyType;
     if(!rparam.getChar(&modifyType))
-        return std::nullopt;
+        return std::unexpected(EINVAL);
 
     CRData rdata(md5sum.data(), md5sum.size());
     int64_t itype;
     if(!rdata.getVarInt(&itype))
-        return std::nullopt;
+        return std::unexpected(EINVAL);
 
     const auto baseType = itype & ~metadata_known_flags;
     if(baseType != metadata_object && baseType != metadata_multipart_object)
-        return std::nullopt;
+        return std::unexpected(EINVAL);
 
     switch(modifyType)
     {
@@ -8074,12 +8587,38 @@ std::optional<std::string> S3Handler::onModifyMetadataCallback(const std::string
             // Legal hold has no serialized data, so only the flag needs to change
             char legalHold;
             if(!rparam.getChar(&legalHold))
-                return std::nullopt;
+                return std::unexpected(EINVAL);
             if(legalHold)
                 itype |= metadata_flag_with_legal_hold;
             else
                 itype &= ~metadata_flag_with_legal_hold;
         } break;
+    case metadata_modify_retention:
+        {
+            ObjMetadata objMetadata;
+            unsigned int objMetadataStart, objMetadataEnd;
+            if(!locateObjMetadata(md5sum, itype, objMetadata, objMetadataStart, objMetadataEnd))
+            {
+                XLOGF(ERR, "Error parsing object metadata of {} for retention modification", fn);
+                return std::unexpected(EIO);
+            }
+
+            const auto rc = applyRetention(objMetadata.lockInfo, rparam);
+            if(rc != 0)
+                return std::unexpected(rc);
+
+            CRData rvarint(md5sum.data(), md5sum.size());
+            int64_t dummy;
+            rvarint.getVarInt(&dummy);
+            const auto prefixStart = rvarint.getStreampos();
+
+            CWData wdata;
+            wdata.addVarInt((itype & ~metadata_flag_has_obj_metadata) | objMetadata.flags());
+            wdata.addBuffer(md5sum.data() + prefixStart, objMetadataStart - prefixStart);
+            objMetadata.serialize(wdata);
+            wdata.addBuffer(md5sum.data() + objMetadataEnd, md5sum.size() - objMetadataEnd);
+            return std::string(wdata.getDataPtr(), wdata.getDataSize());
+        }
     default:
         XLOGF(ERR, "Unknown modify type: {}", static_cast<int>(modifyType));
         abort();
@@ -8226,13 +8765,16 @@ void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const S
 
     if(matchInfo.checkProtected)
     {
-        matchInfo.isProtected = hasLegalHold(fragInfo.md5sum);
+        const auto now = matchInfo.protectedCheckTime != 0 ? 
+            std::chrono::system_clock::time_point(std::chrono::seconds(matchInfo.protectedCheckTime)) :
+            std::chrono::system_clock::now();
+        matchInfo.isProtected = isProtected(fragInfo.md5sum, now, matchInfo.bypassGovernance);
         if(matchInfo.isProtected)
             matchInfo.match = false;
     }
 }
 
-bool S3Handler::hasLegalHold(const std::string_view md5sum)
+bool S3Handler::isProtected(const std::string_view md5sum, const std::chrono::system_clock::time_point now, const bool bypassGovernance)
 {
     CRData rdata(md5sum.data(), md5sum.size());
     int64_t itype;
@@ -8243,10 +8785,29 @@ bool S3Handler::hasLegalHold(const std::string_view md5sum)
     if(baseType != metadata_object && baseType != metadata_multipart_object)
         return false;
 
-    return (itype & metadata_flag_with_legal_hold) != 0;
+    if(itype & metadata_flag_with_legal_hold)
+        return true;
+
+    if(!(itype & metadata_flag_with_lock_info))
+        return false;
+
+    ObjMetadata objMetadata;
+    unsigned int objMetadataStart, objMetadataEnd;
+    if(!locateObjMetadata(md5sum, itype, objMetadata, objMetadataStart, objMetadataEnd))
+    {
+        // Fail safe
+        XLOGF(ERR, "Error parsing object metadata for protection check");
+        return true;
+    }
+
+    if(!objMetadata.lockInfo)
+        return false;
+
+    return objMetadata.lockInfo->isActive(now) &&
+        (objMetadata.lockInfo->complianceMode() || !bypassGovernance);
 }
 
-void S3Handler::addProtectedCheck()
+void S3Handler::addProtectedCheck(const bool bypassGovernance)
 {
     if(!buckets::isObjectLockEnabled(keyInfo.bucketId))
         return;
@@ -8254,6 +8815,9 @@ void S3Handler::addProtectedCheck()
     if(!matchInfo)
         matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
     matchInfo->checkProtected = true;
+    matchInfo->bypassGovernance = bypassGovernance;
+    matchInfo->protectedCheckTime = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
 void S3Handler::parseMatchInfo(proxygen::HTTPMessage& headers, const bool ifModifiedSince, const bool ifUnmodifiedSince)

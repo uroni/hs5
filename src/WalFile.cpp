@@ -18,6 +18,8 @@ const char dataTypeSync = 3;
 // Flags of serialized match info
 const char matchInfoFlagReadNewest = 1 << 0;
 const char matchInfoFlagCheckProtected = 1 << 1;
+const char matchInfoFlagBypassGovernance = 1 << 2;
+const char matchInfoFlagWithProtectedCheckTime = 1 << 3;
 
 const int64_t waitBlockSize = 64 * 1024;
 const int64_t dirtyBlockSize = 64*1024;
@@ -101,7 +103,13 @@ bool serializeMatchInfo(const SingleFileStorage::MatchInfo& matchInfo, CWData& d
         flags |= matchInfoFlagReadNewest;
     if(matchInfo.checkProtected)
         flags |= matchInfoFlagCheckProtected;
+    if(matchInfo.bypassGovernance)
+        flags |= matchInfoFlagBypassGovernance;
+    if(matchInfo.protectedCheckTime != 0)
+        flags |= matchInfoFlagWithProtectedCheckTime;
     data.addChar(flags);
+    if(matchInfo.protectedCheckTime != 0)
+        data.addVarInt(matchInfo.protectedCheckTime);
     data.addVarInt(matchInfo.ifMatch.size());
     for(const auto& s : matchInfo.ifMatch)
         data.addString2(s);
@@ -144,6 +152,9 @@ bool deserializeMatchInfo(CRData& data, SingleFileStorage::MatchInfo& matchInfo)
     b &= data.getChar(&flags);
     matchInfo.readNewest = (flags & matchInfoFlagReadNewest) != 0;
     matchInfo.checkProtected = (flags & matchInfoFlagCheckProtected) != 0;
+    matchInfo.bypassGovernance = (flags & matchInfoFlagBypassGovernance) != 0;
+    if(flags & matchInfoFlagWithProtectedCheckTime)
+        b &= data.getVarInt(&matchInfo.protectedCheckTime);
     int64_t ifMatchSize = 0;
     b &= data.getVarInt(&ifMatchSize);
     for(size_t i = 0; i < ifMatchSize; ++i)

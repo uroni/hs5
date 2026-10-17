@@ -6294,7 +6294,7 @@ std::string SingleFileStorage::remove_disk_id(const std::string & fn, size_t dis
 {
 	if (fn.empty())
 	{
-		return 0;
+		return std::string();
 	}
 
 	if (fn[0] == 0
@@ -8196,11 +8196,12 @@ void SingleFileStorage::operator()()
 			}
 			else
 			{
-				auto mod_data = modify_metadata_callback ? 
-					modify_metadata_callback(frag_info.fn, read_frag_info.md5sum, frag_info.md5sum) : std::nullopt;
+				const auto mod_data = modify_metadata_callback ? 
+					modify_metadata_callback(frag_info.fn, read_frag_info.md5sum, frag_info.md5sum) :
+					std::expected<std::string, int>(std::unexpected(EINVAL));
 				if(!mod_data)
 				{
-					modify_result = EINVAL;
+					modify_result = mod_data.error();
 				}
 				else
 				{

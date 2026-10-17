@@ -58,7 +58,9 @@ enum class Action
     GetBucketCors=51,
     PutObjectLegalHold=52,
     PutBucketObjectLockConfiguration=53,
-    LastDummyAction=54,
+    PutObjectRetention=54,
+    BypassGovernanceRetention=55,
+    LastDummyAction=56,
 };
 
 Action actionFromStr(const std::string_view action);
