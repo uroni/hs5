@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792269430863,
+  "lastUpdate": 1792271589628,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -11469,6 +11469,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.37470686797075986",
             "extra": "mean: 12.306323568200037 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "8d2c9227ef7edc1774b77888864118d91b544ed2",
+          "message": "Use default number of HTTP workers when doing perf tests",
+          "timestamp": "2026-10-18T00:59:42+02:00",
+          "tree_id": "d60234e9371d5ab4cef5ed896764c74c0689d5d0",
+          "url": "https://github.com/uroni/hs5/commit/8d2c9227ef7edc1774b77888864118d91b544ed2"
+        },
+        "date": 1792271588220,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007919535393217705,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.27003357499996 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007872907032136606,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 127.01788499700001 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.09730991463064478,
+            "unit": "iter/sec",
+            "range": "stddev: 0.04569826315168239",
+            "extra": "mean: 10.276445147400022 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.08035260726842054,
+            "unit": "iter/sec",
+            "range": "stddev: 0.05422493023742011",
+            "extra": "mean: 12.445146884399993 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.06835613169540489,
+            "unit": "iter/sec",
+            "range": "stddev: 0.22566106404472008",
+            "extra": "mean: 14.629265512799975 sec\nrounds: 5"
           }
         ]
       }
