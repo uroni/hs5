@@ -402,6 +402,8 @@ private:
     
     void readBodyThread(folly::EventBase *evb);
     void startReadBodyThread(folly::EventBase *evb);
+    bool usesBodyThread() const;
+    void setFinished();
     bool setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::string_view path, const std::string* versionId, const bool setCorsHeader);
     std::optional<std::string> initPayloadHash(proxygen::HTTPMessage& message);
     bool initSdkChecksum(proxygen::HTTPMessage& message, const Action action);
@@ -450,6 +452,8 @@ private:
     std::atomic<bool> paused_{ false };
     int64_t done_bytes = 0;
 	bool running = false;
+    // Written on IO thread. For actions using onBodyCPU (see usesBodyThread) write via setFinished()
+    // as onBodyCPU reads it with extents_mutex held on a CPU thread
     bool finished_ = false;
 	std::atomic<int64_t> put_remaining = -1;
     ExpatXmlParser xmlBody;

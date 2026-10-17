@@ -7274,6 +7274,26 @@ void S3Handler::startReadBodyThread(folly::EventBase *evb)
     }
 }
 
+bool S3Handler::usesBodyThread() const
+{
+    return request_action == Action::PutObject ||
+        request_action == Action::PutObjectPart ||
+        request_action == Action::PostObject;
+}
+
+void S3Handler::setFinished()
+{
+    if(!usesBodyThread())
+    {
+        finished_ = true;
+        return;
+    }
+
+    std::lock_guard lock(extents_mutex);
+    finished_ = true;
+    extents_cond.notify_all();
+}
+
 void S3Handler::readBodyThread(folly::EventBase *evb)
 {
     std::unique_lock lock{bodyMutex};
@@ -7391,7 +7411,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                         .status(500, "Internal error")
                         .body("Invalid chunked encoding body received")
                         .sendWithEOM();
-                    finished_ = true; 
+                    setFinished();
                     return;
                 }
 
@@ -7418,7 +7438,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                         .status(500, "Internal error")
                         .body("Invalid chunk size in chunked encoding body received")
                         .sendWithEOM();
-                    finished_ = true; 
+                    setFinished();
                     return;
                 }
 
@@ -7431,7 +7451,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                             .status(500, "Internal error")
                             .body("Chunked encoding body is signed but no chunk signature found in parameters")
                             .sendWithEOM();
-                        finished_ = true; 
+                        setFinished();
                         return;
                     }
 
@@ -7462,7 +7482,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                                     .status(500, "Internal error")
                                     .body("Chunked encoding body chunk signature is not valid hex")
                                     .sendWithEOM();
-                                finished_ = true; 
+                                setFinished();
                                 return;
                             }
 
@@ -7477,7 +7497,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                             .status(500, "Internal error")
                             .body("Chunked encoding body is signed but no chunk signature found in parameters")
                             .sendWithEOM();
-                        finished_ = true; 
+                        setFinished();
                         return;
                     }
                 }
@@ -7561,7 +7581,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                                     .status(500, "Internal error")
                                     .body("Chunk signature mismatch in chunked encoding body")
                                     .sendWithEOM();
-                                finished_ = true; 
+                                setFinished();
                                 awsChunkedEncoding->state = AwsChunkedEncoding::State::Failed;
                                 return;
                             }
@@ -7573,7 +7593,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                                     .status(500, "Internal error")
                                     .body("Error initializing EVP digest context for chunked encoding body")
                                     .sendWithEOM();
-                                finished_ = true; 
+                                setFinished();
                                 awsChunkedEncoding->state = AwsChunkedEncoding::State::Failed;
                                 return;
                             }
@@ -7628,7 +7648,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                             .status(500, "Internal error")
                             .body("Received trailer header in chunked encoding body but no payload hash expected")
                             .sendWithEOM();
-                        finished_ = true; 
+                        setFinished();
                         return;
                     }
 
@@ -7646,7 +7666,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                             .status(500, "Internal error")
                             .body("Received invalid base64 in payload hash in trailer")
                             .sendWithEOM();
-                        finished_ = true; 
+                        setFinished();
                         return;
                     }
 
@@ -7658,7 +7678,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                             .status(500, "Internal error")
                             .body("Received payload hash in trailer with invalid size")
                             .sendWithEOM();
-                        finished_ = true; 
+                        setFinished();
                         return;
                     }
                 }
@@ -7669,7 +7689,7 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                         .status(500, "Internal error")
                         .body("Invalid trailer header in chunked encoding body received")
                         .sendWithEOM();
-                    finished_ = true; 
+                    setFinished();
                     return;
                 }
 
@@ -7684,12 +7704,12 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                     .status(500, "Internal error")
                     .body("Invalid chunked encoding body received")
                     .sendWithEOM();
-                finished_ = true; 
+                setFinished();
                 return;
             } break;
             case AwsChunkedEncoding::State::Failed:
             {
-                finished_ = true; 
+                setFinished();
                 return;
             } break;
             default:
@@ -7865,7 +7885,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
                         .status(500, "Internal error")
                         .body("Expecting more data")
                         .sendWithEOM();
-                    self->finished_ = true; 
+                    self->setFinished();
                                 });
             return;
         }
@@ -7944,7 +7964,7 @@ void S3Handler::onBodyCPU(folly::EventBase *evb, int64_t offset, std::unique_ptr
                         .status(500, "Internal error")
                         .body("Write ext error")
                         .sendWithEOM();
-                    self->finished_ = true; });
+                    self->setFinished(); });
             return;
         }
 
@@ -7993,7 +8013,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
                 .status(400, "Bad request")
                 .body(s3errorXml(S3ErrorCode::InvalidArgument, "Payload hash not as expected", self->fullKeyPath(), ""))
                 .sendWithEOM();
-            self->finished_ = true; });
+            self->setFinished(); });
         return;
     }
 
@@ -8012,7 +8032,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
                 .status(400, "Bad request")
                 .body(s3errorXml(S3ErrorCode::InvalidArgument, "SDK checksum hash not as expected", self->fullKeyPath(), ""))
                 .sendWithEOM();
-            self->finished_ = true; });
+            self->setFinished(); });
         return;
     }
 
@@ -8031,7 +8051,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
                 .status(400, "Bad request")
                 .body(s3errorXml(S3ErrorCode::BadDigest, "", self->fullKeyPath(), ""))
                 .sendWithEOM();
-            self->finished_ = true; });
+            self->setFinished(); });
         return;
     }
 
@@ -8050,7 +8070,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
                 .status(400, "Bad request")
                 .body("Invalid chunked encoding body")
                 .sendWithEOM();
-            self->finished_ = true; });
+            self->setFinished(); });
         return;
     }
 
@@ -8116,7 +8136,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
                     .status(500, "Internal error")
                     .body("Write finalization error")
                     .sendWithEOM();
-                self->finished_ = true; });
+                self->setFinished(); });
         return;
     }
 
@@ -8130,7 +8150,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
                             {           
                 if(finished_)
                     return;
-                finished_ = true;
+                setFinished();
                 if(matchInfo->isProtected)
                     ResponseBuilder(downstream_)
                         .status(403, "Forbidden")
@@ -8157,7 +8177,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
                             {           
                 if(finished_)
                     return;
-                finished_ = true;
+                setFinished();
                 ResponseBuilder(downstream_)
                     .status(500, "Internal error")
                     .body("Commit error")
@@ -8169,7 +8189,7 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
 
     evb->runInEventBaseThread([this, md5buf, lastModified]()
                             {      
-                finished_ = true;
+                setFinished();
                 ResponseBuilder resp(downstream_);
                 const auto etag = fmt::format("\"{}\"", folly::hexlify(std::string_view(md5buf, MD5_DIGEST_LENGTH)));
                 resp.status(200, "OK");
@@ -8272,7 +8292,7 @@ void S3Handler::onEOM() noexcept
                 .status(400, "Bad request")
                 .body("Received EOM for PostObject but not finished parsing form data")
                 .sendWithEOM();
-            finished_ = true; 
+            setFinished();
             return;
         }
 
@@ -8360,7 +8380,7 @@ void S3Handler::requestComplete() noexcept
 {
     assert(!sfsWasUsed || sigChecked == SigCheckResult::Ok);
     XLOG(DBG0, "Request complete");
-    finished_ = true;
+    setFinished();
     paused_ = true;
     self.reset();
 }
@@ -8368,7 +8388,7 @@ void S3Handler::requestComplete() noexcept
 void S3Handler::onError(ProxygenError err) noexcept
 {
     XLOGF(INFO, "onError {}", getErrorString(err));
-    finished_ = true;
+    setFinished();
     paused_ = true;
 
     if (request_action == Action::PutObject || request_action == Action::PutObjectPart)
@@ -9361,7 +9381,7 @@ void S3Handler::postObject()
             .body(s3errorXml(S3ErrorCode::AccessDenied, "", fullKeyPath(), ""))
             .sendWithEOM();
         postObjectData->state = PostObjectState::Error;
-        finished_ = true;
+        setFinished();
         return;
     }
 
