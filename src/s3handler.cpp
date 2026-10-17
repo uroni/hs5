@@ -4585,17 +4585,16 @@ void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, in
                     return;
                 }
 
-                self->bodyData = self->keyInfo.key;
-                self->keyInfo = {.key = uploadIdToStr(uploadId) +"."+uploadIdToStr(partNumber), .version = 0, 
-                    .bucketId = partsBucketId};
+                self->bodyData = uploadIdToStr(uploadId) +"."+uploadIdToStr(partNumber);
+                const KeyInfo partKeyInfo = {.key = self->bodyData, .version = 0, .bucketId = partsBucketId};
                 
                 if(copyObjectInfo)
                 {
-                    self->copyObject(evb, make_key(self->keyInfo), *copyObjectInfo);
+                    self->copyObject(evb, make_key(partKeyInfo), *copyObjectInfo);
                     return;                  
                 }
 
-                auto res = self->sfs().write_prepare(make_key(self->keyInfo), self->put_remaining);
+                auto res = self->sfs().write_prepare(make_key(partKeyInfo), self->put_remaining);
                 if (res.err != 0)
                 {            
                     XLOGF(WARN, "Write object part prepare failed for uploadId {} partNumber {} err {}", uploadId, partNumber, res.err);        
@@ -8072,15 +8071,15 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
             partSize += ext.len;
         }
 
-        const auto uploadId = uploadIdFromStrDot(keyInfo.key);
+        const auto uploadId = uploadIdFromStrDot(bodyData);
         assert(uploadId.second>=0);
 
         addPart = std::make_unique<SingleFileStorage::SFragInfo>();
         addPart->action = SingleFileStorage::FragAction::ModifyData;
         const auto parseParts = ParsePartRes{.parts = {MultiPartDownloadData::PartExt{.size=partSize, .start=static_cast<int>(uploadId.second), .len=1}}};
         addPart->md5sum = serializePartExts(parseParts);
-        addPart->fn = make_key({.key = bodyData, .version = uploadId.first, 
-                .bucketId = keyInfo.bucketId - 1});
+        addPart->fn = make_key({.key = keyInfo.key, .version = uploadId.first, 
+                .bucketId = buckets::getPartialUploadsBucket(keyInfo.bucketId)});
     }
 
     // TODO perf: With match info set it has to wait for the queue anyway, so we might as well link the commit if we want one.
@@ -8102,7 +8101,8 @@ void S3Handler::finalizePutObject(folly::EventBase *evb, const int64_t lastModif
         matchInfo->readNewest = true;
     }
 
-    auto rc = sfs().write_finalize(make_key(keyInfo), extents, lastModified, md5sum, false, true, std::move(addPart), matchInfo.get());
+    const auto writeFn = addPart ? make_key({.key = bodyData, .version = 0, .bucketId = buckets::getPartsBucket(keyInfo.bucketId)}) : make_key(keyInfo);
+    auto rc = sfs().write_finalize(writeFn, extents, lastModified, md5sum, false, true, std::move(addPart), matchInfo.get());
 
     if (rc != 0)
     {
