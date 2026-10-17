@@ -128,6 +128,11 @@ configure_file(
 #   add_link_options(-fsanitize=address)
 # endif()
 
+# LMDB accesses DUPSORT sub-pages stored inline in nodes (only 2-byte aligned) as MDB_page
+if(CMAKE_C_FLAGS MATCHES "-fsanitize=[^ ]*undefined")
+  set_source_files_properties(external/lmdb/mdb.c PROPERTIES COMPILE_OPTIONS "-fno-sanitize=alignment")
+endif()
+
 add_executable(hs5
     external/lmdb/midl.cpp
     external/lmdb/mdb.c

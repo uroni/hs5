@@ -131,7 +131,7 @@ jobs:
           buildPreset: 'ninja-vcpkg-release'
           testPreset: 'test-release'
 
-      - name: Run CMake+vcpkg+Ninja+CTest to build debug packages with AddressSanitizer and generate/build/test the code.
+      - name: Run CMake+vcpkg+Ninja+CTest to build debug packages with AddressSanitizer+UndefinedBehaviorSanitizer and generate/build/test the code.
         if: matrix.variant == 'asan'
         uses: lukka/run-cmake@v10
         env:
@@ -168,6 +168,7 @@ jobs:
         env:
           HS5_BINARY: builds/ninja-multi-vcpkg-asan/Debug/hs5
           ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_summary=1"
+          UBSAN_OPTIONS: "print_stacktrace=1:halt_on_error=1"
         with:
           emoji: false
           custom-arguments: -p no:sugar -p no:threadexception --benchmark-skip test --timeout=600 -n auto
