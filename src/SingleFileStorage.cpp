@@ -9843,16 +9843,6 @@ std::string SingleFileStorage::encrypt_id(const int64_t id)
 	return cryptId(id, enckey);
 }
 
-CryptResult SingleFileStorage::encrypt_id_separate(const int64_t id, const std::string& preNonce)
-{
-	return cryptIdSeparate(id, enckey, preNonce);
-}
-
-int64_t SingleFileStorage::decrypt_id_separate(const std::string& encdata, const std::string& nonce)
-{
-	return decryptIdSeparate(encdata, nonce, enckey);
-}
-
 namespace
 {
 	

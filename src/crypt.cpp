@@ -7,87 +7,123 @@
 #include <string>
 #include <assert.h>
 #include <sodium.h>
-#include <vector>
+#include <openssl/evp.h>
+#include <cstring>
+#include <optional>
 #include "crypt.h"
+
+namespace
+{
+    constexpr size_t aesBlockSize = 16;
+    static_assert(aesBlockSize == cryptIdSize);
+
+    struct AesCtx
+    {
+        ~AesCtx()
+        {
+            EVP_CIPHER_CTX_free(ctx);
+        }
+
+        EVP_CIPHER_CTX* ctx = nullptr;
+        const unsigned char* key = nullptr;
+    };
+
+    thread_local AesCtx encCtx;
+    thread_local AesCtx decCtx;
+
+    // Returns thread local cipher context initialized with key. ECB without
+    // padding keeps no state between full blocks, so it can be reused.
+    EVP_CIPHER_CTX* getAesCtx(const unsigned char* key, bool encrypt)
+    {
+        static_assert(crypto_secretbox_KEYBYTES == 32);
+
+        AesCtx& aesCtx = encrypt ? encCtx : decCtx;
+
+        // Key memory is owned by SingleFileStorage and does not change
+        if(aesCtx.ctx!=nullptr && aesCtx.key==key)
+            return aesCtx.ctx;
+
+        if(aesCtx.ctx==nullptr)
+        {
+            aesCtx.ctx = EVP_CIPHER_CTX_new();
+            if(aesCtx.ctx==nullptr)
+                return nullptr;
+        }
+
+        if(EVP_CipherInit_ex(aesCtx.ctx, EVP_aes_256_ecb(), nullptr, key, nullptr, encrypt ? 1 : 0)!=1 ||
+            EVP_CIPHER_CTX_set_padding(aesCtx.ctx, 0)!=1)
+        {
+            EVP_CIPHER_CTX_free(aesCtx.ctx);
+            aesCtx.ctx = nullptr;
+            return nullptr;
+        }
+
+        aesCtx.key = key;
+        return aesCtx.ctx;
+    }
+
+    // Single AES-256 block over id || 8 zero bytes. Deterministic; the zero
+    // padding acts as a 64-bit authentication tag on decryption.
+    bool aesBlock(const unsigned char* in, unsigned char* out, const unsigned char* key, bool encrypt)
+    {
+        EVP_CIPHER_CTX* ctx = getAesCtx(key, encrypt);
+        if(ctx==nullptr)
+            return false;
+
+        int outl = 0;
+        return EVP_CipherUpdate(ctx, out, &outl, in, aesBlockSize)==1 &&
+            outl==static_cast<int>(aesBlockSize);
+    }
+
+    bool encryptIdBlock(int64_t id, unsigned char* out, const unsigned char* key)
+    {
+        unsigned char plain[aesBlockSize] = {};
+        memcpy(plain, &id, sizeof(id));
+        return aesBlock(plain, out, key, true);
+    }
+
+    int64_t decryptIdBlock(const unsigned char* in, const unsigned char* key)
+    {
+        unsigned char plain[aesBlockSize];
+        if(!aesBlock(in, plain, key, false))
+            return -1;
+
+        static const unsigned char zeros[aesBlockSize - sizeof(int64_t)] = {};
+        if(sodium_memcmp(plain + sizeof(int64_t), zeros, sizeof(zeros))!=0)
+            return -1;
+
+        int64_t ret;
+        memcpy(&ret, plain, sizeof(ret));
+        return ret;
+    }
+
+    std::optional<std::string> decodeBase64URL(const std::string& data)
+    {
+        try
+        {
+            return folly::base64URLDecode(data);
+        }
+        catch(folly::base64_decode_error&)
+        {
+            return std::nullopt;
+        }
+    }
+}
 
 std::string cryptId(int64_t id, unsigned char* key)
 {
-    unsigned char nonce[crypto_secretbox_NONCEBYTES];
-    randombytes_buf(nonce, sizeof(nonce));
-    std::vector<unsigned char> encbuf(crypto_secretbox_MACBYTES + sizeof(id));
-    if(crypto_secretbox_easy(&encbuf[0], reinterpret_cast<unsigned char*>(&id), sizeof(id), nonce, key)!=0)
+    unsigned char enc[aesBlockSize];
+    if(!encryptIdBlock(id, enc, key))
         return std::string();
 
-    std::string_view nonce_view(reinterpret_cast<char*>(nonce), sizeof(nonce));
-    std::string_view encbuf_view(reinterpret_cast<char*>(encbuf.data()), encbuf.size());
-
-    return folly::base64URLEncode(nonce_view) +
-        folly::base64URLEncode(encbuf_view);
-}
-
-CryptResult cryptIdSeparate(int64_t id, unsigned char* key, const std::string& preNonce)
-{
-    if(!preNonce.empty() && preNonce.size() != crypto_secretbox_NONCEBYTES)
-        return CryptResult{};
-
-    unsigned char nonceBuf[crypto_secretbox_NONCEBYTES];
-    unsigned char* nonce = !preNonce.empty() ? reinterpret_cast<unsigned char*>(const_cast<char*>(preNonce.data())) : nonceBuf;
-    if(preNonce.empty())
-        randombytes_buf(nonceBuf, sizeof(nonceBuf));
-    else if(preNonce.size() != crypto_secretbox_NONCEBYTES)
-        return CryptResult{};
-        
-    std::vector<unsigned char> encbuf(crypto_secretbox_MACBYTES + sizeof(id));
-    if(crypto_secretbox_easy(&encbuf[0], reinterpret_cast<unsigned char*>(&id), sizeof(id), nonce, key)!=0)
-        return CryptResult{};
-
-    std::string_view nonce_view(reinterpret_cast<char*>(nonce), sizeof(nonceBuf));
-    std::string_view encbuf_view(reinterpret_cast<char*>(encbuf.data()), encbuf.size());
-
-    return CryptResult{
-        std::string(encbuf_view),
-        std::string(nonce_view)
-    };
+    return folly::base64URLEncode(std::string_view(reinterpret_cast<char*>(enc), sizeof(enc)));
 }
 
 int64_t decryptId(const std::string& encryptedId, unsigned char* key)
 {
-    std::string binEncId;
-    try
-    {
-        binEncId = folly::base64URLDecode(encryptedId);
-    }
-    catch(folly::base64_decode_error&)
-    {
-        return -1;
-    }
-
-    int64_t ret;
-    if(binEncId.size()!=crypto_secretbox_NONCEBYTES+crypto_secretbox_MACBYTES + sizeof(ret))
+    const auto binEncId = decodeBase64URL(encryptedId);
+    if(!binEncId || binEncId->size()!=aesBlockSize)
         return -1;
 
-    const unsigned char* ptr = reinterpret_cast<const unsigned char*>(&binEncId[0]);
-
-    if(crypto_secretbox_open_easy(reinterpret_cast<unsigned char*>(&ret), ptr+crypto_secretbox_NONCEBYTES, crypto_secretbox_MACBYTES + sizeof(ret), ptr, key)!=0)
-        return -1;
-
-    return ret;
-}
-
-int64_t decryptIdSeparate(const std::string& encryptedId, const std::string& nonce, unsigned char* key)
-{
-    if(nonce.size()!=crypto_secretbox_NONCEBYTES)
-        return -1;
-
-    int64_t ret;
-    if(encryptedId.size()!=crypto_secretbox_MACBYTES + sizeof(ret))
-        return -1;
-
-    const unsigned char* encPtr = reinterpret_cast<const unsigned char*>(&encryptedId[0]);
-    const unsigned char* noncePtr = reinterpret_cast<const unsigned char*>(&nonce[0]);
-
-    if(crypto_secretbox_open_easy(reinterpret_cast<unsigned char*>(&ret), encPtr, crypto_secretbox_MACBYTES + sizeof(ret), noncePtr, key)!=0)
-        return -1;
-
-    return ret;
+    return decryptIdBlock(reinterpret_cast<const unsigned char*>(binEncId->data()), key);
 }

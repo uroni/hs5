@@ -421,10 +421,6 @@ public:
 	int64_t decrypt_id(const std::string& encdata);
 
 	std::string encrypt_id(const int64_t id);
-	
-	CryptResult encrypt_id_separate(const int64_t id, const std::string& preNonce);
-
-	int64_t decrypt_id_separate(const std::string& encdata, const std::string& nonce);
 
 	void free_extents(const std::vector<Ext>& extents);
 

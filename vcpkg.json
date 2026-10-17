@@ -7,6 +7,7 @@
     "zstd",
     "expat",
     "libsodium",
+    "openssl",
     "sqlite-cpp-sqlgen",
     "nlohmann-json",
     "fmt",

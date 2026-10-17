@@ -6,6 +6,7 @@
 #include "ApiHandler.h"
 #include "PayloadHash.h"
 #include "SingleFileStorage.h"
+#include "crypt.h"
 #include <algorithm>
 #include <asm-generic/errno-base.h>
 #include <asm-generic/errno.h>
@@ -29,6 +30,7 @@
 #include <folly/hash/Hash.h>
 #include <folly/hash/Checksum.h>
 #include <folly/base64.h>
+#include <folly/Random.h>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -96,6 +98,7 @@ std::string hmacSha256Binary(const std::string &key,
 }
 
 const size_t SHA1_DIGEST_LENGTH = 20;
+constexpr size_t uploadIdNonceSize = 8;
 
 std::string hmacSha1Binary(const std::string &key,
                              const std::string &payload)
@@ -4709,10 +4712,12 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
             [self = this->self, evb]()
             {
                 const auto uploadId = self->sfs().get_next_partid();
-                const auto uploadIdEnc = self->sfs().encrypt_id_separate(uploadId, std::string());
+                std::string uploadNonce(uploadIdNonceSize, '\0');
+                folly::Random::secureRandom(uploadNonce.data(), uploadNonce.size());
+                const auto uploadIdEnc = self->encryptUploadId(uploadId, uploadNonce);
 
                 CWData data;
-                data.addString2(uploadIdEnc.nonce);
+                data.addString2(uploadNonce);
                 int64_t flags = 0;
                 if(self->sdkChecksumHash)
                     flags |= metadata_flag_with_checksum;
@@ -4759,8 +4764,8 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
         "<InitiateMultipartUploadResult>"
    "\t<Bucket>{}</Bucket>"
    "\t<Key>{}</Key>"
-   "\t<UploadId>{}-{}</UploadId>"
-"</InitiateMultipartUploadResult>", escapeXML(buckets::getBucketName(self->keyInfo.bucketId)), escapeXML(self->keyInfo.key), folly::hexlify(uploadIdEnc.encryptedId), folly::hexlify(uploadIdEnc.nonce));
+   "\t<UploadId>{}</UploadId>"
+"</InitiateMultipartUploadResult>", escapeXML(buckets::getBucketName(self->keyInfo.bucketId)), escapeXML(self->keyInfo.key), uploadIdEnc);
 
                                        ResponseBuilder(self->downstream_)
                         .status(200, "OK")
@@ -4772,22 +4777,24 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
             });
 }
 
+// Upload id is the encrypted id followed by the (unencrypted) nonce stored with the upload
+std::string S3Handler::encryptUploadId(const int64_t id, const std::string& nonce)
+{
+    return sfs().encrypt_id(id) + folly::base64URLEncode(nonce);
+}
+
 S3Handler::UploadIdDec S3Handler::decryptUploadId(const std::string& encdata)
 {
-    const auto dashPos = encdata.find('-');
-    if(dashPos==std::string::npos)
+    constexpr auto noncePos = folly::base64URLEncodedSize(cryptIdSize);
+    if(encdata.size()!=noncePos + folly::base64URLEncodedSize(uploadIdNonceSize))
         return UploadIdDec{-1, std::string()};
-
-    std::string encIdStr = encdata.substr(0, dashPos);
-    std::string nonceStr = encdata.substr(dashPos+1);
 
     try
     {
-        const auto nonce = folly::unhexlify(nonceStr);
-        return UploadIdDec { sfs().decrypt_id_separate(folly::unhexlify(encIdStr), nonce),
-            nonce };
+        return UploadIdDec{ sfs().decrypt_id(encdata.substr(0, noncePos)),
+            folly::base64URLDecode(std::string_view(encdata).substr(noncePos)) };
     }
-    catch(const std::exception&)
+    catch(folly::base64_decode_error&)
     {
         return UploadIdDec{-1, std::string()};
     }
@@ -7186,14 +7193,12 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
 
             rdata.getStr2(&lastOutputUploadNonce);
 
-            const auto encId =sfs().encrypt_id_separate(keyInfo.version, lastOutputUploadNonce);
-
             val_data += fmt::format("\t<Upload>\n"
                 "\t\t<Initiated>{}</Initiated>\n"
                 "\t\t<Key>{}</Key>\n"
-                "\t\t<UploadId>{}-{}</UploadId>\n"
+                "\t\t<UploadId>{}</UploadId>\n"
                 "\t</Upload>\n", format_last_modified(last_modified), 
-                encode(urlEncode, keyInfo.key), folly::hexlify(encId.encryptedId), folly::hexlify(encId.nonce));
+                encode(urlEncode, keyInfo.key), encryptUploadId(keyInfo.version, lastOutputUploadNonce));
             ++keyCount;
         }
 
@@ -7269,8 +7274,7 @@ void S3Handler::listObjects(folly::EventBase *evb, std::shared_ptr<S3Handler> se
         
         if(listPartial)
         {
-            const auto encId = sfs().encrypt_id_separate(lastOutputVersion, lastOutputUploadNonce);
-            nextVersionMarker = folly::hexlify(encId.encryptedId) + "-" + folly::hexlify(encId.nonce);
+            nextVersionMarker = encryptUploadId(lastOutputVersion, lastOutputUploadNonce);
         }
         else if(listVersions)
         {

@@ -413,6 +413,7 @@ private:
     bool initSdkChecksum(proxygen::HTTPMessage& message, const Action action);
     void deleteObjects();
 
+    std::string encryptUploadId(const int64_t id, const std::string& nonce);
     UploadIdDec decryptUploadId(const std::string& encdata);
 
     std::string fullKeyPath() const;
