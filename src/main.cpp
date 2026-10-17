@@ -76,6 +76,7 @@ DEFINE_int32(wal_write_data, 0, "Write objects smaller than defined to WAL file 
 DEFINE_bool(run_duckdb, false, "Run DuckDB UI");
 DEFINE_int32(duckdb_port, 4213, "Port to listen on with DuckDB UI protocol");
 DEFINE_bool(enable_core_dumps, false, "Enable core dumps on crashes");
+DECLARE_bool(test_db_no_sync);
 DEFINE_int32(max_put_buffer_size, 1*1024*1024, "Max read buffer size for HTTP sessions (for PUT)");
 
 namespace {
@@ -276,7 +277,8 @@ int realMain(int argc, char* argv[])
       S3Handler::onAddReadingCallback(fn, fragInfo);
     };
     sfsoptions.wal_write_meta = FLAGS_wal_write_meta;
-    sfsoptions.wal_write_data = FLAGS_wal_write_data;    
+    sfsoptions.wal_write_data = FLAGS_wal_write_data;
+    sfsoptions.no_sync = FLAGS_test_db_no_sync;    
 
     if(!FLAGS_wal_write_meta && FLAGS_wal_write_data==0)
     {

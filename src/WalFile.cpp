@@ -298,12 +298,13 @@ bool forEachDataItem(const int64_t off, const size_t dataSize, auto fn)
 
 } // namespace
 
-WalFile::WalFile(const std::string &path, const std::string_view walUuid, MultiFile& dataFile, const bool trackDirtyBlocks)
+WalFile::WalFile(const std::string &path, const std::string_view walUuid, MultiFile& dataFile, const bool trackDirtyBlocks, const bool noSync)
     : primaryFile(path+"1", O_RDWR | O_CREAT | O_APPEND, 0644), 
     altFile(path+"2", O_RDWR | O_CREAT | O_APPEND, 0644),
     dataFile(dataFile),
     walUuid(walUuid),
-    trackDirtyBlocks(trackDirtyBlocks)
+    trackDirtyBlocks(trackDirtyBlocks),
+    noSync(noSync)
 {
     seqNo = 1;
 
@@ -641,18 +642,18 @@ bool WalFile::sync(const CommitInfo& commitInfo)
     if(!writeData(data))
         return false;
 
-    return currentFile().fsyncNoInt() == 0;
+    return fsyncFile(currentFile()) == 0;
 }
 
 bool WalFile::fsync()
 {
-    return currentFile().fsyncNoInt() == 0;
+    return fsyncFile(currentFile()) == 0;
 }
 
 bool WalFile::switchFiles()
 {
     std::scoped_lock lock(mutex);
-    if(currentFile().fsyncNoInt() != 0)
+    if(fsyncFile(currentFile()) != 0)
     {
         XLOGF(ERR, "WalFile: switchFiles: failed to sync WAL file: {}", folly::errnoStr(errno));
         return false;
@@ -710,7 +711,7 @@ void WalFile::reset(ResetPrep& prep, const bool sync, const std::optional<bool> 
 
     if(sync)
     {
-        if(file.fsyncNoInt() != 0)
+        if(fsyncFile(file) != 0)
         {
             XLOGF(ERR, "WalFile: reset: failed to sync WAL file: {}", folly::errnoStr(errno));
             abort();
@@ -826,7 +827,7 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
 
                 XLOGF(INFO, "WalFile: dataWriteThread: syncing data file");
 
-                if(dataFile.fsyncNoInt() != 0)
+                if(fsyncFile(dataFile) != 0)
                 {
                     XLOGF(ERR, "WalFile: dataWriteThread: failed to sync data file: {}", folly::errnoStr(errno));
                     abort();

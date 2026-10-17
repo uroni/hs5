@@ -138,7 +138,8 @@ class Hs5Runner:
         if os.environ.get("ENABLE_PASSWORD_HASHING") != "1":
             self.args.append("--test_disable_password_hashing")
 
-        if os.environ.get("ENABLE_DB_SYNC") != "1":
+        # Perf tests should measure real sync behaviour
+        if not perf and os.environ.get("ENABLE_DB_SYNC") != "1":
             self.args.append("--test_db_no_sync")
 
         self.args.append(f"--http_worker_threads={os.environ.get('HS5_HTTP_WORKER_THREADS', '4')}")

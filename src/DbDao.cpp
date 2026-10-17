@@ -8,7 +8,7 @@
 #include <gflags/gflags.h>
 
 DEFINE_string(db_path, "./hs5.db", "Path where to put the database");
-DEFINE_bool(test_db_no_sync, false, "Do not fsync the database (PRAGMA synchronous=OFF). For testing only, database may get corrupted on power loss!");
+DEFINE_bool(test_db_no_sync, false, "Do not fsync the database, index, data file and WAL file (PRAGMA synchronous=OFF, MDB_NOSYNC). For testing only, data may get lost or corrupted on power loss!");
 
 typedef void(upgrade_func_t)(sqlgen::Database&);
 

@@ -206,6 +206,8 @@ public:
 		add_reading_callback_t add_reading_callback;
 		bool wal_write_meta = true;
 		int64_t wal_write_data = 0;
+		// Do not fsync LMDB, data file and WAL file. For testing only, data may get lost/corrupted on power loss!
+		bool no_sync = false;
 	};
 
 	SingleFileStorage(SFSOptions options);
@@ -697,6 +699,7 @@ private:
 	bool manual_commit_list_consistent;
 	bool stop_on_error;
 	bool punch_holes;
+	bool no_sync;
 
 	int64_t curr_partid = 0;
 	unsigned char enckey[crypto_secretbox_KEYBYTES];

@@ -431,7 +431,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	sync_freespace_cache(true), mdb_curr_sync(false), data_file_size_limit(options.data_file_size_limit_mb*1024*1024), alloc_chunk_size(options.alloc_chunk_size),
 	alloc_use_free_space_percent(options.alloc_use_free_space_percent),
 	runtime_id(options.runtime_id), manual_commit(options.manual_commit), manual_commit_list_consistent(options.manual_commit_list_consistent),
-	stop_on_error(options.stop_on_error), punch_holes(options.punch_holes),
+	stop_on_error(options.stop_on_error), punch_holes(options.punch_holes), no_sync(options.no_sync),
 	data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func),
 	common_prefix_hash_func(options.common_prefix_hash_func), on_delete_callback(options.on_delete_callback), modify_data_callback(options.modify_data_callback), modify_metadata_callback(options.modify_metadata_callback),
 	match_callback(options.match_callback), wal_write_meta(options.wal_write_meta), wal_write_data(options.wal_write_data), add_reading_callback(options.add_reading_callback)
@@ -729,6 +729,9 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	with_rewrite = false;
 	mdb_flags |= MDB_NORDAHEAD;
 	//mdb_flags |= MDB_WRITEMAP;
+
+	if (no_sync)
+		mdb_flags |= MDB_NOSYNC;
 
 	rc = mdb_env_open(db_env, index_lmdb_fn.c_str(), mdb_flags, 0664);
 
@@ -1215,7 +1218,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 		const auto data_log_str = wal_write_data < 0 ? " (logging all data)" : " (logging data <= " + folly::prettyPrint(wal_write_data, folly::PRETTY_BYTES_IEC) + ")";
 		const auto wal_mode = (wal_write_meta && wal_write_data==0) ? "meta_only" : (wal_write_data != 0 && !wal_write_meta) ?  ("data_only" + data_log_str) : ("full" + data_log_str);
 		XLOGF(INFO, "Opening WAL file at {} mode {} {}", options.wal_file_path, wal_mode, FLAGS_wal_write_thread ? "with write thread" : "no write thread");
-		wal_file = std::make_unique<WalFile>(options.wal_file_path, wal_uuid, data_file, FLAGS_wal_write_thread && wal_write_data>0);
+		wal_file = std::make_unique<WalFile>(options.wal_file_path, wal_uuid, data_file, FLAGS_wal_write_thread && wal_write_data>0, no_sync);
 
 		auto readResAlt = wal_file->read(curr_transid, &data_file, false, true);
 		if(!readResAlt.items.empty())
@@ -2847,7 +2850,7 @@ bool SingleFileStorage::commit(bool background_queue, int64_t transid, int64_t d
 
 	if(pre_sync)
 	{
-		if (data_file.fsyncNoInt()!=0)
+		if (!no_sync && data_file.fsyncNoInt()!=0)
 		{
 			XLOG(ERR) << "Failed to sync data file " << data_file_path << ". " << folly::errnoStr(errno);
 			write_offline = true;
@@ -4797,6 +4800,9 @@ bool SingleFileStorage::open_cache_db(int64_t current_txn_id, int64_t mapsize, b
 	{
 		mdb_flags |= MDB_WRITEMAP;
 	}
+
+	if (no_sync)
+		mdb_flags |= MDB_NOSYNC;
 
 	rc = mdb_env_open(cache_db_env, (freespace_cache_path + os_file_sep() + cache_db_name).c_str(), mdb_flags, 0664);
 
@@ -7520,13 +7526,13 @@ void SingleFileStorage::operator()()
 		{
 			if(wal_write_data >= 0 && data_file_dirty.exchange(false))
 			{
-				if (data_file.fsyncNoInt()!=0)
+				if (!no_sync && data_file.fsyncNoInt()!=0)
 				{
 					XLOG(ERR) << "Failed to sync data file " << data_file_path << ". " << folly::errnoStr(errno);
 					++commit_errors;
 				}
 
-				if (new_data_file
+				if (!no_sync && new_data_file
 					&& new_data_file.fsyncNoInt()!=0)
 				{
 					XLOG(ERR) << "Failed to sync new data file " << (data_file_path.parent_path() / "new_data") << ". " << folly::errnoStr(errno);
@@ -7687,13 +7693,13 @@ void SingleFileStorage::operator()()
 
 			if ( !wal_file || (wal_file_reset && !FLAGS_wal_write_thread) ) 
 			{
-				if (data_file.fsyncNoInt()!=0)
+				if (!no_sync && data_file.fsyncNoInt()!=0)
 				{
 					XLOG(ERR) << "Failed to sync data file " << data_file_path << ". " << folly::errnoStr(errno);
 					++commit_errors;
 				}
 
-				if (new_data_file
+				if (!no_sync && new_data_file
 					&& new_data_file.fsyncNoInt()!=0)
 				{
 					XLOG(ERR) << "Failed to sync new data file " << (data_file_path.parent_path() / "new_data") << ". " << folly::errnoStr(errno);
@@ -7921,7 +7927,7 @@ void SingleFileStorage::operator()()
 					if (!std::filesystem::exists(active_fn, ec))
 					{
 						int fd = open(active_fn.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP);
-						if (fd !=-1)
+						if (fd !=-1 && !no_sync)
 						{
 							folly::fsyncNoInt(fd);
 							os_sync(active_fn.parent_path().string());
