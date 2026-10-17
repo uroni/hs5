@@ -467,7 +467,6 @@ private:
     std::unique_ptr<PutBucketCorsData> putBucketCorsData;
     std::unique_ptr<PutObjectLockConfigurationData> putObjectLockConfigurationData;
     std::unique_ptr<PutObjectRetentionData> putObjectRetentionData;
-    bool createBucketObjectLockEnabled = false;
 
 	std::mutex extents_mutex;
 	std::condition_variable extents_cond;

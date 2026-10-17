@@ -2510,8 +2510,12 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
             }
 
-            createBucketObjectLockEnabled = folly::trimWhitespace(
-                headers->getHeaders().getSingleOrEmpty("x-amz-bucket-object-lock-enabled")) == "true";
+            if(folly::trimWhitespace(
+                headers->getHeaders().getSingleOrEmpty("x-amz-bucket-object-lock-enabled")) == "true")
+            {
+                putObjectLockConfigurationData = std::make_unique<PutObjectLockConfigurationData>();
+                putObjectLockConfigurationData->objectLockEnabled = "1";
+            }
 
             request_action = Action::CreateBucket;
             return;
@@ -5195,7 +5199,9 @@ void S3Handler::finalizeCreateBucket()
                     return;
                 }
 
-                const auto bucketId = buckets::addBucket(self->keyInfo.key, true, self->createBucketObjectLockEnabled);
+                const bool objectLockEnabled = self->putObjectLockConfigurationData &&
+                    self->putObjectLockConfigurationData->objectLockEnabled == "1";
+                const auto bucketId = buckets::addBucket(self->keyInfo.key, true, objectLockEnabled);
 
                 if(bucketId < 0)
                 {
