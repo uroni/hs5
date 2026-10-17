@@ -6878,7 +6878,7 @@ void S3Handler::readObject(folly::EventBase* evb, std::shared_ptr<S3Handler> sel
     {
         if (self->paused_)
         {
-            XLOGF(DBG0, "Sending of {} paused at {} done bytes. Finished={} Running={}", self->keyInfo.key, self->done_bytes, self->finished_, self->running);
+            XLOGF(DBG0, "Sending of {} paused at offset {}", self->keyInfo.key, offset);
             did_pause = true;
             break;
         }
