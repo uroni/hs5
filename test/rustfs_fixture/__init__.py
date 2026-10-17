@@ -22,6 +22,8 @@ def get_next_port(testrun_uid: str) -> int:
         f.truncate(0)
         f.seek(0)
         f.write(str(p))
+        # portalocker unlocks before closing, so flush while still holding the lock
+        f.flush()
 
         return p
 

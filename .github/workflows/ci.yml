@@ -81,13 +81,13 @@ jobs:
           test ! -e vcpkg/buildtrees
 
   job:
-    name: ${{ matrix.os }}-${{ github.workflow }}
+    name: ${{ matrix.os }}-${{ github.workflow }}-${{ matrix.variant }}
     runs-on: ${{ matrix.os }}
     environment: vcpkg
     strategy:
       fail-fast: false
       matrix:
-        benchmark: [0, 1]
+        variant: [debug, benchmark, asan]
         os: [ubuntu-latest]
 
     steps:
@@ -112,7 +112,7 @@ jobs:
           vcpkgGitCommitId: d7b75fa8a30478ae5b5eb86ac730f851ef036875
 
       - name: Run CMake+vcpkg+Ninja+CTest to build debug packages and generate/build/test the code.
-        if: matrix.benchmark == 0
+        if: matrix.variant == 'debug'
         uses: lukka/run-cmake@v10
         env:
           VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org,readwrite"
@@ -122,7 +122,7 @@ jobs:
           testPreset: 'test-debug'
       
       - name: Run CMake+vcpkg+Ninja+CTest to build release packages and generate/build/test the code.
-        if: matrix.benchmark == 1
+        if: matrix.variant == 'benchmark'
         uses: lukka/run-cmake@v10
         env:
           VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org,readwrite"
@@ -130,6 +130,16 @@ jobs:
           configurePreset: 'ninja-multi-vcpkg'
           buildPreset: 'ninja-vcpkg-release'
           testPreset: 'test-release'
+
+      - name: Run CMake+vcpkg+Ninja+CTest to build debug packages with AddressSanitizer and generate/build/test the code.
+        if: matrix.variant == 'asan'
+        uses: lukka/run-cmake@v10
+        env:
+          VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org,readwrite"
+        with:
+          configurePreset: 'ninja-multi-vcpkg-asan'
+          buildPreset: 'ninja-vcpkg-debug-asan'
+          testPreset: 'test-debug-asan'
 
       - name: Cleaning
         run: bash clean.sh
@@ -146,7 +156,7 @@ jobs:
         run: pip install pytest-md pytest-emoji
 
       - uses: pavelzw/pytest-action@v2
-        if: matrix.benchmark == 0
+        if: matrix.variant == 'debug'
         env:
           GOLANG_TEST: "1"
         with:
@@ -154,14 +164,23 @@ jobs:
           custom-arguments: -p no:sugar -p no:threadexception --benchmark-skip test --timeout=300 -n auto
 
       - uses: pavelzw/pytest-action@v2
-        if: matrix.benchmark == 1
+        if: matrix.variant == 'asan'
+        env:
+          HS5_BINARY: builds/ninja-multi-vcpkg-asan/Debug/hs5
+          ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_summary=1"
+        with:
+          emoji: false
+          custom-arguments: -p no:sugar -p no:threadexception --benchmark-skip test --timeout=600 -n auto
+
+      - uses: pavelzw/pytest-action@v2
+        if: matrix.variant == 'benchmark'
         with:
           emoji: false
           custom-arguments: -p no:sugar -p no:threadexception --benchmark-only --benchmark-json output.json test
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
-        if: matrix.benchmark == 1
+        if: matrix.variant == 'benchmark'
         with:
           tool: 'pytest'
           output-file-path: output.json
@@ -172,7 +191,7 @@ jobs:
           auto-push: true
 
       - name: Export warp comparison output
-        if: matrix.benchmark == 1
+        if: matrix.variant == 'benchmark'
         id: warp-compare
         shell: bash
         run: |

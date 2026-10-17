@@ -30,6 +30,8 @@ def get_next_port(testrun_uid: str) -> int:
         f.truncate(0)
         f.seek(0)
         f.write(str(p))
+        # portalocker unlocks before closing, so flush while still holding the lock
+        f.flush()
 
         return p
 
@@ -70,6 +72,10 @@ class Hs5Runner:
                 Path("build/hs5")]
         
         hs5_loc = None
+        hs5_binary = os.environ.get("HS5_BINARY")
+        if hs5_binary:
+            locs.insert(0, Path(hs5_binary))
+
         for loc in locs:
             if (Path(os.getcwd()) / loc).exists():
                 hs5_loc = Path(os.getcwd()) / loc
