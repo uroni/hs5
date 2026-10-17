@@ -3353,9 +3353,10 @@ void S3Handler::getBucketCors(proxygen::HTTPMessage& headers, const std::string&
         for(const auto& header: rule.allowedHeaders)
             corsRulesXml += fmt::format("\t\t<AllowedHeader>{}</AllowedHeader>\n", escapeXML(header));
         
-        corsRulesXml += fmt::format(
-                "\t\t<ID>{}</ID>\n"
-                "\t\t<MaxAgeSeconds>{}</MaxAgeSeconds>\n", escapeXML(rule.id), escapeXML(rule.maxAgeSeconds));
+        if(!rule.id.empty())
+            corsRulesXml += fmt::format("\t\t<ID>{}</ID>\n", escapeXML(rule.id));
+        if(!rule.maxAgeSeconds.empty())
+            corsRulesXml += fmt::format("\t\t<MaxAgeSeconds>{}</MaxAgeSeconds>\n", escapeXML(rule.maxAgeSeconds));
 
         corsRulesXml += "\t</CORSRule>\n";
     }

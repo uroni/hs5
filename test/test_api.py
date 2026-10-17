@@ -268,7 +268,8 @@ def test_delete_bucket_via_api(hs5: Hs5Runner, tmp_path: Path):
         pass
 
 
-@pytest.mark.parametrize("action", ['"*"', '"s3:*"', '["s3:ListBuckets", "s3:ListObjects", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]'])
+@pytest.mark.parametrize("action", ['"*"', '"s3:*"', '["s3:ListBuckets", "s3:ListObjects", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]',
+                                    '["s3:ListBuckets", "s3:ListObjects", "s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:PutBucketCORS", "s3:Get*"]'])
 def test_add_user_for_bucket(hs5: Hs5Runner, action: str):
     admin_client = hs5.get_api_client_admin()
 
@@ -345,6 +346,16 @@ def test_add_user_for_bucket(hs5: Hs5Runner, action: str):
     data = obj["Body"].read()
     assert data == b"testdata"
     s3.delete_object(Bucket="accessbucket", Key="testkey")
+
+    cors_allowed = "s3:ListBuckets" not in action or "s3:PutBucketCORS" in action
+    cors_config = {"CORSRules": [{"AllowedMethods": ["GET"], "AllowedOrigins": ["*"]}]}
+    if cors_allowed:
+        s3.put_bucket_cors(Bucket="accessbucket", CORSConfiguration=cors_config)
+        cors = s3.get_bucket_cors(Bucket="accessbucket")
+        assert cors["CORSRules"][0]["AllowedMethods"] == ["GET"]
+    else:
+        with pytest.raises(ClientError):
+            s3.put_bucket_cors(Bucket="accessbucket", CORSConfiguration=cors_config)
 
 
 @pytest.mark.parametrize("perms", ["", "r", "w", "d", "rw", "rd", "wd", "rwd"])

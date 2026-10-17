@@ -54,6 +54,8 @@ Action actionFromStr(const std::string_view action)
     if(action== "s3:PutObjectRetention") return Action::PutObjectRetention;
     if(action== "s3:BypassGovernanceRetention") return Action::BypassGovernanceRetention;
     if(action== "s3:GetBucketObjectLockConfiguration") return Action::GetBucketObjectLockConfiguration;
+    if(action== "s3:PutBucketCORS" || action== "s3:PutBucketCors") return Action::PutBucketCors;
+    if(action== "s3:GetBucketCORS" || action== "s3:GetBucketCors") return Action::GetBucketCors;
     return Action::Unknown;
 }
 
@@ -101,6 +103,8 @@ std::string actionToStr(const Action action)
         case Action::PutObjectRetention:return  "s3:PutObjectRetention";
         case Action::BypassGovernanceRetention:return  "s3:BypassGovernanceRetention";
         case Action::GetBucketObjectLockConfiguration:return  "s3:GetBucketObjectLockConfiguration";
+        case Action::PutBucketCors:return  "s3:PutBucketCORS";
+        case Action::GetBucketCors:return  "s3:GetBucketCORS";
     }
     return "";
 }
