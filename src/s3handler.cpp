@@ -5196,8 +5196,12 @@ void S3Handler::deleteObjects()
 
                     const auto currPath = make_key(obj.key, self->keyInfo.bucketId, version);
 
+                    std::optional<SingleFileStorage::MatchInfo> objMatchInfo;
                     if(self->matchInfo)
-                        self->matchInfo->match = false;
+                    {
+                        objMatchInfo = *self->matchInfo;
+                        objMatchInfo->match = false;
+                    }
 
                     int res;
 
@@ -5207,16 +5211,16 @@ void S3Handler::deleteObjects()
 
                         if(objRes.err==0)
                         {
-                            if(self->matchInfo)
+                            if(objMatchInfo)
                             {
-                                self->matchInfo->readFn = currPath;
-                                self->matchInfo->readNewest = true;
+                                objMatchInfo->readFn = currPath;
+                                objMatchInfo->readNewest = true;
                             }
 
                             version = self->sfs().get_next_version();
                             const auto writePath = make_key(obj.key, self->keyInfo.bucketId, version);
                             std::string md5sum(1, metadata_tombstone);
-                            res = self->sfs().write(writePath, nullptr, 0, 0, 0, md5sum, false, false, self->matchInfo.get());
+                            res = self->sfs().write(writePath, nullptr, 0, 0, 0, md5sum, false, false, objMatchInfo ? &*objMatchInfo : nullptr);
                         }
                         else
                         {
@@ -5225,17 +5229,17 @@ void S3Handler::deleteObjects()
                     }
                     else
                     {
-                        res = self->sfs().del(currPath, SingleFileStorage::DelAction::Del, false, nullptr, self->matchInfo.get());
+                        res = self->sfs().del(currPath, SingleFileStorage::DelAction::Del, false, nullptr, objMatchInfo ? &*objMatchInfo : nullptr);
                     }
 
-                    if(res==0 && (!self->matchInfo || self->matchInfo->match))
+                    if(res==0 && (!objMatchInfo || objMatchInfo->match))
                     {
                         ++deletedObjects;
                     }
 
                     if(res==0 || res==ENOENT)
                     {
-                        if(self->matchInfo && !self->matchInfo->match)
+                        if(objMatchInfo && !objMatchInfo->match)
                         {
                             resp += fmt::format("\t<Error>\n"
                                 "\t\t<Code>PreconditionFailed</Code>\n"
