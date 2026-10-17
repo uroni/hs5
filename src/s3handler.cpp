@@ -5179,9 +5179,11 @@ void S3Handler::finalizeMultipartUpload()
                 evb->runInEventBaseThread([self = self, etagBin, numParts = multiPartData->parts.size()]()
                                               {
                                                 const auto bucket = buckets::getBucketName(self->keyInfo.bucketId);
-                        ResponseBuilder(self->downstream_)
-                            .status(200, "OK")
-                            .body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                        ResponseBuilder resp(self->downstream_);
+                        resp.status(200, "OK");
+                        if(self->keyInfo.withVersioning() && self->keyInfo.version != 0)
+                            resp.header("x-amz-version-id", self->sfs().encrypt_id(self->keyInfo.version));
+                        resp.body(fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
             "<CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n"
              "\t<Location>{}/{}/{}</Location>\n"
              "\t<Bucket>{}</Bucket>\n"

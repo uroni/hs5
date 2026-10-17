@@ -1649,6 +1649,15 @@ def test_enable_bucket_versioning(hs5: Hs5Runner):
     ver = s3_client.get_bucket_versioning(Bucket=hs5.testbucketname())
     assert "Status" in ver and ver["Status"] == "Enabled"
 
+    # CompleteMultipartUpload returns the version id of the new version
+    upl = s3_client.create_multipart_upload(Bucket=hs5.testbucketname(), Key="versioned.txt")
+    part = s3_client.upload_part(Bucket=hs5.testbucketname(), Key="versioned.txt", UploadId=upl["UploadId"], PartNumber=1, Body=b"version3")
+    res = s3_client.complete_multipart_upload(Bucket=hs5.testbucketname(), Key="versioned.txt", UploadId=upl["UploadId"],
+                                              MultipartUpload={"Parts": [{"ETag": part["ETag"], "PartNumber": 1}]})
+    assert "VersionId" in res
+    obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=res["VersionId"])
+    assert obj["Body"].read() == b"version3"
+
 
 def test_get_object_attributes(hs5: Hs5Runner, tmp_path: Path):
     s3_client = hs5.get_s3_client()
