@@ -18,3 +18,4 @@ psutil
 openapi-generator-cli
 black==25.1.0
 clang-format==18.1.8
+pre-commit==4.3.0

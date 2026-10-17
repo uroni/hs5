@@ -1,0 +1,18 @@
+# Formats only the changed lines. Enable with: pre-commit install
+repos:
+  - repo: https://github.com/akaihola/darker
+    rev: v3.0.0
+    hooks:
+      - id: darker
+        additional_dependencies: [black==25.1.0]
+        exclude: ^test/hs5_api_client/
+
+  - repo: local
+    hooks:
+      - id: git-clang-format
+        name: git-clang-format
+        entry: git-clang-format HEAD --
+        language: python
+        additional_dependencies: [clang-format==18.1.8]
+        files: ^src/[^/]+\.(cpp|h)$
+        require_serial: true
