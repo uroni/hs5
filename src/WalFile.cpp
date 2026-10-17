@@ -331,6 +331,7 @@ bool WalFile::needsWrite(const SingleFileStorage::SFragInfo& info)
         case SingleFileStorage::FragAction::FreeExtents:
         case SingleFileStorage::FragAction::DelFreemapWal:
         case SingleFileStorage::FragAction::AddFreemapWal:
+        case SingleFileStorage::FragAction::ModifyMetadata:
         return true;
         default:
         return false;

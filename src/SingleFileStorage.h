@@ -106,7 +106,8 @@ public:
 		AssertDelQueueEmpty,
 		DelFreemapWal,
 		AddFreemapWal,
-		ModifyData
+		ModifyData,
+		ModifyMetadata
 	};
 
 	struct SFragInfo;
@@ -161,6 +162,7 @@ public:
 	typedef size_t(*common_prefix_hash_func_t)(const std::string_view);
 	using on_delete_callback_t = std::function<std::vector<SingleFileStorage::SFragInfo>(const std::string&, const std::string&)>;
 	using modify_data_callback_t = std::function<std::optional<std::string>(const std::string&, std::string, std::string)>;
+	using modify_metadata_callback_t = std::function<std::optional<std::string>(const std::string&, const std::string&, const std::string&)>;
 	using match_callback_t = std::function<void(MatchInfo&, const SingleFileStorage::SFragInfo&)>;
 	using add_reading_callback_t = std::function<void(const std::string_view fn, const SingleFileStorage::SFragInfo&)>;
 	
@@ -190,6 +192,7 @@ public:
 		common_prefix_hash_func_t common_prefix_hash_func = nullptr;
 		on_delete_callback_t on_delete_callback;
 		modify_data_callback_t modify_data_callback;
+		modify_metadata_callback_t modify_metadata_callback;
 		match_callback_t match_callback;
 		add_reading_callback_t add_reading_callback;
 		bool wal_write_meta = true;
@@ -263,6 +266,11 @@ public:
 
 	int del(const std::string_view fn, DelAction da,
 		bool background_queue, std::unique_ptr<SFragInfo> linked = nullptr, MatchInfo* match_info = nullptr);
+
+	// Replaces the md5sum (metadata) of an existing object with the result of modify_metadata_callback
+	// called with the current md5sum and param. Waits until the modification was applied.
+	// Returns ENOENT if the object does not exist and EINVAL if the callback rejected the modification.
+	int modify_metadata(const std::string& fn, const std::string_view param);
 
 	bool restore_old(const std::string& fn);
 
@@ -562,6 +570,8 @@ private:
 
 	int put_with_rewrite(MDB_txn* txn, MDB_dbi dbi, MDB_val* tkey, MDB_val* tval, THREAD_ID tid, size_t npages);
 
+	int put_frag_info_md5sum(MDB_txn* txn, THREAD_ID tid, const std::string& fn, const SFragInfo& frag_info, const std::string& md5sum);
+
 	void add_reading_item(const SFragInfo& fi);
 
 	void remove_reading_item(const std::vector<Ext>& extents);
@@ -692,6 +702,7 @@ private:
 	common_prefix_hash_func_t common_prefix_hash_func;
 	on_delete_callback_t on_delete_callback;
 	modify_data_callback_t modify_data_callback;
+	modify_metadata_callback_t modify_metadata_callback;
 	match_callback_t match_callback;
 	add_reading_callback_t add_reading_callback;
 

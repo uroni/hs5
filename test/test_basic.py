@@ -1689,6 +1689,84 @@ def test_get_object_attributes_multipart(hs5: Hs5Runner, tmp_path: Path):
     assert "ChecksumCRC32" in part2 and part2["ChecksumCRC32"] == base64.b64encode(crc32(fdata[5*1024*1024:]).to_bytes(4, byteorder='big')).decode()
 
 
+def test_put_object_legal_hold(hs5: Hs5Runner, tmp_path: Path):
+    s3_client = hs5.get_s3_client()
+
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="hold.txt", Body=b"abc", ContentType="text/plain", Metadata={"foo": "bar"})
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="hold.txt")
+    assert "ObjectLockLegalHoldStatus" not in obj_info
+
+    s3_client.put_object_legal_hold(Bucket=hs5.testbucketname(), Key="hold.txt", LegalHold={"Status": "ON"})
+
+    obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="hold.txt")
+    assert obj["ObjectLockLegalHoldStatus"] == "ON"
+    assert obj["ContentType"] == "text/plain"
+    assert obj["Metadata"] == {"foo": "bar"}
+    assert obj["Body"].read() == b"abc"
+
+    hs5.restart()
+    s3_client = hs5.get_s3_client()
+
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="hold.txt")
+    assert obj_info["ObjectLockLegalHoldStatus"] == "ON"
+    assert obj_info["Metadata"] == {"foo": "bar"}
+
+    s3_client.put_object_legal_hold(Bucket=hs5.testbucketname(), Key="hold.txt", LegalHold={"Status": "OFF"})
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="hold.txt")
+    assert "ObjectLockLegalHoldStatus" not in obj_info
+    assert obj_info["Metadata"] == {"foo": "bar"}
+
+    with pytest.raises(ClientError) as exc_info:
+        s3_client.put_object_legal_hold(Bucket=hs5.testbucketname(), Key="nonexistent.txt", LegalHold={"Status": "ON"})
+    assert exc_info.value.response["Error"]["Code"] == "NoSuchKey"
+
+
+def test_put_object_legal_hold_multipart(hs5: Hs5Runner, tmp_path: Path):
+    s3_client = hs5.get_s3_client()
+
+    fdata = os.urandom(10*1024*1024)
+    with open(tmp_path / "upload.txt", "wb") as upload_file:
+        upload_file.write(fdata)
+
+    config = TransferConfig(multipart_chunksize=5*1024*1024)
+    s3_client.upload_file(str(tmp_path / "upload.txt"), hs5.testbucketname(), "upload.txt", Config=config)
+    etag = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")["ETag"]
+
+    s3_client.put_object_legal_hold(Bucket=hs5.testbucketname(), Key="upload.txt", LegalHold={"Status": "ON"})
+
+    obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert obj["ObjectLockLegalHoldStatus"] == "ON"
+    assert obj["ETag"] == etag
+    assert obj["Body"].read() == fdata
+
+
+def test_put_object_legal_hold_versioned(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    s3_client.put_bucket_versioning(Bucket=hs5.testbucketname(), VersioningConfiguration={"Status": "Enabled"})
+
+    v1 = s3_client.put_object(Bucket=hs5.testbucketname(), Key="versioned.txt", Body=b"version1")["VersionId"]
+    v2 = s3_client.put_object(Bucket=hs5.testbucketname(), Key="versioned.txt", Body=b"version2")["VersionId"]
+
+    s3_client.put_object_legal_hold(Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=v1, LegalHold={"Status": "ON"})
+
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=v1)
+    assert obj_info["ObjectLockLegalHoldStatus"] == "ON"
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=v2)
+    assert "ObjectLockLegalHoldStatus" not in obj_info
+
+    # Without version id the newest version is modified
+    s3_client.put_object_legal_hold(Bucket=hs5.testbucketname(), Key="versioned.txt", LegalHold={"Status": "ON"})
+    obj_info = s3_client.head_object(Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=v2)
+    assert obj_info["ObjectLockLegalHoldStatus"] == "ON"
+
+    s3_client.delete_object(Bucket=hs5.testbucketname(), Key="versioned.txt")
+
+    with pytest.raises(ClientError) as exc_info:
+        s3_client.put_object_legal_hold(Bucket=hs5.testbucketname(), Key="versioned.txt", LegalHold={"Status": "ON"})
+    assert exc_info.value.response["Error"]["Code"] == "MethodNotAllowed"
+
+
 def test_post_form_upload_public(hs5: Hs5Runner, tmp_path: Path):
     s3_client = hs5.get_s3_client()
 

@@ -1163,6 +1163,78 @@ static void putBucketVersioningXmlCharData(void *userData,
     }
 }
 
+static void putObjectLegalHoldXmlElementStart(void *userData,
+                                                const XML_Char *name,
+                                                const XML_Char **atts)
+{
+    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
+
+    switch(deleteObjectsData->parseState)
+    {
+    case S3Handler::DeleteObjectsData::ParseState::Init:
+        {
+            if(strcmp(name, "LegalHold")==0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        } break;
+    case S3Handler::DeleteObjectsData::ParseState::InRoot:
+    {
+        if(strcmp(name, "Status")==0)
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InStatus;
+        else
+            deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+    } break;
+    default:
+        break;
+    }
+}
+
+static void putObjectLegalHoldXmlElementEnd(void *userData,
+                                               const XML_Char *name)
+{
+    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
+
+    switch(deleteObjectsData->parseState)
+    {
+    case S3Handler::DeleteObjectsData::ParseState::InRoot:
+        {
+            if(strcmp(name, "LegalHold")==0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Finished;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        } break;
+    case S3Handler::DeleteObjectsData::ParseState::InStatus:
+        {
+            if(strcmp(name, "Status") == 0)
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::InRoot;
+            else
+                deleteObjectsData->parseState = S3Handler::DeleteObjectsData::ParseState::Unknown;
+        } break;
+    default:
+        break;
+    }
+}
+
+static void putObjectLegalHoldXmlCharData(void *userData,
+                                               const XML_Char *s, int len)
+{
+    auto deleteObjectsData = reinterpret_cast<S3Handler::DeleteObjectsData*>(userData);
+
+    std::string_view data(s, len);
+
+    switch(deleteObjectsData->parseState)
+    {
+        case S3Handler::DeleteObjectsData::ParseState::InStatus:
+        {
+            if(deleteObjectsData->buf.size() < 100)
+                deleteObjectsData->buf += std::string(data);
+        } break;
+        default:
+            break;
+    }
+}
+
 static void putBucketCorsXmlElementStart(void *userData,
                                                 const XML_Char *name,
                                                 const XML_Char **atts)
@@ -1353,7 +1425,9 @@ enum class S3ErrorCode
     InvalidBucketName,
     PreconditionFailed,
     ConditionalRequestConflict,
-    BadDigest
+    BadDigest,
+    MalformedXML,
+    MethodNotAllowed
 };
 
 std::string_view s3errorCodeToStr(const S3ErrorCode code)
@@ -1384,6 +1458,10 @@ std::string_view s3errorCodeToStr(const S3ErrorCode code)
             return "ConditionalRequestConflict";
         case S3ErrorCode::BadDigest:
             return "BadDigest";
+        case S3ErrorCode::MalformedXML:
+            return "MalformedXML";
+        case S3ErrorCode::MethodNotAllowed:
+            return "MethodNotAllowed";
         default:
             return "InternalError";
     }
@@ -1413,6 +1491,10 @@ std::string_view s3errorMsg(const S3ErrorCode code)
             return "The condition specified in the conditional header(s) was not met.";
         case S3ErrorCode::BadDigest:
             return "The Content-MD5 you specified did not match what we received.";
+        case S3ErrorCode::MalformedXML:
+            return "The XML you provided was not well-formed or did not validate against our published schema.";
+        case S3ErrorCode::MethodNotAllowed:
+            return "The specified method is not allowed against this resource.";
         default:
             return "We encountered an internal error. Please try again.";
     }
@@ -1991,7 +2073,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
             keyInfo.key = bucketName;
         }
-        else if(!setKeyInfoFromPath(*headers, path, nullptr, false))
+        else if(!setKeyInfoFromPath(*headers, path, 
+                    headers->hasQueryParam("legal-hold") ? headers->getQueryParamPtr("versionId") : nullptr, false))
             return;
 
         const auto copySource = headers->getHeaders().getSingleOrEmpty("x-amz-copy-source");
@@ -2141,6 +2224,25 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             request_action = action;
             putBucketCors(*headers);
+            return;
+        }
+        else if(!createBucket && headers->hasQueryParam("legal-hold") && (xid.empty() || xid=="PutObjectLegalHold") )
+        {
+            const auto action = Action::PutObjectLegalHold;
+
+            if(!checkSig(this, *headers, payload, resource, action, false, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) 
+                || ( currSigPtr != nullptr && currSigPtr->empty()))
+            {
+                XLOGF(INFO, "Unauthorized PutObjectLegalHold: {}", path);
+                ResponseBuilder(downstream_)
+                    .status(403, "Forbidden")
+                    .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
+                    .sendWithEOM();
+                return;
+            }
+
+            request_action = action;
+            putObjectLegalHold(*headers);
             return;
         }
 
@@ -4929,6 +5031,105 @@ void S3Handler::finalizePutBucketCors()
         );
 }
 
+void S3Handler::finalizePutObjectLegalHold()
+{
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+    folly::getGlobalCPUExecutor()->add(
+            [self = this->self, evb]()
+            {
+                const auto sendError = [&](const uint16_t code, const std::string& message, const S3ErrorCode errorCode, const std::string& errorMsg)
+                {
+                    evb->runInEventBaseThread([self = self, code, message, errorCode, errorMsg]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(code, message)
+                            .body(s3errorXml(errorCode, errorMsg, self->fullKeyPath(), ""))
+                            .sendWithEOM();
+                        self->finished_ = true;
+                                              });
+                };
+
+                const auto statusStr = folly::trimWhitespace(self->deleteObjectsData->buf);
+
+                if(self->deleteObjectsData->parseState != DeleteObjectsData::ParseState::Finished ||
+                    (statusStr != "ON" && statusStr != "OFF"))
+                {
+                    XLOGF(WARN, "Invalid legal hold status specified for object {}: {}", self->keyInfo.key, self->deleteObjectsData->buf);
+                    sendError(400, "Bad Request", S3ErrorCode::MalformedXML, "");
+                    return;
+                }
+
+                const bool legalHold = statusStr == "ON";
+
+                std::string fn;
+                if(self->keyInfo.withVersioning() && self->keyInfo.version==0)
+                {
+                    const auto res = self->sfs().read_prepare(make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max()), 
+                        SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading | SingleFileStorage::ReadNewest);
+
+                    if(res.err == ENOENT)
+                    {
+                        sendError(404, "Not found", S3ErrorCode::NoSuchKey, "");
+                        return;
+                    }
+                    else if(res.err != 0)
+                    {
+                        XLOGF(WARN, "Reading object metadata of {} failed for PutObjectLegalHold: {}", self->keyInfo.key, res.err);
+                        sendError(500, "Internal error", S3ErrorCode::InternalError, fmt::format("Error code: {}", res.err));
+                        return;
+                    }
+
+                    fn = res.key;
+                }
+                else
+                {
+                    fn = make_key(self->keyInfo);
+                }
+
+                CWData param;
+                param.addChar(metadata_modify_legal_hold);
+                param.addChar(legalHold ? 1 : 0);
+
+                const auto rc = self->sfs().modify_metadata(fn, std::string_view(param.getDataPtr(), param.getDataSize()));
+
+                if(rc == ENOENT)
+                {
+                    sendError(404, "Not found", S3ErrorCode::NoSuchKey, "");
+                    return;
+                }
+                else if(rc == EINVAL)
+                {
+                    // Delete marker
+                    sendError(405, "Method Not Allowed", S3ErrorCode::MethodNotAllowed, "");
+                    return;
+                }
+                else if(rc != 0)
+                {
+                    XLOGF(WARN, "Setting legal hold of object {} failed: {}", self->keyInfo.key, rc);
+                    sendError(500, "Internal error", S3ErrorCode::InternalError, fmt::format("Error code: {}", rc));
+                    return;
+                }
+
+                if(!self->commit())
+                {
+                    XLOGF(WARN, "Commit after setting legal hold of object {} failed", self->keyInfo.key);
+                    sendError(500, "Internal error", S3ErrorCode::InternalError, "Commit error");
+                    return;
+                }
+
+                XLOGF(INFO, "Set legal hold of object {} to {}", self->keyInfo.key, legalHold ? "ON" : "OFF");
+
+                evb->runInEventBaseThread([self = self]()
+                                              {
+                        ResponseBuilder(self->downstream_)
+                            .status(200, "OK")
+                            .sendWithEOM();
+                        self->finished_ = true;
+                });
+            }
+        );
+}
+
 void S3Handler::deleteObjects()
 {
     if(deleteObjectsData->objects.size() > 1000)
@@ -5322,6 +5523,26 @@ void S3Handler::putBucketCors(proxygen::HTTPMessage& headers)
 
     XML_SetElementHandler(xmlBody.parser, putBucketCorsXmlElementStart, putBucketCorsXmlElementEnd);
     XML_SetCharacterDataHandler(xmlBody.parser, putBucketCorsXmlCharData);
+}
+
+void S3Handler::putObjectLegalHold(proxygen::HTTPMessage& headers)
+{
+    xmlBody.init();
+    if(xmlBody.parser == nullptr)
+    {
+        ResponseBuilder(downstream_)
+            .status(500, "Internal error")
+            .body(s3errorXml(S3ErrorCode::InternalError, "Could not init XML parser", keyInfo.key, ""))
+            .sendWithEOM();
+        return;
+    }
+
+    deleteObjectsData = std::make_unique<DeleteObjectsData>();
+
+    XML_SetUserData(xmlBody.parser, deleteObjectsData.get());
+
+    XML_SetElementHandler(xmlBody.parser, putObjectLegalHoldXmlElementStart, putObjectLegalHoldXmlElementEnd);
+    XML_SetCharacterDataHandler(xmlBody.parser, putObjectLegalHoldXmlCharData);
 }
 
 void S3Handler::optionsObject(proxygen::HTTPMessage& headers)
@@ -6786,7 +7007,8 @@ void S3Handler::onBodyChunked(std::unique_ptr<folly::IOBuf> body)
     if(request_action == Action::CompleteMultipartUpload ||
         request_action == Action::DeleteObjects ||
         request_action == Action::PutBucketVersioning ||
-        request_action == Action::PutBucketCors)
+        request_action == Action::PutBucketCors ||
+        request_action == Action::PutObjectLegalHold)
     {
         if(payloadHash)
             payloadHash->update(body->data(), body->length());
@@ -7378,6 +7600,14 @@ void S3Handler::onEOM() noexcept
         finalizePutBucketCors();
         return;
     }
+    else if(request_action == Action::PutObjectLegalHold)
+    {
+        if(finished_)
+            return;
+
+        finalizePutObjectLegalHold();
+        return;
+    }
 }
 
 void S3Handler::onUpgrade(UpgradeProtocol /*protocol*/) noexcept
@@ -7505,6 +7735,46 @@ std::optional<std::string> S3Handler::onModifyCallback(const std::string& fn, st
     }
 
     return serializePartExts(existingParts);
+}
+
+std::optional<std::string> S3Handler::onModifyMetadataCallback(const std::string& fn, const std::string& md5sum, const std::string& param)
+{
+    CRData rparam(param.data(), param.size());
+    char modifyType;
+    if(!rparam.getChar(&modifyType))
+        return std::nullopt;
+
+    CRData rdata(md5sum.data(), md5sum.size());
+    int64_t itype;
+    if(!rdata.getVarInt(&itype))
+        return std::nullopt;
+
+    const auto baseType = itype & ~metadata_known_flags;
+    if(baseType != metadata_object && baseType != metadata_multipart_object)
+        return std::nullopt;
+
+    switch(modifyType)
+    {
+    case metadata_modify_legal_hold:
+        {
+            // Legal hold has no serialized data, so only the flag needs to change
+            char legalHold;
+            if(!rparam.getChar(&legalHold))
+                return std::nullopt;
+            if(legalHold)
+                itype |= metadata_flag_with_legal_hold;
+            else
+                itype &= ~metadata_flag_with_legal_hold;
+        } break;
+    default:
+        XLOGF(ERR, "Unknown modify type: {}", static_cast<int>(modifyType));
+        abort();
+    }
+
+    CWData wdata;
+    wdata.addVarInt(itype);
+    wdata.addBuffer(rdata.getCurrDataPtr(), rdata.getLeft());
+    return std::string(wdata.getDataPtr(), wdata.getDataSize());
 }
 
 std::string S3Handler::fullKeyPath() const

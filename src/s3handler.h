@@ -146,6 +146,9 @@ const int64_t metadata_known_flags = metadata_flag_with_content_type | metadata_
      metadata_flag_with_expires | metadata_flag_with_checksum |
      metadata_flag_with_lock_info | metadata_flag_with_legal_hold;
 
+// Modification types for SingleFileStorage::modify_metadata
+const char metadata_modify_legal_hold = 1;
+
 class DuckDbFs;
 
 class S3Handler : public proxygen::RequestHandler, public proxygen::RFC1867Codec::Callback
@@ -227,6 +230,7 @@ public:
             InSize,
             InVersionId,
             InQuiet,
+            InStatus,
             Unknown,
             InUnknownObjectAttr,
             Finished,
@@ -278,6 +282,7 @@ public:
 
     static std::vector<SingleFileStorage::SFragInfo> onDeleteCallback(const std::string& fn, const std::string& md5sum);
     static std::optional<std::string> onModifyCallback(const std::string& fn, std::string md5sum, std::string md5sumParam);
+    static std::optional<std::string> onModifyMetadataCallback(const std::string& fn, const std::string& md5sum, const std::string& param);
     static void onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride);
     static void onAddReadingCallback(const std::string_view fn, const SingleFileStorage::SFragInfo& fragInfo);
 
@@ -322,6 +327,7 @@ private:
     void deleteBucket(proxygen::HTTPMessage& headers);
     void putBucketVersioning(proxygen::HTTPMessage& headers);
     void putBucketCors(proxygen::HTTPMessage& headers);
+    void putObjectLegalHold(proxygen::HTTPMessage& headers);
     void optionsObject(proxygen::HTTPMessage& headers);
     void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const std::string_view bucketName);
     void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const buckets::BucketInfo& bucketInfo);
@@ -335,6 +341,7 @@ private:
     void finalizeCreateBucket();
     void finalizePutBucketVersioning();
     void finalizePutBucketCors();
+    void finalizePutObjectLegalHold();
     std::string getEtagParsedMultipart(const std::string& md5sum);
     
     void readBodyThread(folly::EventBase *evb);

@@ -433,7 +433,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 	runtime_id(options.runtime_id), manual_commit(options.manual_commit), manual_commit_list_consistent(options.manual_commit_list_consistent),
 	stop_on_error(options.stop_on_error), punch_holes(options.punch_holes),
 	data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func),
-	common_prefix_hash_func(options.common_prefix_hash_func), on_delete_callback(options.on_delete_callback), modify_data_callback(options.modify_data_callback), 
+	common_prefix_hash_func(options.common_prefix_hash_func), on_delete_callback(options.on_delete_callback), modify_data_callback(options.modify_data_callback), modify_metadata_callback(options.modify_metadata_callback),
 	match_callback(options.match_callback), wal_write_meta(options.wal_write_meta), wal_write_data(options.wal_write_data), add_reading_callback(options.add_reading_callback)
 {
 	if(common_prefix_func==nullptr)
@@ -2761,6 +2761,51 @@ int SingleFileStorage::del(const std::string_view fn, DelAction da,
 
 		commit_info.commit_done.wait(commit_done_lock);
 	}
+
+	return 0;
+}
+
+int SingleFileStorage::modify_metadata(const std::string& fn, const std::string_view param)
+{
+	if (is_dead)
+	{
+		return ENOTRECOVERABLE;
+	}
+
+	SCommitInfo commit_info;
+	// Used to return the modify result
+	commit_info.new_datafile_offset = 0;
+	std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
+
+	SFragInfo curr_frag;
+	curr_frag.action = FragAction::ModifyMetadata;
+	curr_frag.fn = fn;
+	curr_frag.md5sum = param;
+	curr_frag.commit_info = &commit_info;
+
+	{
+		std::unique_lock lock(mutex);
+		wait_queue(lock, false, false);
+		wait_defrag(fn, lock);
+
+		++commit_items[common_prefix_hash_func(fn)];
+
+		if (is_defragging)
+		{
+			defrag_skip_items.insert(fn);
+		}
+
+		commit_queue.push_back(std::move(curr_frag));
+		cond.notify_all();
+	}
+
+	commit_info.commit_done.wait(commit_done_lock);
+
+	if (commit_info.new_datafile_offset != 0)
+		return static_cast<int>(commit_info.new_datafile_offset);
+
+	if (commit_info.commit_errors != 0)
+		return EIO;
 
 	return 0;
 }
@@ -8131,53 +8176,50 @@ void SingleFileStorage::operator()()
 				auto mod_data = modify_data_callback(frag_info.fn, std::move(read_frag_info.md5sum), std::move(frag_info.md5sum));
 				if(mod_data)
 				{
-					// TODO: Extract into function
-
-					CWData wdata;
-
-					int64_t encoded_first_offset;
-					if(read_frag_info.extra_exts.size() < max_inline_exts)
-					{
-						encoded_first_offset = encode_num_exts(read_frag_info.offset, static_cast<int64_t>(read_frag_info.extra_exts.size()));
-					}
-					else
-					{
-						encoded_first_offset = encode_max_num_exts(read_frag_info.offset);
-					}
-
-					wdata.addVarInt(encoded_first_offset);
-					wdata.addVarInt(read_frag_info.len);
-
-					if(read_frag_info.extra_exts.size() >= max_inline_exts)
-					{
-						wdata.addVarInt(read_frag_info.extra_exts.size());
-						wdata.addVarInt(0);
-					}
-
-					for (const SPunchItem& ext : read_frag_info.extra_exts)
-					{
-						wdata.addVarInt(ext.offset);
-						wdata.addVarInt(ext.len);
-					}
-
-					wdata.addVarInt(read_frag_info.last_modified);
-					wdata.addString2(*mod_data);
-
-					MDB_val tval;
-					tval.mv_data = wdata.getDataPtr();
-					tval.mv_size = wdata.getDataSize();
-
-					MDB_val tkey;
-					tkey.mv_data = const_cast<char*>(&frag_info.fn[0]);
-					tkey.mv_size = frag_info.fn.size();
-
-					rc = put_with_rewrite(txn, dbi_main, &tkey, &tval, tid, n_rewrite_pages);
+					rc = put_frag_info_md5sum(txn, tid, frag_info.fn, read_frag_info, *mod_data);
 					if (rc)
 					{
 						XLOG(ERR) << "LMDB: Failed to put updated data in ModifyData (" << mdb_strerror(rc) << ") sfs " << db_path;
 						++commit_errors;
 					}
 				}
+			}
+		}
+		else if(frag_info.action == FragAction::ModifyMetadata)
+		{
+			int modify_result = 0;
+			const auto read_frag_info = get_frag_info(txn, frag_info.fn, true, false);
+
+			if(read_frag_info.offset == -1)
+			{
+				modify_result = ENOENT;
+			}
+			else
+			{
+				auto mod_data = modify_metadata_callback ? 
+					modify_metadata_callback(frag_info.fn, read_frag_info.md5sum, frag_info.md5sum) : std::nullopt;
+				if(!mod_data)
+				{
+					modify_result = EINVAL;
+				}
+				else
+				{
+					rc = put_frag_info_md5sum(txn, tid, frag_info.fn, read_frag_info, *mod_data);
+					if (rc)
+					{
+						XLOG(ERR) << "LMDB: Failed to put updated data in ModifyMetadata (" << mdb_strerror(rc) << ") sfs " << db_path;
+						++commit_errors;
+						modify_result = EIO;
+					}
+				}
+			}
+
+			if (frag_info.commit_info != nullptr)
+			{
+				std::scoped_lock commit_done_lock(frag_info.commit_info->commit_done_mutex);
+				frag_info.commit_info->commit_errors = commit_errors;
+				frag_info.commit_info->new_datafile_offset = modify_result;
+				frag_info.commit_info->commit_done.notify_all();
 			}
 		}
 		else if (frag_info.action == FragAction::Del
@@ -10101,7 +10143,51 @@ bool SingleFileStorage::has_commit_item(const FragAction action)
 			|| action == FragAction::DelNoCallback
 			|| action == FragAction::DelOld
 			|| action == FragAction::RestoreOld
-			|| action==FragAction::DelWithQueued;
+			|| action==FragAction::DelWithQueued
+			|| action == FragAction::ModifyMetadata;
+}
+
+int SingleFileStorage::put_frag_info_md5sum(MDB_txn* txn, THREAD_ID tid, const std::string& fn, const SFragInfo& frag_info, const std::string& md5sum)
+{
+	CWData wdata;
+
+	int64_t encoded_first_offset;
+	if(frag_info.extra_exts.size() < max_inline_exts)
+	{
+		encoded_first_offset = encode_num_exts(frag_info.offset, static_cast<int64_t>(frag_info.extra_exts.size()));
+	}
+	else
+	{
+		encoded_first_offset = encode_max_num_exts(frag_info.offset);
+	}
+
+	wdata.addVarInt(encoded_first_offset);
+	wdata.addVarInt(frag_info.len);
+
+	if(frag_info.extra_exts.size() >= max_inline_exts)
+	{
+		wdata.addVarInt(frag_info.extra_exts.size());
+		wdata.addVarInt(0);
+	}
+
+	for (const SPunchItem& ext : frag_info.extra_exts)
+	{
+		wdata.addVarInt(ext.offset);
+		wdata.addVarInt(ext.len);
+	}
+
+	wdata.addVarInt(frag_info.last_modified);
+	wdata.addString2(md5sum);
+
+	MDB_val tval;
+	tval.mv_data = wdata.getDataPtr();
+	tval.mv_size = wdata.getDataSize();
+
+	MDB_val tkey;
+	tkey.mv_data = const_cast<char*>(&fn[0]);
+	tkey.mv_size = fn.size();
+
+	return put_with_rewrite(txn, dbi_main, &tkey, &tval, tid, n_rewrite_pages);
 }
 
 void SingleFileStorage::queue_linked(const SFragInfo& frag_info)

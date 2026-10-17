@@ -49,6 +49,7 @@ Action actionFromStr(const std::string_view action)
     if(action== "s3:GetBucketVersioning") return Action::GetBucketVersioning;
     if(action== "s3:ListObjectVersions") return Action::ListObjectVersions;
     if(action== "s3:GetObjectAttributes") return Action::GetObjectAttributes;    
+    if(action== "s3:PutObjectLegalHold") return Action::PutObjectLegalHold;
     return Action::Unknown;
 }
 
@@ -91,6 +92,7 @@ std::string actionToStr(const Action action)
         case Action::GetBucketVersioning:return  "s3:GetBucketVersioning";
         case Action::ListObjectVersions:return  "s3:ListObjectVersions";
         case Action::GetObjectAttributes:return  "s3:GetObjectAttributes";
+        case Action::PutObjectLegalHold:return  "s3:PutObjectLegalHold";
     }
     return "";
 }
