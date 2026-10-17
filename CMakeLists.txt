@@ -215,6 +215,7 @@ if(HS5_WITH_DUCKDB)
 endif()
 find_package(aws-c-common CONFIG REQUIRED)
 find_package(aws-checksums CONFIG REQUIRED)
+find_package(date CONFIG REQUIRED)
 option(HS5_USE_JEMALLOC "Link jemalloc as the memory allocator" ON)
 if(HS5_USE_JEMALLOC)
   find_library(JEMALLOC_LIBRARY NAMES jemalloc REQUIRED)
@@ -232,7 +233,7 @@ target_link_libraries(hs5 PRIVATE $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zst
   Folly::folly Folly::folly_deps Folly::follybenchmark Folly::folly_test_util
   proxygen::proxygen proxygen::proxygenhttpserver
   expat::expat unofficial-sodium::sodium OpenSSL::Crypto SqliteCppGen::SqliteCppGen nlohmann_json::nlohmann_json fmt::fmt
-  AWS::aws-c-common AWS::aws-checksums $<$<BOOL:${HS5_USE_JEMALLOC}>:${JEMALLOC_LIBRARY}>)
+  AWS::aws-c-common AWS::aws-checksums date::date $<$<BOOL:${HS5_USE_JEMALLOC}>:${JEMALLOC_LIBRARY}>)
 
 target_compile_features(hs5 PUBLIC cxx_std_20)
 if(HS5_USE_JEMALLOC)

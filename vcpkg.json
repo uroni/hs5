@@ -16,6 +16,7 @@
     "aws-checksums",
     "aws-c-common",
     "frozen",
+    "date",
     "jemalloc"
   ],
   "default-features": [

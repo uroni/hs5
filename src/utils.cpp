@@ -3,10 +3,15 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 #include "utils.h"
+#include <chrono>
 #include <folly/Random.h>
 #include <folly/String.h>
 #include <folly/base64.h>
 #include <sstream>
+// std::chrono::parse is only available in libstdc++ >= 14
+#if __cpp_lib_chrono < 201907L
+#include <date/date.h>
+#endif
 
 std::string random_uuid()
 {
@@ -134,7 +139,11 @@ std::optional<std::chrono::system_clock::time_point> parse_iso8601(const std::st
     {
         std::istringstream in{ std::string(str) };
         std::chrono::sys_time<std::chrono::microseconds> tp;
+#if __cpp_lib_chrono >= 201907L
         if (in >> std::chrono::parse(fmt, tp) && in.peek() == EOF)
+#else
+        if (in >> date::parse(fmt, tp) && in.peek() == EOF)
+#endif
             return tp;
     }
     return std::nullopt;
