@@ -353,7 +353,7 @@ public:
 
 private:
     void readFile(folly::EventBase* evb);
-    void readObject(folly::EventBase* evb, std::shared_ptr<S3Handler> self, int64_t offset);
+    void readObject(folly::EventBase* evb, std::shared_ptr<S3Handler> self, int64_t offset, unsigned int readFlags = 0);
     void onBodyChunked(std::unique_ptr<folly::IOBuf> body);
     void onBodyCPU(folly::EventBase* evb, int64_t offs, std::unique_ptr<folly::IOBuf> body);
     void listObjects(proxygen::HTTPMessage& headers, const std::string& bucket);

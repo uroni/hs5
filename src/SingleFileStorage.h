@@ -249,6 +249,8 @@ public:
     const static unsigned int ReadSkipAddReading = 8;
     const static unsigned int ReadNewest = 16;
     const static unsigned int ReadAddReadingCallback = 32;
+    // Read data via read-only mmap of the data file (falls back to pread on error)
+    const static unsigned int ReadWithMmap = 64;
 
     struct ReadPrepareResult
     {

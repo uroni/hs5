@@ -71,6 +71,7 @@ DEFINE_int64(commit_after_ms, 30000, "If manual commit is enabled, wait this amo
 DEFINE_bool(check_conditional_headers_before_upload, true, "Check conditional HTTP headers like If-Match before upload on PUT (for testing)");
 DEFINE_int32(test_delay_before_modify_ms, 0, "Sleep before queueing an object overwrite/delete (for testing)");
 DEFINE_int32(test_delay_after_protected_check_ms, 0, "Sleep after deciding if an object overwrite/delete needs a protected check and before queueing it (for testing)");
+DEFINE_int64(get_in_worker_threshold, 0, "Handle GET/HEAD object requests in the HTTP worker thread: run read_prepare there and read GET bodies smaller than this many bytes via read-only mmap of the data file without switching to the CPU executor. Larger bodies are read in the CPU executor. 0 disables this (read_prepare and all reads run in the CPU executor)");
 DEFINE_int32(get_buffer_size, 1 * 1024 * 1024, "Buffer size to use for reading objects for GET requests");
 
 std::string hashSha256Hex(const std::string_view payload)
@@ -3795,35 +3796,35 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
     }
     const auto checksumModeEnabled = checksumModeStr == "ENABLED";
 
-    folly::getGlobalCPUExecutor()->add(
+    auto prepareFunc =
         [self = self, evb, accessKey, range = headers.getHeaders().getSingleOrEmpty(proxygen::HTTP_HEADER_RANGE), partNumberStr = partNumberStrPtr ? std::optional<std::string>(*partNumberStrPtr) : std::nullopt, checksumModeEnabled]()
+    {
+        unsigned int flags = 0;
+        if (self->request_action == Action::HeadObject)
+            flags |= SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading;
+        else
+            flags |= SingleFileStorage::ReadAddReadingCallback;
+
+        std::string findPath;
+
+        const auto findNewestVersion = self->keyInfo.withVersioning() && self->keyInfo.version == 0;
+        if (findNewestVersion)
         {
-            unsigned int flags = 0;
-            if (self->request_action == Action::HeadObject)
-                flags |= SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading;
-            else
-                flags |= SingleFileStorage::ReadAddReadingCallback;
+            flags |= SingleFileStorage::ReadNewest;
+            findPath = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
+        }
+        else
+        {
+            findPath = make_key(self->keyInfo);
+        }
 
-            std::string findPath;
+        auto res = self->sfs().read_prepare(findPath, flags);
 
-            const auto findNewestVersion = self->keyInfo.withVersioning() && self->keyInfo.version == 0;
-            if (findNewestVersion)
-            {
-                flags |= SingleFileStorage::ReadNewest;
-                findPath = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());
-            }
-            else
-            {
-                findPath = make_key(self->keyInfo);
-            }
-
-            auto res = self->sfs().read_prepare(findPath, flags);
-
-            if (res.err != 0)
-            {
-                XLOGF(INFO, "Object {} err {}", self->keyInfo.key, res.err);
-                evb->runInEventBaseThread([self = self, res, accessKey]()
-                                          {
+        if (res.err != 0)
+        {
+            XLOGF(INFO, "Object {} err {}", self->keyInfo.key, res.err);
+            evb->runInEventBaseThread([self = self, res, accessKey]()
+                                      {
 
                         if(res.err==ENOENT)
                         {
@@ -3853,150 +3854,150 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                                 .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error code: {}", res.err), self->fullKeyPath(), ""))
                                 .sendWithEOM();
                         } });
+            return;
+        }
+        else if (findNewestVersion)
+        {
+            findPath = res.key;
+            self->keyInfo.version = extractKeyInfoView(findPath).version;
+        }
+
+        bool runReadCleanup = true;
+        SCOPE_EXIT
+        {
+            if (!runReadCleanup || self->request_action == Action::HeadObject)
                 return;
-            }
-            else if (findNewestVersion)
-            {
-                findPath = res.key;
-                self->keyInfo.version = extractKeyInfoView(findPath).version;
-            }
+            int rc;
+            if (self->multiPartDownloadData)
+                rc = finalizeMultiPart(self->sfs(), findPath, self->keyInfo.bucketId, *self->multiPartDownloadData, res.extents);
+            else
+                rc = self->sfs().read_finalize(findPath, res.extents, 0);
+            assert(rc == 0);
+        };
 
-            bool runReadCleanup = true;
-            SCOPE_EXIT
-            {
-                if (!runReadCleanup || self->request_action == Action::HeadObject)
-                    return;
-                int rc;
-                if (self->multiPartDownloadData)
-                    rc = finalizeMultiPart(self->sfs(), findPath, self->keyInfo.bucketId, *self->multiPartDownloadData, res.extents);
-                else
-                    rc = self->sfs().read_finalize(findPath, res.extents, 0);
-                assert(rc == 0);
-            };
+        if (!self->parseMultipartInfo(res.md5sum, res.total_len, self->multiPartDownloadData, &self->objMetadata, &self->sdkChecksumHash))
+        {
+            evb->runInEventBaseThread([self = self]()
+                                      { self->responseBuilderWithCors(500, "Internal error")
+                                            .body(s3errorXml(S3ErrorCode::InternalError, "Error parsing md5sum data", self->fullKeyPath(), ""))
+                                            .sendWithEOM(); });
+            return;
+        }
 
-            if (!self->parseMultipartInfo(res.md5sum, res.total_len, self->multiPartDownloadData, &self->objMetadata, &self->sdkChecksumHash))
-            {
-                evb->runInEventBaseThread([self = self]()
-                                          { self->responseBuilderWithCors(500, "Internal error")
-                                                .body(s3errorXml(S3ErrorCode::InternalError, "Error parsing md5sum data", self->fullKeyPath(), ""))
-                                                .sendWithEOM(); });
-                return;
-            }
-
-            if (res.md5sum.size() == 1 && res.md5sum[0] == metadata_tombstone)
-            {
-                const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
-                if (isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), Action::ListObjects, accessKey))
-                {
-                    evb->runInEventBaseThread([self = self, res]()
-                                              { self->responseBuilderWithCors(404, "Not found")
-                                                    .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
-                                                    .sendWithEOM(); });
-                }
-                else
-                {
-                    evb->runInEventBaseThread([self = self, res]()
-                                              { self->responseBuilderWithCors(403, "Forbidden")
-                                                    .body(s3errorXml(S3ErrorCode::AccessDenied, "Access is forbidden", self->fullKeyPath(), ""))
-                                                    .sendWithEOM(); });
-                }
-                return;
-            }
-
-            const auto md5sum = S3Handler::md5sumBinFromData(res.md5sum);
-
-            auto [rangeStart, rangeEnd] = parseRange(range, res.total_len);
-
-            if (!range.empty() &&
-                (rangeStart < 0 || rangeEnd < 0 || rangeStart >= rangeEnd || rangeEnd > res.total_len))
+        if (res.md5sum.size() == 1 && res.md5sum[0] == metadata_tombstone)
+        {
+            const auto bucketName = buckets::getBucketName(self->keyInfo.bucketId);
+            if (isAuthorized(fmt::format("arn:aws:s3:::{}", bucketName), Action::ListObjects, accessKey))
             {
                 evb->runInEventBaseThread([self = self, res]()
-                                          { self->responseBuilderWithCors(416, "Range Not Satisfiable")
+                                          { self->responseBuilderWithCors(404, "Not found")
+                                                .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
+                                                .sendWithEOM(); });
+            }
+            else
+            {
+                evb->runInEventBaseThread([self = self, res]()
+                                          { self->responseBuilderWithCors(403, "Forbidden")
+                                                .body(s3errorXml(S3ErrorCode::AccessDenied, "Access is forbidden", self->fullKeyPath(), ""))
+                                                .sendWithEOM(); });
+            }
+            return;
+        }
+
+        const auto md5sum = S3Handler::md5sumBinFromData(res.md5sum);
+
+        auto [rangeStart, rangeEnd] = parseRange(range, res.total_len);
+
+        if (!range.empty() &&
+            (rangeStart < 0 || rangeEnd < 0 || rangeStart >= rangeEnd || rangeEnd > res.total_len))
+        {
+            evb->runInEventBaseThread([self = self, res]()
+                                      { self->responseBuilderWithCors(416, "Range Not Satisfiable")
+                                            .sendWithEOM(); });
+            return;
+        }
+
+        std::optional<std::string> partNumberEtag;
+        std::optional<int64_t> partNumberSize;
+        bool setMultiPartExtents = false;
+        if (partNumberStr)
+        {
+            if (!range.empty())
+            {
+                evb->runInEventBaseThread([self = self]()
+                                          { self->responseBuilderWithCors(400, "Bad Request")
+                                                .body(s3errorXml(S3ErrorCode::InvalidArgument, "Cannot specify both Range header and partNumber parameter", self->fullKeyPath(), ""))
                                                 .sendWithEOM(); });
                 return;
             }
 
-            std::optional<std::string> partNumberEtag;
-            std::optional<int64_t> partNumberSize;
-            bool setMultiPartExtents = false;
-            if (partNumberStr)
+            int partNumber;
+            try
             {
-                if (!range.empty())
-                {
-                    evb->runInEventBaseThread([self = self]()
-                                              { self->responseBuilderWithCors(400, "Bad Request")
-                                                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Cannot specify both Range header and partNumber parameter", self->fullKeyPath(), ""))
-                                                    .sendWithEOM(); });
-                    return;
-                }
-
-                int partNumber;
-                try
-                {
-                    partNumber = std::atoi(partNumberStr->c_str()) - 1;
-                }
-                catch (const std::exception&)
-                {
-                    evb->runInEventBaseThread([self = self]()
-                                              { self->responseBuilderWithCors(400, "Bad Request")
-                                                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid partNumber parameter", self->fullKeyPath(), ""))
-                                                    .sendWithEOM(); });
-                    return;
-                }
-
-                if ((!self->multiPartDownloadData && partNumber != 0) || partNumber < 0 || partNumber >= self->multiPartDownloadData->numParts)
-                {
-                    evb->runInEventBaseThread([self = self, partNumber]()
-                                              { self->responseBuilderWithCors(400, "Bad Request")
-                                                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid partNumber parameter", self->fullKeyPath(), ""))
-                                                    .sendWithEOM(); });
-                    return;
-                }
-
-                if (self->multiPartDownloadData)
-                {
-                    std::string partNumberEtagOut;
-                    int64_t partNumberOffset;
-                    int64_t partNumberSizeOut;
-                    std::unique_ptr<PayloadHashBase> partNumberChecksumHashOut;
-                    const auto rc = seekMultipart(self->sfs(), partNumber, self->keyInfo.bucketId, self->request_action != Action::HeadObject,
-                                                  *self->multiPartDownloadData, self->extents, partNumberEtagOut, partNumberOffset, partNumberSizeOut, partNumberChecksumHashOut, nullptr);
-                    if (rc != 0)
-                    {
-                        XLOGF(WARN, "Error seeking to part number {} of key {}: {}",
-                              partNumber + 1, self->keyInfo.key, rc);
-                        evb->runInEventBaseThread([self = self, rc]()
-                                                  { self->responseBuilderWithCors(500, "Internal error")
-                                                        .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error seeking to part: {}", rc), self->fullKeyPath(), ""))
-                                                        .sendWithEOM(); });
-                        return;
-                    }
-
-                    rangeStart = partNumberOffset;
-                    rangeEnd = partNumberOffset + partNumberSizeOut;
-                    partNumberEtag = partNumberEtagOut;
-                    setMultiPartExtents = true;
-
-                    if (partNumberChecksumHashOut && self->sdkChecksumHash)
-                    {
-                        self->sdkChecksumHash->setExpectedHash(partNumberChecksumHashOut->getExpectedHash());
-                    }
-                }
+                partNumber = std::atoi(partNumberStr->c_str()) - 1;
+            }
+            catch (const std::exception&)
+            {
+                evb->runInEventBaseThread([self = self]()
+                                          { self->responseBuilderWithCors(400, "Bad Request")
+                                                .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid partNumber parameter", self->fullKeyPath(), ""))
+                                                .sendWithEOM(); });
+                return;
             }
 
-            if (self->matchInfo)
+            if ((!self->multiPartDownloadData && partNumber != 0) || partNumber < 0 || partNumber >= self->multiPartDownloadData->numParts)
             {
-                SingleFileStorage::SFragInfo frag_info;
-                frag_info.last_modified = res.last_modified;
-                onMatchCallback(*self->matchInfo, frag_info, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum));
+                evb->runInEventBaseThread([self = self, partNumber]()
+                                          { self->responseBuilderWithCors(400, "Bad Request")
+                                                .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid partNumber parameter", self->fullKeyPath(), ""))
+                                                .sendWithEOM(); });
+                return;
             }
 
-            const bool fullRange = rangeStart == 0 && rangeEnd == res.total_len;
+            if (self->multiPartDownloadData)
+            {
+                std::string partNumberEtagOut;
+                int64_t partNumberOffset;
+                int64_t partNumberSizeOut;
+                std::unique_ptr<PayloadHashBase> partNumberChecksumHashOut;
+                const auto rc = seekMultipart(self->sfs(), partNumber, self->keyInfo.bucketId, self->request_action != Action::HeadObject,
+                                              *self->multiPartDownloadData, self->extents, partNumberEtagOut, partNumberOffset, partNumberSizeOut, partNumberChecksumHashOut, nullptr);
+                if (rc != 0)
+                {
+                    XLOGF(WARN, "Error seeking to part number {} of key {}: {}",
+                          partNumber + 1, self->keyInfo.key, rc);
+                    evb->runInEventBaseThread([self = self, rc]()
+                                              { self->responseBuilderWithCors(500, "Internal error")
+                                                    .body(s3errorXml(S3ErrorCode::InternalError, fmt::format("Error seeking to part: {}", rc), self->fullKeyPath(), ""))
+                                                    .sendWithEOM(); });
+                    return;
+                }
 
-            evb->runInEventBaseThread([self = self, hasRange = !range.empty() || partNumberSize,
-                                       rangeStart, rangeEnd, md5sum, partNumberEtag, last_modified = res.last_modified,
-                                       checksumModeEnabled, returnPart = partNumberStr.has_value(), fullRange]()
-                                      {
+                rangeStart = partNumberOffset;
+                rangeEnd = partNumberOffset + partNumberSizeOut;
+                partNumberEtag = partNumberEtagOut;
+                setMultiPartExtents = true;
+
+                if (partNumberChecksumHashOut && self->sdkChecksumHash)
+                {
+                    self->sdkChecksumHash->setExpectedHash(partNumberChecksumHashOut->getExpectedHash());
+                }
+            }
+        }
+
+        if (self->matchInfo)
+        {
+            SingleFileStorage::SFragInfo frag_info;
+            frag_info.last_modified = res.last_modified;
+            onMatchCallback(*self->matchInfo, frag_info, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum));
+        }
+
+        const bool fullRange = rangeStart == 0 && rangeEnd == res.total_len;
+
+        evb->runInEventBaseThread([self = self, hasRange = !range.empty() || partNumberSize,
+                                   rangeStart, rangeEnd, md5sum, partNumberEtag, last_modified = res.last_modified,
+                                   checksumModeEnabled, returnPart = partNumberStr.has_value(), fullRange]()
+                                  {
                     if(self->matchInfo && !self->matchInfo->match)
                     {
                         self->responseBuilderWithCors(412, "Precondition Failed")
@@ -4051,17 +4052,31 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         resp.send();
                     } });
 
-            if (self->request_action == Action::HeadObject || (self->matchInfo && !self->matchInfo->match))
-                return;
+        if (self->request_action == Action::HeadObject || (self->matchInfo && !self->matchInfo->match))
+            return;
 
-            runReadCleanup = false;
-            if (!setMultiPartExtents)
-                self->extents = std::move(res.extents);
-            self->done_bytes = rangeStart;
-            self->put_remaining.store(rangeEnd, std::memory_order_relaxed);
+        runReadCleanup = false;
+        if (!setMultiPartExtents)
+            self->extents = std::move(res.extents);
+        self->done_bytes = rangeStart;
+        self->put_remaining.store(rangeEnd, std::memory_order_relaxed);
+        const bool readInWorker = FLAGS_get_in_worker_threshold > 0 && rangeEnd - rangeStart < FLAGS_get_in_worker_threshold;
 
-            self->readObject(evb, std::move(self), rangeStart);
-        });
+        if (FLAGS_get_in_worker_threshold > 0 && !readInWorker)
+        {
+            folly::getGlobalCPUExecutor()->add([self = self, evb, rangeStart]()
+                                               { self->readObject(evb, self, rangeStart); });
+        }
+        else
+        {
+            self->readObject(evb, std::move(self), rangeStart, readInWorker ? SingleFileStorage::ReadWithMmap : 0);
+        }
+    };
+
+    if (FLAGS_get_in_worker_threshold > 0)
+        prepareFunc();
+    else
+        folly::getGlobalCPUExecutor()->add(std::move(prepareFunc));
 }
 
 void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::string& accessKey)
@@ -6839,7 +6854,7 @@ int S3Handler::finalizeMultiPart(SingleFileStorage& sfs, const std::string& fn, 
     return 0;
 }
 
-void S3Handler::readObject(folly::EventBase* evb, std::shared_ptr<S3Handler> self, int64_t offset)
+void S3Handler::readObject(folly::EventBase* evb, std::shared_ptr<S3Handler> self, int64_t offset, unsigned int readFlags)
 {
     bool runReadCleanup = true;
     SCOPE_EXIT
@@ -6914,7 +6929,7 @@ void S3Handler::readObject(folly::EventBase* evb, std::shared_ptr<S3Handler> sel
         auto curr_ext = SingleFileStorage::Ext(it->obj_offset + ext_offset, it->data_file_offset + ext_offset, it->len - ext_offset);
         int64_t rlen = std::min(static_cast<int64_t>(bufsize), put_remaining.load(std::memory_order_relaxed) - offset);
 
-        auto res = sfs().read_ext(curr_ext, 0, static_cast<size_t>(rlen), buf);
+        auto res = sfs().read_ext(curr_ext, readFlags, static_cast<size_t>(rlen), buf);
 
         if (res.err != 0)
         {

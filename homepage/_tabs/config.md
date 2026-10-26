@@ -37,6 +37,7 @@ LOGLEVEL=info
 | `COMMIT_AFTER_MS` | integer (ms) | `30000` | In manual commit mode, automatically commit after this delay. Use `0` to disable auto-commit. |
 | `WORKER_THREADS` | integer | `2 x CPU cores` | Number of global worker threads. |
 | `HTTP_WORKER_THREADS` | integer | CPU core count | Number of HTTP worker threads. |
+| `GET_IN_WORKER_THRESHOLD` | integer (bytes) | `0` | Serve GET/HEAD requests in the HTTP worker thread and read objects smaller than this via mmap there. Lowers latency for small objects; `0` disables. |
 | `LOGLEVEL` | enum | `info` | Log level. Allowed values: `debug`, `info`, `warn`, `error`. |
 | `STOP_ON_ERROR` | boolean | `false` | Stop HS5 on write/read errors instead of continuing. |
 | `TRIM_FREESPACE_SIZE` | integer (bytes) | `1048576` | If contiguous free space in the data file exceeds this size, HS5 can punch holes to free disk space. Set to `-1` to disable. |

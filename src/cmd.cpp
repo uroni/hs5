@@ -138,6 +138,7 @@ ConfigResult readConfigFile(const std::string& fn)
         { "COMMIT_AFTER_MS", "commit_after_ms" },
         { "WORKER_THREADS", "folly_global_cpu_executor_threads" },
         { "HTTP_WORKER_THREADS", "http_worker_threads" },
+        { "GET_IN_WORKER_THRESHOLD", "get_in_worker_threshold" },
         { "TRIM_FREESPACE_SIZE", "trim_freespace_size" },
         { "DB_MAX_DIRTY_MB", "idl_dirty_max" },
         { "WAL_SIZE_MB", "max_wal_size_mb" },
@@ -321,6 +322,11 @@ int actionRun(std::vector<std::string> args)
     TCLAP::ValueArg<int64_t> httpWorkerThreadsArg("", "http-worker-threads",
                                                   "Max number of worker threads to use for HTTP server (default number of CPU cores)",
                                                   false, 0, "threads", cmd);
+
+    TCLAP::ValueArg<int64_t> getInWorkerThresholdArg("", "get-in-worker-threshold",
+                                                     "Handle GET requests in the HTTP worker thread and read objects smaller than this"
+                                                     " via mmap there without switching to a worker thread (default 0, disabled)",
+                                                     false, 0, "bytes", cmd);
 
     std::vector<std::string> walModes;
     walModes.push_back("disabled");
@@ -650,6 +656,20 @@ int actionRun(std::vector<std::string> args)
         {
             realArgs.push_back("--http_worker_threads");
             realArgs.push_back(workerThreadsEnv);
+        }
+    }
+
+    if (!alreadySetArgs.contains("--get_in_worker_threshold"))
+    {
+        if (getInWorkerThresholdArg.isSet())
+        {
+            realArgs.push_back("--get_in_worker_threshold");
+            realArgs.push_back(std::to_string(getInWorkerThresholdArg.getValue()));
+        }
+        else if (auto getInWorkerThresholdEnv = getenv("HS5_GET_IN_WORKER_THRESHOLD"); getInWorkerThresholdEnv)
+        {
+            realArgs.push_back("--get_in_worker_threshold");
+            realArgs.push_back(getInWorkerThresholdEnv);
         }
     }
 

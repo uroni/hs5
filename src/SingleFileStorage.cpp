@@ -2540,8 +2540,13 @@ SingleFileStorage::ReadExtResult SingleFileStorage::read_ext(const Ext& ext, con
     }
 
     ssize_t read;
-    bool dio_read = (flags & ReadWithReadahead) == 0 && (flags & ReadUnsynced) == 0 && *sel_data_file_dio;
-    if (dio_read)
+    bool mmap_read = (flags & ReadWithMmap) != 0;
+    bool dio_read = !mmap_read && (flags & ReadWithReadahead) == 0 && (flags & ReadUnsynced) == 0 && *sel_data_file_dio;
+    if (mmap_read)
+    {
+        read = sel_data_file->mmapReadFull(bufptr, toread, ext.data_file_offset);
+    }
+    else if (dio_read)
     {
         read = sel_data_file_dio->preadFull(bufptr, toread, ext.data_file_offset);
     }
@@ -2552,7 +2557,7 @@ SingleFileStorage::ReadExtResult SingleFileStorage::read_ext(const Ext& ext, con
 
     if (read < ssize_t(toread))
     {
-        if (dio_read)
+        if (dio_read || mmap_read)
         {
             read = sel_data_file->preadFull(bufptr, toread, ext.data_file_offset);
         }
@@ -2562,7 +2567,7 @@ SingleFileStorage::ReadExtResult SingleFileStorage::read_ext(const Ext& ext, con
         }
         else
         {
-            XLOG(WARN) << "Read succeeded with non-dio";
+            XLOG(WARN) << (mmap_read ? "Read succeeded with pread after mmap read failed" : "Read succeeded with non-dio");
         }
     }
 
@@ -2598,8 +2603,13 @@ int SingleFileStorage::read_ext(const Ext& ext, const unsigned int flags, const 
         wal_file->waitForWriteout(ext.data_file_offset, toread);
     }
 
-    bool dio_read = (flags & ReadWithReadahead) == 0 && (flags & ReadUnsynced) == 0 && *sel_data_file_dio;
-    if (dio_read)
+    bool mmap_read = (flags & ReadWithMmap) != 0;
+    bool dio_read = !mmap_read && (flags & ReadWithReadahead) == 0 && (flags & ReadUnsynced) == 0 && *sel_data_file_dio;
+    if (mmap_read)
+    {
+        read = sel_data_file->mmapReadFull(bufptr, toread, ext.data_file_offset);
+    }
+    else if (dio_read)
     {
         read = sel_data_file_dio->preadFull(bufptr, toread, ext.data_file_offset);
     }
@@ -2610,7 +2620,7 @@ int SingleFileStorage::read_ext(const Ext& ext, const unsigned int flags, const 
 
     if (read < ssize_t(toread))
     {
-        if (dio_read)
+        if (dio_read || mmap_read)
         {
             read = sel_data_file->preadFull(bufptr, toread, ext.data_file_offset);
         }
@@ -2620,7 +2630,7 @@ int SingleFileStorage::read_ext(const Ext& ext, const unsigned int flags, const 
         }
         else
         {
-            XLOG(WARN) << "Read succeeded with non-dio";
+            XLOG(WARN) << (mmap_read ? "Read succeeded with pread after mmap read failed" : "Read succeeded with non-dio");
         }
     }
 

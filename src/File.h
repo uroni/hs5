@@ -1,5 +1,6 @@
 #pragma once
 #include "os_functions.h"
+#include <atomic>
 #include <fcntl.h>
 #include <folly/Exception.h>
 #include <folly/File.h>
@@ -7,8 +8,11 @@
 #include <folly/Format.h>
 #include <folly/String.h>
 #include <folly/logging/xlog.h>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <sys/mman.h>
+#include <type_traits>
 #include <vector>
 
 constexpr int64_t fillPageSize = 4096;
@@ -78,6 +82,30 @@ public:
     }
 };
 
+/**
+ * Lazily created read-only mapping of one MultiFile chunk. The mapping
+ * covers the maximum chunk size so it stays valid while the file grows
+ * and reads do not need to take a lock to remap.
+ */
+struct ChunkMap
+{
+    ChunkMap() = default;
+    ChunkMap(const ChunkMap&) = delete;
+    ChunkMap& operator=(const ChunkMap&) = delete;
+
+    ~ChunkMap()
+    {
+        if (addr != nullptr)
+            munmap(addr, mapSize);
+    }
+
+    std::once_flag mapOnce;
+    char* addr = nullptr;
+    size_t mapSize = 0;
+    // File size known to be backed by the file. Reads beyond it would SIGBUS
+    std::atomic<int64_t> validSize{ 0 };
+};
+
 class MultiFile
 {
 public:
@@ -110,6 +138,7 @@ public:
             lastSize = file.size();
 
             chunks.push_back(std::move(file));
+            maps.push_back(std::make_unique<ChunkMap>());
             ++idx;
         }
 
@@ -119,6 +148,7 @@ public:
             if (!file)
                 return;
             chunks.push_back(std::move(file));
+            maps.push_back(std::make_unique<ChunkMap>());
         }
     }
 
@@ -126,7 +156,7 @@ public:
 
     MultiFile(MultiFile&& other) noexcept
         : namePrefix(other.namePrefix), flags(other.flags), mode(other.mode), maxSize(other.maxSize),
-          chunks(std::exchange(other.chunks, {}))
+          chunks(std::exchange(other.chunks, {})), maps(std::exchange(other.maps, {}))
     {
     }
 
@@ -139,6 +169,7 @@ public:
         mode = other.mode;
         maxSize = other.maxSize;
         std::swap(chunks, other.chunks);
+        std::swap(maps, other.maps);
         return *this;
     }
 
@@ -176,6 +207,7 @@ public:
                         XLOGF(DBG0, "Created next multifile {}{}", namePrefix, nextIdx);
 
                         chunks.push_back(std::move(file));
+                        maps.push_back(std::make_unique<ChunkMap>());
                         ++nextIdx;
                     }
                 }
@@ -187,7 +219,13 @@ public:
 
             const auto currCount = static_cast<size_t>((std::min)(static_cast<int64_t>(count), maxSize - partOffset));
 
-            const auto rc = op(file, currCount, partOffset);
+            const auto rc = [&]()
+            {
+                if constexpr (std::is_invocable_v<T, const File&, size_t, size_t, ChunkMap&>)
+                    return op(file, currCount, partOffset, *maps[part]);
+                else
+                    return op(file, currCount, partOffset);
+            }();
 
             if (rc <= 0)
                 return ret == 0 ? rc : ret;
@@ -215,6 +253,48 @@ public:
             if(rc>0)
                 buf+=rc;
             return rc; }, count, offset, false);
+    }
+
+    /**
+     * Read via a read-only shared mmap of the chunk files. Returns -1 with errno
+     * set if the mapping could not be created, so the caller can fall back to
+     * preadFull. Returns a short count if the range is beyond the end of file.
+     * I/O errors on the underlying device are delivered as SIGBUS.
+     */
+    ssize_t mmapReadFull(char* buf, size_t count, off64_t offset)
+    {
+        return mapOp([&](const File& file, size_t count, size_t offset, ChunkMap& map) -> ssize_t
+                     {
+            std::call_once(map.mapOnce, [&]()
+                           {
+                void* addr = mmap(nullptr, static_cast<size_t>(maxSize), PROT_READ, MAP_SHARED | MAP_NORESERVE, file.fd(), 0);
+                if (addr == MAP_FAILED)
+                {
+                    XLOGF(WARN, "Error mmapping multifile {} chunk: {}", namePrefix, folly::errnoStr(errno));
+                    return;
+                }
+                map.addr = static_cast<char*>(addr);
+                map.mapSize = static_cast<size_t>(maxSize); });
+
+            if (map.addr == nullptr)
+            {
+                errno = ENOMEM;
+                return -1;
+            }
+
+            const auto end = static_cast<int64_t>(offset + count);
+            if (end > map.validSize.load(std::memory_order_relaxed))
+            {
+                const auto fsize = file.size();
+                map.validSize.store(fsize, std::memory_order_relaxed);
+                if (static_cast<int64_t>(offset) >= fsize)
+                    return 0;
+                count = (std::min)(count, static_cast<size_t>(fsize - offset));
+            }
+
+            memcpy(buf, map.addr + offset, count);
+            buf += count;
+            return static_cast<ssize_t>(count); }, count, offset, false);
     }
 
     ssize_t pwriteFull(const char* buf, size_t count, off64_t offset)
@@ -340,10 +420,12 @@ public:
                     std::string fn = namePrefix + std::to_string(chunks.size() - 1);
                     folly::checkUnixError(unlink(fn.c_str()), fmt::format("Error unlinking {} during truncation", fn));
                     chunks.pop_back();
+                    maps.pop_back();
                 }
                 else
                 {
                     lastChunk.truncate(chunkSize - currTrunc);
+                    maps.back()->validSize.store(0, std::memory_order_relaxed);
                 }
 
                 toTruncate -= currTrunc;
@@ -357,5 +439,7 @@ private:
     mode_t mode;
     int64_t maxSize;
     std::vector<File> chunks;
+    // Same size as chunks; only modified under exclusive mutex
+    std::vector<std::unique_ptr<ChunkMap>> maps;
     mutable std::shared_mutex mutex;
 };
