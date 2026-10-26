@@ -97,6 +97,7 @@ enum class PostObjectState
     MultipartParsingError,
     Error,
     ParseSuccessActionStatus,
+    ParseKey,
     File,
     Done
 };
@@ -112,6 +113,7 @@ struct PostObjectData
     proxygen::RFC1867Codec rfc1867Codec;
     PostObjectState state = PostObjectState::Init;
     std::optional<std::string> successActionStatus;
+    std::optional<std::string> key;
     int64_t expectedLength = 0;
 };
 

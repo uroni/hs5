@@ -3958,6 +3958,62 @@ def test_post_form_upload_public(hs5: Hs5Runner, tmp_path: Path):
     assert filecmp.cmp(tmp_path / "upload.txt", dl_path)
 
 
+@pytest.mark.parametrize(
+    "key,expected_key",
+    [
+        ("dir/other-name.bin", "dir/other-name.bin"),
+        ("uploads/${filename}", "uploads/upload.txt"),
+    ],
+)
+def test_post_form_upload_key(hs5: Hs5Runner, key: str, expected_key: str):
+    s3_client = hs5.get_s3_client()
+
+    hs5.get_api_client_admin().set_bucket_public(
+        set_bucket_public_params=SetBucketPublicParams(
+            bucketName=hs5.testbucketname(), public=["write"]
+        )
+    )
+
+    fdata = os.urandom(1024)
+    post_fields = s3_client.generate_presigned_post(
+        Bucket=hs5.testbucketname(), Key=key, ExpiresIn=3600
+    )
+    response = requests.post(
+        post_fields["url"],
+        data=post_fields["fields"],
+        files={"file": ("upload.txt", fdata)},
+    )
+    response.raise_for_status()
+
+    obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key=expected_key)
+    assert obj["Body"].read() == fdata
+
+    with pytest.raises(ClientError) as e:
+        s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert e.value.response["Error"]["Code"] == "404"
+
+
+def test_post_form_upload_missing_key(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    hs5.get_api_client_admin().set_bucket_public(
+        set_bucket_public_params=SetBucketPublicParams(
+            bucketName=hs5.testbucketname(), public=["write"]
+        )
+    )
+
+    response = requests.post(
+        f"{hs5.get_url()}/{hs5.testbucketname()}",
+        files={"file": ("upload.txt", os.urandom(1024))},
+    )
+    assert response.status_code == 400
+    assert "InvalidArgument" in response.text
+
+    with pytest.raises(ClientError) as e:
+        s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
+    assert e.value.response["Error"]["Code"] == "404"
+
+
 def test_put_bucket_cors(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
 
