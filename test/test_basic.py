@@ -8,6 +8,7 @@ import json
 import logging
 from pathlib import Path
 import random
+import re
 from typing import AnyStr, Optional, Union
 from unittest.mock import patch
 from uuid import uuid4
@@ -2168,6 +2169,150 @@ def test_enable_bucket_versioning(hs5: Hs5Runner):
             )["Body"].read()
             == b"version3"
         )
+
+
+# Encrypted 16 byte id, unpadded base64url encoded
+VERSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{22}$")
+
+
+def test_version_id_format(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    s3_client.put_bucket_versioning(
+        Bucket=hs5.testbucketname(), VersioningConfiguration={"Status": "Enabled"}
+    )
+
+    put_vids = []
+    for i in range(5):
+        res = s3_client.put_object(
+            Bucket=hs5.testbucketname(), Key="versioned.txt", Body=f"v{i}".encode()
+        )
+        assert "VersionId" in res
+        assert VERSION_ID_RE.match(res["VersionId"]), res["VersionId"]
+        put_vids.append(res["VersionId"])
+
+    assert len(set(put_vids)) == len(put_vids)
+
+    # Same id is returned by get, head and list
+    assert (
+        s3_client.get_object(Bucket=hs5.testbucketname(), Key="versioned.txt")[
+            "VersionId"
+        ]
+        == put_vids[-1]
+    )
+    assert (
+        s3_client.head_object(Bucket=hs5.testbucketname(), Key="versioned.txt")[
+            "VersionId"
+        ]
+        == put_vids[-1]
+    )
+
+    for i, vid in enumerate(put_vids):
+        obj = s3_client.get_object(
+            Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=vid
+        )
+        assert obj["VersionId"] == vid
+        assert obj["Body"].read() == f"v{i}".encode()
+
+    s3_client.delete_object(Bucket=hs5.testbucketname(), Key="versioned.txt")
+
+    versions = s3_client.list_object_versions(
+        Bucket=hs5.testbucketname(), Prefix="versioned.txt"
+    )
+    assert {v["VersionId"] for v in versions["Versions"]} == set(put_vids)
+    assert len(versions["DeleteMarkers"]) == 1
+    marker_vid = versions["DeleteMarkers"][0]["VersionId"]
+    assert VERSION_ID_RE.match(marker_vid), marker_vid
+    assert marker_vid not in put_vids
+
+
+def test_version_id_stable(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    s3_client.put_bucket_versioning(
+        Bucket=hs5.testbucketname(), VersioningConfiguration={"Status": "Enabled"}
+    )
+
+    put_vids = [
+        s3_client.put_object(
+            Bucket=hs5.testbucketname(), Key="versioned.txt", Body=f"v{i}".encode()
+        )["VersionId"]
+        for i in range(3)
+    ]
+    s3_client.delete_object(Bucket=hs5.testbucketname(), Key="versioned.txt")
+
+    def listed_vids() -> tuple[list[str], list[str]]:
+        versions = s3_client.list_object_versions(
+            Bucket=hs5.testbucketname(), Prefix="versioned.txt"
+        )
+        return [v["VersionId"] for v in versions["Versions"]], [
+            m["VersionId"] for m in versions["DeleteMarkers"]
+        ]
+
+    vids, marker_vids = listed_vids()
+    assert set(vids) == set(put_vids)
+    assert len(marker_vids) == 1
+
+    def check_stable():
+        # Repeated calls return the same ids
+        for _ in range(3):
+            assert listed_vids() == (vids, marker_vids)
+            for i, vid in enumerate(put_vids):
+                obj = s3_client.get_object(
+                    Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=vid
+                )
+                assert obj["VersionId"] == vid
+                assert obj["Body"].read() == f"v{i}".encode()
+                assert (
+                    s3_client.head_object(
+                        Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=vid
+                    )["VersionId"]
+                    == vid
+                )
+
+    check_stable()
+
+    # Ids handed out before a restart stay valid and unchanged
+    hs5.commit_storage(s3_client)
+    hs5.restart()
+    s3_client = hs5.get_s3_client()
+
+    check_stable()
+
+
+def test_version_id_invalid(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    s3_client.put_bucket_versioning(
+        Bucket=hs5.testbucketname(), VersioningConfiguration={"Status": "Enabled"}
+    )
+
+    vid = s3_client.put_object(
+        Bucket=hs5.testbucketname(), Key="versioned.txt", Body=b"data"
+    )["VersionId"]
+
+    # Changing the first character alters the encrypted block, so the
+    # authentication tag no longer matches
+    tampered = ("B" if vid[0] == "A" else "A") + vid[1:]
+
+    for invalid_vid in (
+        tampered,
+        vid[:-1],
+        vid + "AAAA",
+        "!" * 22,
+        "null",
+    ):
+        with pytest.raises(ClientError):
+            s3_client.get_object(
+                Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=invalid_vid
+            )
+
+    assert (
+        s3_client.get_object(
+            Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=vid
+        )["Body"].read()
+        == b"data"
+    )
 
 
 def test_get_object_attributes(hs5: Hs5Runner, tmp_path: Path):
