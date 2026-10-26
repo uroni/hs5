@@ -38,6 +38,28 @@ def get_next_port(testrun_uid: str) -> int:
         return p
 
 
+def find_hs5_binary() -> Path:
+    locs = [
+        Path("builds/ninja-multi-vcpkg-lld/Debug/hs5"),
+        Path("builds/ninja-multi-vcpkg-lld/RelWithDebInfo/hs5"),
+        Path("builds/ninja-multi-vcpkg-lld/Release/hs5"),
+        Path("builds/ninja-multi-vcpkg/Debug/hs5"),
+        Path("builds/ninja-multi-vcpkg/RelWithDebInfo/hs5"),
+        Path("builds/ninja-multi-vcpkg/Release/hs5"),
+        Path("build/hs5"),
+    ]
+
+    hs5_binary = os.environ.get("HS5_BINARY")
+    if hs5_binary:
+        locs.insert(0, Path(hs5_binary))
+
+    for loc in locs:
+        if (Path(os.getcwd()) / loc).exists():
+            return Path(os.getcwd()) / loc
+
+    assert False, "hs5 binary not found"
+
+
 @dataclass
 class Hs5Stats:
     used: int
@@ -74,27 +96,7 @@ class Hs5Runner:
             else:
                 data_file_alloc_chunk_size = int(data_file_alloc_chunk_size_str)
 
-        locs = [
-            Path("builds/ninja-multi-vcpkg-lld/Debug/hs5"),
-            Path("builds/ninja-multi-vcpkg-lld/RelWithDebInfo/hs5"),
-            Path("builds/ninja-multi-vcpkg-lld/Release/hs5"),
-            Path("builds/ninja-multi-vcpkg/Debug/hs5"),
-            Path("builds/ninja-multi-vcpkg/RelWithDebInfo/hs5"),
-            Path("builds/ninja-multi-vcpkg/Release/hs5"),
-            Path("build/hs5"),
-        ]
-
-        hs5_loc = None
-        hs5_binary = os.environ.get("HS5_BINARY")
-        if hs5_binary:
-            locs.insert(0, Path(hs5_binary))
-
-        for loc in locs:
-            if (Path(os.getcwd()) / loc).exists():
-                hs5_loc = Path(os.getcwd()) / loc
-                break
-
-        assert hs5_loc is not None
+        hs5_loc = find_hs5_binary()
 
         self.args = [
             str(hs5_loc),
