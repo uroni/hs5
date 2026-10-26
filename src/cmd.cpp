@@ -194,7 +194,7 @@ ConfigResult readConfigFile(const std::string& fn)
     return res;
 }
 
-ConfigResult readConfigEnv()
+ConfigResult readConfigEnv(const std::set<std::string>& alreadySetArgs)
 {
     ConfigResult res;
 
@@ -207,7 +207,7 @@ ConfigResult readConfigEnv()
 
     for (const auto& [envKey, argKey] : configMapping)
     {
-        if (res.setArgs.contains("--" + std::string(argKey)))
+        if (alreadySetArgs.contains("--" + std::string(argKey)))
             continue;
 
         if (auto envVal = getenv(envKey.data()); envVal)
@@ -354,7 +354,7 @@ int actionRun(std::vector<std::string> args)
         realArgs.insert(realArgs.end(), configRes.args.begin(), configRes.args.end());
         alreadySetArgs = configRes.setArgs;
     }
-    const auto envRes = readConfigEnv();
+    const auto envRes = readConfigEnv(alreadySetArgs);
     realArgs.insert(realArgs.end(), envRes.args.begin(), envRes.args.end());
     alreadySetArgs.insert(envRes.setArgs.begin(), envRes.setArgs.end());
 
