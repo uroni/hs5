@@ -351,11 +351,11 @@ int actionRun(std::vector<std::string> args)
     {
         const auto configRes = readConfigFile(configArg.getValue());
         configValues = configRes.configValues;
-        args.insert(args.end(), configRes.args.begin(), configRes.args.end());
+        realArgs.insert(realArgs.end(), configRes.args.begin(), configRes.args.end());
         alreadySetArgs = configRes.setArgs;
     }
     const auto envRes = readConfigEnv();
-    args.insert(args.end(), envRes.args.begin(), envRes.args.end());
+    realArgs.insert(realArgs.end(), envRes.args.begin(), envRes.args.end());
     alreadySetArgs.insert(envRes.setArgs.begin(), envRes.setArgs.end());
 
     if (!alreadySetArgs.contains("--http_port"))
