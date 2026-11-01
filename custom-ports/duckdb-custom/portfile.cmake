@@ -6,6 +6,7 @@ vcpkg_from_github(
         HEAD_REF main
     PATCHES
         extensions.patch
+        thrift-enum-iterator-eq.patch # libc++ compares iterator ranges with ==
 )
 
 # Remove vendored dependencies which are not properly namespaced
