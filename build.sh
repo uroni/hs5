@@ -39,6 +39,38 @@ version_gte() {
 CDIR="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 cd "$CDIR"
 
+# glibc: dynamically linked against the system glibc
+# musl: fully static, built with zig c++ against musl
+VARIANT="${1:-glibc}"
+
+ARCH=$(uname -m)
+echo "ARCH: $ARCH"
+OUT_ARCH=amd64
+if [[ "$ARCH" == "aarch64" ]]; then
+  OUT_ARCH=arm64
+fi
+
+case "$VARIANT" in
+  glibc)
+    CONFIGURE_PRESET=ninja-multi-vcpkg
+    BUILD_PRESET=ninja-vcpkg-release
+    ;;
+  musl)
+    if ! command -v zig >/dev/null 2>&1 || ! zig version >/dev/null 2>&1; then
+      die "zig is required for the static musl build. Install zig and retry."
+    fi
+    CONFIGURE_PRESET=ninja-multi-vcpkg-zig-static
+    BUILD_PRESET=ninja-vcpkg-release-zig-static
+    if [[ "$OUT_ARCH" == "arm64" ]]; then
+      CONFIGURE_PRESET+=-arm64
+      BUILD_PRESET+=-arm64
+    fi
+    ;;
+  *)
+    die "Unknown build variant '$VARIANT'. Use 'glibc' or 'musl'."
+    ;;
+esac
+
 require_command pnpm "pnpm is required to build the web UI. Install pnpm and retry."
 require_command cmake "cmake is required to configure and build hs5. Install CMake 3.21 or newer and retry."
 require_command xz "xz is required to package the release archive. Install xz-utils and retry."
@@ -75,14 +107,7 @@ cd ../wwwgen
 "$PYTHON_BIN" wwwgen.py ../www/dist not-empty
 
 cd ..
-cmake --preset ninja-multi-vcpkg
-cmake --build --preset ninja-vcpkg-release
+cmake --preset "$CONFIGURE_PRESET"
+cmake --build --preset "$BUILD_PRESET"
 
-OUT_FN=hs5-amd64-glibc.xz
-ARCH=$(uname -m)
-echo "ARCH: $ARCH"
-if [[ "$ARCH" == "aarch64" ]]; then
-  OUT_FN=hs5-arm64-glibc.xz
-fi
-
-xz -z -c ./builds/ninja-multi-vcpkg/Release/hs5 > "./$OUT_FN"
+xz -z -c "./builds/$CONFIGURE_PRESET/Release/hs5" > "./hs5-$OUT_ARCH-$VARIANT.xz"

@@ -6,7 +6,7 @@ on:
 
 jobs:
   job:
-    name: ${{ matrix.os }}-${{ github.workflow }}
+    name: ${{ matrix.os }}-${{ matrix.variant }}-${{ github.workflow }}
     runs-on: ${{ matrix.os }}
     environment: vcpkg
     permissions:
@@ -15,6 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, ubuntu-22.04-arm]
+        variant: [glibc, musl]
 
     steps:
       - uses: actions/checkout@v3
@@ -60,10 +61,19 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: './www/pnpm-lock.yaml'
 
+      - name: Setup zig
+        if: matrix.variant == 'musl'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
       - name: Build
         env:
           VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org,readwrite"
-        run: bash build.sh && bash clean.sh
+        run: bash build.sh ${{ matrix.variant }} && bash clean.sh
+
+      - name: Select hs5 binary for tests
+        run: echo "HS5_BINARY=$(ls builds/*/Release/hs5)" >> "$GITHUB_ENV"
 
       - name: Install Python dependencies
         run: pip install -r test/requirements.txt

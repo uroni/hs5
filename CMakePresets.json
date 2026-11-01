@@ -117,6 +117,48 @@
                     "value": "OFF"
                 }
             }
+        },
+        {
+            "name": "ninja-multi-vcpkg-zig-static",
+            "displayName": "Ninja Multi-Config, static build with zig (x64)",
+            "description": "Configure with vcpkg toolchain using the x64-linux-zig-static triplet and build a fully static binary with zig c++ against musl",
+            "binaryDir": "${sourceDir}/builds/${presetName}",
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": {
+                    "type": "FILEPATH",
+                    "value": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+                },
+                "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": {
+                    "type": "FILEPATH",
+                    "value": "${sourceDir}/cmake/zig-toolchain.cmake"
+                },
+                "VCPKG_TARGET_TRIPLET": {
+                    "type": "STRING",
+                    "value": "x64-linux-zig-static"
+                }
+            }
+        },
+        {
+            "name": "ninja-multi-vcpkg-zig-static-arm64",
+            "displayName": "Ninja Multi-Config, static build with zig (arm64)",
+            "description": "Configure with vcpkg toolchain using the arm64-linux-zig-static triplet and build a fully static binary with zig c++ against musl",
+            "binaryDir": "${sourceDir}/builds/${presetName}",
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": {
+                    "type": "FILEPATH",
+                    "value": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+                },
+                "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": {
+                    "type": "FILEPATH",
+                    "value": "${sourceDir}/cmake/zig-toolchain.cmake"
+                },
+                "VCPKG_TARGET_TRIPLET": {
+                    "type": "STRING",
+                    "value": "arm64-linux-zig-static"
+                }
+            }
         }
     ],
     "buildPresets": [
@@ -174,6 +216,20 @@
             "displayName": "Build (Release with debug info with TSAN)",
             "description": "Build with Ninja/vcpkg (Release with debug info with ThreadSanitizer)",
             "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "ninja-vcpkg-release-zig-static",
+            "configurePreset": "ninja-multi-vcpkg-zig-static",
+            "displayName": "Build (Release, static with zig)",
+            "description": "Build with Ninja/vcpkg (Release, fully static with zig c++)",
+            "configuration": "Release"
+        },
+        {
+            "name": "ninja-vcpkg-release-zig-static-arm64",
+            "configurePreset": "ninja-multi-vcpkg-zig-static-arm64",
+            "displayName": "Build (Release, static with zig arm64)",
+            "description": "Build with Ninja/vcpkg (Release, fully static with zig c++)",
+            "configuration": "Release"
         }
     ],
     "testPresets": [

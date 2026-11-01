@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "${ZIG:-zig}" c++ -target "$(uname -m)-linux-musl" "$@"
