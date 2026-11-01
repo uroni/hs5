@@ -13,3 +13,8 @@ set(CMAKE_RANLIB "${CMAKE_CURRENT_LIST_DIR}/zig/zig-ranlib" CACHE FILEPATH "")
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-static")
+
+# As chainloaded toolchain this replaces vcpkg's linux toolchain, so apply the triplet flags here
+string(APPEND CMAKE_C_FLAGS_INIT " ${VCPKG_C_FLAGS}")
+string(APPEND CMAKE_CXX_FLAGS_INIT " ${VCPKG_CXX_FLAGS}")
+string(APPEND CMAKE_ASM_FLAGS_INIT " ${VCPKG_C_FLAGS}")
