@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793556486401,
+  "lastUpdate": 1793558366825,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -12590,6 +12590,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.6175838901476189",
             "extra": "mean: 18.45193039359997 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "e7f46fc0c599d1573a8a3c4880b25d9013c31968",
+          "message": "Disable zig's -Werror=date-time in compiler wrappers\n\nzig makes -Wdate-time an error in optimized builds, which breaks duckdb's\nbundled pcg.",
+          "timestamp": "2026-11-01T20:23:33+01:00",
+          "tree_id": "e7d1dec7af9deef50148d81f2c71eee2154724ef",
+          "url": "https://github.com/uroni/hs5/commit/e7f46fc0c599d1573a8a3c4880b25d9013c31968"
+        },
+        "date": 1793558365655,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007920653389414034,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.25221062399999 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007882007079604368,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.87123849299996 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.0958902502032345,
+            "unit": "iter/sec",
+            "range": "stddev: 0.10639061706672251",
+            "extra": "mean: 10.428588911599991 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.07677012505220279,
+            "unit": "iter/sec",
+            "range": "stddev: 0.10083594485384885",
+            "extra": "mean: 13.025900365799998 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.0677668846753171,
+            "unit": "iter/sec",
+            "range": "stddev: 0.15481468540122548",
+            "extra": "mean: 14.756469989599987 sec\nrounds: 5"
           }
         ]
       }
