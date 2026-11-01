@@ -578,6 +578,40 @@ def test_get_conditional_status(hs5: Hs5Runner):
         assert status(method, IfMatch='"other"', IfNoneMatch=etag) == 412
 
 
+def test_conditional_unquoted_etag(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+    etag = s3_client.put_object(Bucket=bucket, Key="obj", Body=b"d1")["ETag"]
+    bare = etag.strip('"')
+    assert bare != etag
+
+    def status(method, **kwargs) -> int:
+        try:
+            resp = method(Bucket=bucket, **kwargs)
+            return resp["ResponseMetadata"]["HTTPStatusCode"]
+        except ClientError as e:
+            return e.response["ResponseMetadata"]["HTTPStatusCode"]
+
+    assert status(s3_client.get_object, Key="obj", IfMatch=bare) == 200
+    assert status(s3_client.get_object, Key="obj", IfNoneMatch=bare) == 304
+    assert (
+        status(
+            s3_client.copy_object,
+            Key="copy",
+            CopySource={"Bucket": bucket, "Key": "obj"},
+            CopySourceIfMatch=bare,
+        )
+        == 200
+    )
+    assert status(s3_client.put_object, Key="obj", Body=b"d", IfNoneMatch=bare) == 412
+    assert status(s3_client.put_object, Key="obj", Body=b"d2", IfMatch=bare) == 200
+    # The old ETag no longer matches
+    assert status(s3_client.put_object, Key="obj", Body=b"d3", IfMatch=bare) == 412
+
+    etag = s3_client.head_object(Bucket=bucket, Key="obj")["ETag"]
+    assert status(s3_client.delete_object, Key="obj", IfMatch=etag.strip('"')) == 204
+
+
 def test_copy_source_conditional(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = hs5.testbucketname()

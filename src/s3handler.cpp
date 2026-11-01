@@ -9018,6 +9018,24 @@ void S3Handler::stopChecks()
     sfs().empty_queue(false);
 }
 
+static std::string_view unquoteEtag(std::string_view etag)
+{
+    if (etag.size() >= 2 && etag.front() == '"' && etag.back() == '"')
+        return etag.substr(1, etag.size() - 2);
+    return etag;
+}
+
+// Compare an ETag condition with an object ETag. Accepts the condition with or without quotes.
+static bool etagMatches(const std::string& etag, const std::string& cond)
+{
+    const auto trimmed = folly::trimWhitespace(cond);
+    if (trimmed == "*")
+        return true;
+    const auto condView = unquoteEtag(std::string_view(trimmed.data(), trimmed.size()));
+    const auto etagView = unquoteEtag(etag);
+    return !etagView.empty() && etagView == condView;
+}
+
 void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride)
 {
     // A delete marker as current version means there is no current object
@@ -9043,7 +9061,7 @@ void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const S
         matchInfo.match = false;
         for (const auto ifMatch : matchInfo.ifMatch)
         {
-            if (etag == ifMatch || folly::trimWhitespace(ifMatch) == "*")
+            if (etagMatches(etag, ifMatch))
             {
                 matchInfo.match = true;
                 break;
@@ -9062,7 +9080,7 @@ void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const S
         {
             for (const auto ifNoneMatch : matchInfo.ifNoneMatch)
             {
-                if (etag == ifNoneMatch || folly::trimWhitespace(ifNoneMatch) == "*")
+                if (etagMatches(etag, ifNoneMatch))
                 {
                     matchInfo.match = false;
                     matchInfo.notModified = true;
