@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793570269576,
+  "lastUpdate": 1793571022428,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -13062,6 +13062,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.574934387948829",
             "extra": "mean: 19.364490220800054 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "d2b7417796d3a8fedfda07b6f730e860e36a994b",
+          "message": "Disable C++ module scanning in zig toolchain\n\nzig does not ship clang-scan-deps, so scanning the C++20 hs5 sources failed.",
+          "timestamp": "2026-11-01T23:21:29+01:00",
+          "tree_id": "19e82923f51bae46a7dfea8cda2895d4c5fcd03a",
+          "url": "https://github.com/uroni/hs5/commit/d2b7417796d3a8fedfda07b6f730e860e36a994b"
+        },
+        "date": 1793571021297,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.0079057145233319,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.49078044099997 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007874202677944987,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.99698507899984 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08310568675957353,
+            "unit": "iter/sec",
+            "range": "stddev: 0.07447008649589007",
+            "extra": "mean: 12.032870902000013 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.0652720127508152,
+            "unit": "iter/sec",
+            "range": "stddev: 0.08252298467653875",
+            "extra": "mean: 15.320501970999976 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05825899105439636,
+            "unit": "iter/sec",
+            "range": "stddev: 0.08782622862301741",
+            "extra": "mean: 17.164732548600114 sec\nrounds: 5"
           }
         ]
       }
