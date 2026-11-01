@@ -8,8 +8,9 @@ set(VCPKG_CMAKE_SYSTEM_NAME Linux)
 # hs5 is built as Release against these, so the debug variants are not needed
 set(VCPKG_BUILD_TYPE release)
 
-# musl does not define __ELF_NATIVE_CLASS (glibc does), which folly's symbolizer needs
-set(VCPKG_C_FLAGS "-D__ELF_NATIVE_CLASS=64")
-set(VCPKG_CXX_FLAGS "-D__ELF_NATIVE_CLASS=64")
+# musl does not define __ELF_NATIVE_CLASS (glibc does), which folly's symbolizer needs,
+# and only provides off64_t etc. (used by folly) with _LARGEFILE64_SOURCE
+set(VCPKG_C_FLAGS "-D__ELF_NATIVE_CLASS=64 -D_LARGEFILE64_SOURCE")
+set(VCPKG_CXX_FLAGS "-D__ELF_NATIVE_CLASS=64 -D_LARGEFILE64_SOURCE")
 
 set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE "${CMAKE_CURRENT_LIST_DIR}/../cmake/zig-toolchain.cmake")
