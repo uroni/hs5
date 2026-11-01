@@ -578,6 +578,75 @@ def test_get_conditional_status(hs5: Hs5Runner):
         assert status(method, IfMatch='"other"', IfNoneMatch=etag) == 412
 
 
+def test_copy_source_conditional(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+    src_etag = s3_client.put_object(Bucket=bucket, Key="src.txt", Body=b"src")["ETag"]
+    last_modified: datetime.datetime = s3_client.head_object(
+        Bucket=bucket, Key="src.txt"
+    )["LastModified"]
+    before = last_modified - datetime.timedelta(days=1)
+    after = last_modified + datetime.timedelta(days=1)
+    copy_source = {"Bucket": bucket, "Key": "src.txt"}
+
+    def copy_status(**kwargs) -> int:
+        try:
+            resp = s3_client.copy_object(
+                Bucket=bucket, Key="dst.txt", CopySource=copy_source, **kwargs
+            )
+            return resp["ResponseMetadata"]["HTTPStatusCode"]
+        except ClientError as e:
+            return e.response["ResponseMetadata"]["HTTPStatusCode"]
+
+    assert copy_status(CopySourceIfMatch=src_etag) == 200
+    assert copy_status(CopySourceIfMatch='"other"') == 412
+    assert copy_status(CopySourceIfNoneMatch='"other"') == 200
+    assert copy_status(CopySourceIfNoneMatch=src_etag) == 412
+    assert copy_status(CopySourceIfModifiedSince=before) == 200
+    assert copy_status(CopySourceIfModifiedSince=after) == 412
+    assert copy_status(CopySourceIfUnmodifiedSince=after) == 200
+    assert copy_status(CopySourceIfUnmodifiedSince=before) == 412
+    # if-match true and if-unmodified-since false -> copy
+    assert (
+        copy_status(CopySourceIfMatch=src_etag, CopySourceIfUnmodifiedSince=before)
+        == 200
+    )
+    # if-none-match false and if-modified-since true -> 412
+    assert (
+        copy_status(CopySourceIfNoneMatch=src_etag, CopySourceIfModifiedSince=before)
+        == 412
+    )
+
+    # Destination If-Match is checked against the destination, not the source
+    s3_client.put_object(Bucket=bucket, Key="dst.txt", Body=b"dst")
+    dst_etag = s3_client.head_object(Bucket=bucket, Key="dst.txt")["ETag"]
+    assert copy_status(IfMatch=src_etag) == 412
+    assert copy_status(IfMatch=dst_etag) == 200
+
+    upload_id = s3_client.create_multipart_upload(Bucket=bucket, Key="mp.txt")[
+        "UploadId"
+    ]
+
+    def part_copy_status(**kwargs) -> int:
+        try:
+            resp = s3_client.upload_part_copy(
+                Bucket=bucket,
+                Key="mp.txt",
+                UploadId=upload_id,
+                PartNumber=1,
+                CopySource=copy_source,
+                **kwargs,
+            )
+            return resp["ResponseMetadata"]["HTTPStatusCode"]
+        except ClientError as e:
+            return e.response["ResponseMetadata"]["HTTPStatusCode"]
+
+    assert part_copy_status(CopySourceIfMatch='"other"') == 412
+    assert part_copy_status(CopySourceIfNoneMatch=src_etag) == 412
+    assert part_copy_status(CopySourceIfMatch=src_etag) == 200
+    s3_client.abort_multipart_upload(Bucket=bucket, Key="mp.txt", UploadId=upload_id)
+
+
 def test_del_if_match(tmp_path: Path, hs5: Hs5Runner):
     fdata = os.urandom(1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:

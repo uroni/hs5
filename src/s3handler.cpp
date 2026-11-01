@@ -9172,7 +9172,7 @@ void S3Handler::parseMatchInfo(proxygen::HTTPMessage& headers, const bool ifModi
 
 void S3Handler::parseSourceMatchInfo(proxygen::HTTPMessage& headers, SingleFileStorage::MatchInfo& matchInfo)
 {
-    auto ifMatchStr = headers.getHeaders().getSingleOrEmpty("If-Match");
+    auto ifMatchStr = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source-if-match");
     if (!ifMatchStr.empty())
     {
         std::vector<std::string_view> ifMatchVec;
@@ -9184,7 +9184,7 @@ void S3Handler::parseSourceMatchInfo(proxygen::HTTPMessage& headers, SingleFileS
         }
     }
 
-    auto ifNoneMatchStr = headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_IF_NONE_MATCH);
+    auto ifNoneMatchStr = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source-if-none-match");
     if (!ifNoneMatchStr.empty())
     {
         std::vector<std::string_view> ifNoneMatchVec;
@@ -9197,14 +9197,14 @@ void S3Handler::parseSourceMatchInfo(proxygen::HTTPMessage& headers, SingleFileS
     }
     else
     {
-        auto ifModifiedSinceStr = headers.getHeaders().getSingleOrEmpty(HTTPHeaderCode::HTTP_HEADER_IF_MODIFIED_SINCE);
+        auto ifModifiedSinceStr = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source-if-modified-since");
         if (!ifModifiedSinceStr.empty())
         {
             matchInfo.ifModifiedSince = proxygen::parseHTTPDateTime(ifModifiedSinceStr);
         }
     }
 
-    auto ifUnmodifiedSinceStr = headers.getHeaders().getSingleOrEmpty("If-Unmodified-Since");
+    auto ifUnmodifiedSinceStr = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source-if-unmodified-since");
     if (!ifUnmodifiedSinceStr.empty())
     {
         matchInfo.ifUnmodifiedSince = proxygen::parseHTTPDateTime(ifUnmodifiedSinceStr);
