@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793567736350,
+  "lastUpdate": 1793568010459,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -12885,6 +12885,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.09042075223204102",
             "extra": "mean: 19.703770738999992 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "438d12b5a1f638eda9d82bc0814b627c323cb73d",
+          "message": "Set explicit duckdb platform for zig triplets\n\nduckdb runs a helper binary to detect its platform, which CMake does not\nresolve when cross compiling.",
+          "timestamp": "2026-11-01T22:28:18+01:00",
+          "tree_id": "9fb3224f0c34057a8df13d6be6f80cc7a5efee97",
+          "url": "https://github.com/uroni/hs5/commit/438d12b5a1f638eda9d82bc0814b627c323cb73d"
+        },
+        "date": 1793568009700,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007914367802434421,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.35248006699976 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007874788401931447,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.98753908800018 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08174590826682647,
+            "unit": "iter/sec",
+            "range": "stddev: 0.08939494013671193",
+            "extra": "mean: 12.233028186999945 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06494605126898229,
+            "unit": "iter/sec",
+            "range": "stddev: 0.19055330186458333",
+            "extra": "mean: 15.397394921800151 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05755679237396619,
+            "unit": "iter/sec",
+            "range": "stddev: 0.23777606849127847",
+            "extra": "mean: 17.374144019400138 sec\nrounds: 5"
           }
         ]
       }
