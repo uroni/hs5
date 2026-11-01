@@ -1,0 +1,11 @@
+--- a/include/jemalloc/jemalloc_macros.h.in
++++ b/include/jemalloc/jemalloc_macros.h.in
+@@ -51,7 +51,7 @@
+  */
+ #define MALLCTL_ARENAS_DESTROYED	4097
+ 
+-#if defined(__cplusplus) && defined(JEMALLOC_USE_CXX_THROW)
++#if defined(__cplusplus) && defined(JEMALLOC_USE_CXX_THROW) && !(defined(__linux__) && !defined(__GLIBC__))
+ #  define JEMALLOC_CXX_THROW throw()
+ #else
+ #  define JEMALLOC_CXX_THROW
