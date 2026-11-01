@@ -23,4 +23,8 @@ if(PORT STREQUAL "duckdb-custom")
     list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS "-DDUCKDB_EXPLICIT_PLATFORM=linux_arm64_musl")
 endif()
 
+if(PORT STREQUAL "folly")
+    set(VCPKG_POST_PORTFILE_INCLUDES "${CMAKE_CURRENT_LIST_DIR}/../cmake/zig-static-post-portfile.cmake")
+endif()
+
 set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE "${CMAKE_CURRENT_LIST_DIR}/../cmake/zig-toolchain.cmake")
