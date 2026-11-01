@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793548535231,
+  "lastUpdate": 1793549852703,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -12118,6 +12118,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.14867902199246136",
             "extra": "mean: 17.433738422399983 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "8ad27bf1ab12e4ece575613f515a39314bc61b54",
+          "message": "Apply vcpkg triplet flags in zig toolchain\n\nThe chainloaded toolchain replaces vcpkg's linux toolchain, so VCPKG_C_FLAGS\nand VCPKG_CXX_FLAGS (e.g. __ELF_NATIVE_CLASS for folly) were not applied.",
+          "timestamp": "2026-11-01T18:02:54+01:00",
+          "tree_id": "12135eeea40bcb4b61afc1b79456c8bfd090d428",
+          "url": "https://github.com/uroni/hs5/commit/8ad27bf1ab12e4ece575613f515a39314bc61b54"
+        },
+        "date": 1793549851910,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.00791926481219959,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.27434789900002 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007877130865556458,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.94977613900005 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.09744547521063478,
+            "unit": "iter/sec",
+            "range": "stddev: 0.01164210730339609",
+            "extra": "mean: 10.262149143800002 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.07774084537269212,
+            "unit": "iter/sec",
+            "range": "stddev: 0.05361633234602817",
+            "extra": "mean: 12.863250910200009 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.06965565723546996,
+            "unit": "iter/sec",
+            "range": "stddev: 0.15118253350138888",
+            "extra": "mean: 14.356335719000025 sec\nrounds: 5"
           }
         ]
       }
