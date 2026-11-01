@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793555542996,
+  "lastUpdate": 1793556207460,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -12472,6 +12472,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.1511542544836968",
             "extra": "mean: 17.868045684199977 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "ba46d99437d5b35d9e2212146b4c2582fe15ce3f",
+          "message": "Set LIBRT_LIBRARY for zig triplets\n\nlibrt is part of musl's libc, so find_library cannot find it for fizz,\nwangle and mvfst.",
+          "timestamp": "2026-11-01T19:48:56+01:00",
+          "tree_id": "4bcb9aeb173a61af7a1f669ea636f2494a4599e9",
+          "url": "https://github.com/uroni/hs5/commit/ba46d99437d5b35d9e2212146b4c2582fe15ce3f"
+        },
+        "date": 1793556206089,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.0076713983801755805,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 130.35433051999996 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007726359315146415,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 129.42706379699996 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.09583860260535397,
+            "unit": "iter/sec",
+            "range": "stddev: 0.98152899272038",
+            "extra": "mean: 10.434208897200005 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.08152916071797148,
+            "unit": "iter/sec",
+            "range": "stddev: 0.26247436351400627",
+            "extra": "mean: 12.265550033799991 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05923537786113628,
+            "unit": "iter/sec",
+            "range": "stddev: 0.4876648802634006",
+            "extra": "mean: 16.881803343000023 sec\nrounds: 5"
           }
         ]
       }
