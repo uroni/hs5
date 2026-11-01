@@ -4444,8 +4444,7 @@ int S3Handler::checkMatchInfo()
     std::string findPath;
     unsigned int flags = SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading;
 
-    const auto withVersioning = self->keyInfo.withVersioning() && self->keyInfo.version == 0;
-    if (withVersioning)
+    if (self->keyInfo.withVersioning())
     {
         flags |= SingleFileStorage::ReadNewest;
         findPath = make_key(self->keyInfo.key, self->keyInfo.bucketId, std::numeric_limits<int64_t>::max());

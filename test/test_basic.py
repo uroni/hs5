@@ -2282,6 +2282,58 @@ def test_enable_bucket_versioning(hs5: Hs5Runner):
 VERSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{22}$")
 
 
+def test_conditional_put_versioned(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+
+    s3_client.put_bucket_versioning(
+        Bucket=bucket, VersioningConfiguration={"Status": "Enabled"}
+    )
+
+    def status(**kwargs) -> int:
+        try:
+            resp = s3_client.put_object(Bucket=bucket, Key="obj", Body=b"d", **kwargs)
+            return resp["ResponseMetadata"]["HTTPStatusCode"]
+        except ClientError as e:
+            return e.response["ResponseMetadata"]["HTTPStatusCode"]
+
+    def mp_status(**kwargs) -> int:
+        upload_id = s3_client.create_multipart_upload(Bucket=bucket, Key="obj")[
+            "UploadId"
+        ]
+        part = s3_client.upload_part(
+            Bucket=bucket, Key="obj", UploadId=upload_id, PartNumber=1, Body=b"mp"
+        )
+        try:
+            resp = s3_client.complete_multipart_upload(
+                Bucket=bucket,
+                Key="obj",
+                UploadId=upload_id,
+                MultipartUpload={"Parts": [{"ETag": part["ETag"], "PartNumber": 1}]},
+                **kwargs,
+            )
+            return resp["ResponseMetadata"]["HTTPStatusCode"]
+        except ClientError as e:
+            s3_client.abort_multipart_upload(
+                Bucket=bucket, Key="obj", UploadId=upload_id
+            )
+            return e.response["ResponseMetadata"]["HTTPStatusCode"]
+
+    old_etag = s3_client.put_object(Bucket=bucket, Key="obj", Body=b"d1")["ETag"]
+    etag = s3_client.put_object(Bucket=bucket, Key="obj", Body=b"d2")["ETag"]
+
+    assert status(IfNoneMatch="*") == 412
+    assert status(IfMatch=old_etag) == 412
+    assert status(IfMatch='"other"') == 412
+    assert mp_status(IfNoneMatch="*") == 412
+    assert mp_status(IfMatch='"other"') == 412
+
+    etag = s3_client.head_object(Bucket=bucket, Key="obj")["ETag"]
+    assert status(IfMatch=etag) == 200
+    etag = s3_client.head_object(Bucket=bucket, Key="obj")["ETag"]
+    assert mp_status(IfMatch=etag) == 200
+
+
 def test_version_id_format(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
 
