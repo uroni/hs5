@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793568010459,
+  "lastUpdate": 1793569626800,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -12944,6 +12944,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.23777606849127847",
             "extra": "mean: 17.374144019400138 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "3bb0adcbb82222e7a46f34f9b2cf59a5ac210334",
+          "message": "Only require ICU in DuckDBConfig with the icu feature\n\nThe port always builds with WITH_INTERNAL_ICU=OFF, so the installed config\nrequired system ICU even though only the icu extension links it. The zig\nbuild cannot use the system ICU.",
+          "timestamp": "2026-11-01T23:05:40+01:00",
+          "tree_id": "f5114b892a5e8b6a4226078616ad754d856434c0",
+          "url": "https://github.com/uroni/hs5/commit/3bb0adcbb82222e7a46f34f9b2cf59a5ac210334"
+        },
+        "date": 1793569625961,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.00769739867475799,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 129.91401930099983 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.00775694181502393,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 128.9167849710002 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.09205200234413385,
+            "unit": "iter/sec",
+            "range": "stddev: 1.7924186540672522",
+            "extra": "mean: 10.863424743999895 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.07972749466717997,
+            "unit": "iter/sec",
+            "range": "stddev: 0.5153457384348642",
+            "extra": "mean: 12.542724491399985 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05810102967142514,
+            "unit": "iter/sec",
+            "range": "stddev: 0.44902681794226307",
+            "extra": "mean: 17.21139893139989 sec\nrounds: 5"
           }
         ]
       }
