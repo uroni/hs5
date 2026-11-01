@@ -8380,7 +8380,7 @@ void S3Handler::finalizePutObject(folly::EventBase* evb, const int64_t lastModif
         sfs().free_extents(extents);
         extents.clear();
 
-        XLOGF(WARN, "Object {} match condition not met (protected: {}). Returning error", keyInfo.key, matchInfo->isProtected);
+        XLOGF(WARN, "Object {} match condition not met (protected: {}). Returning error", keyInfo.key, static_cast<bool>(matchInfo->isProtected));
         evb->runInEventBaseThread([this]()
                                   {           
                 if(finished_)

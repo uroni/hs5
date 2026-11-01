@@ -115,21 +115,21 @@ public:
     struct MatchInfo
     {
         std::optional<std::string> readFn;
-        bool readNewest = false;
         std::vector<std::string> ifMatch;
         std::vector<std::string> ifNoneMatch;
         folly::Optional<int64_t> ifModifiedSince;
         folly::Optional<int64_t> ifUnmodifiedSince;
-        bool match = false;
-        // Set if match is false because of If-None-Match/If-Modified-Since (304 Not Modified for GET/HEAD)
-        bool notModified = false;
-        // If set, the match callback sets match=false and isProtected=true if the current object is protected from modification
-        bool checkProtected = false;
-        bool isProtected = false;
-        // Governance mode retention does not protect the object (with checkProtected)
-        bool bypassGovernance = false;
         // Time (seconds since epoch) at which protection is checked (with checkProtected). Current time if 0
         int64_t protectedCheckTime = 0;
+        bool readNewest : 1 = false;
+        bool match : 1 = false;
+        // Set if match is false because of If-None-Match/If-Modified-Since (304 Not Modified for GET/HEAD)
+        bool notModified : 1 = false;
+        // If set, the match callback sets match=false and isProtected=true if the current object is protected from modification
+        bool checkProtected : 1 = false;
+        bool isProtected : 1 = false;
+        // Governance mode retention does not protect the object (with checkProtected)
+        bool bypassGovernance : 1 = false;
     };
 
     struct SCommitInfo
