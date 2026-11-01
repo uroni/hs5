@@ -2,6 +2,9 @@
 # Used both for hs5 itself and (via the *-linux-zig-static triplets) for the vcpkg dependencies.
 # The compiler wrappers in cmake/zig select the musl target for the host architecture.
 set(CMAKE_SYSTEM_NAME Linux)
+# Setting CMAKE_SYSTEM_NAME marks this as cross compiling, which leaves CMAKE_SYSTEM_PROCESSOR
+# empty (breaks e.g. folly's arch checks). The wrappers target the host architecture.
+set(CMAKE_SYSTEM_PROCESSOR "${CMAKE_HOST_SYSTEM_PROCESSOR}")
 
 set(CMAKE_C_COMPILER "${CMAKE_CURRENT_LIST_DIR}/zig/zig-cc")
 set(CMAKE_CXX_COMPILER "${CMAKE_CURRENT_LIST_DIR}/zig/zig-c++")
