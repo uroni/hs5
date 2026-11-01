@@ -132,12 +132,15 @@ public:
         bool bypassGovernance : 1 = false;
         // Set if match is false because of If-Match and there is no current object (404 Not Found for writes)
         bool notFound : 1 = false;
+        // Set by the match callback if the checked object is a delete marker
+        bool isDeleteMarker : 1 = false;
 
         void setNotFound()
         {
             match = ifMatch.empty();
             notFound = !match;
             notModified = false;
+            isDeleteMarker = false;
         }
     };
 

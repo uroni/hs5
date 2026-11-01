@@ -820,6 +820,85 @@ def test_delete_objects_if_match(hs5: Hs5Runner, versioned: bool):
     assert delete([{"Key": "missing"}]) == (["missing"], {})
 
 
+def test_delete_marker_reporting(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+
+    # Unversioned: no version or delete marker info
+    s3_client.put_object(Bucket=bucket, Key="obj", Body=b"1")
+    resp = s3_client.delete_object(Bucket=bucket, Key="obj")
+    assert "DeleteMarker" not in resp
+    assert "VersionId" not in resp
+    s3_client.put_object(Bucket=bucket, Key="obj", Body=b"1")
+    resp = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": "obj"}]})
+    assert resp["Deleted"] == [{"Key": "obj"}]
+
+    s3_client.put_bucket_versioning(
+        Bucket=bucket, VersioningConfiguration={"Status": "Enabled"}
+    )
+
+    # DeleteObject creating a delete marker
+    v1 = s3_client.put_object(Bucket=bucket, Key="obj", Body=b"1")["VersionId"]
+    resp = s3_client.delete_object(Bucket=bucket, Key="obj")
+    assert resp["DeleteMarker"]
+    marker1 = resp["VersionId"]
+    markers = s3_client.list_object_versions(Bucket=bucket)["DeleteMarkers"]
+    assert [m["VersionId"] for m in markers] == [marker1]
+
+    # DeleteObject of a specific delete marker version
+    resp = s3_client.delete_object(Bucket=bucket, Key="obj", VersionId=marker1)
+    assert resp["DeleteMarker"]
+    assert resp["VersionId"] == marker1
+
+    # DeleteObject of a specific object version
+    resp = s3_client.delete_object(Bucket=bucket, Key="obj", VersionId=v1)
+    assert "DeleteMarker" not in resp
+    assert resp["VersionId"] == v1
+
+    # DeleteObjects creating a delete marker
+    v2 = s3_client.put_object(Bucket=bucket, Key="obj", Body=b"2")["VersionId"]
+    resp = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": "obj"}]})
+    deleted = resp["Deleted"][0]
+    assert deleted["Key"] == "obj"
+    assert deleted["DeleteMarker"]
+    marker2 = deleted["DeleteMarkerVersionId"]
+    markers = s3_client.list_object_versions(Bucket=bucket)["DeleteMarkers"]
+    assert [m["VersionId"] for m in markers] == [marker2]
+
+    # DeleteObjects of a delete marker version and an object version
+    resp = s3_client.delete_objects(
+        Bucket=bucket,
+        Delete={
+            "Objects": [
+                {"Key": "obj", "VersionId": marker2},
+                {"Key": "obj", "VersionId": v2},
+            ]
+        },
+    )
+    assert resp["Deleted"] == [
+        {
+            "Key": "obj",
+            "VersionId": marker2,
+            "DeleteMarker": True,
+            "DeleteMarkerVersionId": marker2,
+        },
+        {"Key": "obj", "VersionId": v2},
+    ]
+    versions = s3_client.list_object_versions(Bucket=bucket)
+    assert "Versions" not in versions
+    assert "DeleteMarkers" not in versions
+
+    # Deleting already deleted versions without conditions still succeeds
+    resp = s3_client.delete_object(Bucket=bucket, Key="obj", VersionId=v2)
+    assert resp["ResponseMetadata"]["HTTPStatusCode"] == 204
+    assert "DeleteMarker" not in resp
+    resp = s3_client.delete_objects(
+        Bucket=bucket, Delete={"Objects": [{"Key": "obj", "VersionId": marker2}]}
+    )
+    assert "Errors" not in resp
+    assert resp["Deleted"] == [{"Key": "obj", "VersionId": marker2}]
+
+
 def test_list_buckets(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     buckets = s3_client.list_buckets()

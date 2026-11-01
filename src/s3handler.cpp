@@ -5956,6 +5956,7 @@ void S3Handler::deleteObjects()
                 }
 
                 int res;
+                bool deleteMarker = false;
 
                 if (delNewest)
                 {
@@ -5973,6 +5974,7 @@ void S3Handler::deleteObjects()
                         const auto writePath = make_key(obj.key, self->keyInfo.bucketId, version);
                         std::string md5sum(1, metadata_tombstone);
                         res = self->sfs().write(writePath, nullptr, 0, 0, 0, md5sum, false, false, objMatchInfo ? &*objMatchInfo : nullptr);
+                        deleteMarker = true;
                     }
                     else
                     {
@@ -5994,7 +5996,12 @@ void S3Handler::deleteObjects()
                         objMatchInfo->bypassGovernance = deleteObjectsData->bypassGovernanceRequested &&
                                                          isAuthorized(resource, Action::BypassGovernanceRetention, deleteObjectsData->accessKey);
                     }
+                    // Match callback reports whether the deleted version is a delete marker
+                    if (withVersioning && !objMatchInfo)
+                        objMatchInfo.emplace();
                     res = self->sfs().del(currPath, SingleFileStorage::DelAction::Del, false, nullptr, objMatchInfo ? &*objMatchInfo : nullptr);
+                    if (withVersioning)
+                        deleteMarker = objMatchInfo->isDeleteMarker;
                 }
 
                 if (res == 0 && (!objMatchInfo || objMatchInfo->match))
@@ -6034,9 +6041,15 @@ void S3Handler::deleteObjects()
                     else if (!deleteObjectsData->quiet)
                     {
                         resp += fmt::format("\t<Deleted>\n"
-                                            "\t\t<Key>{}</Key>\n"
-                                            "\t</Deleted>\n",
+                                            "\t\t<Key>{}</Key>\n",
                                             escapeXML(obj.key));
+                        if (!obj.versionId.empty())
+                            resp += fmt::format("\t\t<VersionId>{}</VersionId>\n", escapeXML(obj.versionId));
+                        if (res == 0 && deleteMarker)
+                            resp += fmt::format("\t\t<DeleteMarker>true</DeleteMarker>\n"
+                                                "\t\t<DeleteMarkerVersionId>{}</DeleteMarkerVersionId>\n",
+                                                escapeXML(self->sfs().encrypt_id(version)));
+                        resp += "\t</Deleted>\n";
                     }
                 }
                 else
@@ -6185,6 +6198,9 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers, const bool bypassGo
             XLOGF(INFO, "Removing object {}", self->keyInfo.key);
 
             bool delNewest = false;
+            // Response reports the version (delete marker created or version deleted)
+            bool hasVersionId = false;
+            bool deleteMarker = false;
 
             if (self->keyInfo.withVersioning() && self->keyInfo.version == 0)
             {
@@ -6211,6 +6227,8 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers, const bool bypassGo
                     const auto writePath = make_key(self->keyInfo);
                     std::string md5sum(1, metadata_tombstone);
                     res = self->sfs().write(writePath, nullptr, 0, 0, 0, md5sum, false, false, self->matchInfo.get());
+                    hasVersionId = true;
+                    deleteMarker = true;
                 }
                 else
                 {
@@ -6234,7 +6252,17 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers, const bool bypassGo
                 if (FLAGS_test_delay_after_protected_check_ms > 0)
                     std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_test_delay_after_protected_check_ms));
 
+                // Match callback reports whether the deleted version is a delete marker
+                if (self->keyInfo.withVersioning() && !self->matchInfo)
+                    self->matchInfo = std::make_unique<SingleFileStorage::MatchInfo>();
+
                 res = self->sfs().del(currPath, SingleFileStorage::DelAction::Del, false, nullptr, self->matchInfo.get());
+
+                if (self->keyInfo.withVersioning())
+                {
+                    hasVersionId = true;
+                    deleteMarker = self->matchInfo->isDeleteMarker;
+                }
             }
 
             if (res == 0 && self->matchInfo && !self->matchInfo->match)
@@ -6260,7 +6288,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers, const bool bypassGo
                 res = self->commit() ? 0 : 1;
             }
 
-            evb->runInEventBaseThread([self = self, res]()
+            evb->runInEventBaseThread([self = self, res, hasVersionId, deleteMarker]()
                                       {
                     if(res==ENOENT)
                     {
@@ -6279,9 +6307,13 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers, const bool bypassGo
                     }
                     else
                     {
-                        ResponseBuilder(self->downstream_)
-                            .status(204, "No Content")
-                            .sendWithEOM();
+                        ResponseBuilder resp(self->downstream_);
+                        resp.status(204, "No Content");
+                        if(hasVersionId)
+                            resp.header("x-amz-version-id", self->sfs().encrypt_id(self->keyInfo.version));
+                        if(deleteMarker)
+                            resp.header("x-amz-delete-marker", "true");
+                        resp.sendWithEOM();
                     }
                     self->finished_ = true; });
         });
@@ -9067,6 +9099,7 @@ void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const S
     if (fragInfo.md5sum.size() == 1 && fragInfo.md5sum[0] == metadata_tombstone)
     {
         matchInfo.setNotFound();
+        matchInfo.isDeleteMarker = true;
         return;
     }
 
@@ -9080,6 +9113,7 @@ void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const S
     matchInfo.match = true;
     matchInfo.notModified = false;
     matchInfo.notFound = false;
+    matchInfo.isDeleteMarker = false;
 
     if (!matchInfo.ifMatch.empty())
     {
