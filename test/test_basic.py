@@ -899,6 +899,41 @@ def test_delete_marker_reporting(hs5: Hs5Runner):
     assert resp["Deleted"] == [{"Key": "obj", "VersionId": marker2}]
 
 
+def test_delete_marker_reporting_object_lock(hs5: Hs5Runner):
+    # With object lock, match info is used to report delete markers
+    s3_client = hs5.get_s3_client()
+    bucket = create_object_lock_bucket(s3_client, "lockbucket")
+
+    v1 = s3_client.put_object(Bucket=bucket, Key="obj", Body=b"1")["VersionId"]
+    marker1 = s3_client.delete_object(Bucket=bucket, Key="obj")["VersionId"]
+    marker2 = s3_client.delete_objects(
+        Bucket=bucket, Delete={"Objects": [{"Key": "obj"}]}
+    )["Deleted"][0]["DeleteMarkerVersionId"]
+
+    resp = s3_client.delete_object(Bucket=bucket, Key="obj", VersionId=marker1)
+    assert resp["DeleteMarker"]
+    assert resp["VersionId"] == marker1
+
+    resp = s3_client.delete_objects(
+        Bucket=bucket,
+        Delete={
+            "Objects": [
+                {"Key": "obj", "VersionId": marker2},
+                {"Key": "obj", "VersionId": v1},
+            ]
+        },
+    )
+    assert resp["Deleted"] == [
+        {
+            "Key": "obj",
+            "VersionId": marker2,
+            "DeleteMarker": True,
+            "DeleteMarkerVersionId": marker2,
+        },
+        {"Key": "obj", "VersionId": v1},
+    ]
+
+
 def test_list_buckets(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     buckets = s3_client.list_buckets()

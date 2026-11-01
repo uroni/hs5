@@ -5996,11 +5996,14 @@ void S3Handler::deleteObjects()
                         objMatchInfo->bypassGovernance = deleteObjectsData->bypassGovernanceRequested &&
                                                          isAuthorized(resource, Action::BypassGovernanceRetention, deleteObjectsData->accessKey);
                     }
-                    // Match callback reports whether the deleted version is a delete marker
+                    // Avoid waiting for commit thread if possible
                     if (withVersioning && !objMatchInfo)
-                        objMatchInfo.emplace();
+                    {
+                        const auto verRes = self->sfs().read_prepare(currPath, SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading);
+                        deleteMarker = verRes.err == 0 && verRes.md5sum.size() == 1 && verRes.md5sum[0] == metadata_tombstone;
+                    }
                     res = self->sfs().del(currPath, SingleFileStorage::DelAction::Del, false, nullptr, objMatchInfo ? &*objMatchInfo : nullptr);
-                    if (withVersioning)
+                    if (withVersioning && objMatchInfo)
                         deleteMarker = objMatchInfo->isDeleteMarker;
                 }
 
