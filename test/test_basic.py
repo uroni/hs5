@@ -718,6 +718,48 @@ def test_del_if_match(tmp_path: Path, hs5: Hs5Runner):
     assert exc_info.value.response["Error"]["Code"] == "PreconditionFailed"
 
 
+@pytest.mark.parametrize("versioned", [False, True])
+def test_del_if_match_versioning(hs5: Hs5Runner, versioned: bool):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+
+    if versioned:
+        s3_client.put_bucket_versioning(
+            Bucket=bucket, VersioningConfiguration={"Status": "Enabled"}
+        )
+
+    def status(**kwargs) -> int:
+        try:
+            resp = s3_client.delete_object(Bucket=bucket, Key="obj", **kwargs)
+            return resp["ResponseMetadata"]["HTTPStatusCode"]
+        except ClientError as e:
+            return e.response["ResponseMetadata"]["HTTPStatusCode"]
+
+    # No object
+    assert status(IfMatch="*") == 412
+    assert status(IfMatch='"other"') == 412
+
+    etag1 = s3_client.put_object(Bucket=bucket, Key="obj", Body=b"1")["ETag"]
+    res2 = s3_client.put_object(Bucket=bucket, Key="obj", Body=b"2")
+    etag2 = res2["ETag"]
+
+    # Only the current version is checked
+    assert status(IfMatch=etag1) == 412
+    assert status(IfMatch='"other"') == 412
+    assert status(IfMatch=etag2) == 204
+
+    # Deleted (delete marker as current version if versioned)
+    assert status(IfMatch="*") == 412
+    assert status(IfMatch=etag2) == 412
+
+    if versioned:
+        versions = s3_client.list_object_versions(Bucket=bucket)
+        assert len(versions["Versions"]) == 2
+        assert len(versions["DeleteMarkers"]) == 1
+        assert status(VersionId=res2["VersionId"], IfMatch=etag1) == 412
+        assert status(VersionId=res2["VersionId"], IfMatch=etag2) == 204
+
+
 def test_list_buckets(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     buckets = s3_client.list_buckets()

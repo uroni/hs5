@@ -6197,6 +6197,13 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers, const bool bypassGo
                 else
                 {
                     res = objRes.err;
+                    // No object: If-Match fails
+                    if (res == ENOENT && self->matchInfo)
+                    {
+                        self->matchInfo->setNotFound();
+                        if (!self->matchInfo->match)
+                            res = 0;
+                    }
                 }
             }
             else
