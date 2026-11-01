@@ -19,7 +19,7 @@ So 2,3545€ TB/mo, so 0,0023545 € GB/mo. Compared to 129.47€ for 20TB per m
 Setup:
 
  1. Start CAX11 VM -- you can save 0.5€ per month if you don't need it accessible via ipv4. I like to use Debian, so let's assume that for now
- 2. Download HS5 to e.g. `/usr/local/bin/hs5` via `wget https://github.com/uroni/hs5/releases/latest/download/hs5-arm64.xz -O - | xz -d > /usr/local/bin/hs5 && chmod +x /usr/local/bin/hs5`
+ 2. Download HS5 to e.g. `/usr/local/bin/hs5` via `wget https://github.com/uroni/hs5/releases/latest/download/hs5-arm64-glibc.xz -O - | xz -d > /usr/local/bin/hs5 && chmod +x /usr/local/bin/hs5`
  3. Create a script that mounts the storage box via CIFS and starts HS5 at e.g. `/root/hs5_start.sh` (replace userid, password and mount path with what you setup in Hetzner):
 
     ```bash

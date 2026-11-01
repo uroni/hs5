@@ -17,7 +17,7 @@ Visit the link above to download binaries and release notes for your platform.
 You can download and extract the latest Linux AMD64 binary directly with:
 
 ```bash
-wget https://github.com/uroni/hs5/releases/latest/download/hs5.xz -O - | xz -d > hs5
+wget https://github.com/uroni/hs5/releases/latest/download/hs5-amd64-glibc.xz -O - | xz -d > hs5
 chmod +x hs5
 ./hs5 run
 ```
@@ -27,7 +27,7 @@ chmod +x hs5
 For ARM64 (aarch64) systems, use:
 
 ```bash
-wget https://github.com/uroni/hs5/releases/latest/download/hs5-arm64.xz -O - | xz -d > hs5
+wget https://github.com/uroni/hs5/releases/latest/download/hs5-arm64-glibc.xz -O - | xz -d > hs5
 chmod +x hs5
 ./hs5 run
 ```
