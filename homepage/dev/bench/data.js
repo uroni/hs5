@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793558407825,
+  "lastUpdate": 1793565808620,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -12708,6 +12708,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.5330212773673655",
             "extra": "mean: 17.385887874400055 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "349b2340fafbcf1c62bfad883c61743e182698b2",
+          "message": "Add operator== to duckdb's thrift TEnumIterator\n\nlibc++ (used by the zig build) compares the iterator range passed to the\nstd::map constructor with ==, which TEnumIterator did not define.",
+          "timestamp": "2026-11-01T22:08:13+01:00",
+          "tree_id": "a61e6910adc825dc074d31e48aec7d2ce7e47e6d",
+          "url": "https://github.com/uroni/hs5/commit/349b2340fafbcf1c62bfad883c61743e182698b2"
+        },
+        "date": 1793565807299,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007767106181553844,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 128.74807896599987 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007718135716706327,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 129.56496707299993 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.13466421044953494,
+            "unit": "iter/sec",
+            "range": "stddev: 0.10858525364827944",
+            "extra": "mean: 7.425878016600018 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.10932418625044556,
+            "unit": "iter/sec",
+            "range": "stddev: 0.2671103419059809",
+            "extra": "mean: 9.147106731799932 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.0901885899941576,
+            "unit": "iter/sec",
+            "range": "stddev: 0.338805149934836",
+            "extra": "mean: 11.087877081399984 sec\nrounds: 5"
           }
         ]
       }
