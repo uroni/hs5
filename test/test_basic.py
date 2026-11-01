@@ -540,6 +540,44 @@ def test_get_if_match(tmp_path: Path, hs5: Hs5Runner):
     assert exc_info.value.response["Error"]["Code"] == "PreconditionFailed"
 
 
+def test_get_conditional_status(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+    s3_client.put_object(Bucket=bucket, Key="cond.txt", Body=b"data")
+    obj_info = s3_client.head_object(Bucket=bucket, Key="cond.txt")
+    etag = obj_info["ETag"]
+    last_modified: datetime.datetime = obj_info["LastModified"]
+    before = last_modified - datetime.timedelta(days=1)
+    after = last_modified + datetime.timedelta(days=1)
+
+    def status(method, **kwargs) -> int:
+        try:
+            resp = method(Bucket=bucket, Key="cond.txt", **kwargs)
+            if "Body" in resp:
+                assert resp["Body"].read() == b"data"
+            return resp["ResponseMetadata"]["HTTPStatusCode"]
+        except ClientError as e:
+            return e.response["ResponseMetadata"]["HTTPStatusCode"]
+
+    for method in (s3_client.get_object, s3_client.head_object):
+        assert status(method, IfNoneMatch=etag) == 304
+        assert status(method, IfNoneMatch="*") == 304
+        assert status(method, IfNoneMatch='"other"') == 200
+        assert status(method, IfModifiedSince=last_modified) == 304
+        assert status(method, IfModifiedSince=after) == 304
+        assert status(method, IfModifiedSince=before) == 200
+        assert status(method, IfMatch='"other"') == 412
+        assert status(method, IfUnmodifiedSince=before) == 412
+        assert status(method, IfUnmodifiedSince=last_modified) == 200
+        # If-None-Match false and If-Modified-Since true -> 304
+        assert status(method, IfNoneMatch=etag, IfModifiedSince=before) == 304
+        # If-Match true and If-Unmodified-Since false -> 200
+        assert status(method, IfMatch=etag, IfUnmodifiedSince=before) == 200
+        # If-Match false takes precedence over If-Modified-Since
+        assert status(method, IfMatch='"other"', IfModifiedSince=before) == 412
+        assert status(method, IfMatch='"other"', IfNoneMatch=etag) == 412
+
+
 def test_del_if_match(tmp_path: Path, hs5: Hs5Runner):
     fdata = os.urandom(1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:

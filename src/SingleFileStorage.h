@@ -121,6 +121,8 @@ public:
         folly::Optional<int64_t> ifModifiedSince;
         folly::Optional<int64_t> ifUnmodifiedSince;
         bool match = false;
+        // Set if match is false because of If-None-Match/If-Modified-Since (304 Not Modified for GET/HEAD)
+        bool notModified = false;
         // If set, the match callback sets match=false and isProtected=true if the current object is protected from modification
         bool checkProtected = false;
         bool isProtected = false;

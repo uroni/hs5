@@ -3998,6 +3998,15 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                                    rangeStart, rangeEnd, md5sum, partNumberEtag, last_modified = res.last_modified,
                                    checksumModeEnabled, returnPart = partNumberStr.has_value(), fullRange]()
                                   {
+                    if(self->matchInfo && !self->matchInfo->match && self->matchInfo->notModified)
+                    {
+                        self->responseBuilderWithCors(304, "Not Modified")
+                            .header(proxygen::HTTP_HEADER_ETAG, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum))
+                            .header("Last-Modified", format_last_modified_rfc1123(last_modified))
+                            .sendWithEOM();
+                        return;
+                    }
+
                     if(self->matchInfo && !self->matchInfo->match)
                     {
                         self->responseBuilderWithCors(412, "Precondition Failed")
@@ -8996,9 +9005,18 @@ void S3Handler::stopChecks()
 void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride)
 {
     const auto etag = etagOverride ? *etagOverride : getEtag(fragInfo.md5sum);
+    // HTTP dates have second resolution (Last-Modified is sent truncated to seconds)
+    const auto lastModifiedSec = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::nanoseconds(fragInfo.last_modified)).count();
+
+    // Evaluation order as in RFC 7232 section 6 (also matches AWS S3 GetObject/HeadObject docs):
+    // If-Match (else If-Unmodified-Since) failing -> 412,
+    // then If-None-Match (else If-Modified-Since) failing -> 304 for GET/HEAD (412 otherwise)
+    matchInfo.match = true;
+    matchInfo.notModified = false;
 
     if (!matchInfo.ifMatch.empty())
     {
+        matchInfo.match = false;
         for (const auto ifMatch : matchInfo.ifMatch)
         {
             if (etag == ifMatch || folly::trimWhitespace(ifMatch) == "*")
@@ -9008,34 +9026,33 @@ void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const S
             }
         }
     }
-    else
+    else if (matchInfo.ifUnmodifiedSince)
     {
-        matchInfo.match = true;
+        if (lastModifiedSec > *matchInfo.ifUnmodifiedSince)
+            matchInfo.match = false;
     }
 
-    if (matchInfo.ifModifiedSince)
+    if (matchInfo.match)
     {
-        std::chrono::seconds lastModifiedSec(*matchInfo.ifModifiedSince);
-        matchInfo.match = fragInfo.last_modified > std::chrono::nanoseconds(lastModifiedSec).count();
-    }
-    else if (!matchInfo.ifNoneMatch.empty())
-    {
-        for (const auto ifNoneMatch : matchInfo.ifNoneMatch)
+        if (!matchInfo.ifNoneMatch.empty())
         {
-            if (etag == ifNoneMatch || folly::trimWhitespace(ifNoneMatch) == "*")
+            for (const auto ifNoneMatch : matchInfo.ifNoneMatch)
             {
-                matchInfo.match = false;
-                break;
+                if (etag == ifNoneMatch || folly::trimWhitespace(ifNoneMatch) == "*")
+                {
+                    matchInfo.match = false;
+                    matchInfo.notModified = true;
+                    break;
+                }
             }
         }
-    }
-
-    if (matchInfo.ifUnmodifiedSince)
-    {
-        std::chrono::seconds lastModifiedSec(*matchInfo.ifUnmodifiedSince);
-        if (fragInfo.last_modified > std::chrono::nanoseconds(lastModifiedSec).count())
+        else if (matchInfo.ifModifiedSince)
         {
-            matchInfo.match = false;
+            if (lastModifiedSec <= *matchInfo.ifModifiedSince)
+            {
+                matchInfo.match = false;
+                matchInfo.notModified = true;
+            }
         }
     }
 
