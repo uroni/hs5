@@ -1,2 +1,11 @@
 #!/bin/sh
+# zig only accepts its own CPU names for -march, so map arm architecture names
+# (e.g. -march=armv8-a+crc+crypto from aws-checksums) to zig's generic CPU, keeping the features
+for arg do
+	shift
+	case "$arg" in
+		-march=armv8*-a*) arg="-march=generic${arg#-march=armv8*-a}" ;;
+	esac
+	set -- "$@" "$arg"
+done
 exec "${ZIG:-zig}" c++ -target "$(uname -m)-linux-musl" "$@"
