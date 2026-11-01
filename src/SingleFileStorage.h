@@ -130,6 +130,15 @@ public:
         bool isProtected : 1 = false;
         // Governance mode retention does not protect the object (with checkProtected)
         bool bypassGovernance : 1 = false;
+        // Set if match is false because of If-Match and there is no current object (404 Not Found for writes)
+        bool notFound : 1 = false;
+
+        void setNotFound()
+        {
+            match = ifMatch.empty();
+            notFound = !match;
+            notModified = false;
+        }
     };
 
     struct SCommitInfo

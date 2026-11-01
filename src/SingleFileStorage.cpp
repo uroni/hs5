@@ -9768,8 +9768,7 @@ bool SingleFileStorage::frag_info_matches(MDB_txn* txn, SFragInfo& frag_info)
     auto curr_info = get_frag_info(txn, fn, true, match_info.readFn.has_value() && match_info.readNewest);
     if (curr_info.offset == -1)
     {
-        if (match_info.ifMatch.empty())
-            match_info.match = true;
+        match_info.setNotFound();
     }
     else
     {

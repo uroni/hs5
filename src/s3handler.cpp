@@ -4460,10 +4460,7 @@ int S3Handler::checkMatchInfo()
     {
         if (res.err == ENOENT)
         {
-            if (matchInfo->ifMatch.empty())
-            {
-                matchInfo->match = true;
-            }
+            matchInfo->setNotFound();
         }
         else
         {
@@ -4558,6 +4555,11 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
                                 ResponseBuilder(self->downstream_)
                                     .status(403, "Forbidden")
                                     .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by object lock", self->fullKeyPath(), ""))
+                                    .sendWithEOM();
+                            else if (self->matchInfo->notFound)
+                                ResponseBuilder(self->downstream_)
+                                    .status(404, "Not Found")
+                                    .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
                                     .sendWithEOM();
                             else
                                 ResponseBuilder(self->downstream_)
@@ -4897,6 +4899,11 @@ void S3Handler::finalizeMultipartUpload()
                                     .status(403, "Forbidden")
                                     .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by object lock", self->fullKeyPath(), ""))
                                     .sendWithEOM();
+                            else if (self->matchInfo->notFound)
+                                ResponseBuilder(self->downstream_)
+                                    .status(404, "Not Found")
+                                    .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
+                                    .sendWithEOM();
                             else
                                 ResponseBuilder(self->downstream_)
                                     .status(412, "Precondition Failed")
@@ -5225,6 +5232,11 @@ void S3Handler::finalizeMultipartUpload()
                             ResponseBuilder(self->downstream_)
                                 .status(403, "Forbidden")
                                 .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by object lock", self->fullKeyPath(), ""))
+                                .sendWithEOM();
+                        else if (self->matchInfo->notFound)
+                            ResponseBuilder(self->downstream_)
+                                .status(404, "Not Found")
+                                .body(s3errorXml(S3ErrorCode::NoSuchKey, "", self->fullKeyPath(), ""))
                                 .sendWithEOM();
                         else
                             ResponseBuilder(self->downstream_)
@@ -8390,6 +8402,11 @@ void S3Handler::finalizePutObject(folly::EventBase* evb, const int64_t lastModif
                         .status(403, "Forbidden")
                         .body(s3errorXml(S3ErrorCode::AccessDenied, "Object is protected by object lock", fullKeyPath(), ""))
                         .sendWithEOM();
+                else if (matchInfo->notFound)
+                    ResponseBuilder(downstream_)
+                        .status(404, "Not Found")
+                        .body(s3errorXml(S3ErrorCode::NoSuchKey, "", fullKeyPath(), ""))
+                        .sendWithEOM();
                 else
                     ResponseBuilder(downstream_)
                         .status(409 , "ConditionalRequestConflict")
@@ -9003,6 +9020,13 @@ void S3Handler::stopChecks()
 
 void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride)
 {
+    // A delete marker as current version means there is no current object
+    if (fragInfo.md5sum.size() == 1 && fragInfo.md5sum[0] == metadata_tombstone)
+    {
+        matchInfo.setNotFound();
+        return;
+    }
+
     const auto etag = etagOverride ? *etagOverride : getEtag(fragInfo.md5sum);
     // HTTP dates have second resolution (Last-Modified is sent truncated to seconds)
     const auto lastModifiedSec = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::nanoseconds(fragInfo.last_modified)).count();
@@ -9012,6 +9036,7 @@ void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const S
     // then If-None-Match (else If-Modified-Since) failing -> 304 for GET/HEAD (412 otherwise)
     matchInfo.match = true;
     matchInfo.notModified = false;
+    matchInfo.notFound = false;
 
     if (!matchInfo.ifMatch.empty())
     {

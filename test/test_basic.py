@@ -2334,6 +2334,73 @@ def test_conditional_put_versioned(hs5: Hs5Runner):
     assert mp_status(IfMatch=etag) == 200
 
 
+@pytest.mark.parametrize("versioned", [False, True])
+def test_conditional_put_missing(hs5: Hs5Runner, versioned: bool):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+
+    if versioned:
+        s3_client.put_bucket_versioning(
+            Bucket=bucket, VersioningConfiguration={"Status": "Enabled"}
+        )
+
+    def status(**kwargs):
+        try:
+            resp = s3_client.put_object(Bucket=bucket, Key="obj", Body=b"d", **kwargs)
+            return resp["ResponseMetadata"]["HTTPStatusCode"]
+        except ClientError as e:
+            return (
+                e.response["ResponseMetadata"]["HTTPStatusCode"],
+                e.response["Error"]["Code"],
+            )
+
+    def mp_status(**kwargs):
+        upload_id = s3_client.create_multipart_upload(Bucket=bucket, Key="obj")[
+            "UploadId"
+        ]
+        part = s3_client.upload_part(
+            Bucket=bucket, Key="obj", UploadId=upload_id, PartNumber=1, Body=b"mp"
+        )
+        try:
+            resp = s3_client.complete_multipart_upload(
+                Bucket=bucket,
+                Key="obj",
+                UploadId=upload_id,
+                MultipartUpload={"Parts": [{"ETag": part["ETag"], "PartNumber": 1}]},
+                **kwargs,
+            )
+            return resp["ResponseMetadata"]["HTTPStatusCode"]
+        except ClientError as e:
+            s3_client.abort_multipart_upload(
+                Bucket=bucket, Key="obj", UploadId=upload_id
+            )
+            return (
+                e.response["ResponseMetadata"]["HTTPStatusCode"],
+                e.response["Error"]["Code"],
+            )
+
+    not_found = (404, "NoSuchKey")
+
+    # No object
+    assert status(IfMatch="*") == not_found
+    assert status(IfMatch='"other"') == not_found
+    assert mp_status(IfMatch="*") == not_found
+    assert mp_status(IfMatch='"other"') == not_found
+
+    etag = s3_client.put_object(Bucket=bucket, Key="obj", Body=b"d1")["ETag"]
+    s3_client.delete_object(Bucket=bucket, Key="obj")
+
+    # Deleted object (delete marker as current version if versioned)
+    assert status(IfMatch="*") == not_found
+    assert status(IfMatch=etag) == not_found
+    assert mp_status(IfMatch="*") == not_found
+    assert status(IfNoneMatch="*") == 200
+
+    s3_client.delete_object(Bucket=bucket, Key="obj")
+    assert mp_status(IfNoneMatch="*") == 200
+    assert status(IfMatch="*") == 200
+
+
 def test_version_id_format(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
 
