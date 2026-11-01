@@ -166,7 +166,7 @@ int64_t ObjectReader::Read(char* buffer, int64_t bsize)
 time_t ObjectReader::LastModifiedTime() const
 {
     constexpr auto epoch = std::chrono::time_point<std::chrono::system_clock>();
-    const auto lastModifiedTp = std::chrono::system_clock::to_time_t(epoch + std::chrono::nanoseconds(lastModified));
+    const auto lastModifiedTp = std::chrono::system_clock::to_time_t(std::chrono::time_point_cast<std::chrono::system_clock::duration>(epoch + std::chrono::nanoseconds(lastModified)));
     return lastModifiedTp;
 }
 

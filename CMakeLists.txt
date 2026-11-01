@@ -241,3 +241,5 @@ if(HS5_USE_JEMALLOC)
 endif()
 # Always use mvfst's expected-lite implementation (nonstd::expected), never std::expected
 target_compile_definitions(hs5 PRIVATE nsel_CONFIG_SELECT_EXPECTED=nsel_EXPECTED_NONSTD)
+# off64_t, stat64 etc. are only declared with this on musl (glibc implies it with _GNU_SOURCE)
+target_compile_definitions(hs5 PRIVATE _LARGEFILE64_SOURCE)

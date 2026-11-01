@@ -36,13 +36,13 @@ public:
         return st.st_size;
     }
 
-    bool punchHole(__off64_t spos, __off64_t size) const
+    bool punchHole(off64_t spos, off64_t size) const
     {
         int rc = fallocate64(fd(), FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, spos, size);
         return rc == 0;
     }
 
-    void truncate(__off64_t len) const
+    void truncate(off64_t len) const
     {
         folly::checkUnixError(ftruncate64(fd(), len), "Truncate failed");
     }
@@ -372,13 +372,13 @@ public:
         return rc;
     }
 
-    bool punchHole(__off64_t spos, __off64_t size)
+    bool punchHole(off64_t spos, off64_t size)
     {
         return mapOp([](const File& file, size_t count, size_t offset)
                      { return file.punchHole(offset, count) ? count : -1; }, size, spos, false) == size;
     }
 
-    bool alloc(__off64_t len)
+    bool alloc(off64_t len)
     {
         if (len <= 0)
             return false;
@@ -387,7 +387,7 @@ public:
                      { return posix_fallocate(file.fd(), 0, offset + count) == 0 ? 1 : -1; }, 1, len - 1, true) == 1;
     }
 
-    void truncate(__off64_t len)
+    void truncate(off64_t len)
     {
         const auto csize = size();
 
