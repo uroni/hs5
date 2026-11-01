@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793549957224,
+  "lastUpdate": 1793553323352,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -12236,6 +12236,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.2080187183256228",
             "extra": "mean: 17.076809792799985 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "9788a0e930346c61f79576db7c3946b06a6ff7a2",
+          "message": "Define _LARGEFILE64_SOURCE for zig triplets\n\nmusl only provides off64_t etc., which folly uses, with _LARGEFILE64_SOURCE.",
+          "timestamp": "2026-11-01T18:59:19+01:00",
+          "tree_id": "de8d28044cffc7db2fb70b9bcb89ae5f88d5b944",
+          "url": "https://github.com/uroni/hs5/commit/9788a0e930346c61f79576db7c3946b06a6ff7a2"
+        },
+        "date": 1793553322289,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007910322637999808,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.41709393700006 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007870973755935281,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 127.04908325300005 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08139901444817138,
+            "unit": "iter/sec",
+            "range": "stddev: 0.17960032093576556",
+            "extra": "mean: 12.28516102779995 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06468873390764024,
+            "unit": "iter/sec",
+            "range": "stddev: 0.2272244397861003",
+            "extra": "mean: 15.458642326000017 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05811529693144845,
+            "unit": "iter/sec",
+            "range": "stddev: 0.14159022106810115",
+            "extra": "mean: 17.207173546399986 sec\nrounds: 5"
           }
         ]
       }
