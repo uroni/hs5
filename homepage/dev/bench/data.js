@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793555391639,
+  "lastUpdate": 1793555542996,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -12413,6 +12413,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.4018760540895605",
             "extra": "mean: 12.682488955600025 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "7406348618d93541ab26ba010dd40d0f734957ec",
+          "message": "Add jemalloc overlay port with musl fix\n\njemalloc declares malloc etc. with throw() on all Linux hosts, which conflicts\nwith musl's declarations when building with zig.",
+          "timestamp": "2026-11-01T19:35:49+01:00",
+          "tree_id": "5e55b8e0898e37947aaf9dd9f05480ad0140c672",
+          "url": "https://github.com/uroni/hs5/commit/7406348618d93541ab26ba010dd40d0f734957ec"
+        },
+        "date": 1793555542246,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007922278150308975,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.22631786299996 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007877022659831546,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.95152003300007 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08221424600113568,
+            "unit": "iter/sec",
+            "range": "stddev: 0.06618959875862765",
+            "extra": "mean: 12.163342104800018 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06354415142375715,
+            "unit": "iter/sec",
+            "range": "stddev: 0.23431862157838643",
+            "extra": "mean: 15.737089529000013 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05596582959737233,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1511542544836968",
+            "extra": "mean: 17.868045684199977 sec\nrounds: 5"
           }
         ]
       }
