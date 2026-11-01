@@ -760,6 +760,66 @@ def test_del_if_match_versioning(hs5: Hs5Runner, versioned: bool):
         assert status(VersionId=res2["VersionId"], IfMatch=etag2) == 204
 
 
+@pytest.mark.parametrize("versioned", [False, True])
+def test_delete_objects_if_match(hs5: Hs5Runner, versioned: bool):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+
+    if versioned:
+        s3_client.put_bucket_versioning(
+            Bucket=bucket, VersioningConfiguration={"Status": "Enabled"}
+        )
+
+    def delete(objects):
+        resp = s3_client.delete_objects(Bucket=bucket, Delete={"Objects": objects})
+        errors = {e["Key"]: e["Code"] for e in resp.get("Errors", [])}
+        deleted = [d["Key"] for d in resp.get("Deleted", [])]
+        return deleted, errors
+
+    def exists(key: str) -> bool:
+        try:
+            s3_client.head_object(Bucket=bucket, Key=key)
+            return True
+        except ClientError:
+            return False
+
+    old_etag = s3_client.put_object(Bucket=bucket, Key="a", Body=b"1")["ETag"]
+    etag_a = s3_client.put_object(Bucket=bucket, Key="a", Body=b"2")["ETag"]
+    etag_b = s3_client.put_object(Bucket=bucket, Key="b", Body=b"b")["ETag"]
+    s3_client.put_object(Bucket=bucket, Key="c", Body=b"c")
+
+    assert delete([{"Key": "a", "ETag": '"other"'}]) == (
+        [],
+        {"a": "PreconditionFailed"},
+    )
+    assert delete([{"Key": "a", "ETag": old_etag}]) == (
+        [],
+        {"a": "PreconditionFailed"},
+    )
+    assert exists("a")
+
+    # Mixed batch: matching (unquoted) ETag, wrong ETag, wildcard, missing key
+    deleted, errors = delete(
+        [
+            {"Key": "a", "ETag": etag_a.strip('"')},
+            {"Key": "b", "ETag": '"other"'},
+            {"Key": "c", "ETag": "*"},
+            {"Key": "missing", "ETag": "*"},
+        ]
+    )
+    assert sorted(deleted) == ["a", "c"]
+    assert errors == {"b": "PreconditionFailed", "missing": "NoSuchKey"}
+    assert not exists("a")
+    assert exists("b")
+    assert not exists("c")
+
+    assert delete([{"Key": "b", "ETag": etag_b}]) == (["b"], {})
+    assert not exists("b")
+
+    # Without ETag, deleting a missing key still succeeds
+    assert delete([{"Key": "missing"}]) == (["missing"], {})
+
+
 def test_list_buckets(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     buckets = s3_client.list_buckets()

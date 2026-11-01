@@ -5948,6 +5948,13 @@ void S3Handler::deleteObjects()
                     objMatchInfo->isProtected = false;
                 }
 
+                if (!obj.etag.empty())
+                {
+                    if (!objMatchInfo)
+                        objMatchInfo.emplace();
+                    objMatchInfo->ifMatch = { obj.etag };
+                }
+
                 int res;
 
                 if (delNewest)
@@ -5970,6 +5977,8 @@ void S3Handler::deleteObjects()
                     else
                     {
                         res = objRes.err;
+                        if (res == ENOENT && objMatchInfo)
+                            objMatchInfo->setNotFound();
                     }
                 }
                 else
@@ -6000,6 +6009,15 @@ void S3Handler::deleteObjects()
                         resp += fmt::format("\t<Error>\n"
                                             "\t\t<Code>AccessDenied</Code>\n"
                                             "\t\t<Message>Object is protected by object lock</Message>\n"
+                                            "\t\t<Key>{}</Key>\n"
+                                            "\t</Error>\n",
+                                            escapeXML(obj.key));
+                    }
+                    else if (objMatchInfo && objMatchInfo->notFound)
+                    {
+                        resp += fmt::format("\t<Error>\n"
+                                            "\t\t<Code>NoSuchKey</Code>\n"
+                                            "\t\t<Message>The specified key does not exist</Message>\n"
                                             "\t\t<Key>{}</Key>\n"
                                             "\t</Error>\n",
                                             escapeXML(obj.key));
