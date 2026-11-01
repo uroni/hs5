@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793571591484,
+  "lastUpdate": 1793571664307,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -13239,6 +13239,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.10693819287898422",
             "extra": "mean: 17.101381343000025 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "79cac25dd84b0ad67ee3998f18ddbc06573fde9c",
+          "message": "Fix hs5 build against musl and libc++\n\nDefine _LARGEFILE64_SOURCE (musl only declares off64_t, stat64 etc. with it),\nuse off64_t instead of glibc-internal __off64_t, and cast to\nsystem_clock::duration before to_time_t since libc++'s system_clock has\nmicrosecond resolution.",
+          "timestamp": "2026-11-02T00:05:56+01:00",
+          "tree_id": "88b214df4ef0188dc9152bd5e94f8ffd98f33b40",
+          "url": "https://github.com/uroni/hs5/commit/79cac25dd84b0ad67ee3998f18ddbc06573fde9c"
+        },
+        "date": 1793571663362,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007908744315636537,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.442322585 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007870734092366218,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 127.052951893 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08156940579134293,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1592002355958486",
+            "extra": "mean: 12.259498402600002 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06213682118286827,
+            "unit": "iter/sec",
+            "range": "stddev: 0.17623702931216456",
+            "extra": "mean: 16.09351719259996 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.056495170227236255,
+            "unit": "iter/sec",
+            "range": "stddev: 0.39499665411429036",
+            "extra": "mean: 17.700628141800006 sec\nrounds: 5"
           }
         ]
       }
