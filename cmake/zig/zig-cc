@@ -8,4 +8,5 @@ for arg do
 	esac
 	set -- "$@" "$arg"
 done
-exec "${ZIG:-zig}" cc -target "$(uname -m)-linux-musl" "$@"
+# zig turns -Wdate-time into an error in optimized builds (breaks e.g. duckdb's pcg)
+exec "${ZIG:-zig}" cc -target "$(uname -m)-linux-musl" -Wno-date-time "$@"
