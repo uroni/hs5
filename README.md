@@ -87,12 +87,12 @@ services:
 
 Access the S3 API and the web interface at port 8085 in this case.
 
-### On Linux (AMD64, glibc >= 2.35)
+### On Linux (AMD64)
 
 Download the hs5 binary and run it:
 
 ```bash
-wget https://github.com/uroni/hs5/releases/latest/download/hs5-amd64-glibc.xz -O - | xz -d > hs5
+wget https://github.com/uroni/hs5/releases/latest/download/hs5-amd64-musl.xz -O - | xz -d > hs5
 chmod +x hs5
 ./hs5 run
 ```
