@@ -17,4 +17,10 @@ set(VCPKG_CXX_FLAGS "-D__ELF_NATIVE_CLASS=64 -D_LARGEFILE64_SOURCE")
 # (fizz, wangle and mvfst require it); zig accepts -lrt
 set(VCPKG_CMAKE_CONFIGURE_OPTIONS "-DLIBRT_LIBRARY:STRING=rt")
 
+# duckdb detects its platform by running a helper binary, which CMake does not do when
+# cross compiling (as CMAKE_SYSTEM_NAME is set); this is what the helper would report
+if(PORT STREQUAL "duckdb-custom")
+    list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS "-DDUCKDB_EXPLICIT_PLATFORM=linux_arm64_musl")
+endif()
+
 set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE "${CMAKE_CURRENT_LIST_DIR}/../cmake/zig-toolchain.cmake")
