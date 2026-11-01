@@ -11,6 +11,9 @@ set(CMAKE_CXX_COMPILER "${CMAKE_CURRENT_LIST_DIR}/zig/zig-c++")
 set(CMAKE_AR "${CMAKE_CURRENT_LIST_DIR}/zig/zig-ar" CACHE FILEPATH "")
 set(CMAKE_RANLIB "${CMAKE_CURRENT_LIST_DIR}/zig/zig-ranlib" CACHE FILEPATH "")
 
+# zig does not ship clang-scan-deps, which CMake uses to scan C++20 sources for modules
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-static")
 
