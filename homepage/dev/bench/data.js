@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793572073586,
+  "lastUpdate": 1793572307288,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -13357,6 +13357,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.34810122085551853",
             "extra": "mean: 12.750622730399959 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "07ce1c27d217a2a35c6f3175c6eb33a4e78857fa",
+          "message": "Remove folly's exception tracer from zig static builds\n\nIt defines __cxa_throw etc. to wrap a shared C++ runtime, which clashes with\nlibc++abi's definitions when hs5 is linked fully statically.",
+          "timestamp": "2026-11-02T00:15:24+01:00",
+          "tree_id": "96640959b9de43e1d43996c21cd0905442b88de6",
+          "url": "https://github.com/uroni/hs5/commit/07ce1c27d217a2a35c6f3175c6eb33a4e78857fa"
+        },
+        "date": 1793572306025,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007916530120188002,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.31796820300002 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007876160958828591,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.96540931900006 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08265957198793204,
+            "unit": "iter/sec",
+            "range": "stddev: 0.07553483517594144",
+            "extra": "mean: 12.097812460800014 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.0579333968517244,
+            "unit": "iter/sec",
+            "range": "stddev: 0.8291949947675817",
+            "extra": "mean: 17.261200867599996 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05228907118518599,
+            "unit": "iter/sec",
+            "range": "stddev: 0.6173087834990438",
+            "extra": "mean: 19.12445521279999 sec\nrounds: 5"
           }
         ]
       }
