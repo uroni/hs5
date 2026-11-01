@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793548454340,
+  "lastUpdate": 1793548535231,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -12059,6 +12059,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 4.580525994632564",
             "extra": "mean: 20.739041451200045 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "06408f70040f5759cecdf4cda5ee1a340975e814",
+          "message": "Fix musl build of folly and aws-checksums with zig\n\nDefine __ELF_NATIVE_CLASS for the zig triplets since musl lacks it, and map\n-march=armv8*-a to zig's generic CPU in the compiler wrappers.",
+          "timestamp": "2026-11-01T17:36:44+01:00",
+          "tree_id": "39e385e1eb5c2beba52fc5171009377b186ab868",
+          "url": "https://github.com/uroni/hs5/commit/06408f70040f5759cecdf4cda5ee1a340975e814"
+        },
+        "date": 1793548534512,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007916103843109002,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.32477034399994 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007873074917996511,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 127.01517646100001 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07912527701298565,
+            "unit": "iter/sec",
+            "range": "stddev: 0.8114321857537649",
+            "extra": "mean: 12.63818640200002 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.06394402259395963,
+            "unit": "iter/sec",
+            "range": "stddev: 0.23079365881114633",
+            "extra": "mean: 15.638678322599981 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.05736004382830111,
+            "unit": "iter/sec",
+            "range": "stddev: 0.14867902199246136",
+            "extra": "mean: 17.433738422399983 sec\nrounds: 5"
           }
         ]
       }
