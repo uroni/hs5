@@ -59,6 +59,7 @@ case "$VARIANT" in
     if ! command -v zig >/dev/null 2>&1 || ! zig version >/dev/null 2>&1; then
       die "zig is required for the static musl build. Install zig and retry."
     fi
+    bash ./cmake/check-zig-libc.sh || die "zig libc check failed, see above."
     CONFIGURE_PRESET=ninja-multi-vcpkg-zig-static
     BUILD_PRESET=ninja-vcpkg-release-zig-static
     if [[ "$OUT_ARCH" == "arm64" ]]; then

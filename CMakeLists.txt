@@ -161,6 +161,7 @@ add_executable(hs5
     external/lmdb/midl.cpp
     external/lmdb/mdb.c
     external/lmdb/cppmidl.cpp
+    src/zig_libc_compat.c
     src/main.cpp
     src/s3handler.cpp
     src/SingleFileStorage.cpp
