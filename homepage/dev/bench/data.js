@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793578206495,
+  "lastUpdate": 1793578272954,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -13593,6 +13593,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.25631240782122733",
             "extra": "mean: 18.16001896739997 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "f893bc4bca9db7c0753e68246ba4723e1937af64",
+          "message": "Override zig libc functions that bypass jemalloc",
+          "timestamp": "2026-11-02T01:54:04+01:00",
+          "tree_id": "d7560fb0342c836e1aa6c6dcfdf17e3e86c34c70",
+          "url": "https://github.com/uroni/hs5/commit/f893bc4bca9db7c0753e68246ba4723e1937af64"
+        },
+        "date": 1793578272144,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.00790483731346788,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.50481728400007 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007879851160826496,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.90595032699991 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07542649220999123,
+            "unit": "iter/sec",
+            "range": "stddev: 0.18956424211598505",
+            "extra": "mean: 13.257941218000019 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.05842194193092636,
+            "unit": "iter/sec",
+            "range": "stddev: 0.5563799454114099",
+            "extra": "mean: 17.116856560199995 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.053613305592790664,
+            "unit": "iter/sec",
+            "range": "stddev: 0.5267741391331705",
+            "extra": "mean: 18.652086248799947 sec\nrounds: 5"
           }
         ]
       }
