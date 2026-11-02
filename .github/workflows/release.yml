@@ -86,6 +86,13 @@ jobs:
           emoji: false
           custom-arguments: -p no:sugar --benchmark-skip test --timeout=300 -n auto
 
+      - name: Upload hs5 binary for crash analysis
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hs5-${{ matrix.os }}-${{ matrix.variant }}
+          path: ${{ env.HS5_BINARY }}
+
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
