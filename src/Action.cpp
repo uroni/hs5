@@ -81,6 +81,20 @@ Action actionFromStr(const std::string_view action)
         return Action::ChangePassword;
     if (action == "hs5:ChangeOwnPassword")
         return Action::ChangeOwnPassword;
+    if (action == "s3:GetBucketLocation")
+        return Action::GetBucketLocation;
+    if (action == "s3:CopyObject")
+        return Action::CopyObject;
+    if (action == "s3:UploadPartCopy")
+        return Action::UploadPartCopy;
+    if (action == "hs5:ListBucketPermissions")
+        return Action::ListBucketPermissions;
+    if (action == "hs5:AddBucketPermission")
+        return Action::AddBucketPermission;
+    if (action == "hs5:RemoveBucketPermission")
+        return Action::RemoveBucketPermission;
+    if (action == "s3:PostObject")
+        return Action::PostObject;
     if (action == "hs5:SetBucketPublic")
         return Action::SetBucketPublic;
     if (action == "s3:PutBucketVersioning")
@@ -196,6 +210,37 @@ std::string actionToStr(const Action action)
             return "s3:PutBucketCORS";
         case Action::GetBucketCors:
             return "s3:GetBucketCORS";
+        case Action::ListMultipartUploads:
+            return "s3:ListMultipartUploads";
+        case Action::AbortMultipartUpload:
+            return "s3:AbortMultipartUpload";
+        case Action::CreateMultipartUpload:
+            return "s3:CreateMultipartUpload";
+        case Action::ChangePolicy:
+            return "hs5:ChangePolicy";
+        case Action::CreateUser:
+            return "hs5:CreateUser";
+        case Action::ChangePassword:
+            return "hs5:ChangePassword";
+        case Action::ChangeOwnPassword:
+            return "hs5:ChangeOwnPassword";
+        case Action::GetBucketLocation:
+            return "s3:GetBucketLocation";
+        case Action::CopyObject:
+            return "s3:CopyObject";
+        case Action::UploadPartCopy:
+            return "s3:UploadPartCopy";
+        case Action::ListBucketPermissions:
+            return "hs5:ListBucketPermissions";
+        case Action::AddBucketPermission:
+            return "hs5:AddBucketPermission";
+        case Action::RemoveBucketPermission:
+            return "hs5:RemoveBucketPermission";
+        case Action::PostObject:
+            return "s3:PostObject";
+        case Action::Unknown:
+        case Action::LastDummyAction:
+            break;
     }
     return "";
 }
