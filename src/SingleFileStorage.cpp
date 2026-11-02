@@ -9718,6 +9718,20 @@ void SingleFileStorage::wait_for_wal_startup_finished()
 void SingleFileStorage::assert_reading_items_empty()
 {
     {
+        // Trim thread processes items asynchronously. Give it some time to finish
+        const auto wait_until = std::chrono::steady_clock::now() + 30s;
+        while (std::chrono::steady_clock::now() < wait_until)
+        {
+            {
+                std::scoped_lock lock(trim_queue_mutex);
+                if (trim_queue.empty() && trimming_free_skip_extents.empty())
+                    break;
+            }
+            std::this_thread::sleep_for(10ms);
+        }
+    }
+
+    {
         std::scoped_lock lock(trim_queue_mutex);
 
         for (auto& [offset, count] : trimming_free_skip_extents)
