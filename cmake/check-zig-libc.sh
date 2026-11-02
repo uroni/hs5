@@ -23,11 +23,12 @@ OVERRIDDEN="reallocarray strdup strndup wcsdup"
 ALLOCATOR="aligned_alloc calloc free malloc malloc_usable_size memalign posix_memalign realloc reallocarray valloc"
 
 # Functions (outside of the allocator itself) that allocate or call an allocating function
-ALLOCATING_CALL='(^|[^A-Za-z0-9_])(std\.)?c\.(malloc|calloc|realloc|reallocarray|aligned_alloc|posix_memalign|memalign|valloc|free)\(|(^|[^A-Za-z0-9_.])(strdup|strndup|wcsdup|reallocarray)\('
+# (passed via the environment, as awk -v would interpret escape sequences)
+export ALLOCATING_CALL='(^|[^A-Za-z0-9_])(std[.])?c[.](malloc|calloc|realloc|reallocarray|aligned_alloc|posix_memalign|memalign|valloc|free)[(]|(^|[^A-Za-z0-9_.])(strdup|strndup|wcsdup|reallocarray)[(]'
 affected="$(find "$LIBC_DIR" -name '*.zig' ! -name malloc.zig -print0 |
-  xargs -0 awk -v pat="$ALLOCATING_CALL" '
-    match($0, /fn [A-Za-z0-9_]+\(/) { fn = substr($0, RSTART + 3, RLENGTH - 4); next }
-    $0 ~ pat && $0 !~ /^[[:space:]]*\/\// { print fn }
+  xargs -0 awk '
+    match($0, /fn [A-Za-z0-9_]+[(]/) { fn = substr($0, RSTART + 3, RLENGTH - 4); next }
+    $0 ~ ENVIRON["ALLOCATING_CALL"] && $0 !~ "^[[:space:]]*//" { print fn }
   ' | sort -u)"
 
 exported_allocator="$(sed -n 's/.*symbol(&[A-Za-z0-9_]*, "\([A-Za-z0-9_]*\)").*/\1/p' "$LIBC_DIR/malloc.zig" | sort -u)"
