@@ -323,6 +323,12 @@ class Hs5Runner:
             return 0
         return os.path.getsize(data_file_path)
 
+    def get_datafile_allocated_size(self) -> int:
+        data_file_path = self._workdir / "data0"
+        if not data_file_path.exists():
+            return 0
+        return os.stat(data_file_path).st_blocks * 512
+
     def get_stats(self) -> Hs5Stats:
         url = self.get_api_url() + "stats"
         response = self._ses.post(url, json={})

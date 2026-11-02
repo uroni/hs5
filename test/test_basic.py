@@ -2041,6 +2041,16 @@ def test_datafile_space_reused(hs5_large_small_alloc_chunksize: Hs5Runner):
     """
     hs5 = hs5_large_small_alloc_chunksize
 
+    def wait_for_trim():
+        # Freed space that is still queued for trimming (hole punching) is not
+        # reused, so wait until the deleted data has been punched out
+        starttime = time.monotonic()
+        while (
+            hs5.get_datafile_allocated_size() > 10 * 1024 * 1024
+            and time.monotonic() - starttime < 60
+        ):
+            time.sleep(0.1)
+
     def add_remove():
         mb_data = os.urandom(1024 * 1024)
 
@@ -2048,6 +2058,7 @@ def test_datafile_space_reused(hs5_large_small_alloc_chunksize: Hs5Runner):
         hs5_large_small_alloc_chunksize.commit_storage(hs5.get_s3_client(), force=True)
         delete_all_objects(hs5, hs5.testbucketname())
         hs5_large_small_alloc_chunksize.commit_storage(hs5.get_s3_client(), force=True)
+        wait_for_trim()
 
     for _ in range(0, 2):
         add_remove()
