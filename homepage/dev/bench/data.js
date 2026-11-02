@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793578770988,
+  "lastUpdate": 1793578884410,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -13711,6 +13711,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.4079912569639039",
             "extra": "mean: 18.147740814199985 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "0a028309a8e4341bcbbd64cd54862b04719773bd",
+          "message": "Only upload hs5 binary if it was built",
+          "timestamp": "2026-11-02T02:05:16+01:00",
+          "tree_id": "de45cd17b75456b8a45900ac1a7402944ff6cc5a",
+          "url": "https://github.com/uroni/hs5/commit/0a028309a8e4341bcbbd64cd54862b04719773bd"
+        },
+        "date": 1793578883323,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007913843416471483,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.36085241699999 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.0078659485023507,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 127.13025005200006 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.06884573376942524,
+            "unit": "iter/sec",
+            "range": "stddev: 0.3076662412318071",
+            "extra": "mean: 14.525228292999987 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.05384523200269342,
+            "unit": "iter/sec",
+            "range": "stddev: 0.21514710537148346",
+            "extra": "mean: 18.5717465188 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.049549040867222074,
+            "unit": "iter/sec",
+            "range": "stddev: 0.35748777716822705",
+            "extra": "mean: 20.18202537320001 sec\nrounds: 5"
           }
         ]
       }
