@@ -9743,6 +9743,20 @@ void SingleFileStorage::assert_reading_items_empty()
         assert(trimming_free_skip_extents.empty());
     }
 
+    {
+        // Readers (e.g. copy source) may finalize after the response was sent. Give them some time to finish
+        const auto wait_until = std::chrono::steady_clock::now() + 30s;
+        while (std::chrono::steady_clock::now() < wait_until)
+        {
+            {
+                std::scoped_lock lock(mutex);
+                if (reading_items.empty())
+                    break;
+            }
+            std::this_thread::sleep_for(10ms);
+        }
+    }
+
     std::scoped_lock lock(mutex);
     if (!reading_items.empty())
     {
