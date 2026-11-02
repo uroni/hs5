@@ -90,7 +90,7 @@ public:
     duckdb::unique_ptr<duckdb::FileHandle> OpenFile(const std::string& path, duckdb::FileOpenFlags flags,
                                                     duckdb::optional_ptr<duckdb::FileOpener> opener = nullptr) override;
 
-    virtual int64_t GetFileSize(duckdb::FileHandle& handle);
+    int64_t GetFileSize(duckdb::FileHandle& handle) override;
 
     virtual time_t GetLastModifiedTime(duckdb::FileHandle& handle) override;
 
