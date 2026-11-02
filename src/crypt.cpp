@@ -82,6 +82,16 @@ namespace
         return aesBlock(plain, out, key, true);
     }
 
+    // Same as encryptIdBlock but with a non-zero tag in the padding so the
+    // result never decrypts as a valid id
+    bool encryptEtagBlock(int64_t version, unsigned char* out, const unsigned char* key)
+    {
+        unsigned char plain[aesBlockSize] = {};
+        memcpy(plain, &version, sizeof(version));
+        memset(plain + sizeof(version), 'E', aesBlockSize - sizeof(version));
+        return aesBlock(plain, out, key, true);
+    }
+
     int64_t decryptIdBlock(const unsigned char* in, const unsigned char* key)
     {
         unsigned char plain[aesBlockSize];
@@ -117,6 +127,15 @@ std::string cryptId(int64_t id, unsigned char* key)
         return std::string();
 
     return folly::base64URLEncode(std::string_view(reinterpret_cast<char*>(enc), sizeof(enc)));
+}
+
+std::string cryptEtag(int64_t version, unsigned char* key)
+{
+    unsigned char enc[aesBlockSize];
+    if (!encryptEtagBlock(version, enc, key))
+        return std::string();
+
+    return std::string(reinterpret_cast<char*>(enc), sizeof(enc));
 }
 
 int64_t decryptId(const std::string& encryptedId, unsigned char* key)

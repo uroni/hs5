@@ -9661,6 +9661,11 @@ std::string SingleFileStorage::encrypt_id(const int64_t id)
     return cryptId(id, enckey);
 }
 
+std::string SingleFileStorage::get_next_version_etag()
+{
+    return cryptEtag(get_next_version(), enckey);
+}
+
 namespace
 {
 

@@ -73,6 +73,7 @@ DEFINE_int32(test_delay_before_modify_ms, 0, "Sleep before queueing an object ov
 DEFINE_int32(test_delay_after_protected_check_ms, 0, "Sleep after deciding if an object overwrite/delete needs a protected check and before queueing it (for testing)");
 DEFINE_int64(get_in_worker_threshold, 0, "Handle GET/HEAD object requests in the HTTP worker thread: run read_prepare there and read GET bodies smaller than this many bytes via read-only mmap of the data file without switching to the CPU executor. Larger bodies are read in the CPU executor. 0 disables this (read_prepare and all reads run in the CPU executor)");
 DEFINE_int32(get_buffer_size, 1 * 1024 * 1024, "Buffer size to use for reading objects for GET requests");
+DEFINE_bool(disable_md5_etag, false, "Disable using MD5 ETag for objects (not S3 compatible) to reduce PUT CPU usage");
 
 std::string hashSha256Hex(const std::string_view payload)
 {
@@ -3688,6 +3689,12 @@ std::string S3Handler::getEtag(const std::string& md5sum)
         return fmt::format("\"{}\"", folly::hexlify(etag));
 
     return fmt::format("\"{}-{}\"", folly::hexlify(etag), numParts);
+}
+
+bool S3Handler::computeMd5() const
+{
+    // MD5 is still needed to verify Content-MD5 if ETag is not the MD5
+    return !FLAGS_disable_md5_etag || !contentMd5.empty();
 }
 
 std::string S3Handler::getEtagParsedMultipart(const std::string& md5sum)
@@ -8223,7 +8230,8 @@ void S3Handler::onBodyCPU(folly::EventBase* evb, int64_t offset, std::unique_ptr
     const uint8_t* data = body->data();
     size_t data_size = body->length();
 
-    EVP_DigestUpdate(evpMdCtx.ctx, data, data_size);
+    if (computeMd5())
+        EVP_DigestUpdate(evpMdCtx.ctx, data, data_size);
 
     if (payloadHash)
         payloadHash->update(data, data_size);
@@ -8296,8 +8304,37 @@ void S3Handler::finalizePutObject(folly::EventBase* evb, const int64_t lastModif
     wmetadata.addVarInt(itype);
     char md5buf[MD5_DIGEST_LENGTH];
     std::string_view md5bufView(md5buf, MD5_DIGEST_LENGTH);
-    EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(md5buf), nullptr);
-    wmetadata.addBuffer(md5buf, MD5_DIGEST_LENGTH);
+    if (computeMd5())
+        EVP_DigestFinal_ex(evpMdCtx.ctx, reinterpret_cast<unsigned char*>(md5buf), nullptr);
+    if (FLAGS_disable_md5_etag)
+    {
+        const auto versionEtag = sfs().get_next_version_etag();
+        static_assert(cryptIdSize == MD5_DIGEST_LENGTH);
+        if (versionEtag.size() != MD5_DIGEST_LENGTH)
+        {
+            sfs().free_extents(extents);
+            extents.clear();
+
+            XLOGF(ERR, "Generating version ETag failed. Object {}", keyInfo.key);
+
+            evb->runInEventBaseThread([self = this]()
+                                      {
+                if(!self || self->finished_)
+                    return;
+                ResponseBuilder(self->downstream_)
+                    .status(500, "Internal error")
+                    .body(s3errorXml(S3ErrorCode::InternalError, "Generating ETag failed", self->fullKeyPath(), ""))
+                    .sendWithEOM();
+                self->setFinished(); });
+            return;
+        }
+        // Content-MD5 check below still uses md5bufView
+        wmetadata.addBuffer(versionEtag.data(), MD5_DIGEST_LENGTH);
+    }
+    else
+    {
+        wmetadata.addBuffer(md5buf, MD5_DIGEST_LENGTH);
+    }
     if (objMetadata)
         objMetadata->serialize(wmetadata);
     if (sdkChecksumHash)
@@ -8496,11 +8533,11 @@ void S3Handler::finalizePutObject(folly::EventBase* evb, const int64_t lastModif
 
     XLOGF(DBG0, "Successfully wrote object {} etag {}", keyInfo.key, folly::hexlify(md5sumBinFromData(md5sum)));
 
-    evb->runInEventBaseThread([this, md5buf, lastModified]()
+    evb->runInEventBaseThread([this, etagBin = md5sumBinFromData(md5sum), lastModified]()
                               {      
                 setFinished();
                 ResponseBuilder resp(downstream_);
-                const auto etag = fmt::format("\"{}\"", folly::hexlify(std::string_view(md5buf, MD5_DIGEST_LENGTH)));
+                const auto etag = fmt::format("\"{}\"", folly::hexlify(etagBin));
                 resp.status(200, "OK");
                 resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, etag);
                 if(keyInfo.version != 0)
@@ -9483,7 +9520,8 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
             return;
         }
 
-        EVP_DigestUpdate(evpMdCtx.ctx, buf.data(), toRead);
+        if (computeMd5())
+            EVP_DigestUpdate(evpMdCtx.ctx, buf.data(), toRead);
 
         auto writeOffset = readOffset - writeStart;
         readOffset += toRead;

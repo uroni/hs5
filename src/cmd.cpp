@@ -181,6 +181,15 @@ ConfigResult readConfigFile(const std::string& fn)
             }
             continue;
         }
+        if (key == "DISABLE_MD5_ETAG")
+        {
+            if (parseConfigBool(val))
+            {
+                res.args.push_back("--disable_md5_etag");
+                res.setArgs.insert("--disable_md5_etag");
+            }
+            continue;
+        }
 
         const auto it = configMapping.find(key);
         if (it != configMapping.end())
@@ -534,6 +543,12 @@ int actionRun(std::vector<std::string> args)
             realArgs.push_back("--stop_on_error");
         else if (stopOnErrorArg.isSet() && stopOnErrorArg.getValue())
             realArgs.push_back("--stop_on_error");
+    }
+
+    if (!alreadySetArgs.contains("--disable_md5_etag"))
+    {
+        if (auto disableMd5EtagEnv = getenv("HS5_DISABLE_MD5_ETAG"); disableMd5EtagEnv && parseConfigBool(disableMd5EtagEnv))
+            realArgs.push_back("--disable_md5_etag");
     }
 
     std::string walMode;

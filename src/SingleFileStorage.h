@@ -449,6 +449,9 @@ public:
 
     std::string encrypt_id(const int64_t id);
 
+    // Binary ETag (16 bytes) from a new version
+    std::string get_next_version_etag();
+
     void free_extents(const std::vector<Ext>& extents);
 
     // Make an extent smaller by the specified amount from the end

@@ -22,6 +22,7 @@ from hs5_fixture import (
     hs5_large,
     hs5_large_small_alloc_chunksize,
     hs5_no_precheck,
+    hs5_no_md5_etag,
     hs5_modify_delay,
     hs5_protected_check_delay,
 )
@@ -307,6 +308,81 @@ def test_put_if_match2(tmp_path: Path, hs5: Hs5Runner):
     put_if_match_test(
         tmp_path, hs5, expected_error="PreconditionFailed", expected_http_error=412
     )
+
+
+def test_put_no_md5_etag(hs5_no_md5_etag: Hs5Runner):
+    hs5 = hs5_no_md5_etag
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+
+    fdata = os.urandom(1024)
+    md5_etag = f'"{hashlib.md5(fdata).hexdigest()}"'
+
+    put_res = s3_client.put_object(Bucket=bucket, Key="upload.txt", Body=fdata)
+    etag = put_res["ETag"]
+    assert etag != md5_etag
+    assert re.fullmatch(r'"[0-9a-f]{32}"', etag)
+
+    obj_info = s3_client.head_object(Bucket=bucket, Key="upload.txt")
+    assert obj_info["ETag"] == etag
+    get_res = s3_client.get_object(Bucket=bucket, Key="upload.txt")
+    assert get_res["ETag"] == etag
+    assert get_res["Body"].read() == fdata
+
+    # Same content gets a different ETag
+    put_res2 = s3_client.put_object(
+        Bucket=bucket, Key="upload.txt", Body=fdata, IfMatch=etag
+    )
+    assert put_res2["ETag"] != etag
+
+    with pytest.raises(ClientError):
+        s3_client.put_object(Bucket=bucket, Key="upload.txt", Body=fdata, IfMatch=etag)
+
+    # Content-MD5 is still verified
+    s3_client.put_object(
+        Bucket=bucket,
+        Key="upload.txt",
+        Body=fdata,
+        ContentMD5=base64.b64encode(hashlib.md5(fdata).digest()).decode(),
+    )
+    with pytest.raises(ClientError) as exc_info:
+        s3_client.put_object(
+            Bucket=bucket,
+            Key="upload.txt",
+            Body=fdata,
+            ContentMD5=base64.b64encode(hashlib.md5(b"other").digest()).decode(),
+        )
+    assert exc_info.value.response["Error"]["Code"] == "BadDigest"
+
+    copy_res = s3_client.copy_object(
+        Bucket=bucket,
+        Key="copy.txt",
+        CopySource={"Bucket": bucket, "Key": "upload.txt"},
+    )
+    copy_etag = copy_res["CopyObjectResult"]["ETag"]
+    assert copy_etag != md5_etag
+    assert s3_client.head_object(Bucket=bucket, Key="copy.txt")["ETag"] == copy_etag
+
+    upload = s3_client.create_multipart_upload(Bucket=bucket, Key="multipart.txt")
+    part_data = os.urandom(5 * 1024 * 1024)
+    part_res = s3_client.upload_part(
+        Bucket=bucket,
+        Key="multipart.txt",
+        UploadId=upload["UploadId"],
+        PartNumber=1,
+        Body=part_data,
+    )
+    assert part_res["ETag"] != f'"{hashlib.md5(part_data).hexdigest()}"'
+    complete_res = s3_client.complete_multipart_upload(
+        Bucket=bucket,
+        Key="multipart.txt",
+        UploadId=upload["UploadId"],
+        MultipartUpload={"Parts": [{"ETag": part_res["ETag"], "PartNumber": 1}]},
+    )
+    obj_info = s3_client.head_object(Bucket=bucket, Key="multipart.txt")
+    assert obj_info["ETag"] == complete_res["ETag"]
+    get_res = s3_client.get_object(Bucket=bucket, Key="multipart.txt")
+    assert get_res["Body"].read() == part_data
 
 
 def put_if_match_test(

@@ -404,6 +404,7 @@ private:
     void finalizePutObjectLockConfiguration();
     void finalizePutObjectRetention();
     std::string getEtagParsedMultipart(const std::string& md5sum);
+    bool computeMd5() const;
 
     void readBodyThread(folly::EventBase* evb);
     void startReadBodyThread(folly::EventBase* evb);

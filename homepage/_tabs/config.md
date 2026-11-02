@@ -40,6 +40,7 @@ LOGLEVEL=info
 | `GET_IN_WORKER_THRESHOLD` | integer (bytes) | `0` | Serve GET/HEAD requests in the HTTP worker thread and read objects smaller than this via mmap there. Lowers latency for small objects; `0` disables. |
 | `LOGLEVEL` | enum | `info` | Log level. Allowed values: `debug`, `info`, `warn`, `error`. |
 | `STOP_ON_ERROR` | boolean | `false` | Stop HS5 on write/read errors instead of continuing. |
+| `DISABLE_MD5_ETAG` | boolean | `false` | Use a unique random value as ETag instead of the MD5 of the object data. Saves CPU on uploads, but ETags are no longer content MD5s (not S3 compatible for clients that verify them). |
 | `TRIM_FREESPACE_SIZE` | integer (bytes) | `1048576` | If contiguous free space in the data file exceeds this size, HS5 can punch holes to free disk space. Set to `-1` to disable. |
 | `DB_MAX_DIRTY_MB` | integer (MiB) | `50` | Maximum LMDB dirty page budget before flush. |
 | `WAL_MODE` | enum | `disabled` | Performance WAL mode. Allowed values: `disabled`, `metadata-only`, `data-only`, `all-data-only`, `full`, `full-all-data`. |
@@ -59,3 +60,4 @@ HS5 can also read these options from environment variables using the `HS5_` pref
 - Set `TRIM_FREESPACE_SIZE=-1` to disable hole-punch trimming when optimizing for throughput over disk-space reclamation.
 - Increase `DB_MAX_DIRTY_MB` if you have available RAM and want fewer flushes under sustained writes in `MANUAL_COMMIT` mode.
 - Increase `WORKER_THREADS` above the default when storage is fast and CPU is not saturated; raise gradually while monitoring throughput and p95/p99 latency, since too many threads can increase contention and hurt performance.
+- Set `DISABLE_MD5_ETAG=true` to skip computing the MD5 of uploaded data. This only saves CPU (roughly 1–1.5 ms of CPU per MiB uploaded) and does not improve throughput unless HS5 is CPU-bound on uploads. Trade-off: ETags are no longer the MD5 of the object data, which breaks clients that verify ETags against content.

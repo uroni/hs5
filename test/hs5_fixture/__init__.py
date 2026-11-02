@@ -493,3 +493,21 @@ def hs5_no_precheck(tmpdir: Path, testrun_uid: str):
         rmtree(loc)
     except:
         pass
+
+
+@pytest.fixture
+def hs5_no_md5_etag(tmpdir: Path, testrun_uid: str):
+    loc = tmpdir / uuid.uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(
+        loc,
+        data_file_size_limit_mb=100,
+        testrun_uid=testrun_uid,
+        extra_args=["--disable_md5_etag"],
+    )
+    yield runner
+    runner.stop(cleanup=True, kill=False)
+    try:
+        rmtree(loc)
+    except:
+        pass
