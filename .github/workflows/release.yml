@@ -87,7 +87,7 @@ jobs:
           custom-arguments: -p no:sugar --benchmark-skip test --timeout=300 -n auto
 
       - name: Upload hs5 binary for crash analysis
-        if: failure()
+        if: failure() && env.HS5_BINARY != ''
         uses: actions/upload-artifact@v4
         with:
           name: hs5-${{ matrix.os }}-${{ matrix.variant }}
