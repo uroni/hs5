@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793653234761,
+  "lastUpdate": 1794065106420,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -14006,6 +14006,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.18321358680543295",
             "extra": "mean: 19.945860711199977 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "3c770a1ff2a366c12d736169fb02cd6e5e9e5b10",
+          "message": "Add clang thread safety annotations to WalFile\n\nCheck them with libc++ in CI via cmake/thread-safety-check.sh.",
+          "timestamp": "2026-11-07T17:09:08+01:00",
+          "tree_id": "393fa362a4f5baa7471b896348baf20436e9390e",
+          "url": "https://github.com/uroni/hs5/commit/3c770a1ff2a366c12d736169fb02cd6e5e9e5b10"
+        },
+        "date": 1794065105685,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007712089378407449,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 129.666547019 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007538566468139341,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 132.65121481999995 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.07990163469300535,
+            "unit": "iter/sec",
+            "range": "stddev: 0.8544363775792527",
+            "extra": "mean: 12.51538850039999 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.058287359189749754,
+            "unit": "iter/sec",
+            "range": "stddev: 1.9203670395081958",
+            "extra": "mean: 17.156378568200033 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.0552380975914065,
+            "unit": "iter/sec",
+            "range": "stddev: 0.5631365261450828",
+            "extra": "mean: 18.103447504600013 sec\nrounds: 5"
           }
         ]
       }
