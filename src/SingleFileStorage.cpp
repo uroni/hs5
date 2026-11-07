@@ -1844,8 +1844,6 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
             {
                 XLOG(DBG) << "Current data offset " << std::to_string(data_file_offset) << " out of extent end (" << std::to_string(data_file_offset_end) << "). Searching for new free extent...";
 
-                const auto fsize = data_file_max_size;
-
                 SCommitInfo commit_info;
                 std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
 
@@ -1879,9 +1877,10 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
                 data_file_offset = commit_info.new_datafile_offset;
                 data_file_offset_end = commit_info.new_datafile_offset_end;
 
-                if (data_file_offset_end > fsize)
+                if (data_file_offset_end > data_file_alloc_end)
                 {
                     alloc_fsize = data_file_offset_end;
+                    data_file_alloc_end = data_file_offset_end;
                 }
 
                 XLOG(DBG0) << "Found new free extent (" << std::to_string(data_file_offset) << ", " << std::to_string(data_file_offset_end) << "). Size " << folly::prettyPrint(data_file_offset_end - data_file_offset, folly::PRETTY_BYTES_IEC);
@@ -9441,6 +9440,11 @@ void SingleFileStorage::defrag(str_map& params, relaxed_atomic<int64_t>& defrag_
 bool SingleFileStorage::start_thread(int64_t transid)
 {
     curr_transid = transid;
+
+    {
+        std::scoped_lock lock(datafileoffset_mutex);
+        data_file_alloc_end = (std::max)(data_file_max_size, data_file_offset_end);
+    }
 
     commit_thread_h = std::thread([this]()
                                   {

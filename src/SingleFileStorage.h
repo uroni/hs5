@@ -645,6 +645,9 @@ private:
     int64_t data_file_max_size;
     int64_t data_file_offset;
     int64_t data_file_offset_end;
+    // End of the data file space preallocated by write_prepare (datafileoffset_mutex). data_file_max_size is
+    // owned by the commit thread
+    int64_t data_file_alloc_end = 0;
     int64_t data_file_free;
     std::map<int64_t, int64_t> reserved_extents;
     std::mutex reserved_extents_mutex;
