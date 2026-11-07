@@ -1,8 +1,12 @@
 #pragma once
+#include "ThreadSafety.h"
 
 #include <atomic>
+#include <cassert>
 #include <folly/File.h>
 #include <folly/Memory.h>
+#include <folly/io/async/EventBase.h>
+#include <folly/io/async/EventBaseManager.h>
 #include <proxygen/httpserver/RequestHandler.h>
 #include <proxygen/lib/utils/ZlibStreamDecompressor.h>
 #include <string>
@@ -73,14 +77,49 @@ public:
     void onEgressResumed() noexcept override;
 
 private:
-    void readFile(folly::EventBase* evb);
-    bool checkForCompletion();
+    void readFile(folly::EventBase* evb) REQUIRES(requestOwner);
+    bool checkForCompletion() REQUIRES(httpThread);
 
-    MemFile _file{ std::string_view() };
-    bool _readFileScheduled{ false };
+    ThreadRole httpThread;
+
+    void assertOnHttpThread(folly::EventBase* evb) const ASSERT_CAPABILITY(httpThread)
+    {
+        assert(evb != nullptr && evb->isInEventBaseThread());
+    }
+
+    void assertOnHttpThread() const ASSERT_CAPABILITY(httpThread)
+    {
+#ifndef NDEBUG
+        const auto evb = folly::EventBaseManager::get()->getExistingEventBase();
+        assert(evb != nullptr && evb->isInEventBaseThread());
+#endif
+    }
+
+    // Role held by the owner of _file and _decompressor: readFile while it is scheduled, the HTTP thread otherwise
+    ThreadRole requestOwner;
+
+    void assertHttpThreadOwnsRequest() const REQUIRES(httpThread) ASSERT_CAPABILITY(requestOwner)
+    {
+        assert(!_readFileScheduled);
+    }
+
+    // _readFileScheduled is set before scheduling readFile and only reset by the lambda readFile posts last
+    void assertReadFileOwnsRequest() const ASSERT_CAPABILITY(requestOwner) NO_THREAD_SAFETY_ANALYSIS
+    {
+        assert(_readFileScheduled);
+    }
+
+    bool fileDone() REQUIRES(httpThread)
+    {
+        assertHttpThreadOwnsRequest();
+        return _file.done();
+    }
+
+    MemFile _file GUARDED_BY(requestOwner){ std::string_view() };
+    bool _readFileScheduled GUARDED_BY(httpThread){ false };
     std::atomic<bool> _paused{ false };
-    bool _finished{ false };
+    bool _finished GUARDED_BY(httpThread){ false };
     std::atomic<bool> _error{ false };
-    std::unique_ptr<StaticHandler> _self;
-    std::unique_ptr<proxygen::ZlibStreamDecompressor> _decompressor;
+    std::unique_ptr<StaticHandler> _self GUARDED_BY(httpThread);
+    std::unique_ptr<proxygen::ZlibStreamDecompressor> _decompressor GUARDED_BY(requestOwner);
 };

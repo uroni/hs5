@@ -482,9 +482,17 @@ private:
     // Role held while running on the HTTP thread of this request
     ThreadRole httpThread;
 
-    void assertOnHttpThread(folly::EventBase* evb = folly::EventBaseManager::get()->getExistingEventBase()) const ASSERT_CAPABILITY(httpThread)
+    void assertOnHttpThread(folly::EventBase* evb) const ASSERT_CAPABILITY(httpThread)
     {
         assert(evb != nullptr && evb->isInEventBaseThread());
+    }
+
+    void assertOnHttpThread() const ASSERT_CAPABILITY(httpThread)
+    {
+#ifndef NDEBUG
+        const auto evb = folly::EventBaseManager::get()->getExistingEventBase();
+        assert(evb != nullptr && evb->isInEventBaseThread());
+#endif
     }
 
     // Role held while the request is active, i.e. before requestComplete/onError. Required for downstream()

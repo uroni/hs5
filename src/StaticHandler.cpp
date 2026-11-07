@@ -16,6 +16,8 @@ using namespace proxygen;
 
 void StaticHandler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 {
+    assertOnHttpThread();
+    assertHttpThreadOwnsRequest();
     _error = false;
     if (headers->getMethod() != HTTPMethod::GET)
     {
@@ -91,6 +93,7 @@ void StaticHandler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
     folly::getGlobalCPUExecutor()->add(
         [this, evb = folly::EventBaseManager::get()->getEventBase()]()
         {
+            assertReadFileOwnsRequest();
             readFile(evb);
         });
 }
@@ -140,8 +143,9 @@ void StaticHandler::readFile(folly::EventBase* evb)
     }
 
     // Notify the request thread that we terminated the readFile loop
-    evb->runInEventBaseThread([this]
+    evb->runInEventBaseThread([this, evb]
                               {
+    assertOnHttpThread(evb);
     _readFileScheduled = false;
     if (!checkForCompletion() && !_paused) {
       VLOG(4) << "Resuming deferred readFile";
@@ -158,15 +162,17 @@ void StaticHandler::onEgressPaused() noexcept
 
 void StaticHandler::onEgressResumed() noexcept
 {
+    assertOnHttpThread();
     VLOG(4) << "StaticHandler resumed";
     _paused = false;
     // If readFileScheduled_, it will reschedule itself
-    if (!_readFileScheduled && !_file.done())
+    if (!_readFileScheduled && !fileDone())
     {
         _readFileScheduled = true;
         folly::getGlobalCPUExecutor()->add(
             [this, evb = folly::EventBaseManager::get()->getEventBase()]()
             {
+                assertReadFileOwnsRequest();
                 readFile(evb);
             });
     }
@@ -190,6 +196,7 @@ void StaticHandler::onUpgrade(UpgradeProtocol /*protocol*/) noexcept
 
 void StaticHandler::requestComplete() noexcept
 {
+    assertOnHttpThread();
     _finished = true;
     _paused = true;
     checkForCompletion();
@@ -197,6 +204,7 @@ void StaticHandler::requestComplete() noexcept
 
 void StaticHandler::onError(ProxygenError /*err*/) noexcept
 {
+    assertOnHttpThread();
     _error = true;
     _finished = true;
     _paused = true;
