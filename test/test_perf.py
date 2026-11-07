@@ -12,6 +12,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from mypy_boto3_s3 import S3Client
+import portalocker
 import pytest
 import requests
 
@@ -40,7 +41,10 @@ def prep_warp():
     url, expected_sha256 = _wap_url()
     loc = Path("warp")
     loc_new = Path("warp.new")
-    if not loc.exists():
+    with portalocker.Lock("warp.download.lock", timeout=600):
+        if loc.exists():
+            return
+
         print("Downloading Warp client...")
         with requests.get(url, stream=True) as r:
             r.raise_for_status()

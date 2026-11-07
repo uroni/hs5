@@ -67,7 +67,10 @@ class GarageRunner:
     def _download_garage(self):
         loc = Path("garage")
         loc_new = Path("garage.new")
-        if not loc.exists():
+        with portalocker.Lock("garage.download.lock", timeout=600):
+            if loc.exists():
+                return
+
             print("Downloading Garage server...")
             url, expected_sha256 = self._garage_url()
             with requests.get(url, stream=True) as r:
@@ -81,10 +84,10 @@ class GarageRunner:
                     f"SHA256 checksum {calculate_sha256(loc_new)} does not match expected value {expected_sha256}."
                 )
 
-            loc_new.rename(loc)
-
             # Enable execute permissions
-            loc.chmod(0o755)
+            loc_new.chmod(0o755)
+
+            loc_new.rename(loc)
 
     def __init__(self, datapath: Path, dbengine: str, testrun_uid: str):
         """

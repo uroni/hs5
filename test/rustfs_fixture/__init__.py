@@ -44,7 +44,10 @@ class RustfsRunner:
 
         loc = Path("rustfs")
         loc_new = Path("rustfs.new.zip")
-        if not loc.exists():
+        with portalocker.Lock("rustfs.download.lock", timeout=600):
+            if loc.exists():
+                return
+
             print("Downloading RustFS server...")
             url = "https://github.com/rustfs/rustfs/releases/download/1.0.0-alpha.83/rustfs-linux-x86_64-gnu-latest.zip"
             with requests.get(url, stream=True) as r:

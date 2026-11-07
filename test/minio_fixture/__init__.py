@@ -66,7 +66,10 @@ class MinioRunner:
     def _download_minio(self):
         loc = Path("minio")
         loc_new = Path("minio.new")
-        if not loc.exists():
+        with portalocker.Lock("minio.download.lock", timeout=600):
+            if loc.exists():
+                return
+
             print("Downloading MinIO server...")
             url, expected_sha256 = self._minio_url()
             with requests.get(url, stream=True) as r:
@@ -80,10 +83,10 @@ class MinioRunner:
                     f"SHA256 checksum {calculate_sha256(loc_new)} does not match expected value {expected_sha256}."
                 )
 
-            loc_new.rename(loc)
-
             # Enable execute permissions
-            loc.chmod(0o755)
+            loc_new.chmod(0o755)
+
+            loc_new.rename(loc)
 
     def __init__(self, datapath: Path, testrun_uid: str):
         """
