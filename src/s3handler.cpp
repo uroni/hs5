@@ -7202,6 +7202,22 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
         return key.substr(0, delimPos + 1);
     };
 
+    const auto objectSize = [&](const std::string_view key, int64_t size, const std::vector<SingleFileStorage::SPunchItem>& extra_exts, const std::string& md5sum) -> int64_t
+    {
+        for (const auto& ext : extra_exts)
+        {
+            size += ext.len;
+        }
+
+        std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
+        if (!self->parseMultipartInfo(md5sum, size, multiPartDownloadData, nullptr, nullptr))
+        {
+            XLOGF(WARN, "Error parsing multipart info for key {} with md5sum {}", key, folly::hexlify(md5sum));
+        }
+
+        return size;
+    };
+
     std::string val_data;
     std::vector<std::string> commonPrefixes;
     const size_t prefixSize = prefix ? prefix->size() : 0;
@@ -7308,17 +7324,6 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
         {
             lastOutputKeyStr = keyInfo.key;
 
-            for (const auto& ext : extra_exts)
-            {
-                size += ext.len;
-            }
-
-            std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
-            if (!self->parseMultipartInfo(md5sum, size, multiPartDownloadData, nullptr, nullptr))
-            {
-                XLOGF(WARN, "Error parsing multipart info for key {} with md5sum {}", keyInfo.key, folly::hexlify(md5sum));
-            }
-
             val_data += fmt::format("\t<Contents>\n"
                                     "\t\t<Key>{}</Key>\n"
                                     "\t\t<LastModified>{}</LastModified>\n"
@@ -7326,7 +7331,7 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
                                     "\t\t<Size>{}</Size>\n"
                                     "\t\t<StorageClass>STANDARD</StorageClass>\n"
                                     "\t</Contents>\n",
-                                    encode(urlEncode, keyInfo.key), format_last_modified(last_modified), getEtag(md5sum), size);
+                                    encode(urlEncode, keyInfo.key), format_last_modified(last_modified), getEtag(md5sum), objectSize(keyInfo.key, size, extra_exts, md5sum));
             ++keyCount;
         }
         else if (outputKey && listPartial)
@@ -7387,7 +7392,7 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
                                         "\t\t<StorageClass>STANDARD</StorageClass>\n"
                                         "\t</Version>",
                                         encode(urlEncode, keyInfo.key), sfs().encrypt_id(keyInfo.version), isLatest ? "true" : "false",
-                                        format_last_modified(last_modified), getEtag(md5sum), size);
+                                        format_last_modified(last_modified), getEtag(md5sum), objectSize(keyInfo.key, size, extra_exts, md5sum));
                 ++keyCount;
             }
         }

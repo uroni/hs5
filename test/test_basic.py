@@ -2691,6 +2691,58 @@ def test_list_object_versions_is_latest(hs5: Hs5Runner):
     assert latest_by_key(paged) == latest
 
 
+@pytest.mark.parametrize("versioned", [False, True])
+def test_list_object_versions_size(hs5: Hs5Runner, versioned: bool):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+
+    if versioned:
+        s3_client.put_bucket_versioning(
+            Bucket=bucket, VersioningConfiguration={"Status": "Enabled"}
+        )
+
+    sizes = {"small": 100, "large": 15 * 1024 * 1024}
+    for key, size in sizes.items():
+        s3_client.put_object(Bucket=bucket, Key=key, Body=os.urandom(size))
+
+    parts = [os.urandom(5 * 1024 * 1024), os.urandom(1234)]
+    upl = s3_client.create_multipart_upload(Bucket=bucket, Key="multipart")
+    etags = [
+        s3_client.upload_part(
+            Bucket=bucket,
+            Key="multipart",
+            UploadId=upl["UploadId"],
+            PartNumber=i + 1,
+            Body=part,
+        )["ETag"]
+        for i, part in enumerate(parts)
+    ]
+    s3_client.complete_multipart_upload(
+        Bucket=bucket,
+        Key="multipart",
+        UploadId=upl["UploadId"],
+        MultipartUpload={
+            "Parts": [
+                {"ETag": etag, "PartNumber": i + 1} for i, etag in enumerate(etags)
+            ]
+        },
+    )
+    sizes["multipart"] = sum(len(part) for part in parts)
+
+    list_sizes = {
+        o.get("Key"): o.get("Size")
+        for o in s3_client.list_objects_v2(Bucket=bucket).get("Contents", [])
+    }
+    version_sizes = {
+        v.get("Key"): v.get("Size")
+        for v in s3_client.list_object_versions(Bucket=bucket).get("Versions", [])
+    }
+    for key, size in sizes.items():
+        assert s3_client.head_object(Bucket=bucket, Key=key)["ContentLength"] == size
+        assert list_sizes[key] == size
+        assert version_sizes[key] == size
+
+
 # Encrypted 16 byte id, unpadded base64url encoded
 VERSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{22}$")
 
