@@ -190,6 +190,12 @@ ConfigResult readConfigFile(const std::string& fn)
             }
             continue;
         }
+        if (key == "PREALLOCATE_DATA")
+        {
+            res.args.push_back(std::string("--preallocate_data=") + (parseConfigBool(val) ? "true" : "false"));
+            res.setArgs.insert("--preallocate_data");
+            continue;
+        }
 
         const auto it = configMapping.find(key);
         if (it != configMapping.end())
@@ -549,6 +555,12 @@ int actionRun(std::vector<std::string> args)
     {
         if (auto disableMd5EtagEnv = getenv("HS5_DISABLE_MD5_ETAG"); disableMd5EtagEnv && parseConfigBool(disableMd5EtagEnv))
             realArgs.push_back("--disable_md5_etag");
+    }
+
+    if (!alreadySetArgs.contains("--preallocate_data"))
+    {
+        if (auto preallocateDataEnv = getenv("HS5_PREALLOCATE_DATA"); preallocateDataEnv)
+            realArgs.push_back(std::string("--preallocate_data=") + (parseConfigBool(preallocateDataEnv) ? "true" : "false"));
     }
 
     std::string walMode;

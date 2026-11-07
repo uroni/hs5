@@ -41,6 +41,7 @@ LOGLEVEL=info
 | `LOGLEVEL` | enum | `info` | Log level. Allowed values: `debug`, `info`, `warn`, `error`. |
 | `STOP_ON_ERROR` | boolean | `false` | Stop HS5 on write/read errors instead of continuing. |
 | `DISABLE_MD5_ETAG` | boolean | `false` | Use a unique random value as ETag instead of the MD5 of the object data. Saves CPU on uploads, but ETags are no longer content MD5s (not S3 compatible for clients that verify them). |
+| `PREALLOCATE_DATA` | boolean | `true` | Preallocate space in the data file to improve write performance and reduce fragmentation. Automatically disabled on Btrfs. |
 | `TRIM_FREESPACE_SIZE` | integer (bytes) | `1048576` | If contiguous free space in the data file exceeds this size, HS5 can punch holes to free disk space. Set to `-1` to disable. |
 | `DB_MAX_DIRTY_MB` | integer (MiB) | `50` | Maximum LMDB dirty page budget before flush. |
 | `WAL_MODE` | enum | `disabled` | Performance WAL mode. Allowed values: `disabled`, `metadata-only`, `data-only`, `all-data-only`, `full`, `full-all-data`. |
