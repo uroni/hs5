@@ -1479,6 +1479,8 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
     obj_range = s3_client.get_object(
         Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=1
     )
+    assert obj_range["ResponseMetadata"]["HTTPStatusCode"] == 206
+    assert obj_range["ContentRange"] == f"bytes 0-{8 * MB - 1}/{ul_size}"
     bdata = obj_range["Body"].read()
     md5sum = hashlib.md5(bdata).hexdigest()
     assert len(bdata) == 8 * MB
@@ -1489,6 +1491,8 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
     obj_range = s3_client.get_object(
         Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=2
     )
+    assert obj_range["ResponseMetadata"]["HTTPStatusCode"] == 206
+    assert obj_range["ContentRange"] == f"bytes {8 * MB}-{16 * MB - 1}/{ul_size}"
     bdata = obj_range["Body"].read()
     md5sum = hashlib.md5(bdata).hexdigest()
     assert len(bdata) == 8 * MB

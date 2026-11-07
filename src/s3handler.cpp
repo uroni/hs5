@@ -4058,6 +4058,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
                 rangeStart = partNumberOffset;
                 rangeEnd = partNumberOffset + partNumberSizeOut;
+                partNumberSize = partNumberSizeOut;
                 partNumberEtag = partNumberEtagOut;
                 setMultiPartExtents = true;
 
