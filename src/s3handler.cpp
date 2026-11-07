@@ -4270,7 +4270,7 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
                                       self->sdkChecksumHash->getHashTypeStr(), checksumType);
             }
 
-            if (outputParts)
+            if (outputParts && self->multiPartDownloadData)
             {
                 std::string partEtag;
                 int64_t partOffset;

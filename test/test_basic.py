@@ -2905,6 +2905,22 @@ def test_get_object_attributes(hs5: Hs5Runner, tmp_path: Path):
     assert "StorageClass" in obj and obj["StorageClass"] == "STANDARD"
 
 
+def test_get_object_attributes_parts_non_multipart(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="single.txt", Body=b"foo")
+
+    # ObjectParts is only returned for multipart uploads
+    obj = s3_client.get_object_attributes(
+        Bucket=hs5.testbucketname(),
+        Key="single.txt",
+        ObjectAttributes=["ETag", "ObjectParts", "ObjectSize"],
+    )
+    assert obj["ObjectSize"] == 3
+    assert "ETag" in obj
+    assert "ObjectParts" not in obj
+
+
 def test_get_object_attributes_multipart(hs5: Hs5Runner, tmp_path: Path):
     s3_client = hs5.get_s3_client()
 
