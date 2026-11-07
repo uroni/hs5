@@ -174,6 +174,11 @@ time_t ObjectReader::LastModifiedTime() const
     return lastModifiedTp;
 }
 
+int64_t ObjectReader::Version() const
+{
+    return extractKeyInfoView(s3key).version;
+}
+
 std::string ObjectReader::ETag() const
 {
     if (multiPartDownloadData)

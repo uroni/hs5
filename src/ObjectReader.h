@@ -64,6 +64,9 @@ public:
 
     std::string ETag() const;
 
+    // Version of the read object (0 if unversioned)
+    int64_t Version() const;
+
     ObjMetadata* GetObjMetadata()
     {
         return objMetadata.get();

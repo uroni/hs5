@@ -438,7 +438,7 @@ private:
     // Only if object lock is enabled for the bucket. Call right before queueing the overwrite/delete.
     void addProtectedCheck(const bool bypassGovernance);
     int checkMatchInfo();
-    void finalizePutObject(folly::EventBase* evb, const int64_t lastModified);
+    void finalizePutObject(folly::EventBase* evb, const int64_t lastModified, const int64_t copySourceVersion);
 
     bool serializeMetadataValues(CWData& wdata);
     bool unserializeMetadataValues(CRData& rdata);

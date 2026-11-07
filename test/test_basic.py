@@ -1782,12 +1782,19 @@ def test_copy_object_version(hs5: Hs5Runner):
     v2 = s3_client.put_object(Bucket=bucket, Key="src", Body=b"two").get("VersionId")
     assert v1 is not None and v2 is not None
 
-    s3_client.copy_object(
+    res = s3_client.copy_object(
         Bucket=bucket,
         Key="copy1",
         CopySource={"Bucket": bucket, "Key": "src", "VersionId": v1},
     )
+    assert res.get("CopySourceVersionId") == v1
     assert s3_client.get_object(Bucket=bucket, Key="copy1")["Body"].read() == b"one"
+
+    # Without version id the latest version is copied
+    res = s3_client.copy_object(
+        Bucket=bucket, Key="copy-latest", CopySource={"Bucket": bucket, "Key": "src"}
+    )
+    assert res.get("CopySourceVersionId") == v2
 
     # Versions stay copyable while the latest version is a delete marker
     marker = s3_client.delete_object(Bucket=bucket, Key="src").get("VersionId")
@@ -1831,17 +1838,15 @@ def test_copy_object_version(hs5: Hs5Runner):
     upl = s3_client.create_multipart_upload(Bucket=bucket, Key="copy3")
     etags: list[str] = []
     for i, vid in enumerate((v1, v2)):
-        etag = (
-            s3_client.upload_part_copy(
-                Bucket=bucket,
-                Key="copy3",
-                UploadId=upl["UploadId"],
-                PartNumber=i + 1,
-                CopySource={"Bucket": bucket, "Key": "src", "VersionId": vid},
-            )
-            .get("CopyPartResult", {})
-            .get("ETag")
+        part_res = s3_client.upload_part_copy(
+            Bucket=bucket,
+            Key="copy3",
+            UploadId=upl["UploadId"],
+            PartNumber=i + 1,
+            CopySource={"Bucket": bucket, "Key": "src", "VersionId": vid},
         )
+        assert part_res.get("CopySourceVersionId") == vid
+        etag = part_res.get("CopyPartResult", {}).get("ETag")
         assert etag is not None
         etags.append(etag)
     s3_client.complete_multipart_upload(
@@ -1880,6 +1885,14 @@ def test_copy_object_encoded_source_key(hs5: Hs5Runner):
             s3_client.get_object(Bucket=bucket, Key=f"copy-{key}")["Body"].read()
             == key.encode()
         )
+
+    # Source in a bucket without versioning has no version
+    res = s3_client.copy_object(
+        Bucket=bucket,
+        Key="copy-unversioned",
+        CopySource={"Bucket": bucket, "Key": "a b"},
+    )
+    assert "CopySourceVersionId" not in res
 
 
 @pytest.mark.slow

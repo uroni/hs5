@@ -8245,7 +8245,7 @@ void S3Handler::onBodyCPU(folly::EventBase* evb, int64_t offset, std::unique_ptr
         const auto lastModified = std::chrono::duration_cast<std::chrono::nanoseconds>(
                                       tnow.time_since_epoch())
                                       .count();
-        finalizePutObject(evb, lastModified);
+        finalizePutObject(evb, lastModified, 0);
         return;
     }
 
@@ -8331,7 +8331,7 @@ void S3Handler::onBodyCPU(folly::EventBase* evb, int64_t offset, std::unique_ptr
     put_remaining.fetch_sub(body->length(), std::memory_order_release);
 }
 
-void S3Handler::finalizePutObject(folly::EventBase* evb, const int64_t lastModified)
+void S3Handler::finalizePutObject(folly::EventBase* evb, const int64_t lastModified, const int64_t copySourceVersion)
 {
     int64_t itype = metadata_object;
     if (objMetadata)
@@ -8571,7 +8571,7 @@ void S3Handler::finalizePutObject(folly::EventBase* evb, const int64_t lastModif
 
     XLOGF(DBG0, "Successfully wrote object {} etag {}", keyInfo.key, folly::hexlify(md5sumBinFromData(md5sum)));
 
-    evb->runInEventBaseThread([this, etagBin = md5sumBinFromData(md5sum), lastModified]()
+    evb->runInEventBaseThread([this, etagBin = md5sumBinFromData(md5sum), lastModified, copySourceVersion]()
                               {      
                 setFinished();
                 ResponseBuilder resp(downstream_);
@@ -8580,6 +8580,8 @@ void S3Handler::finalizePutObject(folly::EventBase* evb, const int64_t lastModif
                 resp.header(HTTPHeaderCode::HTTP_HEADER_ETAG, etag);
                 if(keyInfo.version != 0)
                     resp.header("x-amz-version-id", sfs().encrypt_id(keyInfo.version));
+                if(copySourceVersion != 0)
+                    resp.header("x-amz-copy-source-version-id", sfs().encrypt_id(copySourceVersion));
                 if(!corsAllowOrigin.empty())
                     resp.header(HTTPHeaderCode::HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN, corsAllowOrigin);
                 if(request_action==Action::UploadPartCopy)
@@ -9707,7 +9709,7 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
     }
 
     cleanupExtents = false;
-    finalizePutObject(evb, sourceFile->LastModifiedTimeNs());
+    finalizePutObject(evb, sourceFile->LastModifiedTimeNs(), sourceFile->Version());
 }
 
 void S3Handler::sigCheckOk()
