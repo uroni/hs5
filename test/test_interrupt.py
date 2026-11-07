@@ -13,7 +13,8 @@ from uuid import uuid4
 
 from mypy_boto3_s3 import S3Client
 import pytest
-from hs5_fixture import Hs5Runner, hs5, hs5_get_prepare_delay
+import requests
+from hs5_fixture import Hs5Runner, hs5, hs5_api_request_delay, hs5_get_prepare_delay
 
 
 @dataclass
@@ -166,3 +167,25 @@ def test_reset_during_get(hs5_get_prepare_delay: Hs5Runner):
 
     obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="obj")
     assert obj["Body"].read() == b"data"
+
+
+def test_reset_during_api_request(hs5_api_request_delay: Hs5Runner):
+    """Client resets the connection while an API request runs, so the response is ready after onError"""
+    hs5 = hs5_api_request_delay
+    url = urlsplit(hs5.get_api_url() + "sessionCheck")
+
+    for _ in range(3):
+        sock = socket.create_connection((url.hostname, url.port))
+        sock.sendall(
+            f"POST {url.path} HTTP/1.1\r\nHost: {url.netloc}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{}}".encode()
+        )
+        time.sleep(0.2)
+        # Close with RST instead of FIN
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        sock.close()
+        # Wait for the delayed API request to finish
+        time.sleep(1.5)
+
+    response = requests.post(hs5.get_api_url() + "sessionCheck", json={})
+    # Server still handles API requests (sessionCheck without session)
+    assert response.status_code == 401

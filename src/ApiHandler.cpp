@@ -98,6 +98,7 @@ DEFINE_string(init_root_access_key, "", "Initial name of access key of root acco
 DEFINE_string(init_root_secret_access_key, "", "Initial secret access key of root account. Default: Password of root account");
 DEFINE_string(init_create_bucket, "", "Comma separated list of buckets to create on initialization. Example: \"bucket1,bucket2\"");
 DEFINE_bool(test_disable_password_hashing, false, "Store user passwords unhashed instead of using argon2i. For testing only (speeds up debug builds)!");
+DEFINE_int32(test_delay_api_request_ms, 0, "Sleep before running an API request (for testing)");
 DECLARE_bool(pre_sync_commit);
 
 using json = nlohmann::json;
@@ -316,9 +317,11 @@ ApiHandler::ApiHandler(SingleFileStorage& sfs)
 
 void ApiHandler::onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexcept
 {
+    assertInCallback();
+    assertHttpThreadOwnsRequest();
     if (headers->getMethod() != HTTPMethod::POST)
     {
-        ResponseBuilder(downstream_)
+        ResponseBuilder(downstream())
             .status(400, "Bad method")
             .body("Only POST is supported")
             .sendWithEOM();
@@ -344,7 +347,7 @@ void ApiHandler::onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexc
         proxygen::HTTP_HEADER_CONTENT_LENGTH);
     if (cl.empty())
     {
-        ResponseBuilder(downstream_)
+        ResponseBuilder(downstream())
             .status(500, "Internal error")
             .body("Content-Length header not set")
             .sendWithEOM();
@@ -354,7 +357,7 @@ void ApiHandler::onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexc
 
     if (func != "login" && func != "logout" && ApiFunctions::apiFunctions.find(frozen::string(func)) == ApiFunctions::apiFunctions.end())
     {
-        ResponseBuilder(downstream_)
+        ResponseBuilder(downstream())
             .status(404, "Not found")
             .body("Function not found")
             .sendWithEOM();
@@ -369,6 +372,8 @@ void ApiHandler::onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexc
 
 void ApiHandler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 {
+    assertInCallback();
+    assertHttpThreadOwnsRequest();
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     const auto bodyBytes = body->length();
@@ -378,7 +383,7 @@ void ApiHandler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
     if (!onBody(body->data(), body->length()))
     {
-        ResponseBuilder(downstream_)
+        ResponseBuilder(downstream())
             .status(500, "Internal error")
             .body("Write ext error")
             .sendWithEOM();
@@ -395,6 +400,8 @@ bool ApiHandler::onBody(const uint8_t* data, size_t dataSize)
 
 void ApiHandler::onEOM() noexcept
 {
+    assertInCallback();
+    assertHttpThreadOwnsRequest();
     auto evb = folly::EventBaseManager::get()->getEventBase();
 
     if (finished)
@@ -402,7 +409,7 @@ void ApiHandler::onEOM() noexcept
 
     if (putRemaining != 0)
     {
-        ResponseBuilder(downstream_)
+        ResponseBuilder(downstream())
             .status(500, "Internal error")
             .body("Expecting more data")
             .sendWithEOM();
@@ -411,15 +418,24 @@ void ApiHandler::onEOM() noexcept
     }
 
     folly::getGlobalCPUExecutor()->add(
-        [this, evb]()
+        [self = std::move(self), evb]() mutable
         {
-            const auto response = runRequest();
+            if (FLAGS_test_delay_api_request_ms > 0)
+                std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_test_delay_api_request_ms));
 
-            evb->runInEventBaseThread([this, response]()
-                                      {
+            self->assertOwnedBy(self);
+            const auto response = self->runRequest();
+
+            runInHttpThread(evb, std::move(self), [response](ApiHandler& h, std::unique_ptr<ApiHandler>& owner) REQUIRES(h.httpThread)
+                            {
+                h.assertActive();
+                h.finished = true;
+                // Back to the HTTP thread owning the handler until requestComplete/onError
+                h.self = std::move(owner);
+
                 auto statusMesg = response.code == 200 ? "OK" : "Internal error";
-                
-                ResponseBuilder respBuilder(downstream_);
+
+                ResponseBuilder respBuilder(h.downstream());
                 respBuilder.status(response.code, statusMesg);
                 respBuilder.body(response.contentType ? response.body : escapeXML(response.body));
 
@@ -433,25 +449,27 @@ void ApiHandler::onEOM() noexcept
                     respBuilder.header(HTTPHeaderCode::HTTP_HEADER_CONTENT_TYPE, *response.contentType);
                 }
 
-                respBuilder.sendWithEOM();
-
-                finished = true; });
+                // May call requestComplete and delete the handler. Must be the last use of h
+                respBuilder.sendWithEOM(); });
         });
 }
 
 void ApiHandler::onUpgrade(UpgradeProtocol /*protocol*/) noexcept
 {
+    assertInCallback();
     // handler doesn't support upgrades
 }
 
 void ApiHandler::requestComplete() noexcept
 {
+    assertInCallback();
     finished = true;
     self.reset();
 }
 
 void ApiHandler::onError(proxygen::ProxygenError) noexcept
 {
+    assertInCallback();
     finished = true;
     self.reset();
 }

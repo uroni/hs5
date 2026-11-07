@@ -5,6 +5,7 @@
 
 #include "DbDao.h"
 #include "Session.h"
+#include "ThreadSafety.h"
 #include "apigen/AddAccessKeyParams.hpp"
 #include "apigen/AddAccessKeyResp.hpp"
 #include "apigen/AddBucketParams.hpp"
@@ -69,6 +70,10 @@
 #include "apigen/SetBucketPublicResp.hpp"
 #include "apigen/StatsParams.hpp"
 #include "apigen/StatsResp.hpp"
+#include <cassert>
+#include <folly/io/async/EventBase.h>
+#include <folly/io/async/EventBaseManager.h>
+#include <memory>
 #include <proxygen/httpserver/RequestHandler.h>
 
 class SingleFileStorage;
@@ -80,7 +85,7 @@ public:
 
     void onRequest(std::unique_ptr<proxygen::HTTPMessage> headers) noexcept override;
 
-    bool onBody(const uint8_t* data, size_t dataSize);
+    bool onBody(const uint8_t* data, size_t dataSize) REQUIRES(requestOwner);
 
     void onBody(std::unique_ptr<folly::IOBuf> body) noexcept override;
 
@@ -100,7 +105,7 @@ public:
         std::optional<std::string> contentType;
     };
 
-    ApiResponse runRequest();
+    ApiResponse runRequest() REQUIRES(requestOwner);
 
     static void init();
 
@@ -131,27 +136,90 @@ private:
     Api::ChangePolicyResp changePolicy(const Api::ChangePolicyParams& params, const ApiSessionStorage& sessionStorage);
     Api::DeleteBucketResp deleteBucket(const Api::DeleteBucketParams& params, const ApiSessionStorage& sessionStorage);
     Api::ChangePasswordResp changePassword(const Api::ChangePasswordParams& params, const ApiSessionStorage& sessionStorage);
-    Api::LogoutResp logout(const Api::LogoutParams& params, SessionScope& sessionStorage);
+    Api::LogoutResp logout(const Api::LogoutParams& params, SessionScope& sessionStorage) REQUIRES(requestOwner);
     Api::ListBucketPermissionsResp listBucketPermissions(const Api::ListBucketPermissionsParams& params, const ApiSessionStorage& sessionStorage);
     Api::AddBucketPermissionResp addBucketPermission(const Api::AddBucketPermissionParams& params, const ApiSessionStorage& sessionStorage);
     Api::RemoveBucketPermissionResp removeBucketPermission(const Api::RemoveBucketPermissionParams& params, const ApiSessionStorage& sessionStorage);
     Api::SessionCheckResp sessionCheck(const Api::SessionCheckParams& params, const ApiSessionStorage& sessionStorage);
     Api::SetBucketPublicResp setBucketPublic(const Api::SetBucketPublicParams& params, const ApiSessionStorage& sessionStorage);
 
-    std::string func;
-    std::string body;
-    std::string authHeader;
-    std::string cookieSes;
+    // Role held by the owner of the handler: the HTTP thread until onEOM, then the CPU thread running runRequest
+    ThreadRole requestOwner;
+
+    // Call in callbacks using request data, before ownership was moved to a CPU thread in onEOM
+    void assertHttpThreadOwnsRequest() const REQUIRES(httpThread) ASSERT_CAPABILITY(requestOwner)
+    {
+        assert(self != nullptr);
+    }
+
+    // Call on a CPU thread holding owner, the unique_ptr to this handler
+    void assertOwnedBy(const std::unique_ptr<ApiHandler>& owner) const ASSERT_CAPABILITY(requestOwner)
+    {
+        assert(owner.get() == this);
+    }
+
+    std::string func GUARDED_BY(requestOwner);
+    std::string body GUARDED_BY(requestOwner);
+    std::string authHeader GUARDED_BY(requestOwner);
+    std::string cookieSes GUARDED_BY(requestOwner);
 
     SingleFileStorage& sfs;
 
     static thread_local DbDao dao;
 
-    int64_t putRemaining = -1;
-    int64_t doneBytes = 0;
-    bool finished = false;
+    // Role held while running on the HTTP thread of this request
+    ThreadRole httpThread;
 
-    std::unique_ptr<ApiHandler> self;
+    void assertOnHttpThread(folly::EventBase* evb = folly::EventBaseManager::get()->getExistingEventBase()) const ASSERT_CAPABILITY(httpThread)
+    {
+        assert(evb != nullptr && evb->isInEventBaseThread());
+    }
+
+    ThreadRole requestActive;
+
+    struct RequestInactive
+    {
+    };
+
+    void assertInCallback() const ASSERT_CAPABILITY(httpThread) ASSERT_CAPABILITY(requestActive)
+    {
+        assertOnHttpThread();
+    }
+
+    void assertActive() const REQUIRES(httpThread) ASSERT_CAPABILITY(requestActive)
+    {
+        if (finished)
+            throw RequestInactive();
+    }
+
+    proxygen::ResponseHandler* downstream() const REQUIRES(httpThread, requestActive)
+    {
+        assert(self != nullptr);
+        return downstream_;
+    }
+
+    template <typename F>
+    static void runInHttpThread(folly::EventBase* evb, std::unique_ptr<ApiHandler> owner, F&& f)
+    {
+        evb->runInEventBaseThread([owner = std::move(owner), evb, f = std::forward<F>(f)]() NO_THREAD_SAFETY_ANALYSIS mutable
+                                  {
+                                      ApiHandler& handler = *owner;
+                                      handler.assertOnHttpThread(evb);
+                                      try
+                                      {
+                                          f(handler, owner);
+                                      }
+                                      catch (const RequestInactive&)
+                                      {
+                                      } });
+    }
+
+    int64_t putRemaining GUARDED_BY(httpThread) = -1;
+    int64_t doneBytes GUARDED_BY(httpThread) = 0;
+    bool finished GUARDED_BY(httpThread) = false;
+
+    // Null while a CPU thread owns the handler (onEOM)
+    std::unique_ptr<ApiHandler> self GUARDED_BY(httpThread);
 
     class ApiFunctions;
 };
