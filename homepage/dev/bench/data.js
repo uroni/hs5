@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794065106420,
+  "lastUpdate": 1794083621047,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -14065,6 +14065,65 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.5631365261450828",
             "extra": "mean: 18.103447504600013 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "f431a65e54b3a9c1b4bea399ee41ceaa539d44ab",
+          "message": "Suppress TSan reports for LMDB lock-free reader table",
+          "timestamp": "2026-11-07T22:16:33+01:00",
+          "tree_id": "61b09350d4726c1e43efee591aa08825c92cfaec",
+          "url": "https://github.com/uroni/hs5/commit/f431a65e54b3a9c1b4bea399ee41ceaa539d44ab"
+        },
+        "date": 1794083619676,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007704361800710201,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 129.796604296 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007704227699480177,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 129.79886355999997 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.09757797050117975,
+            "unit": "iter/sec",
+            "range": "stddev: 0.47736487276805817",
+            "extra": "mean: 10.248214785200002 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.07251614437045385,
+            "unit": "iter/sec",
+            "range": "stddev: 1.402785602440758",
+            "extra": "mean: 13.790032670399977 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.06210423189590394,
+            "unit": "iter/sec",
+            "range": "stddev: 0.7840156518908559",
+            "extra": "mean: 16.101962289400035 sec\nrounds: 5"
           }
         ]
       }
