@@ -193,6 +193,7 @@ public:
             InUnknownPartAttr,
             Finished,
             InvalidPartOrder,
+            InvalidPartNumber,
             Unknown
         };
 

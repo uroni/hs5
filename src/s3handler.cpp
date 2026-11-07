@@ -902,7 +902,13 @@ static void multiPartUploadXmlElementEnd(void* userData,
         case S3Handler::MultiPartUploadData::ParseState::InPart:
         {
             if (strcmp(name, "Part") == 0)
-                multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InRoot;
+            {
+                // PartNumber missing or empty
+                if (multiPartData->parts.back().partNumber == 0)
+                    multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InvalidPartNumber;
+                else
+                    multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InRoot;
+            }
             else
                 multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::Unknown;
         }
@@ -926,7 +932,11 @@ static void multiPartUploadXmlElementEnd(void* userData,
 
                 multiPartData->partNumBuf.clear();
 
-                if (multiPartData->parts.size() > 1)
+                if (partNum < 1 || partNum > 10000)
+                {
+                    multiPartData->parseState = S3Handler::MultiPartUploadData::ParseState::InvalidPartNumber;
+                }
+                else if (multiPartData->parts.size() > 1)
                 {
                     auto& prevPart = multiPartData->parts[multiPartData->parts.size() - 2];
                     if (partNum <= prevPart.partNumber)
@@ -8614,6 +8624,16 @@ void S3Handler::onEOM() noexcept
                 ResponseBuilder(self->downstream_)
                     .status(400, "Bad request")
                     .body(s3errorXml(S3ErrorCode::InvalidPartOrder, "", fullKeyPath(), ""))
+                    .sendWithEOM();
+                finished_ = true;
+                return;
+            }
+            case MultiPartUploadData::ParseState::InvalidPartNumber:
+            {
+                XLOGF(WARN, "Invalid part number in CompleteMultipartUpload for obj {}", keyInfo.key);
+                ResponseBuilder(self->downstream_)
+                    .status(400, "Bad request")
+                    .body(s3errorXml(S3ErrorCode::InvalidArgument, "Part number must be an integer between 1 and 10000, inclusive", fullKeyPath(), ""))
                     .sendWithEOM();
                 finished_ = true;
                 return;
