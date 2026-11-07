@@ -198,6 +198,28 @@ jobs:
           emoji: false
           custom-arguments: -p no:sugar -p no:threadexception --benchmark-skip test --timeout=300 -n auto
 
+      - name: Run tests with WAL (metadata only)
+        uses: pavelzw/pytest-action@v2
+        if: matrix.variant == 'debug' && !cancelled()
+        env:
+          ENABLE_WAL: "1"
+        with:
+          emoji: false
+          report-title: Test Report (WAL metadata only)
+          custom-arguments: -p no:sugar -p no:threadexception --benchmark-skip test --timeout=300 -n auto
+
+      - name: Run tests with WAL (metadata and all data)
+        uses: pavelzw/pytest-action@v2
+        if: matrix.variant == 'debug' && !cancelled()
+        env:
+          ENABLE_WAL: "1"
+          ENABLE_WAL_WRITE_DATA: "1"
+          WAL_WRITE_DATA_THRESHOLD: "-1"
+        with:
+          emoji: false
+          report-title: Test Report (WAL metadata and all data)
+          custom-arguments: -p no:sugar -p no:threadexception --benchmark-skip test --timeout=300 -n auto
+
       - uses: pavelzw/pytest-action@v2
         if: matrix.variant == 'asan'
         env:
