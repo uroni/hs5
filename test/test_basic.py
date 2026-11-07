@@ -2743,6 +2743,65 @@ def test_list_object_versions_size(hs5: Hs5Runner, versioned: bool):
         assert version_sizes[key] == size
 
 
+def test_delete_marker_missing_key(hs5: Hs5Runner):
+    # Like S3, deleting a key that does not exist in a versioned bucket creates a delete marker
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+    s3_client.put_bucket_versioning(
+        Bucket=bucket, VersioningConfiguration={"Status": "Enabled"}
+    )
+
+    res = s3_client.delete_object(Bucket=bucket, Key="missing1")
+    assert res.get("DeleteMarker")
+    marker1 = res.get("VersionId")
+    assert marker1 is not None and VERSION_ID_RE.match(marker1)
+
+    res = s3_client.delete_objects(
+        Bucket=bucket, Delete={"Objects": [{"Key": "missing2"}]}
+    )
+    deleted = res.get("Deleted", [])
+    assert len(deleted) == 1
+    assert deleted[0].get("Key") == "missing2"
+    assert deleted[0].get("DeleteMarker")
+    marker2 = deleted[0].get("DeleteMarkerVersionId")
+    assert marker2 is not None and VERSION_ID_RE.match(marker2)
+
+    versions = s3_client.list_object_versions(Bucket=bucket)
+    assert not versions.get("Versions")
+    assert {
+        (m.get("Key"), m.get("VersionId"), m.get("IsLatest"))
+        for m in versions.get("DeleteMarkers", [])
+    } == {
+        ("missing1", marker1, True),
+        ("missing2", marker2, True),
+    }
+
+    # A precondition on a missing key still fails without creating a delete marker
+    with pytest.raises(ClientError) as exc_info:
+        s3_client.delete_object(Bucket=bucket, Key="missing3", IfMatch='"abc"')
+    assert exc_info.value.response.get("Error", {}).get("Code") == "PreconditionFailed"
+
+    res = s3_client.delete_objects(
+        Bucket=bucket, Delete={"Objects": [{"Key": "missing4", "ETag": '"abc"'}]}
+    )
+    assert not res.get("Deleted")
+    errors = res.get("Errors", [])
+    assert len(errors) == 1
+    assert errors[0].get("Key") == "missing4"
+    assert errors[0].get("Code") == "NoSuchKey"
+
+    versions = s3_client.list_object_versions(Bucket=bucket)
+    assert {m.get("Key") for m in versions.get("DeleteMarkers", [])} == {
+        "missing1",
+        "missing2",
+    }
+
+    # Removing the delete marker removes the key from the listing again
+    s3_client.delete_object(Bucket=bucket, Key="missing1", VersionId=marker1)
+    versions = s3_client.list_object_versions(Bucket=bucket)
+    assert {m.get("Key") for m in versions.get("DeleteMarkers", [])} == {"missing2"}
+
+
 # Encrypted 16 byte id, unpadded base64url encoded
 VERSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{22}$")
 

@@ -6000,7 +6000,7 @@ void S3Handler::deleteObjects()
                 {
                     const auto objRes = self->sfs().check_existence(currPath, SingleFileStorage::ReadNewest);
 
-                    if (objRes.err == 0)
+                    if (objRes.err == 0 || objRes.err == ENOENT)
                     {
                         if (objMatchInfo)
                         {
@@ -6017,8 +6017,6 @@ void S3Handler::deleteObjects()
                     else
                     {
                         res = objRes.err;
-                        if (res == ENOENT && objMatchInfo)
-                            objMatchInfo->setNotFound();
                     }
                 }
                 else
@@ -6256,7 +6254,7 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers, const bool bypassGo
             {
                 const auto objRes = self->sfs().check_existence(currPath, SingleFileStorage::ReadNewest);
 
-                if (objRes.err == 0)
+                if (objRes.err == 0 || objRes.err == ENOENT)
                 {
                     if (self->matchInfo)
                     {
@@ -6274,13 +6272,6 @@ void S3Handler::deleteObject(proxygen::HTTPMessage& headers, const bool bypassGo
                 else
                 {
                     res = objRes.err;
-                    // No object: If-Match fails
-                    if (res == ENOENT && self->matchInfo)
-                    {
-                        self->matchInfo->setNotFound();
-                        if (!self->matchInfo->match)
-                            res = 0;
-                    }
                 }
             }
             else
