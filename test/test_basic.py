@@ -3139,10 +3139,27 @@ def test_version_id_invalid(hs5: Hs5Runner):
         "!" * 22,
         "null",
     ):
-        with pytest.raises(ClientError):
+        with pytest.raises(ClientError) as exc_info:
             s3_client.get_object(
                 Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=invalid_vid
             )
+        assert exc_info.value.response.get("Error", {}).get("Code") == "InvalidArgument"
+
+        with pytest.raises(ClientError) as exc_info:
+            s3_client.delete_object(
+                Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=invalid_vid
+            )
+        assert exc_info.value.response.get("Error", {}).get("Code") == "InvalidArgument"
+
+        # HEAD responses have no body, so only the status is available
+        with pytest.raises(ClientError) as exc_info:
+            s3_client.head_object(
+                Bucket=hs5.testbucketname(), Key="versioned.txt", VersionId=invalid_vid
+            )
+        assert (
+            exc_info.value.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            == 400
+        )
 
     assert (
         s3_client.get_object(

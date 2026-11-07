@@ -2785,8 +2785,6 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             const auto bucketName = path.substr(1, nextSlash == std::string::npos ? std::string::npos : nextSlash - 1);
             keyInfo.key = bucketName;
         }
-        else if (!setKeyInfoFromPath(*headers, path, abortMultipart ? nullptr : headers->getQueryParamPtr("versionId"), false))
-            return;
 
         const auto resource = fmt::format("arn:aws:s3:::{}", path.substr(1));
         const auto action = abortMultipart ? Action::AbortMultipartUpload
@@ -2803,6 +2801,9 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 .sendWithEOM();
             return;
         }
+
+        if (!isDeleteBucket && !setKeyInfoFromPath(*headers, path, abortMultipart ? nullptr : headers->getQueryParamPtr("versionId"), false))
+            return;
 
         bool bypassGovernance = false;
         if (action == Action::DeleteObject)
@@ -3220,8 +3221,8 @@ bool S3Handler::setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::st
         {
             XLOGF(INFO, "Version {} cannot be decrypted when getting key info", *versionId);
             ResponseBuilder(downstream_)
-                .status(500, "Internal error")
-                .body(s3errorXml(S3ErrorCode::InternalError, "VersionId invalid", "", ""))
+                .status(400, "Bad request")
+                .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid version id specified", path, ""))
                 .sendWithEOM();
             return false;
         }
