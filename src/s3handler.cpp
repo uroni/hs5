@@ -3166,7 +3166,7 @@ bool S3Handler::setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::st
     int64_t version = 0;
     if (versionId)
     {
-        version = sfs().decrypt_id(*versionId);
+        version = _sfs.decrypt_id(*versionId);
         if (version < 0)
         {
             XLOGF(INFO, "Version {} cannot be decrypted when getting key info", *versionId);
