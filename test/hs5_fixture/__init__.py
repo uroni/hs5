@@ -337,6 +337,23 @@ class Hs5Runner:
         resp = response.json()
         return Hs5Stats(**resp)
 
+    def wait_for_used(self, expected: int, timeout: float = 5) -> None:
+        """Wait for used space to settle at expected. With WAL data the data file
+        lags behind the free space accounting, so size - free can be temporarily off.
+        Waits on size - free_space instead of the (clamped) used value, then checks
+        that used matches as well."""
+        starttime = time.monotonic()
+        while True:
+            stats = self.get_stats()
+            used = stats.size - stats.free_space
+            if used == expected or time.monotonic() - starttime >= timeout:
+                break
+            time.sleep(0.1)
+        assert used == expected, f"Used space {used} != expected {expected} ({stats})"
+        assert (
+            stats.used == expected
+        ), f"Settled used {stats.used} != expected {expected} ({stats})"
+
     def get_rss_mb(self) -> float:
         try:
             proc = psutil.Process(self._process.pid)

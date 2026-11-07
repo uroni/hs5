@@ -608,7 +608,7 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
             if (!data_file)
                 throw std::runtime_error("WalFile: read: data file is null");
 
-            if (data_file->pwriteFull(data_ptr, data_size, data_off) != data_size)
+            if (data_file->pwriteFullFillPage(data_ptr, data_size, data_off) != data_size)
             {
                 throw std::runtime_error("WalFile: read: failed to write data to data file: " + folly::errnoStr(errno));
             }
@@ -788,7 +788,7 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
         XLOGF(DBG0, "WalFile: dataWriteThread: writing data {} to data file at offset {} size {}", folly::crc32c(reinterpret_cast<const uint8_t*>(item.data.data()), item.data.size()), item.dataOff, item.data.size());
 
         if (!item.data.empty() &&
-            dataFile.pwriteFull(item.data.data(), item.data.size(), item.dataOff) != item.data.size())
+            dataFile.pwriteFullFillPage(item.data.data(), item.data.size(), item.dataOff) != item.data.size())
         {
             XLOGF(ERR, "WalFile: dataWriteThread: failed to write data to data file: {}", folly::errnoStr(errno));
             abort();

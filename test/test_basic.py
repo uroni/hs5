@@ -68,7 +68,7 @@ def test_head_bucket(hs5: Hs5Runner):
 
 def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
 
-    assert hs5.get_stats().used == 0
+    hs5.wait_for_used(0)
 
     fdata = os.urandom(29 * 1024 * 1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
@@ -110,10 +110,7 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     assert len(bdata) == 10
     assert bdata == fdata[-10:]
 
-    if os.getenv("ENABLE_WAL_WRITE_DATA") == "1":
-        time.sleep(1)
-
-    assert hs5.get_stats().used == len(fdata)
+    hs5.wait_for_used(len(fdata))
 
     obj_range = s3_client.get_object(
         Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=10-19"
@@ -166,7 +163,7 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     assert not list_resp["IsTruncated"]
     assert "Contents" not in list_resp
 
-    assert hs5.get_stats().used == 0
+    hs5.wait_for_used(0)
 
 
 def test_put_get_commit_context(tmp_path: Path, hs5: Hs5Runner):
@@ -272,7 +269,7 @@ def delete_all_objects(hs5: Hs5Runner, bucket: str):
 
     hs5.commit_storage(s3_client)
 
-    assert hs5.get_stats().used == 0
+    hs5.wait_for_used(0)
 
 
 def test_put_empty(tmp_path: Path, hs5: Hs5Runner):
@@ -388,7 +385,7 @@ def test_put_no_md5_etag(hs5_no_md5_etag: Hs5Runner):
 def put_if_match_test(
     tmp_path: Path, hs5: Hs5Runner, expected_error: str, expected_http_error: int
 ):
-    assert hs5.get_stats().used == 0
+    hs5.wait_for_used(0)
 
     fdata = os.urandom(1024)
     with open(tmp_path / "upload.txt", "wb") as upload_file:
@@ -475,7 +472,7 @@ def put_if_match_test(
     s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload3.txt")
 
-    assert hs5.get_stats().used == 0
+    hs5.wait_for_used(0)
 
 
 def test_put_if_match_multipart_no_precheck(tmp_path: Path, hs5_no_precheck: Hs5Runner):
@@ -572,7 +569,7 @@ def put_if_match_multipart(
 
     s3_client.delete_object(Bucket=hs5.testbucketname(), Key="upload.txt")
 
-    assert hs5.get_stats().used == 0
+    hs5.wait_for_used(0)
 
 
 def test_get_if_match(tmp_path: Path, hs5: Hs5Runner):
@@ -1375,7 +1372,7 @@ def test_list_start_after(tmp_path: Path, hs5: Hs5Runner):
 @pytest.mark.parametrize("restart_during_download", [True, False])
 def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: bool):
 
-    assert hs5.get_stats().used == 0
+    hs5.wait_for_used(0)
 
     ul_size = 50 * 1024 * 1024
 
@@ -1406,7 +1403,7 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
 
     hs5.commit_storage(s3_client)
 
-    assert hs5.get_stats().used == ul_size
+    hs5.wait_for_used(ul_size)
 
     dl_path = tmp_path / "download.dat"
     s3_client.download_file(hs5.testbucketname(), "upload.txt", str(dl_path))
@@ -1558,16 +1555,12 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
         assert dl_md5sum == md5sum_full_file
 
     # Delete being async after reading is expected
-    starttime = time.monotonic()
-    while time.monotonic() - starttime < 5 and hs5.get_stats().used > 0:
-        time.sleep(0.1)
-
-    assert hs5.get_stats().used == 0
+    hs5.wait_for_used(0)
 
 
 def test_list_partial_uploads(tmp_path: Path, hs5: Hs5Runner):
 
-    assert hs5.get_stats().used == 0
+    hs5.wait_for_used(0)
 
     s3_client = hs5.get_s3_client()
 
@@ -1610,7 +1603,7 @@ def test_list_partial_uploads(tmp_path: Path, hs5: Hs5Runner):
     assert not list_resp["IsTruncated"]
     assert "Uploads" not in list_resp
 
-    assert hs5.get_stats().used == 0
+    hs5.wait_for_used(0)
 
 
 @pytest.mark.slow
@@ -1643,8 +1636,8 @@ def test_put_large(hs5_large: Hs5Runner, tmp_path: Path):
             break
         time.sleep(0.1)
 
+    hs5_large.wait_for_used(0)
     stats = hs5_large.get_stats()
-    assert stats.used == 0
     assert stats.size_full < testfilesize / 10
 
 
@@ -2044,8 +2037,8 @@ def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
             break
         time.sleep(0.1)
 
+    hs5.wait_for_used(0)
     stats = hs5.get_stats()
-    assert stats.used == 0
     assert stats.size_full < max_test_size
 
 
