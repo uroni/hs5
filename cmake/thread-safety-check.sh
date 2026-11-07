@@ -100,6 +100,16 @@ for fn in sys.argv[1:]:
             line = src.count("\n", 0, m.start()) + 1
             print(f"{fn}:{line}: error: use runInHttpThread instead of runInEventBaseThread", file=sys.stderr)
             ok = False
+        if os.path.basename(fn).startswith("s3handler."):
+            for m in re.finditer(r"getGlobalCPUExecutor\(\)->add\(", src):
+                line_start = src.rfind("\n", 0, m.start()) + 1
+                if "//" in src[line_start:m.start()]:
+                    continue  # Comment
+                if re.search(r"void runInCpuThread(FireAndForget)?\(", src[max(0, m.start() - 200):m.start()]):
+                    continue  # Used by runInCpuThread/runInCpuThreadFireAndForget itself
+                line = src.count("\n", 0, m.start()) + 1
+                print(f"{fn}:{line}: error: use runInCpuThread or runInCpuThreadFireAndForget instead of getGlobalCPUExecutor()->add in S3Handler", file=sys.stderr)
+                ok = False
         for m in re.finditer(r"\bdownstream_\b", src):
             line_start = src.rfind("\n", 0, m.start()) + 1
             if "//" in src[line_start:m.start()]:

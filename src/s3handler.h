@@ -12,6 +12,7 @@
 #include <cassert>
 #include <condition_variable>
 #include <expat.h>
+#include <folly/executors/GlobalExecutor.h>
 #include <folly/io/IOBuf.h>
 #include <folly/io/async/EventBase.h>
 #include <folly/io/async/EventBaseManager.h>
@@ -25,6 +26,7 @@
 #include <proxygen/lib/http/ProxygenErrorEnum.h>
 #include <proxygen/lib/http/experimental/RFC1867.h>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 class ExpatXmlParser
@@ -526,11 +528,36 @@ private:
             throw RequestInactive();
     }
 
+    // Runs f on the global CPU executor, keeping self alive until f has run
+    template <typename F>
+    static void runInCpuThread(std::shared_ptr<S3Handler> self, F&& f)
+    {
+        folly::getGlobalCPUExecutor()->add([self = std::move(self), f = std::forward<F>(f)]() mutable
+                                           { invokeWithSelf(f, self); });
+    }
+
+    // Runs f, which does not use the handler, on the global CPU executor
+    template <typename F>
+    static void runInCpuThreadFireAndForget(F&& f)
+    {
+        folly::getGlobalCPUExecutor()->add(std::forward<F>(f));
+    }
+
     // Use instead of downstream_, which must not be used after requestComplete/onError
     proxygen::ResponseHandler* downstream() const REQUIRES(httpThread, requestActive)
     {
         assert(self != nullptr);
         return downstream_;
+    }
+
+    // Calls f(self) if f takes the handler (instead of capturing its own copy), otherwise f()
+    template <typename F>
+    static void invokeWithSelf(F& f, const std::shared_ptr<S3Handler>& self) NO_THREAD_SAFETY_ANALYSIS
+    {
+        if constexpr (std::is_invocable_v<F&, const std::shared_ptr<S3Handler>&>)
+            f(self);
+        else
+            f();
     }
 
     // Keeps self alive until f has run on the HTTP thread evb. f may call assertActive/assertNotCompleted
@@ -542,7 +569,7 @@ private:
                                       self->assertOnHttpThread(evb);
                                       try
                                       {
-                                          f();
+                                          invokeWithSelf(f, self);
                                       }
                                       catch (const RequestInactive&)
                                       {
