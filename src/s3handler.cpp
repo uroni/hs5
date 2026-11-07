@@ -154,6 +154,8 @@ std::string uploadIdToStr(int64_t uploadId)
 
 int64_t uploadIdFromStr(const std::string& key)
 {
+    // Accidentally started this with a zero byte. Changing this
+    // would need a migration
     if (key.size() == sizeof(unsigned char) + 1)
     {
         unsigned char bnum;
@@ -184,12 +186,25 @@ int64_t uploadIdFromStr(const std::string& key)
 
 std::pair<int64_t, int64_t> uploadIdFromStrDot(const std::string& key)
 {
-    const auto dotPos = key.find(".");
-    if (dotPos == std::string::npos)
+    // The upload id may contain '.' itself, so find the separator from the end: The part number
+    // (1..10000) takes one or two bytes after its leading 0 byte
+    if (key.size() < 5)
+    {
+        assert(false);
         return { -1, -1 };
+    }
 
-    const auto uploadId1 = key.substr(0, dotPos);
-    const auto uploadId2 = key.substr(dotPos + 1);
+    const size_t partsSize = key[key.size() - 3] == '.' ? 1 : 2;
+
+    if (key[key.size() - partsSize - 1] != 0 ||
+        key[key.size() - partsSize - 2] != '.')
+    {
+        assert(false);
+        return { -1, -1 };
+    }
+
+    const auto uploadId1 = key.substr(0, key.size() - partsSize - 2);
+    const auto uploadId2 = key.substr(key.size() - partsSize - 1);
 
     return { uploadIdFromStr(uploadId1), uploadIdFromStr(uploadId2) };
 }
