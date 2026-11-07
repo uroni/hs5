@@ -7,10 +7,14 @@
 #include "PayloadHash.h"
 #include "Policy.h"
 #include "SingleFileStorage.h"
+#include "ThreadSafety.h"
 #include "data.h"
+#include <cassert>
 #include <condition_variable>
 #include <expat.h>
 #include <folly/io/IOBuf.h>
+#include <folly/io/async/EventBase.h>
+#include <folly/io/async/EventBaseManager.h>
 #include <memory>
 #include <proxygen/httpserver/HTTPServer.h>
 #include <proxygen/httpserver/RequestHandler.h>
@@ -357,19 +361,19 @@ public:
 private:
     void readFile(folly::EventBase* evb);
     void readObject(folly::EventBase* evb, std::shared_ptr<S3Handler> self, int64_t offset, unsigned int readFlags = 0);
-    void onBodyChunked(std::unique_ptr<folly::IOBuf> body);
-    void onBodyCPU(folly::EventBase* evb, int64_t offs, std::unique_ptr<folly::IOBuf> body);
-    void listObjects(proxygen::HTTPMessage& headers, const std::string& bucket);
-    void listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId);
-    void listBuckets(proxygen::HTTPMessage& headers, std::string accessKey);
+    void onBodyChunked(std::unique_ptr<folly::IOBuf> body) REQUIRES(httpThread);
+    void onBodyCPU(folly::EventBase* evb, std::shared_ptr<S3Handler> self, int64_t offs, std::unique_ptr<folly::IOBuf> body);
+    void listObjects(proxygen::HTTPMessage& headers, const std::string& bucket) REQUIRES(httpThread);
+    void listObjectsV2(proxygen::HTTPMessage& headers, const std::string& bucket, const int64_t bucketId) REQUIRES(httpThread);
+    void listBuckets(proxygen::HTTPMessage& headers, std::string accessKey) REQUIRES(httpThread);
     void listBuckets(folly::EventBase* evb, std::shared_ptr<S3Handler> self, std::string accessKey);
-    void getBucketLocation(proxygen::HTTPMessage& headers, const std::string& bucket);
-    void getBucketVersioning(proxygen::HTTPMessage& headers, const std::string& bucket);
-    void getBucketCors(proxygen::HTTPMessage& headers, const std::string& bucket);
-    void getBucketObjectLockConfiguration(proxygen::HTTPMessage& headers, const std::string& bucket);
-    void getCommitObject(proxygen::HTTPMessage& headers);
-    void getObject(proxygen::HTTPMessage& headers, const std::string& accessKey);
-    void getObjectAttributes(proxygen::HTTPMessage& headers, const std::string& accessKey);
+    void getBucketLocation(proxygen::HTTPMessage& headers, const std::string& bucket) REQUIRES(httpThread);
+    void getBucketVersioning(proxygen::HTTPMessage& headers, const std::string& bucket) REQUIRES(httpThread);
+    void getBucketCors(proxygen::HTTPMessage& headers, const std::string& bucket) REQUIRES(httpThread);
+    void getBucketObjectLockConfiguration(proxygen::HTTPMessage& headers, const std::string& bucket) REQUIRES(httpThread);
+    void getCommitObject(proxygen::HTTPMessage& headers) REQUIRES(httpThread);
+    void getObject(proxygen::HTTPMessage& headers, const std::string& accessKey) REQUIRES(httpThread);
+    void getObjectAttributes(proxygen::HTTPMessage& headers, const std::string& accessKey) REQUIRES(httpThread);
     struct CopySource
     {
         std::string bucket;
@@ -378,51 +382,51 @@ private:
         int64_t version = 0;
     };
 
-    void putObject(proxygen::HTTPMessage& headers, std::optional<CopySource> copySource);
-    void putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId, std::optional<CopySource> copySource);
-    void manualCommit(proxygen::HTTPMessage& headers);
-    void deleteObject(proxygen::HTTPMessage& headers, const bool bypassGovernance);
-    void abortMultipartUpload(proxygen::HTTPMessage& headers, const std::string& uploadIdStr);
-    void deleteBucket(proxygen::HTTPMessage& headers);
-    void putBucketVersioning(proxygen::HTTPMessage& headers);
-    void putBucketCors(proxygen::HTTPMessage& headers);
-    void putObjectLegalHold(proxygen::HTTPMessage& headers);
-    void putObjectLockConfiguration(proxygen::HTTPMessage& headers);
-    void putObjectRetention(proxygen::HTTPMessage& headers, const bool bypassGovernance);
+    void putObject(proxygen::HTTPMessage& headers, std::optional<CopySource> copySource) REQUIRES(httpThread);
+    void putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId, std::optional<CopySource> copySource) REQUIRES(httpThread);
+    void manualCommit(proxygen::HTTPMessage& headers) REQUIRES(httpThread);
+    void deleteObject(proxygen::HTTPMessage& headers, const bool bypassGovernance) REQUIRES(httpThread);
+    void abortMultipartUpload(proxygen::HTTPMessage& headers, const std::string& uploadIdStr) REQUIRES(httpThread);
+    void deleteBucket(proxygen::HTTPMessage& headers) REQUIRES(httpThread);
+    void putBucketVersioning(proxygen::HTTPMessage& headers) REQUIRES(httpThread);
+    void putBucketCors(proxygen::HTTPMessage& headers) REQUIRES(httpThread);
+    void putObjectLegalHold(proxygen::HTTPMessage& headers) REQUIRES(httpThread);
+    void putObjectLockConfiguration(proxygen::HTTPMessage& headers) REQUIRES(httpThread);
+    void putObjectRetention(proxygen::HTTPMessage& headers, const bool bypassGovernance) REQUIRES(httpThread);
     static bool bypassGovernanceRequested(proxygen::HTTPMessage& headers);
     // Returns if governance retention should be bypassed (requested via header).
     // Sends error response and returns std::nullopt if bypass is requested but not authorized
-    std::optional<bool> checkBypassGovernance(proxygen::HTTPMessage& headers, const std::string_view resource, const std::string_view accessKey);
+    std::optional<bool> checkBypassGovernance(proxygen::HTTPMessage& headers, const std::string_view resource, const std::string_view accessKey) REQUIRES(httpThread);
     // Parses x-amz-object-lock-* headers of object writes into objMetadata.
     // Sends error response and returns false if headers are invalid or not authorized
-    bool parseObjectLockHeaders(proxygen::HTTPMessage& headers, const std::string_view resource, const std::string_view accessKey);
-    void optionsObject(proxygen::HTTPMessage& headers);
-    void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const std::string_view bucketName);
-    void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const buckets::BucketInfo& bucketInfo);
+    bool parseObjectLockHeaders(proxygen::HTTPMessage& headers, const std::string_view resource, const std::string_view accessKey) REQUIRES(httpThread);
+    void optionsObject(proxygen::HTTPMessage& headers) REQUIRES(httpThread);
+    void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const std::string_view bucketName) REQUIRES(httpThread);
+    void setCorsAllowOrigin(proxygen::HTTPMessage& headers, const buckets::BucketInfo& bucketInfo) REQUIRES(httpThread);
     bool commit();
 
     void listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> self, const std::string& continuationToken,
                      const int maxKeys, const std::optional<std::string>& prefix, const std::optional<std::string>& startAfter, const std::string& delimiter, const int64_t bucket,
                      const bool listV2, const std::string& bucketName, const std::string& markerVersionStr, const bool urlEncode);
-    void createMultipartUpload(proxygen::HTTPMessage& headers);
-    void finalizeMultipartUpload();
-    void finalizeCreateBucket();
-    void finalizePutBucketVersioning();
-    void finalizePutBucketCors();
-    void finalizePutObjectLegalHold();
-    void finalizePutObjectLockConfiguration();
-    void finalizePutObjectRetention();
+    void createMultipartUpload(proxygen::HTTPMessage& headers) REQUIRES(httpThread);
+    void finalizeMultipartUpload() REQUIRES(httpThread);
+    void finalizeCreateBucket() REQUIRES(httpThread);
+    void finalizePutBucketVersioning() REQUIRES(httpThread);
+    void finalizePutBucketCors() REQUIRES(httpThread);
+    void finalizePutObjectLegalHold() REQUIRES(httpThread);
+    void finalizePutObjectLockConfiguration() REQUIRES(httpThread);
+    void finalizePutObjectRetention() REQUIRES(httpThread);
     std::string getEtagParsedMultipart(const std::string& md5sum);
     bool computeMd5() const;
 
-    void readBodyThread(folly::EventBase* evb);
-    void startReadBodyThread(folly::EventBase* evb);
+    void readBodyThread(folly::EventBase* evb, std::shared_ptr<S3Handler> self) EXCLUDES(bodyMutex);
+    void startReadBodyThread(folly::EventBase* evb) REQUIRES(bodyMutex, httpThread);
     bool usesBodyThread() const;
     void setFinished();
-    bool setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::string_view path, const std::string* versionId, const bool setCorsHeader);
-    std::optional<std::string> initPayloadHash(proxygen::HTTPMessage& message);
-    bool initSdkChecksum(proxygen::HTTPMessage& message, const Action action);
-    void deleteObjects();
+    bool setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::string_view path, const std::string* versionId, const bool setCorsHeader) REQUIRES(httpThread);
+    std::optional<std::string> initPayloadHash(proxygen::HTTPMessage& message) REQUIRES(httpThread);
+    bool initSdkChecksum(proxygen::HTTPMessage& message, const Action action) REQUIRES(httpThread);
+    void deleteObjects() REQUIRES(httpThread);
 
     std::string encryptUploadId(const int64_t id, const std::string& nonce);
     UploadIdDec decryptUploadId(const std::string& encdata);
@@ -438,16 +442,16 @@ private:
     // Only if object lock is enabled for the bucket. Call right before queueing the overwrite/delete.
     void addProtectedCheck(const bool bypassGovernance);
     int checkMatchInfo();
-    void finalizePutObject(folly::EventBase* evb, const int64_t lastModified, const int64_t copySourceVersion);
+    void finalizePutObject(folly::EventBase* evb, std::shared_ptr<S3Handler> self, const int64_t lastModified, const int64_t copySourceVersion);
 
     bool serializeMetadataValues(CWData& wdata);
     bool unserializeMetadataValues(CRData& rdata);
 
-    void postObject();
+    void postObject() REQUIRES(httpThread);
 
     // Parses x-amz-copy-source and checks that accessKey may read the source.
     // Sends an error response and returns nullopt otherwise
-    std::optional<CopySource> parseCopySource(proxygen::HTTPMessage& headers, const std::string_view accessKey);
+    std::optional<CopySource> parseCopySource(proxygen::HTTPMessage& headers, const std::string_view accessKey) REQUIRES(httpThread);
 
     struct CopyObjectInfo
     {
@@ -463,22 +467,57 @@ private:
         SingleFileStorage::MatchInfo sourceMatchInfo;
     };
 
-    void copyObject(folly::EventBase* evb, const std::string& targetFn, CopyObjectInfo& copyObjectInfo);
+    void copyObject(folly::EventBase* evb, std::shared_ptr<S3Handler> self, const std::string& targetFn, CopyObjectInfo& copyObjectInfo);
 
-    proxygen::ResponseBuilder responseBuilderWithCors(uint16_t code, const std::string& message);
+    proxygen::ResponseBuilder responseBuilderWithCors(uint16_t code, const std::string& message) REQUIRES(httpThread);
 
-    std::shared_ptr<S3Handler> self;
+    // Owning reference to this handler while the request is active. Reset in requestComplete/onError.
+    // Code on other threads must keep the handler alive with its own copy, handed over from the HTTP thread
+    std::shared_ptr<S3Handler> self GUARDED_BY(httpThread);
     Action request_action = Action::Unknown;
 
     KeyInfo keyInfo;
     std::atomic<bool> paused_{ false };
-    int64_t done_bytes = 0;
-    bool running = false;
+
+    // Role held while running on the HTTP thread of this request
+    ThreadRole httpThread;
+
+    void assertOnHttpThread(folly::EventBase* evb = folly::EventBaseManager::get()->getExistingEventBase()) const ASSERT_CAPABILITY(httpThread)
+    {
+        assert(evb != nullptr && evb->isInEventBaseThread());
+    }
+
+    // False after requestComplete/onError (downstream_ must not be used). Unlike finished_, still true after
+    // the response was sent while the request body is being received
+    bool requestActive() const REQUIRES(httpThread)
+    {
+        return self != nullptr;
+    }
+
+    // Use instead of downstream_, which must not be used after requestComplete/onError
+    proxygen::ResponseHandler* downstream() const REQUIRES(httpThread)
+    {
+        assert(requestActive());
+        return downstream_;
+    }
+
+    // Keeps self alive until f has run on the HTTP thread evb
+    template <typename F>
+    static void runInHttpThread(folly::EventBase* evb, std::shared_ptr<S3Handler> self, F&& f)
+    {
+        evb->runInEventBaseThread([self = std::move(self), evb, f = std::forward<F>(f)]() NO_THREAD_SAFETY_ANALYSIS mutable
+                                  {
+                                      self->assertOnHttpThread(evb);
+                                      f(); });
+    }
+
+    int64_t done_bytes GUARDED_BY(httpThread) = 0;
+    bool running GUARDED_BY(httpThread) = false;
     // Written on IO thread. For actions using onBodyCPU (see usesBodyThread) write via setFinished()
     // as onBodyCPU reads it with extents_mutex held on a CPU thread
     bool finished_ = false;
     std::atomic<int64_t> put_remaining = -1;
-    ExpatXmlParser xmlBody;
+    ExpatXmlParser xmlBody GUARDED_BY(httpThread);
     std::string bodyData;
 
     std::string serverUrl;
@@ -488,7 +527,7 @@ private:
     std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
     std::unique_ptr<DeleteObjectsData> deleteObjectsData;
     std::unique_ptr<ObjMetadata> objMetadata;
-    std::unique_ptr<PostObjectData> postObjectData;
+    std::unique_ptr<PostObjectData> postObjectData GUARDED_BY(httpThread);
     std::unique_ptr<PutBucketCorsData> putBucketCorsData;
     std::unique_ptr<PutObjectLockConfigurationData> putObjectLockConfigurationData;
     std::unique_ptr<PutObjectRetentionData> putObjectRetentionData;
@@ -496,8 +535,17 @@ private:
     std::mutex extents_mutex;
     std::condition_variable extents_cond;
 
-    std::vector<SingleFileStorage::Ext> extents;
-    bool extentsInitialized = false;
+    std::vector<SingleFileStorage::Ext> extents GUARDED_BY(extents_mutex);
+    bool extentsInitialized GUARDED_BY(extents_mutex) = false;
+
+    std::vector<SingleFileStorage::Ext>& ownedExtents() EXCLUDES(extents_mutex) NO_THREAD_SAFETY_ANALYSIS
+    {
+#ifndef NDEBUG
+        std::scoped_lock lock(extents_mutex);
+        assert(!usesBodyThread() || extentsInitialized);
+#endif
+        return extents;
+    }
     EvpMdCtx evpMdCtx;
     std::string contentMd5;
     std::unique_ptr<PayloadHashBase> payloadHash;
@@ -511,8 +559,8 @@ private:
     };
 
     std::mutex bodyMutex;
-    bool hasBodyThread = false;
-    std::queue<BodyObj> bodyQueue;
+    bool hasBodyThread GUARDED_BY(bodyMutex) = false;
+    std::queue<BodyObj> bodyQueue GUARDED_BY(bodyMutex);
 
     struct AwsChunkedEncoding
     {
@@ -570,9 +618,9 @@ private:
         Failed
     };
 
-    SigCheckResult sigChecked = SigCheckResult::NotChecked;
+    SigCheckResult sigChecked GUARDED_BY(httpThread) = SigCheckResult::NotChecked;
     bool sfsWasUsed = false;
 #endif
 
-    std::string corsAllowOrigin;
+    std::string corsAllowOrigin GUARDED_BY(httpThread);
 };

@@ -80,4 +80,44 @@ EOF
   (cd "${ARGS[0]}" && "$CLANGXX" "${FLAGS[@]}" "${ARGS[@]:1}") || status=1
 done
 
+# Lambdas passed to S3Handler::runInHttpThread must be annotated with REQUIRES(<self>->httpThread).
+# The analysis only flags an unannotated lambda if it accesses guarded members, and attributes are
+# not part of the lambda type, so this cannot be checked in the template itself.
+# S3Handler must not use runInEventBaseThread directly, as that bypasses the check, and must use downstream()
+# instead of downstream_, which checks that the request is still active.
+python3 - "$ROOT"/src/*.cpp "$ROOT"/src/*.h <<'EOF' || status=1
+import os, re, sys
+ok = True
+for fn in sys.argv[1:]:
+    src = open(fn).read()
+    if os.path.basename(fn).startswith("s3handler."):
+        for m in re.finditer(r"\brunInEventBaseThread\(", src):
+            line_start = src.rfind("\n", 0, m.start()) + 1
+            if "//" in src[line_start:m.start()]:
+                continue  # Comment
+            if "void runInHttpThread(" in src[max(0, m.start() - 200):m.start()]:
+                continue  # Used by runInHttpThread itself
+            line = src.count("\n", 0, m.start()) + 1
+            print(f"{fn}:{line}: error: use runInHttpThread instead of runInEventBaseThread in S3Handler", file=sys.stderr)
+            ok = False
+        for m in re.finditer(r"\bdownstream_\b", src):
+            line_start = src.rfind("\n", 0, m.start()) + 1
+            if "//" in src[line_start:m.start()]:
+                continue  # Comment
+            if "ResponseHandler* downstream() const" in src[max(0, m.start() - 200):m.start()]:
+                continue  # Used by downstream() itself
+            line = src.count("\n", 0, m.start()) + 1
+            print(f"{fn}:{line}: error: use downstream() instead of downstream_ in S3Handler", file=sys.stderr)
+            ok = False
+    for m in re.finditer(r"\brunInHttpThread\(", src):
+        head = src[m.end():src.find("{", m.end())]
+        if "F&&" in head:
+            continue  # Definition
+        if not re.search(r"\)\s*REQUIRES\(\s*\w+->httpThread\s*\)", head):
+            line = src.count("\n", 0, m.start()) + 1
+            print(f"{fn}:{line}: error: lambda passed to runInHttpThread must be annotated with REQUIRES(self->httpThread)", file=sys.stderr)
+            ok = False
+sys.exit(0 if ok else 1)
+EOF
+
 exit $status

@@ -9,7 +9,7 @@
 // The macros expand to nothing on compilers without support.
 // std::mutex and std::scoped_lock are only annotated in libc++ with
 // _LIBCPP_ENABLE_THREAD_SAFETY_ANNOTATIONS, see cmake/thread-safety-check.sh.
-// std::unique_lock is not annotated, use CondVarLock below for condition variables
+// std::unique_lock is not annotated, use CondVarLock below for condition variables or manual unlock/lock
 
 #include <condition_variable>
 #include <mutex>
@@ -38,8 +38,14 @@
 #define RETURN_CAPABILITY(x) THREAD_ANNOTATION_ATTRIBUTE__(lock_returned(x))
 #define NO_THREAD_SAFETY_ANALYSIS THREAD_ANNOTATION_ATTRIBUTE__(no_thread_safety_analysis)
 
-// Annotated std::unique_lock replacement for waiting on a std::condition_variable
-// (std::unique_lock is not annotated in libc++). Use std::scoped_lock otherwise
+// Capability representing "running on a specific thread". Never locked; held for the
+// analysis after calling a function annotated with ASSERT_CAPABILITY that checks the thread
+class CAPABILITY("role") ThreadRole
+{
+};
+
+// Annotated std::unique_lock replacement for waiting on a std::condition_variable or
+// temporarily unlocking (std::unique_lock is not annotated in libc++). Use std::scoped_lock otherwise
 class SCOPED_CAPABILITY CondVarLock
 {
     std::unique_lock<std::mutex> l;
