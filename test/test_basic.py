@@ -2615,6 +2615,82 @@ def test_enable_bucket_versioning(hs5: Hs5Runner):
         )
 
 
+def test_list_object_versions_is_latest(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+
+    # Written before versioning is enabled, so it becomes the "null" version
+    s3_client.put_object(Bucket=bucket, Key="pre-versioning", Body=b"null")
+
+    s3_client.put_bucket_versioning(
+        Bucket=bucket, VersioningConfiguration={"Status": "Enabled"}
+    )
+
+    s3_client.put_object(Bucket=bucket, Key="pre-versioning", Body=b"v1")
+    for i in range(3):
+        s3_client.put_object(Bucket=bucket, Key="three-versions", Body=f"v{i}".encode())
+    s3_client.put_object(Bucket=bucket, Key="deleted", Body=b"v0")
+    s3_client.delete_object(Bucket=bucket, Key="deleted")
+    s3_client.put_object(Bucket=bucket, Key="newest-removed", Body=b"v0")
+    newest = s3_client.put_object(Bucket=bucket, Key="newest-removed", Body=b"v1")
+    s3_client.delete_object(
+        Bucket=bucket, Key="newest-removed", VersionId=newest["VersionId"]
+    )
+    s3_client.put_object(Bucket=bucket, Key="single", Body=b"v0")
+
+    def latest_by_key(entries):
+        latest = {}
+        for e in entries:
+            if e["IsLatest"]:
+                assert e["Key"] not in latest, e
+                latest[e["Key"]] = e["VersionId"]
+        return latest
+
+    def expected_latest(key):
+        try:
+            return s3_client.head_object(Bucket=bucket, Key=key)["VersionId"]
+        except ClientError:
+            # Latest is a delete marker
+            return None
+
+    res = s3_client.list_object_versions(Bucket=bucket)
+    versions = res.get("Versions", [])
+    markers = res.get("DeleteMarkers", [])
+    keys = {e.get("Key") for e in [*versions, *markers]}
+    assert keys == {
+        "pre-versioning",
+        "three-versions",
+        "deleted",
+        "newest-removed",
+        "single",
+    }
+
+    latest = latest_by_key(versions + markers)
+    assert set(latest) == keys
+    for key in keys:
+        expected = expected_latest(key)
+        if expected is None:
+            assert latest[key] in {
+                m.get("VersionId") for m in markers if m.get("Key") == key
+            }
+        else:
+            assert latest[key] == expected
+
+    # Same result when paging through the versions one entry at a time
+    paged = []
+    kwargs = {"Bucket": bucket, "MaxKeys": 1}
+    while True:
+        page = s3_client.list_object_versions(**kwargs)
+        paged.extend(page.get("Versions", []) + page.get("DeleteMarkers", []))
+        if not page["IsTruncated"]:
+            break
+        kwargs["KeyMarker"] = page["NextKeyMarker"]
+        kwargs["VersionIdMarker"] = page["NextVersionIdMarker"]
+
+    assert len(paged) == len(versions) + len(markers)
+    assert latest_by_key(paged) == latest
+
+
 # Encrypted 16 byte id, unpadded base64url encoded
 VERSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{22}$")
 

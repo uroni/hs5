@@ -7133,7 +7133,8 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
 {
     const bool listPartial = request_action == Action::ListMultipartUploads;
     const bool listVersions = request_action == Action::ListObjectVersions;
-    const auto markerVersion = !markerVersionStr.empty() ? decryptUploadId(markerVersionStr).id : std::numeric_limits<int64_t>::max();
+    const auto markerVersion = markerVersionStr.empty() ? std::numeric_limits<int64_t>::max()
+                                                        : (listVersions ? sfs().decrypt_id(markerVersionStr) : decryptUploadId(markerVersionStr).id);
     const auto listBucketId = listPartial ? buckets::getPartialUploadsBucket(bucketId) : bucketId;
     SingleFileStorage::IterData iter_data = {};
     std::string iterStartVal;
@@ -7205,6 +7206,13 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
     std::vector<std::string> commonPrefixes;
     const size_t prefixSize = prefix ? prefix->size() : 0;
 
+    // Key of the previous entry in index order. Versions of a key are sorted newest first, so an entry is
+    // the latest version of its key if the previous entry has a different key. When continuing after a
+    // version marker, the remaining versions of the marker key are older than the already listed one
+    std::optional<std::string> prevIterKey;
+    if (listVersions && !marker.empty() && markerVersion != std::numeric_limits<int64_t>::max())
+        prevIterKey = marker;
+
     int i;
     bool truncated = true;
     size_t keyCount = 0;
@@ -7222,6 +7230,9 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
         }
 
         const auto keyInfo = extractKeyInfoView(keyBin);
+
+        const bool isLatest = !prevIterKey || *prevIterKey != keyInfo.key;
+        prevIterKey = std::string(keyInfo.key);
 
         bool outputKey = true;
 
@@ -7350,23 +7361,6 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
 
         if (outputKey && listVersions)
         {
-            bool isLatest = true;
-            {
-                // TODO perf: Reading key twice...
-                std::string keyBin, md5sum;
-                int64_t offset, size, last_modified;
-                std::vector<SingleFileStorage::SPunchItem> extra_exts;
-                if (sfs().iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
-                {
-                    const auto keyInfoNext = extractKeyInfoView(keyBin);
-
-                    if (keyInfoNext.key == keyInfo.key && keyInfoNext.bucketId == listBucketId)
-                    {
-                        isLatest = false;
-                    }
-                }
-            }
-
             lastOutputKeyStr = keyInfo.key;
             lastOutputVersion = keyInfo.version;
 
