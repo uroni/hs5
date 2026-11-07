@@ -477,6 +477,24 @@ def hs5_modify_delay(tmpdir: Path, testrun_uid: str):
 
 
 @pytest.fixture
+def hs5_get_prepare_delay(tmpdir: Path, testrun_uid: str):
+    loc = tmpdir / uuid.uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(
+        loc,
+        data_file_size_limit_mb=100,
+        testrun_uid=testrun_uid,
+        extra_args=["--test_delay_get_prepare_ms=1000"],
+    )
+    yield runner
+    runner.stop(cleanup=True, kill=False)
+    try:
+        rmtree(loc)
+    except:
+        pass
+
+
+@pytest.fixture
 def hs5_protected_check_delay(tmpdir: Path, testrun_uid: str):
     loc = tmpdir / uuid.uuid4().hex
     loc.mkdir()

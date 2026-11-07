@@ -6,13 +6,14 @@ import os
 from pathlib import Path
 import random
 import socket
+import struct
 import time
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 from mypy_boto3_s3 import S3Client
 import pytest
-from hs5_fixture import Hs5Runner, hs5
+from hs5_fixture import Hs5Runner, hs5, hs5_get_prepare_delay
 
 
 @dataclass
@@ -136,3 +137,32 @@ def test_disconnect_during_put(hs5: Hs5Runner):
     )
     obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="after_disconnect")
     assert obj["Body"].read() == b"ok"
+
+
+def test_reset_during_get(hs5_get_prepare_delay: Hs5Runner):
+    """Client resets the connection while a GET is prepared, so the response is ready after onError"""
+    hs5 = hs5_get_prepare_delay
+    s3_client = hs5.get_s3_client()
+    s3_client.put_object(Bucket=hs5.testbucketname(), Key="obj", Body=b"data")
+
+    for _ in range(3):
+        url = urlsplit(
+            s3_client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": hs5.testbucketname(), "Key": "obj"},
+                ExpiresIn=600,
+            )
+        )
+        sock = socket.create_connection((url.hostname, url.port))
+        sock.sendall(
+            f"GET {url.path}?{url.query} HTTP/1.1\r\nHost: {url.netloc}\r\n\r\n".encode()
+        )
+        time.sleep(0.2)
+        # Close with RST instead of FIN
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        sock.close()
+        # Wait for the delayed GET preparation to finish
+        time.sleep(1.5)
+
+    obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="obj")
+    assert obj["Body"].read() == b"data"
