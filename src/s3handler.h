@@ -370,8 +370,16 @@ private:
     void getCommitObject(proxygen::HTTPMessage& headers);
     void getObject(proxygen::HTTPMessage& headers, const std::string& accessKey);
     void getObjectAttributes(proxygen::HTTPMessage& headers, const std::string& accessKey);
-    void putObject(proxygen::HTTPMessage& headers);
-    void putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId);
+    struct CopySource
+    {
+        std::string bucket;
+        std::string key;
+        // 0 means newest version
+        int64_t version = 0;
+    };
+
+    void putObject(proxygen::HTTPMessage& headers, std::optional<CopySource> copySource);
+    void putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId, std::optional<CopySource> copySource);
     void manualCommit(proxygen::HTTPMessage& headers);
     void deleteObject(proxygen::HTTPMessage& headers, const bool bypassGovernance);
     void abortMultipartUpload(proxygen::HTTPMessage& headers, const std::string& uploadIdStr);
@@ -437,9 +445,15 @@ private:
 
     void postObject();
 
+    // Parses x-amz-copy-source and checks that accessKey may read the source.
+    // Sends an error response and returns nullopt otherwise
+    std::optional<CopySource> parseCopySource(proxygen::HTTPMessage& headers, const std::string_view accessKey);
+
     struct CopyObjectInfo
     {
+        // x-amz-copy-source header value (for logging and error responses)
         std::string source;
+        CopySource sourceObject;
         std::string range;
         enum class MetadataDirective
         {

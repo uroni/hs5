@@ -6,7 +6,7 @@
 #include "Buckets.h"
 #include "s3handler.h"
 
-ObjectReader::ObjectReader(SingleFileStorage& sfs, const std::string& bucket, const std::string& key)
+ObjectReader::ObjectReader(SingleFileStorage& sfs, const std::string& bucket, const std::string& key, const int64_t version)
     : sfs(sfs), name(bucket + "/" + key)
 {
     const auto bucketInfoOpt = buckets::getBucketInfo(bucket);
@@ -21,8 +21,12 @@ ObjectReader::ObjectReader(SingleFileStorage& sfs, const std::string& bucket, co
 
     unsigned int readPrepFlags = SingleFileStorage::ReadAddReadingCallback;
 
-    const auto withVersioning = bucketInfo.versioning == buckets::VersioningState::Enabled || bucketInfo.versioning == buckets::VersioningState::Suspended;
-    if (withVersioning)
+    const auto withVersioning = version == 0 && (bucketInfo.versioning == buckets::VersioningState::Enabled || bucketInfo.versioning == buckets::VersioningState::Suspended);
+    if (version != 0)
+    {
+        s3key = make_key(key, bucketId, version);
+    }
+    else if (withVersioning)
     {
         s3key = make_key(key, bucketId, std::numeric_limits<int64_t>::max());
         readPrepFlags |= SingleFileStorage::ReadNewest;

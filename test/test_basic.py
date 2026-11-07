@@ -1771,6 +1771,93 @@ def test_copy_object_missing_source(hs5: Hs5Runner):
         s3_client.head_object(Bucket=hs5.testbucketname(), Key="copy.dat")
 
 
+def test_copy_object_version(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+    s3_client.put_bucket_versioning(
+        Bucket=bucket, VersioningConfiguration={"Status": "Enabled"}
+    )
+
+    v1 = s3_client.put_object(Bucket=bucket, Key="src", Body=b"one").get("VersionId")
+    v2 = s3_client.put_object(Bucket=bucket, Key="src", Body=b"two").get("VersionId")
+    assert v1 is not None and v2 is not None
+
+    s3_client.copy_object(
+        Bucket=bucket,
+        Key="copy1",
+        CopySource={"Bucket": bucket, "Key": "src", "VersionId": v1},
+    )
+    assert s3_client.get_object(Bucket=bucket, Key="copy1")["Body"].read() == b"one"
+
+    # Versions stay copyable while the latest version is a delete marker
+    s3_client.delete_object(Bucket=bucket, Key="src")
+    with pytest.raises(ClientError) as exc_info:
+        s3_client.copy_object(
+            Bucket=bucket, Key="copy2", CopySource={"Bucket": bucket, "Key": "src"}
+        )
+    assert exc_info.value.response.get("Error", {}).get("Code") == "NoSuchKey"
+
+    s3_client.copy_object(
+        Bucket=bucket,
+        Key="copy2",
+        CopySource={"Bucket": bucket, "Key": "src", "VersionId": v2},
+    )
+    assert s3_client.get_object(Bucket=bucket, Key="copy2")["Body"].read() == b"two"
+
+    upl = s3_client.create_multipart_upload(Bucket=bucket, Key="copy3")
+    etags: list[str] = []
+    for i, vid in enumerate((v1, v2)):
+        etag = (
+            s3_client.upload_part_copy(
+                Bucket=bucket,
+                Key="copy3",
+                UploadId=upl["UploadId"],
+                PartNumber=i + 1,
+                CopySource={"Bucket": bucket, "Key": "src", "VersionId": vid},
+            )
+            .get("CopyPartResult", {})
+            .get("ETag")
+        )
+        assert etag is not None
+        etags.append(etag)
+    s3_client.complete_multipart_upload(
+        Bucket=bucket,
+        Key="copy3",
+        UploadId=upl["UploadId"],
+        MultipartUpload={
+            "Parts": [
+                {"ETag": etag, "PartNumber": i + 1} for i, etag in enumerate(etags)
+            ]
+        },
+    )
+    assert s3_client.get_object(Bucket=bucket, Key="copy3")["Body"].read() == b"onetwo"
+
+    for invalid_vid in ("null", "A" * 22, "!!!"):
+        with pytest.raises(ClientError) as exc_info:
+            s3_client.copy_object(
+                Bucket=bucket,
+                Key="copy4",
+                CopySource={"Bucket": bucket, "Key": "src", "VersionId": invalid_vid},
+            )
+        assert exc_info.value.response.get("Error", {}).get("Code") == "InvalidArgument"
+
+
+def test_copy_object_encoded_source_key(hs5: Hs5Runner):
+    # The copy source is URL encoded
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+
+    for key in ("foo?bar", "a b", "per%cent", "ünïcode", "dir/sub/key", "plus+sign"):
+        s3_client.put_object(Bucket=bucket, Key=key, Body=key.encode())
+        s3_client.copy_object(
+            Bucket=bucket, Key=f"copy-{key}", CopySource={"Bucket": bucket, "Key": key}
+        )
+        assert (
+            s3_client.get_object(Bucket=bucket, Key=f"copy-{key}")["Body"].read()
+            == key.encode()
+        )
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "size", [512 * 1024, 5 * 1024 * 1024 + 12, 101, 51 * 1024 * 1024]

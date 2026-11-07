@@ -26,11 +26,11 @@ private:
     bool notFound_;
 };
 
-// Reads the newest version of an object (single or multipart). Throws ObjectReadError on failure
+// Reads the newest (or the given) version of an object (single or multipart). Throws ObjectReadError on failure
 class ObjectReader
 {
 public:
-    ObjectReader(SingleFileStorage& sfs, const std::string& bucket, const std::string& key);
+    ObjectReader(SingleFileStorage& sfs, const std::string& bucket, const std::string& key, const int64_t version = 0);
 
     ~ObjectReader();
 

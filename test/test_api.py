@@ -348,6 +348,74 @@ def test_add_user_for_bucket(hs5: Hs5Runner, action: str):
             s3.put_bucket_cors(Bucket="accessbucket", CORSConfiguration=cors_config)
 
 
+def test_copy_source_permission(hs5: Hs5Runner):
+    # Copying needs read permission on the source object
+    admin_client = hs5.get_api_client_admin()
+    admin_client.add_bucket(hs5_models.AddBucketParams(bucketName="secret-bucket"))
+    admin_client.add_bucket(hs5_models.AddBucketParams(bucketName="own-bucket"))
+
+    admin_s3 = hs5.get_s3_client()
+    admin_s3.put_object(Bucket="secret-bucket", Key="secret", Body=b"secret")
+    admin_s3.put_object(Bucket="own-bucket", Key="own", Body=b"own")
+
+    user_resp = admin_client.add_user(
+        hs5_models.AddUserParams(username="copyuser", password="copyuser")
+    )
+    access_key_resp = admin_client.add_access_key(
+        hs5_models.AddAccessKeyParams(userId=user_resp.id)
+    )
+    admin_client.add_bucket_permission(
+        hs5_models.AddBucketPermissionParams(
+            bucketName="own-bucket",
+            addBucketPermissions=["read", "write"],
+            userId=user_resp.id,
+        )
+    )
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=hs5.get_url(),
+        aws_access_key_id=access_key_resp.access_key,
+        aws_secret_access_key=access_key_resp.secret_key,
+        config=Config(signature_version="s3v4"),
+    )
+
+    def upload_part_copy(source_bucket: str, source_key: str, key: str):
+        upl = s3.create_multipart_upload(Bucket="own-bucket", Key=key)
+        s3.upload_part_copy(
+            Bucket="own-bucket",
+            Key=key,
+            UploadId=upl["UploadId"],
+            PartNumber=1,
+            CopySource={"Bucket": source_bucket, "Key": source_key},
+        )
+
+    with pytest.raises(ClientError) as exc_info:
+        s3.copy_object(
+            Bucket="own-bucket",
+            Key="stolen",
+            CopySource={"Bucket": "secret-bucket", "Key": "secret"},
+        )
+    assert exc_info.value.response.get("Error", {}).get("Code") == "AccessDenied"
+
+    with pytest.raises(ClientError) as exc_info:
+        upload_part_copy("secret-bucket", "secret", "stolen2")
+    assert exc_info.value.response.get("Error", {}).get("Code") == "AccessDenied"
+
+    for key in ("stolen", "stolen2"):
+        with pytest.raises(ClientError):
+            admin_s3.head_object(Bucket="own-bucket", Key=key)
+
+    # Copying within the readable bucket works
+    s3.copy_object(
+        Bucket="own-bucket",
+        Key="own-copy",
+        CopySource={"Bucket": "own-bucket", "Key": "own"},
+    )
+    assert s3.get_object(Bucket="own-bucket", Key="own-copy")["Body"].read() == b"own"
+    upload_part_copy("own-bucket", "own", "own-copy2")
+
+
 @pytest.mark.parametrize("perms", ["", "r", "w", "d", "rw", "rd", "wd", "rwd"])
 def test_simple_permissions(hs5: Hs5Runner, perms: str):
     admin_client = hs5.get_api_client_admin()

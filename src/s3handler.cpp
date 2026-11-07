@@ -49,6 +49,7 @@
 #include <proxygen/lib/http/HTTPCommonHeaders.h>
 #include <proxygen/lib/http/HTTPMethod.h>
 #include <proxygen/lib/utils/HTTPTime.h>
+#include <proxygen/lib/utils/ParseURL.h>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -2498,7 +2499,8 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
             const bool allowPresigned = action == Action::PutObjectPart;
 
-            if (!checkSig(this, *headers, payload, resource, action, allowPresigned, currSigPtr, stringToSignHeaderPtr, signingKeyOutput) || (currSigPtr != nullptr && currSigPtr->empty()))
+            const auto accessKey = checkSig(this, *headers, payload, resource, action, allowPresigned, currSigPtr, stringToSignHeaderPtr, signingKeyOutput);
+            if (!accessKey || (currSigPtr != nullptr && currSigPtr->empty()))
             {
                 XLOGF(INFO, "Unauthorized putObjectPart: {}", path);
                 ResponseBuilder(downstream_)
@@ -2506,6 +2508,14 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                     .body(s3errorXml(S3ErrorCode::AccessDenied, "", resource, ""))
                     .sendWithEOM();
                 return;
+            }
+
+            std::optional<CopySource> partCopySource;
+            if (copyObject)
+            {
+                partCopySource = parseCopySource(*headers, *accessKey);
+                if (!partCopySource)
+                    return;
             }
 
             try
@@ -2528,7 +2538,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
                 return;
 
             request_action = action;
-            putObjectPart(*headers, partNumber, uploadId.id, uploadId.nonce);
+            putObjectPart(*headers, partNumber, uploadId.id, uploadId.nonce, std::move(partCopySource));
             return;
         }
         else if (createBucket && headers->hasQueryParam("cors") && (xid.empty() || xid == "PutBucketCors"))
@@ -2661,6 +2671,14 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
         }
 
+        std::optional<CopySource> objectCopySource;
+        if (copyObject)
+        {
+            objectCopySource = parseCopySource(*headers, *accessKey);
+            if (!objectCopySource)
+                return;
+        }
+
         try
         {
             const auto contentMd5Base64 = headers->getHeaders().getSingleOrEmpty("Content-MD5");
@@ -2741,7 +2759,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         XLOGF(DBG0, "PutObject {} length {}", path, remaining);
 
         request_action = action;
-        putObject(*headers);
+        putObject(*headers, std::move(objectCopySource));
         return;
     }
     else if (headers->getMethod() == HTTPMethod::DELETE)
@@ -4516,7 +4534,7 @@ int S3Handler::checkMatchInfo()
     return 0;
 }
 
-void S3Handler::putObject(proxygen::HTTPMessage& headers)
+void S3Handler::putObject(proxygen::HTTPMessage& headers, std::optional<CopySource> copySource)
 {
     std::unique_ptr<CopyObjectInfo> copyObjectInfo;
     if (request_action == Action::CopyObject)
@@ -4526,8 +4544,7 @@ void S3Handler::putObject(proxygen::HTTPMessage& headers)
         if (metadataDirective == "REPLACE")
             copyObjectInfo->metadataDirective = CopyObjectInfo::MetadataDirective::Replace;
         copyObjectInfo->source = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source");
-        if (copyObjectInfo->source.starts_with("/"))
-            copyObjectInfo->source = copyObjectInfo->source.substr(1);
+        copyObjectInfo->sourceObject = std::move(*copySource);
         parseSourceMatchInfo(headers, copyObjectInfo->sourceMatchInfo);
     }
 
@@ -4687,16 +4704,15 @@ std::pair<std::string, std::string> splitUploadId(const std::string& uploadId)
     }
 }
 
-void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId)
+void S3Handler::putObjectPart(proxygen::HTTPMessage& headers, int partNumber, int64_t uploadId, std::string uploadVerId, std::optional<CopySource> copySource)
 {
     std::unique_ptr<CopyObjectInfo> copyObjectInfo;
     if (request_action == Action::UploadPartCopy)
     {
         copyObjectInfo = std::make_unique<CopyObjectInfo>();
         copyObjectInfo->source = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source");
+        copyObjectInfo->sourceObject = std::move(*copySource);
         copyObjectInfo->range = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source-range");
-        if (copyObjectInfo->source.starts_with("/"))
-            copyObjectInfo->source = copyObjectInfo->source.substr(1);
         parseSourceMatchInfo(headers, copyObjectInfo->sourceMatchInfo);
     }
 
@@ -9342,6 +9358,73 @@ void S3Handler::parseMatchInfo(proxygen::HTTPMessage& headers, const bool ifModi
     }
 }
 
+std::optional<S3Handler::CopySource> S3Handler::parseCopySource(proxygen::HTTPMessage& headers, const std::string_view accessKey)
+{
+    const auto& sourceHeader = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source");
+
+    const auto invalidArgument = [&](const std::string_view message)
+    {
+        XLOGF(INFO, "Invalid copy source '{}': {}", sourceHeader, message);
+        ResponseBuilder(downstream_)
+            .status(400, "Bad request")
+            .body(s3errorXml(S3ErrorCode::InvalidArgument, message, sourceHeader, ""))
+            .sendWithEOM();
+        return std::optional<CopySource>();
+    };
+
+    // Format: [/]bucket/key[?versionId=id] with URL encoded bucket and key
+    std::string_view source = sourceHeader;
+    if (source.starts_with('/'))
+        source.remove_prefix(1);
+
+    std::optional<std::string_view> versionIdEnc;
+    const auto queryPos = source.find('?');
+    if (queryPos != std::string_view::npos)
+    {
+        versionIdEnc = proxygen::ParseURL::getQueryParam(source.substr(queryPos + 1), "versionId");
+        if (!versionIdEnc)
+            return invalidArgument("Unsupported copy source parameter");
+
+        source = source.substr(0, queryPos);
+    }
+
+    std::string sourceDec;
+    if (!folly::tryUriUnescape(source, sourceDec))
+        return invalidArgument("Copy source is not URL encoded correctly");
+
+    const auto bucketSep = sourceDec.find('/');
+    if (bucketSep == std::string::npos || bucketSep == 0 || bucketSep + 1 == sourceDec.size())
+        return invalidArgument("Copy source needs to contain bucket and key");
+
+    CopySource copySource;
+    copySource.bucket = sourceDec.substr(0, bucketSep);
+    copySource.key = sourceDec.substr(bucketSep + 1);
+
+    if (versionIdEnc)
+    {
+        std::string versionId;
+        if (!folly::tryUriUnescape(*versionIdEnc, versionId))
+            return invalidArgument("Invalid version id specified");
+
+        copySource.version = sfs().decrypt_id(versionId);
+        if (copySource.version <= 0)
+            return invalidArgument("Invalid version id specified");
+    }
+
+    const auto sourceResource = fmt::format("arn:aws:s3:::{}/{}", copySource.bucket, copySource.key);
+    if (!isAuthorized(sourceResource, Action::GetObject, accessKey))
+    {
+        XLOGF(INFO, "Unauthorized read of copy source {}", sourceResource);
+        ResponseBuilder(downstream_)
+            .status(403, "Forbidden")
+            .body(s3errorXml(S3ErrorCode::AccessDenied, "", sourceHeader, ""))
+            .sendWithEOM();
+        return std::nullopt;
+    }
+
+    return copySource;
+}
+
 void S3Handler::parseSourceMatchInfo(proxygen::HTTPMessage& headers, SingleFileStorage::MatchInfo& matchInfo)
 {
     auto ifMatchStr = headers.getHeaders().getSingleOrEmpty("x-amz-copy-source-if-match");
@@ -9388,11 +9471,8 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
     std::unique_ptr<ObjectReader> sourceFile;
     try
     {
-        const auto bucketSep = copyObjectInfo.source.find('/');
-        if (bucketSep == std::string::npos || bucketSep == 0)
-            throw ObjectReadError("Copy source needs to contain bucket and key");
-
-        sourceFile = std::make_unique<ObjectReader>(sfs(), copyObjectInfo.source.substr(0, bucketSep), copyObjectInfo.source.substr(bucketSep + 1));
+        const auto& source = copyObjectInfo.sourceObject;
+        sourceFile = std::make_unique<ObjectReader>(sfs(), source.bucket, source.key, source.version);
     }
     catch (const std::exception& e)
     {
