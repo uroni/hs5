@@ -4077,7 +4077,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
         const bool fullRange = rangeStart == 0 && rangeEnd == res.total_len;
 
-        runInHttpThread(evb, self, [hasRange = !range.empty() || partNumberSize, rangeStart, rangeEnd, md5sum, partNumberEtag, last_modified = res.last_modified, checksumModeEnabled, returnPart = partNumberStr.has_value(), fullRange](const std::shared_ptr<S3Handler>& self) REQUIRES(self->httpThread)
+        runInHttpThread(evb, self, [hasRange = !range.empty() || partNumberSize, rangeStart, rangeEnd, totalLen = res.total_len, md5sum, partNumberEtag, last_modified = res.last_modified, checksumModeEnabled, returnPart = partNumberStr.has_value(), fullRange](const std::shared_ptr<S3Handler>& self) REQUIRES(self->httpThread)
                         {
                     self->assertActive();
                     self->done_bytes = rangeStart;
@@ -4104,6 +4104,9 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                         .header(proxygen::HTTP_HEADER_CONTENT_LENGTH, std::to_string(rangeEnd-rangeStart))
                         .header(proxygen::HTTP_HEADER_ETAG, partNumberEtag ? *partNumberEtag : self->getEtagParsedMultipart(md5sum))
                         .header("Last-Modified", format_last_modified_rfc1123(last_modified)));
+
+                    if(hasRange)
+                        resp.header(proxygen::HTTP_HEADER_CONTENT_RANGE, fmt::format("bytes {}-{}/{}", rangeStart, rangeEnd-1, totalLen));
 
                     ObjMetadata::addRespHeaders(self->objMetadata.get(), resp);
 

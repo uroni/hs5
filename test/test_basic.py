@@ -99,12 +99,17 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     assert obj_range["ContentType"] == "text/markdown"
     assert "test" in obj_range["Metadata"] and obj_range["Metadata"]["test"] == "foo"
     assert obj_range["LastModified"].year >= 2025
+    assert obj_range["ContentRange"] == f"bytes 0-9/{len(fdata)}"
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
     assert bdata == fdata[:10]
 
     obj_range = s3_client.get_object(
         Bucket=hs5.testbucketname(), Key="upload.txt", Range="bytes=-10"
+    )
+    assert (
+        obj_range["ContentRange"]
+        == f"bytes {len(fdata)-10}-{len(fdata)-1}/{len(fdata)}"
     )
     bdata = obj_range["Body"].read()
     assert len(bdata) == 10
@@ -117,7 +122,17 @@ def test_put_get_del_list(tmp_path: Path, hs5: Hs5Runner):
     )
     assert obj_range["ContentType"] == "text/markdown"
     assert "test" in obj_range["Metadata"] and obj_range["Metadata"]["test"] == "foo"
+    assert obj_range["ContentRange"] == f"bytes 10-19/{len(fdata)}"
     assert obj_range["Body"].read() == fdata[10:20]
+
+    obj_range = s3_client.get_object(
+        Bucket=hs5.testbucketname(),
+        Key="upload.txt",
+        Range=f"bytes=0-{len(fdata)-1}",
+    )
+    assert obj_range["ResponseMetadata"]["HTTPStatusCode"] == 206
+    assert obj_range["ContentRange"] == f"bytes 0-{len(fdata)-1}/{len(fdata)}"
+    assert obj_range["Body"].read() == fdata
 
     with pytest.raises(ClientError, match="Range Not Satisfiable"):
         obj_range = s3_client.get_object(
