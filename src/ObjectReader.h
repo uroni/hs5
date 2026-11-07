@@ -14,16 +14,23 @@ struct MultiPartDownloadData;
 class ObjectReadError : public std::runtime_error
 {
 public:
-    ObjectReadError(const std::string& msg, bool notFound = false)
-        : std::runtime_error(msg), notFound_(notFound) {}
+    ObjectReadError(const std::string& msg, bool notFound = false, bool deleteMarker = false)
+        : std::runtime_error(msg), notFound_(notFound), deleteMarker_(deleteMarker) {}
 
     bool notFound() const
     {
         return notFound_;
     }
 
+    // The explicitly requested version is a delete marker
+    bool deleteMarker() const
+    {
+        return deleteMarker_;
+    }
+
 private:
     bool notFound_;
+    bool deleteMarker_;
 };
 
 // Reads the newest (or the given) version of an object (single or multipart). Throws ObjectReadError on failure

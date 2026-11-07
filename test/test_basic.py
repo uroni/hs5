@@ -1790,12 +1790,36 @@ def test_copy_object_version(hs5: Hs5Runner):
     assert s3_client.get_object(Bucket=bucket, Key="copy1")["Body"].read() == b"one"
 
     # Versions stay copyable while the latest version is a delete marker
-    s3_client.delete_object(Bucket=bucket, Key="src")
+    marker = s3_client.delete_object(Bucket=bucket, Key="src").get("VersionId")
+    assert marker is not None
     with pytest.raises(ClientError) as exc_info:
         s3_client.copy_object(
             Bucket=bucket, Key="copy2", CopySource={"Bucket": bucket, "Key": "src"}
         )
     assert exc_info.value.response.get("Error", {}).get("Code") == "NoSuchKey"
+
+    # A delete marker cannot be copied by version id
+    with pytest.raises(ClientError) as exc_info:
+        s3_client.copy_object(
+            Bucket=bucket,
+            Key="copy2",
+            CopySource={"Bucket": bucket, "Key": "src", "VersionId": marker},
+        )
+    assert exc_info.value.response.get("Error", {}).get("Code") == "InvalidRequest"
+
+    marker_upl = s3_client.create_multipart_upload(Bucket=bucket, Key="copy2")
+    with pytest.raises(ClientError) as exc_info:
+        s3_client.upload_part_copy(
+            Bucket=bucket,
+            Key="copy2",
+            UploadId=marker_upl["UploadId"],
+            PartNumber=1,
+            CopySource={"Bucket": bucket, "Key": "src", "VersionId": marker},
+        )
+    assert exc_info.value.response.get("Error", {}).get("Code") == "InvalidRequest"
+    s3_client.abort_multipart_upload(
+        Bucket=bucket, Key="copy2", UploadId=marker_upl["UploadId"]
+    )
 
     s3_client.copy_object(
         Bucket=bucket,

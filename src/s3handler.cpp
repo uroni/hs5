@@ -9478,6 +9478,21 @@ void S3Handler::copyObject(folly::EventBase* evb, const std::string& targetFn, C
     catch (const std::exception& e)
     {
         const auto readError = dynamic_cast<const ObjectReadError*>(&e);
+        if (readError && readError->deleteMarker())
+        {
+            XLOGF(INFO, "Source object version {} for copy is a delete marker", copyObjectInfo.source);
+            evb->runInEventBaseThread([self = this->self, copyObjectInfo]()
+                                      {
+                                          if (self->finished_)
+                                              return;
+                                          ResponseBuilder(self->downstream_)
+                                              .status(400, "Bad request")
+                                              .body(s3errorXml(S3ErrorCode::InvalidRequest, "The source of a copy request may not specifically refer to a delete marker by version id.", copyObjectInfo.source, ""))
+                                              .sendWithEOM();
+                                          self->finished_ = true; });
+            return;
+        }
+
         if (readError && readError->notFound())
         {
             XLOGF(WARN, "Source object {} not found for copy", copyObjectInfo.source);

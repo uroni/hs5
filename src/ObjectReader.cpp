@@ -57,7 +57,7 @@ ObjectReader::ObjectReader(SingleFileStorage& sfs, const std::string& bucket, co
 
     if (res.md5sum.size() == 1 && res.md5sum[0] == metadata_tombstone)
     {
-        throw ObjectReadError("File not found: " + name, true);
+        throw ObjectReadError("File not found: " + name, true, version != 0);
     }
 
     extents = std::move(res.extents);
