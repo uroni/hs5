@@ -1,3 +1,7 @@
 # ThreadSanitizer suppressions
 # libevent unconditionally writes this flag from every event loop thread (event_debug_note_*). Harmless.
 race:event_debug_mode_too_late
+# LMDB reader table and meta txnid are intentionally accessed lock-free (see mdb.c ITS#7970 / mdb_env_write_meta comment).
+race:mdb_find_oldest
+race:mdb_txn_renew0
+race:mdb_env_write_meta
