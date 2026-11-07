@@ -1481,6 +1481,7 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
     )
     assert obj_range["ResponseMetadata"]["HTTPStatusCode"] == 206
     assert obj_range["ContentRange"] == f"bytes 0-{8 * MB - 1}/{ul_size}"
+    assert obj_range["PartsCount"] == (ul_size + 8 * MB - 1) // (8 * MB)
     bdata = obj_range["Body"].read()
     md5sum = hashlib.md5(bdata).hexdigest()
     assert len(bdata) == 8 * MB
@@ -1503,12 +1504,14 @@ def test_put_multipart(tmp_path: Path, hs5: Hs5Runner, restart_during_download: 
 
     obj = s3_client.head_object(Bucket=hs5.testbucketname(), Key="upload.txt")
     assert obj["ContentLength"] == ul_size
+    assert "PartsCount" not in obj
 
     obj = s3_client.head_object(
         Bucket=hs5.testbucketname(), Key="upload.txt", PartNumber=2
     )
     assert obj["ContentLength"] == 8 * MB
     assert obj["ETag"].strip('"').lower() == md5sum.lower()
+    assert obj["PartsCount"] == (ul_size + 8 * MB - 1) // (8 * MB)
 
     with pytest.raises(ClientError):
         s3_client.head_object(

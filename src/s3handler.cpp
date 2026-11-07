@@ -3994,6 +3994,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
         std::optional<std::string> partNumberEtag;
         std::optional<int64_t> partNumberSize;
+        std::optional<int64_t> partsCount;
         bool setMultiPartExtents = false;
         if (partNumberStr)
         {
@@ -4060,6 +4061,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
                 rangeEnd = partNumberOffset + partNumberSizeOut;
                 partNumberSize = partNumberSizeOut;
                 partNumberEtag = partNumberEtagOut;
+                partsCount = self->multiPartDownloadData->numParts;
                 setMultiPartExtents = true;
 
                 if (partNumberChecksumHashOut && self->sdkChecksumHash)
@@ -4078,7 +4080,7 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
         const bool fullRange = rangeStart == 0 && rangeEnd == res.total_len;
 
-        runInHttpThread(evb, self, [hasRange = !range.empty() || partNumberSize, rangeStart, rangeEnd, totalLen = res.total_len, md5sum, partNumberEtag, last_modified = res.last_modified, checksumModeEnabled, returnPart = partNumberStr.has_value(), fullRange](const std::shared_ptr<S3Handler>& self) REQUIRES(self->httpThread)
+        runInHttpThread(evb, self, [hasRange = !range.empty() || partNumberSize, rangeStart, rangeEnd, totalLen = res.total_len, partsCount, md5sum, partNumberEtag, last_modified = res.last_modified, checksumModeEnabled, returnPart = partNumberStr.has_value(), fullRange](const std::shared_ptr<S3Handler>& self) REQUIRES(self->httpThread)
                         {
                     self->assertActive();
                     self->done_bytes = rangeStart;
@@ -4108,6 +4110,9 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
                     if(hasRange)
                         resp.header(proxygen::HTTP_HEADER_CONTENT_RANGE, fmt::format("bytes {}-{}/{}", rangeStart, rangeEnd-1, totalLen));
+
+                    if(partsCount)
+                        resp.header("x-amz-mp-parts-count", std::to_string(*partsCount));
 
                     ObjMetadata::addRespHeaders(self->objMetadata.get(), resp);
 
