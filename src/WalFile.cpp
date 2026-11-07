@@ -282,19 +282,20 @@ namespace
         return b;
     }
 
-    bool forEachDataItem(const int64_t off, const size_t dataSize, auto fn)
-    {
-        auto startOff = (off / waitBlockSize) * waitBlockSize;
-        for (auto i = startOff; i < off + dataSize; i += waitBlockSize)
-        {
-            const auto block = i / waitBlockSize;
-            if (fn(block))
-                return true;
-        }
-        return false;
-    }
-
 } // namespace
+
+template <typename F>
+bool WalFile::forEachDataItem(const int64_t off, const size_t dataSize, F fn) const
+{
+    auto startOff = (off / waitBlockSize) * waitBlockSize;
+    for (auto i = startOff; i < off + dataSize; i += waitBlockSize)
+    {
+        const auto block = i / waitBlockSize;
+        if (fn(block))
+            return true;
+    }
+    return false;
+}
 
 WalFile::WalFile(const std::string& path, const std::string_view walUuid, MultiFile& dataFile, const bool trackDirtyBlocks, const bool noSync)
     : primaryFile(path + "1", O_RDWR | O_CREAT | O_APPEND, 0644),
@@ -332,8 +333,7 @@ WalFile::WalFile(const std::string& path, const std::string_view walUuid, MultiF
 
     if (currentFile().size() == 0)
     {
-        WalFile::ResetPrep prep(nullptr);
-        reset(prep, false, std::nullopt);
+        resetLocked(false, std::nullopt);
     }
 }
 
@@ -366,7 +366,7 @@ bool WalFile::write(const int64_t transid, const SingleFileStorage::SFragInfo& i
     }
 
     CWData data;
-    writeDataHeader(data, dataTypeFragInfo, seqNo);
+    writeDataHeader(data, dataTypeFragInfo, unlockedSeqNo());
     data.addVarInt(transid);
 
     if (!serializeFragInfo(info, data))
@@ -453,13 +453,13 @@ bool WalFile::writeData(CWData& data, DataItem* dataItem)
 
     if (trackDirtyBlocks)
     {
-        forEachDataItem(off, dataSize, [&](const int64_t block)
+        forEachDataItem(off, dataSize, [&](const int64_t block) REQUIRES(mutex)
                         {
             dirtyBlocks().insert(block);
             return false; });
     }
 
-    forEachDataItem(off, dataSize, [&](const int64_t block)
+    forEachDataItem(off, dataSize, [&](const int64_t block) REQUIRES(mutex)
                     {
         auto it = dataItems.find(block);
         if(it != dataItems.end())
@@ -632,22 +632,24 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
 bool WalFile::sync(const CommitInfo& commitInfo)
 {
     CWData data;
-    writeDataHeader(data, dataTypeSync, seqNo);
+    writeDataHeader(data, dataTypeSync, unlockedSeqNo());
     serializeCommitInfo(commitInfo, data);
 
     if (!writeData(data))
         return false;
 
-    return fsyncFile(currentFile()) == 0;
+    return fsyncFile(unlockedCurrentFile()) == 0;
 }
 
 bool WalFile::fsync()
 {
-    return fsyncFile(currentFile()) == 0;
+    return fsyncFile(unlockedCurrentFile()) == 0;
 }
 
 bool WalFile::switchFiles()
 {
+    assertCommitThread();
+
     std::scoped_lock lock(mutex);
     if (fsyncFile(currentFile()) != 0)
     {
@@ -664,13 +666,27 @@ bool WalFile::switchFiles()
 
     useAltFile = !useAltFile;
     pendingReset = true;
-    ResetPrep prep(nullptr);
-    reset(prep, true, std::nullopt);
+    resetLocked(true, std::nullopt);
 
     return true;
 }
 
 void WalFile::reset(ResetPrep& prep, const bool sync, const std::optional<bool> useAltFileManual)
+{
+    assertCommitThread();
+    assertHeld(prep.lock);
+    resetLocked(sync, useAltFileManual);
+    prep.unlock();
+}
+
+void WalFile::reset(const bool sync, const std::optional<bool> useAltFileManual)
+{
+    assertCommitThread();
+    std::scoped_lock lock(mutex);
+    resetLocked(sync, useAltFileManual);
+}
+
+void WalFile::resetLocked(const bool sync, const std::optional<bool> useAltFileManual)
 {
     const bool writeHeader = !useAltFileManual;
     if (writeHeader)
@@ -714,8 +730,6 @@ void WalFile::reset(ResetPrep& prep, const bool sync, const std::optional<bool> 
     }
 
     currDirtyBlocks.clear();
-
-    prep.unlock();
 }
 
 bool WalFile::writeData(const int64_t off, const char* data, const size_t dataSize, const bool useThreadWrite)
@@ -723,7 +737,7 @@ bool WalFile::writeData(const int64_t off, const char* data, const size_t dataSi
     XLOGF(DBG0, "Log data {} to offset {} {}", dataSize, off, useThreadWrite ? "using thread write" : "direct write");
 
     CWData wdata;
-    writeDataHeader(wdata, dataTypeDataFileData, seqNo);
+    writeDataHeader(wdata, dataTypeDataFileData, unlockedSeqNo());
     wdata.addVarInt(off);
     wdata.addBuffer(data, dataSize);
 
@@ -747,10 +761,10 @@ bool WalFile::writeData(const int64_t off, const char* data, const size_t dataSi
 
 void WalFile::waitForWrites()
 {
-    std::unique_lock lock(mutex);
+    CondVarLock lock(mutex);
     while (altPendingData())
     {
-        pendingDataCond.wait(lock);
+        lock.wait(pendingDataCond);
     }
 }
 
@@ -758,13 +772,13 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
 {
     folly::setThreadName("Wal data writer");
 
-    std::unique_lock lock(mutex);
+    CondVarLock lock(mutex);
 
     while (true)
     {
         while (dataWriteQueue.empty() && !stopToken.stop_requested())
         {
-            dataWriteCond.wait(lock);
+            lock.wait(dataWriteCond);
         }
 
         if (stopToken.stop_requested())
@@ -798,7 +812,7 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
 
         if (!item.data.empty())
         {
-            forEachDataItem(item.dataOff, item.data.size(), [&](const int64_t block)
+            forEachDataItem(item.dataOff, item.data.size(), [&](const int64_t block) REQUIRES(mutex)
                             {
                 auto it = dataItems.find(block);
                 assert(it != dataItems.end());
@@ -829,8 +843,7 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
 
                 lock.lock();
 
-                ResetPrep prep(nullptr);
-                reset(prep, true, item.isAlt);
+                resetLocked(true, item.isAlt);
                 pendingReset = false;
             }
             else
@@ -857,10 +870,10 @@ void WalFile::dataWriteThread(std::stop_token stopToken)
 
 void WalFile::waitForWriteout(const int64_t off, const size_t dataSize)
 {
-    std::unique_lock lock(mutex);
+    CondVarLock lock(mutex);
     while (true)
     {
-        auto wait = forEachDataItem(off, dataSize, [&](const int64_t block)
+        auto wait = forEachDataItem(off, dataSize, [&](const int64_t block) REQUIRES(mutex)
                                     {
             auto it = dataItems.find(block);
             if(it!=dataItems.end())
@@ -873,7 +886,7 @@ void WalFile::waitForWriteout(const int64_t off, const size_t dataSize)
 
         if (wait)
         {
-            writeDoneCond.wait(lock);
+            lock.wait(writeDoneCond);
             continue;
         }
 
@@ -885,7 +898,7 @@ bool WalFile::isDirty(const int64_t off, const size_t dataSize) const
 {
     bool ret = false;
     std::scoped_lock lock(mutex);
-    return forEachDataItem(off, dataSize, [&](const int64_t block)
+    return forEachDataItem(off, dataSize, [&](const int64_t block) REQUIRES(mutex)
                            {
         if(dirtyBlocks().contains(block) || altDirtyBlocks().contains(block))
         {

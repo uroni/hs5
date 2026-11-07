@@ -7875,9 +7875,14 @@ void SingleFileStorage::operator()()
 
                 if (wal_file && wal_file_reset)
                 {
-                    if (!FLAGS_wal_write_thread || wal_write_data == 0)
+                    if (!FLAGS_wal_write_thread)
                     {
                         wal_file->reset(walFileResetPrep, wal_write_data != 0, std::nullopt);
+                    }
+                    else if (wal_write_data == 0)
+                    {
+                        assert(!walFileResetPrep.lock.owns_lock());
+                        wal_file->reset(false, std::nullopt);
                     }
                     else
                     {

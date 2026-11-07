@@ -140,7 +140,19 @@ jobs:
           configurePreset: 'ninja-multi-vcpkg'
           buildPreset: 'ninja-vcpkg-debug'
           testPreset: 'test-debug'
-      
+
+      - name: Install clang and libc++ for thread safety analysis
+        if: matrix.variant == 'debug'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev
+
+      - name: Run thread safety analysis
+        if: matrix.variant == 'debug'
+        env:
+          CLANGXX: clang++-18
+        run: cmake/thread-safety-check.sh builds/ninja-multi-vcpkg
+
       - name: Run CMake+vcpkg+Ninja+CTest to build release packages and generate/build/test the code.
         if: matrix.variant == 'benchmark'
         uses: lukka/run-cmake@v10
