@@ -22,6 +22,14 @@ METADATA_STORAGE_PATH=/var/lib/hs5/meta
 LOGLEVEL=info
 ```
 
+<style>
+  .config-table td:last-child,
+  .config-table th:last-child {
+    white-space: normal;
+    min-width: 20rem;
+  }
+</style>
+
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `HTTP_PORT` | integer | `80` | HTTP port HS5 listens on. |
@@ -49,6 +57,7 @@ LOGLEVEL=info
 | `WAL_SMALL_OBJECT_LIMIT` | integer (bytes) | `6000` | In `full` or `data-only` WAL mode, object size threshold for writing object data to WAL. |
 | `WAL_SIZE_MB` | integer (MiB) | `1000` | WAL file size threshold before reset/rollover. |
 | `WAL_ITEMS` | integer | `10000` | WAL item count threshold before reset/rollover. |
+{: .config-table }
 
 HS5 can also read these options from environment variables using the `HS5_` prefix (for example,
 `HS5_HTTP_PORT`). Option precedence is: config file values first, then environment variables, then command line arguments.
