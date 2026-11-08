@@ -1,7 +1,7 @@
 ---
 # the default layout is 'page'
 icon: fas fa-rocket
-order: 5
+order: 6
 title: Use cases
 ---
 

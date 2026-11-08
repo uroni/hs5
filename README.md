@@ -100,7 +100,7 @@ Data and metadata will be stored in the current directory by default. It'll prin
 
 ## Omissions #
 
-At this point HS5 implements most major S3 operations, including versioning and object locks. POST Object uploading is only rudimentary at this point.
+At this point HS5 implements most major S3 operations, including versioning and object locks. POST Object uploading is only rudimentary at this point. See [hs5.eu/operations](https://hs5.eu/operations/) for the list of supported S3 operations.
 
 ## How the storage works #
 
