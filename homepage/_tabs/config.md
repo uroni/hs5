@@ -23,10 +23,22 @@ LOGLEVEL=info
 ```
 
 <style>
+  .config-table td:first-child,
+  .config-table th:first-child,
+  .config-table td:nth-child(3),
+  .config-table th:nth-child(3) {
+    white-space: normal;
+  }
+  .config-table td:nth-child(3) {
+    min-width: 9rem;
+  }
+  .config-table td:nth-child(3) code {
+    white-space: nowrap;
+  }
   .config-table td:last-child,
   .config-table th:last-child {
     white-space: normal;
-    min-width: 20rem;
+    min-width: 16rem;
   }
 </style>
 
@@ -35,17 +47,17 @@ LOGLEVEL=info
 | `HTTP_PORT` | integer | `80` | HTTP port HS5 listens on. |
 | `SERVER_URL` | string | empty | Public/base URL of this server. |
 | `DATA_STORAGE_PATH` | path | `.` | Path for HS5 data files. |
-| `METADATA_STORAGE_PATH` | path | `.` | Path for HS5 metadata/index files. |
+| <code class="language-plaintext highlighter-rouge">METADATA_<wbr>STORAGE_<wbr>PATH</code> | path | `.` | Path for HS5 metadata/index files. |
 | `SERVER_IP` | string | `0.0.0.0` | Address/hostname HS5 binds to. |
-| `INIT_ROOT_ACCESS_KEY` | string | `root` | Initial root access key name on first startup. |
+| <code class="language-plaintext highlighter-rouge">INIT_<wbr>ROOT_<wbr>ACCESS_<wbr>KEY</code> | string | `root` | Initial root access key name on first startup. |
 | `INIT_ROOT_PASSWORD` | string | auto-generated if unset | Initial root password on first startup. |
 | `INIT_CREATE_BUCKET` | string | empty | Comma-separated list of buckets to create at startup. |
 | `MANUAL_COMMIT` | boolean | `false` | Enable manual commit mode. Accepted true values: `true`, `yes`, `on`, `1`. |
-| `MANUAL_COMMIT_LIST_CONSISTENT` | boolean | `true` | Keep list operations fully consistent in manual commit mode (higher latency). |
+| <code class="language-plaintext highlighter-rouge">MANUAL_<wbr>COMMIT_<wbr>LIST_<wbr>CONSISTENT</code> | boolean | `true` | Keep list operations fully consistent in manual commit mode (higher latency). |
 | `COMMIT_AFTER_MS` | integer (ms) | `30000` | In manual commit mode, automatically commit after this delay. Use `0` to disable auto-commit. |
 | `WORKER_THREADS` | integer | `2 x CPU cores` | Number of global worker threads. |
 | `HTTP_WORKER_THREADS` | integer | CPU core count | Number of HTTP worker threads. |
-| `GET_IN_WORKER_THRESHOLD` | integer (bytes) | `0` | Serve GET/HEAD requests in the HTTP worker thread and read objects smaller than this via mmap there. Lowers latency for small objects; `0` disables. |
+| <code class="language-plaintext highlighter-rouge">GET_<wbr>IN_<wbr>WORKER_<wbr>THRESHOLD</code> | integer (bytes) | `0` | Serve GET/HEAD requests in the HTTP worker thread and read objects smaller than this via mmap there. Lowers latency for small objects; `0` disables. |
 | `LOGLEVEL` | enum | `info` | Log level. Allowed values: `debug`, `info`, `warn`, `error`. |
 | `STOP_ON_ERROR` | boolean | `false` | Stop HS5 on write/read errors instead of continuing. |
 | `DISABLE_MD5_ETAG` | boolean | `false` | Use a unique random value as ETag instead of the MD5 of the object data. Saves CPU on uploads, but ETags are no longer content MD5s (not S3 compatible for clients that verify them). |
@@ -54,7 +66,7 @@ LOGLEVEL=info
 | `DB_MAX_DIRTY_MB` | integer (MiB) | `50` | Maximum LMDB dirty page budget before flush. |
 | `WAL_MODE` | enum | `disabled` | Performance WAL mode. Allowed values: `disabled`, `metadata-only`, `data-only`, `all-data-only`, `full`, `full-all-data`. |
 | `WAL_PATH` | path | metadata path | Path where WAL files are written. |
-| `WAL_SMALL_OBJECT_LIMIT` | integer (bytes) | `6000` | In `full` or `data-only` WAL mode, object size threshold for writing object data to WAL. |
+| <code class="language-plaintext highlighter-rouge">WAL_<wbr>SMALL_<wbr>OBJECT_<wbr>LIMIT</code> | integer (bytes) | `6000` | In `full` or `data-only` WAL mode, object size threshold for writing object data to WAL. |
 | `WAL_SIZE_MB` | integer (MiB) | `1000` | WAL file size threshold before reset/rollover. |
 | `WAL_ITEMS` | integer | `10000` | WAL item count threshold before reset/rollover. |
 {: .config-table }
