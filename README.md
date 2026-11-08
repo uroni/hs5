@@ -15,7 +15,7 @@ Freely available under the [LGPLv3+](https://github.com/uroni/hs5#LGPL-3.0-1-ov-
 HS5 has a web interface to manage buckets and configure users.
 ![HS5 Screenshot](https://hs5.eu/assets/img/Screenshot1.png)
 
-Homepage at [https://www.hs5.eu](https://www.hs5.eu)
+Homepage at [https://www.hs5.eu](https://www.hs5.eu). See [hs5.eu/changelog](https://hs5.eu/changelog/) for release notes.
 
 Table of Contents
 =================
