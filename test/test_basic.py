@@ -1958,6 +1958,64 @@ def test_put_chunked(
             assert filecmp.cmp(tmpfile, dl_path)
 
 
+@pytest.mark.parametrize(
+    "trailer_value,expected_status",
+    [
+        # Rejected while decoding the aws-chunked body (HTTP thread)
+        ("!!not-base64!!", 500),
+        # Valid base64, but not the size of a CRC32 (rejected when applied on the body thread)
+        (base64.b64encode(b"abc").decode("ascii"), 500),
+        # Valid CRC32 size, but wrong value
+        (base64.b64encode(b"\0\0\0\0").decode("ascii"), 400),
+    ],
+)
+@pytest.mark.parametrize("size", [101, 5 * 1024 * 1024 + 12])
+def test_put_chunked_invalid_trailer(
+    hs5: Hs5Runner, size: int, trailer_value: str, expected_status: int
+):
+    import botocore.httpchecksum
+
+    def resolve_override(request, operation_model, params):
+        botocore.httpchecksum.resolve_request_checksum_algorithm(
+            request, operation_model, params
+        )
+        botocore.httpchecksum.resolve_response_checksum_algorithms(
+            request, operation_model, params
+        )
+        if operation_model.name == "PutObject":
+            checksum_context = request["context"]["checksum"]
+            checksum_context["request_algorithm"]["in"] = "trailer"
+
+    key = f"invalid_trailer_{size}.dat"
+
+    with patch("botocore.httpchecksum.DEFAULT_CHECKSUM_ALGORITHM", new="CRC32"):
+        with patch("botocore.client.resolve_checksum_context", new=resolve_override):
+            # The trailer value is the (corrupted) checksum digest
+            with patch.object(
+                botocore.httpchecksum.BaseChecksum,
+                "b64digest",
+                lambda _self: trailer_value,
+            ):
+                s3_client = hs5.get_s3_client()
+
+                with pytest.raises(ClientError) as e:
+                    s3_client.put_object(
+                        Bucket=hs5.testbucketname(),
+                        Key=key,
+                        Body=io.BytesIO(os.urandom(size)),
+                    )
+
+                assert (
+                    e.value.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                    == expected_status
+                )
+
+    s3_client = hs5.get_s3_client()
+    with pytest.raises(ClientError) as e:
+        s3_client.head_object(Bucket=hs5.testbucketname(), Key=key)
+    assert e.value.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404
+
+
 @pytest.mark.slow
 def test_put_get_del_stress(tmp_path: Path, hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()

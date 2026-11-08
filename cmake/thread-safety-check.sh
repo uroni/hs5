@@ -81,6 +81,8 @@ EOF
 done
 
 # Lambdas passed to S3Handler::runInHttpThread must be annotated with REQUIRES(<self>->httpThread).
+# Lambdas passed to runInHttpThreadWithOwner must be annotated with REQUIRES(<self>->httpThread, <self>->requestOwner),
+# lambdas passed to runInCpuThread/runInCurrentThread with REQUIRES(<self>->requestOwner) or RELEASE(<self>->requestOwner).
 # The analysis only flags an unannotated lambda if it accesses guarded members, and attributes are
 # not part of the lambda type, so this cannot be checked in the template itself.
 # S3Handler and ApiHandler must not use runInEventBaseThread directly, as that bypasses the check, and must use
@@ -105,10 +107,10 @@ for fn in sys.argv[1:]:
                 line_start = src.rfind("\n", 0, m.start()) + 1
                 if "//" in src[line_start:m.start()]:
                     continue  # Comment
-                if re.search(r"void runInCpuThread(FireAndForget)?\(", src[max(0, m.start() - 200):m.start()]):
-                    continue  # Used by runInCpuThread/runInCpuThreadFireAndForget itself
+                if re.search(r"void runInCpuThread(FireAndForget|WithoutOwner)?\(", src[max(0, m.start() - 200):m.start()]):
+                    continue  # Used by runInCpuThreadWithoutOwner/runInCpuThreadFireAndForget itself
                 line = src.count("\n", 0, m.start()) + 1
-                print(f"{fn}:{line}: error: use runInCpuThread or runInCpuThreadFireAndForget instead of getGlobalCPUExecutor()->add in S3Handler", file=sys.stderr)
+                print(f"{fn}:{line}: error: use runInCpuThread, runInCpuThreadWithoutOwner or runInCpuThreadFireAndForget instead of getGlobalCPUExecutor()->add in S3Handler", file=sys.stderr)
                 ok = False
         for m in re.finditer(r"\bdownstream_\b", src):
             line_start = src.rfind("\n", 0, m.start()) + 1
@@ -126,6 +128,29 @@ for fn in sys.argv[1:]:
         if not re.search(r"\)\s*REQUIRES\(\s*\w+(->|\.)httpThread\s*\)", head):
             line = src.count("\n", 0, m.start()) + 1
             print(f"{fn}:{line}: error: lambda passed to runInHttpThread must be annotated with REQUIRES(self->httpThread)", file=sys.stderr)
+            ok = False
+    for m in re.finditer(r"\brunInHttpThreadWithOwner\(", src):
+        head = src[m.end():src.find("{", m.end())]
+        if "F&&" in head:
+            continue  # Definition
+        if not re.search(r"\)\s*REQUIRES\(\s*(\w+)(->|\.)httpThread\s*,\s*\1(->|\.)requestOwner\s*\)", head):
+            line = src.count("\n", 0, m.start()) + 1
+            print(f"{fn}:{line}: error: lambda passed to runInHttpThreadWithOwner must be annotated with REQUIRES(self->httpThread, self->requestOwner)", file=sys.stderr)
+            ok = False
+    for m in re.finditer(r"\b(runInCpuThread|runInCurrentThread)\(", src):
+        head = src[m.end():src.find("{", m.end())]
+        if "F&&" in head:
+            continue  # Definition
+        if ";" in head:
+            # Named callable (e.g. prepareFunc in getObject): check the lambda it was initialized with
+            name = re.search(r"(\w+)\)*\s*;", head).group(1)
+            defn = None
+            for d in re.finditer(r"\b" + name + r"\s*=\s*\[[^\n]*", src[:m.start()]):
+                defn = d
+            head = defn.group(0) if defn else ""
+        if not re.search(r"\)\s*(REQUIRES|RELEASE)\(\s*\w+(->|\.)requestOwner\s*\)", head):
+            line = src.count("\n", 0, m.start()) + 1
+            print(f"{fn}:{line}: error: lambda passed to {m.group(1)} must be annotated with REQUIRES(self->requestOwner) or RELEASE(self->requestOwner)", file=sys.stderr)
             ok = False
 sys.exit(0 if ok else 1)
 EOF
