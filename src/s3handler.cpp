@@ -9403,7 +9403,7 @@ void S3Handler::copyObject(folly::EventBase* evb, std::shared_ptr<S3Handler> sel
     beginPendingCleanup();
 
     std::vector<char> buf;
-    buf.resize(128 * 1024 * 1024);
+    buf.resize(128 * 1024);
 
     while (readOffset < sourceFileSize)
     {
