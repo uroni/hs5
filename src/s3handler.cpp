@@ -1844,6 +1844,13 @@ std::string s3errorXml(const S3ErrorCode code, const std::string_view& msg, cons
                        s3errorCodeToStr(code), msg.empty() ? s3errorMsg(code) : escapeXML(msg), escapeXML(ressource), escapeXML(request_id));
 }
 
+void sendWithBody(ResponseBuilder& builder, const bool isHead, std::string body)
+{
+    if (!isHead && !body.empty())
+        builder.body(std::move(body));
+    builder.sendWithEOM();
+}
+
 ParsePartRes parsePartExtsFromStr(const std::string& rdata)
 {
     CRData crdata(rdata.data(), rdata.size());
@@ -3215,13 +3222,14 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
 
 bool S3Handler::setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::string_view path, const std::string* versionId, const bool setCorsHeader)
 {
+    const bool isHead = headers.getMethod() == HTTPMethod::HEAD;
+
     if (path.empty())
     {
         XLOGF(INFO, "Path empty when getting key info");
-        ResponseBuilder(downstream())
-            .status(500, "Internal error")
-            .body(s3errorXml(S3ErrorCode::InternalError, "Path is empty", "", ""))
-            .sendWithEOM();
+        ResponseBuilder resp(downstream());
+        resp.status(500, "Internal error");
+        sendWithBody(resp, isHead, s3errorXml(S3ErrorCode::InternalError, "Path is empty", "", ""));
         return false;
     }
 
@@ -3232,10 +3240,9 @@ bool S3Handler::setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::st
         if (version < 0)
         {
             XLOGF(INFO, "Version {} cannot be decrypted when getting key info", *versionId);
-            ResponseBuilder(downstream())
-                .status(400, "Bad request")
-                .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid version id specified", path, ""))
-                .sendWithEOM();
+            ResponseBuilder resp(downstream());
+            resp.status(400, "Bad request");
+            sendWithBody(resp, isHead, s3errorXml(S3ErrorCode::InvalidArgument, "Invalid version id specified", path, ""));
             return false;
         }
     }
@@ -3245,10 +3252,9 @@ bool S3Handler::setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::st
     if (bucketEnd == std::string::npos)
     {
         XLOGF(INFO, "Could not find bucket in path {}", path);
-        ResponseBuilder(downstream())
-            .status(500, "Internal error")
-            .body(s3errorXml(S3ErrorCode::InternalError, "Could not find bucket in path", "", ""))
-            .sendWithEOM();
+        ResponseBuilder resp(downstream());
+        resp.status(500, "Internal error");
+        sendWithBody(resp, isHead, s3errorXml(S3ErrorCode::InternalError, "Could not find bucket in path", "", ""));
         return false;
     }
 
@@ -3259,10 +3265,9 @@ bool S3Handler::setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::st
     if (!bucketInfoOpt)
     {
         XLOGF(INFO, "Bucket of {} not found", path);
-        ResponseBuilder(downstream())
-            .status(404, "Not found")
-            .body(s3errorXml(S3ErrorCode::NoSuchBucket, "", bucketName, ""))
-            .sendWithEOM();
+        ResponseBuilder resp(downstream());
+        resp.status(404, "Not found");
+        sendWithBody(resp, isHead, s3errorXml(S3ErrorCode::NoSuchBucket, "", bucketName, ""));
         return false;
     }
 
@@ -3860,10 +3865,10 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
     if (!checksumModeStr.empty() && checksumModeStr != "ENABLED")
     {
-        ResponseBuilder(downstream())
-            .status(400, "Bad request")
-            .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid checksum mode", fullKeyPath(), ""))
-            .sendWithEOM();
+        ResponseBuilder resp(downstream());
+        resp.status(400, "Bad request");
+        sendWithBody(resp, headers.getMethod() == HTTPMethod::HEAD,
+                     s3errorXml(S3ErrorCode::InvalidArgument, "Invalid checksum mode", fullKeyPath(), ""));
         return;
     }
     const auto checksumModeEnabled = checksumModeStr == "ENABLED";
@@ -4080,11 +4085,11 @@ void S3Handler::getObject(proxygen::HTTPMessage& headers, const std::string& acc
 
                     if(matchFailed)
                     {
-                        self->responseBuilderWithCors(412, "Precondition Failed")
-                            .header(proxygen::HTTP_HEADER_ETAG, etag)
-                            .header("Last-Modified", format_last_modified_rfc1123(last_modified))
-                            .body(s3errorXml(S3ErrorCode::PreconditionFailed, "", fullKeyPath, ""))
-                            .sendWithEOM();
+                        auto resp = self->responseBuilderWithCors(412, "Precondition Failed");
+                        resp.header(proxygen::HTTP_HEADER_ETAG, etag)
+                            .header("Last-Modified", format_last_modified_rfc1123(last_modified));
+                        sendWithBody(resp, self->requestAction() == Action::HeadObject,
+                                     s3errorXml(S3ErrorCode::PreconditionFailed, "", fullKeyPath, ""));
                         return;
                     }
                     
@@ -4799,9 +4804,7 @@ void S3Handler::sendResponse(folly::EventBase* evb, const std::shared_ptr<S3Hand
                              {
         self->assertActive();
         auto resp = self->responseBuilderWithCors(code, message);
-        if (!body.empty())
-            resp.body(body);
-        resp.sendWithEOM();
+        sendWithBody(resp, self->requestAction() == Action::HeadObject, std::move(body));
         self->setFinished(); });
 }
 
@@ -4810,9 +4813,9 @@ void S3Handler::sendError(folly::EventBase* evb, const std::shared_ptr<S3Handler
     runInHttpThreadWithOwner(evb, self, [code, message, errorCode, errorMsg, resource = std::move(resource)](const std::shared_ptr<S3Handler>& self) REQUIRES(self->httpThread, self->requestOwner)
                              {
         self->assertActive();
-        self->responseBuilderWithCors(code, message)
-            .body(s3errorXml(errorCode, errorMsg, resource ? *resource : self->fullKeyPath(), ""))
-            .sendWithEOM();
+        auto resp = self->responseBuilderWithCors(code, message);
+        sendWithBody(resp, self->requestAction() == Action::HeadObject,
+                     s3errorXml(errorCode, errorMsg, resource ? *resource : self->fullKeyPath(), ""));
         self->setFinished(); });
 }
 

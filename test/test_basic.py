@@ -1660,6 +1660,70 @@ def test_list_partial_uploads_after_create(hs5: Hs5Runner):
         )
 
 
+@pytest.mark.parametrize(
+    "case", ["missing_key", "missing_bucket", "precondition_failed"]
+)
+def test_head_error_no_body(hs5: Hs5Runner, case: str):
+    """
+    Error responses to HEAD must not have a body. Otherwise a client reusing the
+    connection reads it as the start of the next response (breaks Docker registry)
+    """
+    import socket
+    from urllib.parse import urlsplit
+
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+    s3_client.put_object(Bucket=bucket, Key="exists", Body=b"data")
+
+    head_headers = {}
+    if case == "missing_key":
+        head_params = {"Bucket": bucket, "Key": "missing"}
+        expected_status = [404]
+    elif case == "missing_bucket":
+        head_params = {"Bucket": "nosuchbucket", "Key": "missing"}
+        expected_status = [403, 404]
+    else:
+        head_params = {"Bucket": bucket, "Key": "exists"}
+        head_headers = {"If-Match": '"00000000000000000000000000000000"'}
+        expected_status = [412]
+
+    head_url = urlsplit(
+        s3_client.generate_presigned_url("head_object", Params=head_params)
+    )
+    get_url = urlsplit(
+        s3_client.generate_presigned_url(
+            "get_object", Params={"Bucket": bucket, "Key": "exists"}
+        )
+    )
+
+    # Raw socket, as http.client discards unread bytes after a HEAD response
+    def raw_request(method: str, url, headers: dict[str, str]) -> bytes:
+        lines = [f"{method} {url.path}?{url.query} HTTP/1.1", f"Host: {url.netloc}"]
+        lines += [f"{k}: {v}" for k, v in headers.items()]
+        return ("\r\n".join(lines) + "\r\n\r\n").encode()
+
+    with socket.create_connection((head_url.hostname, head_url.port), timeout=10) as s:
+        s.sendall(raw_request("HEAD", head_url, head_headers))
+
+        data = b""
+        while b"\r\n\r\n" not in data:
+            chunk = s.recv(65536)
+            assert chunk, "connection closed"
+            data += chunk
+        head_resp, _, rest = data.partition(b"\r\n\r\n")
+        status = int(head_resp.split(b" ", 2)[1])
+        assert status in expected_status
+
+        # Same connection: the next bytes must be the response to this request,
+        # not a body sent with the HEAD response
+        s.sendall(raw_request("GET", get_url, {}))
+        while len(rest) < len(b"HTTP/1.1 200"):
+            chunk = s.recv(65536)
+            assert chunk, "connection closed"
+            rest += chunk
+        assert rest.startswith(b"HTTP/1.1 200"), rest[:100]
+
+
 def test_list_parts(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = hs5.testbucketname()
