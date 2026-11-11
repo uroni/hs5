@@ -7452,6 +7452,11 @@ void SingleFileStorage::operator()()
 
             last_commit_time = std::chrono::steady_clock::now();
 
+            {
+                std::scoped_lock scoped_lock(mutex);
+                needs_wal_file_reset = true;
+            }
+
             bool has_commit_info = false;
             if (frag_info.commit_info != nullptr)
             {
@@ -7463,7 +7468,6 @@ void SingleFileStorage::operator()()
             has_commit_info |= finish_pending_commits(commit_errors);
             if (commit_ok && has_commit_info)
                 commit_errors = 0;
-            needs_wal_file_reset = true;
             can_skip_commit = true;
         }
         else if (frag_info.action == FragAction::Commit)
