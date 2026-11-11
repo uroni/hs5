@@ -4968,6 +4968,11 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
                        {
                            XLOGF(WARN, "Could not write upload data for uploadId {} err {}", uploadId, rc);
                        }
+                       else if (!self->commit())
+                       {
+                           XLOGF(WARN, "Could not commit upload data for uploadId {}", uploadId);
+                           rc = EIO;
+                       }
 
                        {
                            if (rc != 0)

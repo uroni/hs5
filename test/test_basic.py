@@ -1629,6 +1629,37 @@ def test_list_partial_uploads(tmp_path: Path, hs5: Hs5Runner):
     hs5.wait_for_used(0)
 
 
+def test_list_partial_uploads_after_create(hs5: Hs5Runner):
+    """
+    A created multipart upload without any parts must be listed immediately
+    (Docker registry looks up its upload with ListMultipartUploads)
+    """
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+
+    keys = [f"uploads/upload{i}/data" for i in range(3)]
+    upload_ids = {
+        key: s3_client.create_multipart_upload(Bucket=bucket, Key=key)["UploadId"]
+        for key in keys
+    }
+
+    list_resp = s3_client.list_multipart_uploads(Bucket=bucket)
+    assert [(u["Key"], u["UploadId"]) for u in list_resp.get("Uploads", [])] == [
+        (key, upload_ids[key]) for key in keys
+    ]
+
+    for key in keys:
+        list_resp = s3_client.list_multipart_uploads(Bucket=bucket, Prefix=key)
+        assert [(u["Key"], u["UploadId"]) for u in list_resp.get("Uploads", [])] == [
+            (key, upload_ids[key])
+        ]
+
+    for key in keys:
+        s3_client.abort_multipart_upload(
+            Bucket=bucket, Key=key, UploadId=upload_ids[key]
+        )
+
+
 def test_list_parts(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = hs5.testbucketname()
