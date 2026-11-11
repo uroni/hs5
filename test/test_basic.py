@@ -5051,3 +5051,79 @@ def test_put_bucket_cors(hs5: Hs5Runner):
 
     obj = s3_client.get_object(Bucket=hs5.testbucketname(), Key="test.txt")
     assert obj["ResponseMetadata"]["HTTPHeaders"]["access-control-allow-origin"] == "*"
+
+
+@pytest.mark.parametrize("delimiter", [None, "/"])
+def test_list_start_after_before_prefix(hs5: Hs5Runner, delimiter: Optional[str]):
+    """StartAfter/Marker sorting before Prefix must not end the listing early"""
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+
+    base = "app/store/"
+    cache = [f"{base}cache/{i:02x}/data" for i in range(3)]
+    items = [f"{base}items/item{i}/meta" for i in range(3)]
+    outside = ["a-before", "zz-after"]
+    for key in cache + items + outside:
+        s3_client.put_object(Bucket=bucket, Key=key, Body=b"x")
+
+    prefix = f"{base}items/"
+    if delimiter is None:
+        expected = sorted(items)
+    else:
+        expected = sorted(
+            {prefix + k[len(prefix) :].split("/")[0] + "/" for k in items}
+        )
+
+    def extra() -> dict:
+        return {"Delimiter": delimiter} if delimiter else {}
+
+    def entries(res) -> list[str]:
+        return [c["Key"] for c in res.get("Contents", [])] + [
+            c["Prefix"] for c in res.get("CommonPrefixes", [])
+        ]
+
+    def version_entries(res) -> list[str]:
+        return [c["Key"] for c in res.get("Versions", [])] + [
+            c["Prefix"] for c in res.get("CommonPrefixes", [])
+        ]
+
+    for start in ["app", "a", "", base, f"{base}cache/ff"]:
+        kw = {"StartAfter": start} if start else {}
+        res = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix, **kw, **extra())
+        assert sorted(entries(res)) == expected, f"v2 StartAfter={start!r}"
+
+        kw = {"Marker": start} if start else {}
+        res = s3_client.list_objects(Bucket=bucket, Prefix=prefix, **kw, **extra())
+        assert sorted(entries(res)) == expected, f"v1 Marker={start!r}"
+
+        kw = {"KeyMarker": start} if start else {}
+        res = s3_client.list_object_versions(
+            Bucket=bucket, Prefix=prefix, **kw, **extra()
+        )
+        assert sorted(version_entries(res)) == expected, f"versions KeyMarker={start!r}"
+
+    # Paginated with MaxKeys=1 starting before prefix
+    got: list[str] = []
+    kw: dict = {"StartAfter": "app"}
+    while True:
+        res = s3_client.list_objects_v2(
+            Bucket=bucket, Prefix=prefix, MaxKeys=1, **kw, **extra()
+        )
+        got.extend(entries(res))
+        if not res.get("IsTruncated"):
+            break
+        kw = {"ContinuationToken": res["NextContinuationToken"]}
+    assert sorted(got) == expected
+
+    # StartAfter past the prefix range -> empty
+    res = s3_client.list_objects_v2(
+        Bucket=bucket, Prefix=f"{base}cache/", StartAfter=prefix, **extra()
+    )
+    assert entries(res) == []
+
+    # StartAfter inside the prefix range -> only later keys
+    if delimiter is None:
+        res = s3_client.list_objects_v2(
+            Bucket=bucket, Prefix=prefix, StartAfter=items[0]
+        )
+        assert sorted(entries(res)) == sorted(items[1:])

@@ -6844,6 +6844,10 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
             lastOutputKeyStr = marker;
             lastOutputVersion = markerVersion;
         }
+
+        // Marker can be any key, also one sorting before the prefix
+        if (prefix && !lastOutputKeyStr.starts_with(*prefix))
+            foundPrefix = false;
     }
     else
     {
