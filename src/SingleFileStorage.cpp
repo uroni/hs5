@@ -7262,8 +7262,17 @@ void SingleFileStorage::operator()()
         XLOGF(DBG0, "Running frag_info action={} fn={} offset={} len={}",
               static_cast<int>(frag_info.action), frag_info.fn, frag_info.offset, frag_info.len);
 
+        auto wal_commit_allowed = [&]()
+        {
+            // Commits needing a full index commit (e.g. listing commits) are not deferred, as
+            // deferred commits are finished together with the next commit, which may only be a WAL commit
+            return frag_info.md5sum != "reset" &&
+                   frag_info.md5sum != "l";
+        };
+
         if (!pending_commit && !from_startup_wal &&
-            frag_info.action == FragAction::Commit)
+            frag_info.action == FragAction::Commit &&
+            wal_commit_allowed())
         {
             pending_commits.push_back(std::move(frag_info));
             lock.lock();
@@ -7312,12 +7321,6 @@ void SingleFileStorage::operator()()
             XLOG(ERR) << "Failed to write to wal file. " << folly::errnoStr(errno);
             ++commit_errors;
         }
-
-        auto wal_commit_allowed = [&]()
-        {
-            return frag_info.md5sum != "reset" &&
-                   frag_info.md5sum != "l";
-        };
 
         if (frag_info.action == FragAction::Commit)
         {
