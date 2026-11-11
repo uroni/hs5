@@ -1931,7 +1931,7 @@ std::string serializePartExts(const ParsePartRes& partRes)
     wdata.addVarInt(flags);
     partRes.objMetadata.serialize(wdata);
     if (partRes.sdkChecksumType != AwsHashType::None)
-        wdata.addVarInt(static_cast<int64_t>(partRes.sdkChecksumType));
+        serializePartSdkChecksum(partRes.sdkChecksumType, wdata);
     for (const auto& part : partRes.parts)
     {
         wdata.addVarInt(part.size);
@@ -4952,7 +4952,7 @@ void S3Handler::createMultipartUpload(proxygen::HTTPMessage& headers)
                            data.addVarInt(flags);
                        }
                        if (self->sdkChecksumHash)
-                           serializeSdkChecksum(self->sdkChecksumHash->getExpectedHash(), self->sdkChecksumHash->getHashType(), data);
+                           serializePartSdkChecksum(self->sdkChecksumHash->getHashType(), data);
 
                        std::string md5sum(data.getDataPtr(), data.getDataSize());
                        const auto partialUploadsBucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId);
@@ -5058,7 +5058,7 @@ void S3Handler::finalizeMultipartUpload()
                            uploadNonce != self->multiPartUploadData->uploadId.nonce ||
                            !uploadData.getVarInt(&uploadObjMetadataFlags) ||
                            !uploadObjMetadata.deserialize(uploadData, uploadObjMetadataFlags) ||
-                           ((uploadObjMetadataFlags & metadata_flag_with_checksum) && !deserializeSdkChecksum(uploadData, uploadSdkChecksumHash, false)))
+                           ((uploadObjMetadataFlags & metadata_flag_with_checksum) && !deserializePartSdkChecksum(uploadData, uploadSdkChecksumHash)))
                        {
                            XLOGF(WARN, "Could not find upload data for uploadId {} err {}", self->multiPartUploadData->uploadId.id, readRes.err);
                            self->sendError(evb, self, 500, "Internal error", S3ErrorCode::InternalError, fmt::format("Could not find upload. Errno {}", readRes.err));

@@ -327,6 +327,7 @@ std::unique_ptr<PayloadHashBase> createPayloadHash(const AwsHashType hashType)
 
 void serializeSdkChecksum(const std::string_view hashVal, const AwsHashType hashType, CWData& wdata)
 {
+    // Unfortunately did not use varInt here (TODO: switch to varInt for hashType)
     wdata.addInt64(static_cast<int64_t>(hashType));
     wdata.addBuffer(hashVal.data(), hashVal.size());
 }
@@ -349,4 +350,18 @@ bool deserializeSdkChecksum(CRData& rdata, std::unique_ptr<PayloadHashBase>& has
     hash->setExpectedHash(hashVal);
     rdata.incrementPtr(hash->getSize());
     return true;
+}
+
+bool deserializePartSdkChecksum(CRData& rdata, std::unique_ptr<PayloadHashBase>& hash)
+{
+    int64_t hashTypeInt;
+    if (!rdata.getVarInt(&hashTypeInt))
+        return false;
+    hash = createPayloadHash(static_cast<AwsHashType>(hashTypeInt));
+    return hash != nullptr;
+}
+
+void serializePartSdkChecksum(const AwsHashType hashType, CWData& wdata)
+{
+    wdata.addVarInt(static_cast<int64_t>(hashType));
 }

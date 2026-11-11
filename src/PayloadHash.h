@@ -242,3 +242,6 @@ std::unique_ptr<PayloadHashBase> createPayloadHash(const AwsHashType hashType);
 void serializeSdkChecksum(const std::string_view hashVal, const AwsHashType hashType, CWData& wdata);
 
 bool deserializeSdkChecksum(CRData& rdata, std::unique_ptr<PayloadHashBase>& hash, const bool withExpectedHash);
+// Checksum type of a multipart upload (in the partial uploads bucket). Stored as varint without hash value
+void serializePartSdkChecksum(const AwsHashType hashType, CWData& wdata);
+bool deserializePartSdkChecksum(CRData& rdata, std::unique_ptr<PayloadHashBase>& hash);
