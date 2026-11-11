@@ -139,7 +139,7 @@ std::string getSecretKey(const std::string_view accessKey)
 
 bool hasSimplePermission(const int perm, const Action action)
 {
-    if ((perm & BUCKET_PERMISSION_READ) && (action == Action::GetObject || action == Action::ListObjects || action == Action::ListBuckets || action == Action::ListMultipartUploads || action == Action::GetBucketLocation))
+    if ((perm & BUCKET_PERMISSION_READ) && (action == Action::GetObject || action == Action::ListObjects || action == Action::ListBuckets || action == Action::ListMultipartUploads || action == Action::ListMultipartUploadParts || action == Action::GetBucketLocation))
         return true;
     else if ((perm & BUCKET_PERMISSION_WRITE) && (action == Action::PutObject || action == Action::PutObjectPart || action == Action::CompleteMultipartUpload || action == Action::CreateMultipartUpload || action == Action::CopyObject || action == Action::UploadPartCopy || action == Action::PostObject))
         return true;

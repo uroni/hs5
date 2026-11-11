@@ -398,6 +398,7 @@ private:
     void getCommitObject(proxygen::HTTPMessage& headers) REQUIRES(httpThread, requestActive);
     void getObject(proxygen::HTTPMessage& headers, const std::string& accessKey) REQUIRES(httpThread, requestActive);
     void getObjectAttributes(proxygen::HTTPMessage& headers, const std::string& accessKey) REQUIRES(httpThread, requestActive);
+    void listParts(proxygen::HTTPMessage& headers) REQUIRES(httpThread, requestActive);
     struct CopySource
     {
         std::string bucket;

@@ -74,4 +74,5 @@ are also accepted. Operations not listed here are not supported.
 | `UploadPartCopy` | <code class="language-plaintext highlighter-rouge">PUT /{bucket}/{key}<wbr>?partNumber=N<wbr>&amp;uploadId=ID</code> with `x-amz-copy-source` | Supports `x-amz-copy-source-range` and `x-amz-copy-source-if-*` conditions. |
 | `CompleteMultipartUpload` | `POST /{bucket}/{key}?uploadId=ID` | |
 | `AbortMultipartUpload` | `DELETE /{bucket}/{key}?uploadId=ID` | |
+| `ListParts` | `GET /{bucket}/{key}?uploadId=ID` | Supports `max-parts` and `part-number-marker`. |
 {: .ops-table .ops-table-wrap }

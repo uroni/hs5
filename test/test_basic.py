@@ -38,7 +38,7 @@ import hashlib
 from hs5_commit import Hs5Commit, Hs5RestartError
 from awsgosdktest import UploadAwsSdkGo, goawssdk_test_fixture
 from miniosdktest import UploadMinioGo, miniosdk_test_fixture
-from mypy_boto3_s3.type_defs import CORSConfigurationTypeDef
+from mypy_boto3_s3.type_defs import CORSConfigurationTypeDef, PartTypeDef
 
 
 def create_random_file(fn: Path, size: int) -> int:
@@ -1626,6 +1626,133 @@ def test_list_partial_uploads(tmp_path: Path, hs5: Hs5Runner):
     assert "Uploads" not in list_resp
 
     hs5.wait_for_used(0)
+
+
+def test_list_parts(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+    key = "list_parts.dat"
+
+    upload_id = s3_client.create_multipart_upload(Bucket=bucket, Key=key)["UploadId"]
+
+    part_data = {
+        1: os.urandom(1000),
+        2: os.urandom(2000),
+        3: os.urandom(3000),
+        5: os.urandom(500),
+    }
+    etags: dict[int, str] = {}
+    for part_number in [1, 2, 3, 5]:
+        etags[part_number] = s3_client.upload_part(
+            Bucket=bucket,
+            Key=key,
+            PartNumber=part_number,
+            UploadId=upload_id,
+            Body=part_data[part_number],
+        )["ETag"]
+
+    def check_parts(parts: list[PartTypeDef], part_numbers: list[int]):
+        assert [p.get("PartNumber") for p in parts] == part_numbers
+        for p in parts:
+            part_number = p.get("PartNumber")
+            assert part_number is not None
+            assert p.get("ETag") == etags[part_number]
+            assert (
+                p.get("ETag")
+                == '"' + hashlib.md5(part_data[part_number]).hexdigest() + '"'
+            )
+            assert p.get("Size") == len(part_data[part_number])
+            assert "LastModified" in p
+
+    resp = s3_client.list_parts(Bucket=bucket, Key=key, UploadId=upload_id)
+    assert resp["Bucket"] == bucket
+    assert resp["Key"] == key
+    assert resp["UploadId"] == upload_id
+    assert not resp["IsTruncated"]
+    check_parts(resp["Parts"], [1, 2, 3, 5])
+
+    # Pagination
+    resp = s3_client.list_parts(Bucket=bucket, Key=key, UploadId=upload_id, MaxParts=2)
+    assert resp["IsTruncated"]
+    assert resp["MaxParts"] == 2
+    assert resp["NextPartNumberMarker"] == 2
+    check_parts(resp["Parts"], [1, 2])
+
+    resp = s3_client.list_parts(
+        Bucket=bucket, Key=key, UploadId=upload_id, MaxParts=2, PartNumberMarker=2
+    )
+    assert not resp["IsTruncated"]
+    assert resp["PartNumberMarker"] == 2
+    check_parts(resp["Parts"], [3, 5])
+
+    resp = s3_client.list_parts(
+        Bucket=bucket, Key=key, UploadId=upload_id, PartNumberMarker=5
+    )
+    assert not resp["IsTruncated"]
+    assert "Parts" not in resp
+
+    # Paginator
+    paginator = s3_client.get_paginator("list_parts")
+    all_parts: list[PartTypeDef] = []
+    for page in paginator.paginate(
+        Bucket=bucket, Key=key, UploadId=upload_id, PaginationConfig={"PageSize": 1}
+    ):
+        all_parts.extend(page.get("Parts", []))
+    check_parts(all_parts, [1, 2, 3, 5])
+
+    # Upload id of a different key
+    with pytest.raises(ClientError) as exc:
+        s3_client.list_parts(Bucket=bucket, Key="other_key", UploadId=upload_id)
+    assert exc.value.response.get("Error", {}).get("Code") == "NoSuchUpload"
+
+    # Invalid upload id
+    with pytest.raises(ClientError) as exc:
+        s3_client.list_parts(Bucket=bucket, Key=key, UploadId="invalid")
+    assert exc.value.response.get("Error", {}).get("Code") == "NoSuchUpload"
+
+    s3_client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+
+    with pytest.raises(ClientError) as exc:
+        s3_client.list_parts(Bucket=bucket, Key=key, UploadId=upload_id)
+    assert exc.value.response.get("Error", {}).get("Code") == "NoSuchUpload"
+
+
+def test_list_parts_checksum(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+    key = "list_parts_checksum.dat"
+
+    from awscrt.checksums import crc32c
+
+    upload_id = s3_client.create_multipart_upload(
+        Bucket=bucket, Key=key, ChecksumAlgorithm="CRC32C"
+    )["UploadId"]
+
+    checksums: dict[int, str] = {}
+    for part_number in [1, 2]:
+        data = os.urandom(1000 * part_number)
+        checksums[part_number] = base64.b64encode(
+            crc32c(data).to_bytes(4, byteorder="big")
+        ).decode()
+        s3_client.upload_part(
+            Bucket=bucket,
+            Key=key,
+            PartNumber=part_number,
+            UploadId=upload_id,
+            Body=data,
+            ChecksumAlgorithm="CRC32C",
+            ChecksumCRC32C=checksums[part_number],
+        )
+
+    resp = s3_client.list_parts(Bucket=bucket, Key=key, UploadId=upload_id)
+    assert resp["ChecksumAlgorithm"] == "CRC32C"
+    assert resp["ChecksumType"] == "COMPOSITE"
+    assert [p.get("PartNumber") for p in resp["Parts"]] == [1, 2]
+    assert {
+        p.get("PartNumber"): p.get("ChecksumCRC32C") for p in resp["Parts"]
+    } == checksums
+
+    s3_client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
 
 
 @pytest.mark.slow

@@ -69,6 +69,8 @@ Action actionFromStr(const std::string_view action)
         return Action::ListBuckets;
     if (action == "s3:ListMultipartUploads")
         return Action::ListMultipartUploads;
+    if (action == "s3:ListMultipartUploadParts")
+        return Action::ListMultipartUploadParts;
     if (action == "s3:AbortMultipartUpload")
         return Action::AbortMultipartUpload;
     if (action == "s3:CreateMultipartUpload")
@@ -212,6 +214,8 @@ std::string actionToStr(const Action action)
             return "s3:GetBucketCORS";
         case Action::ListMultipartUploads:
             return "s3:ListMultipartUploads";
+        case Action::ListMultipartUploadParts:
+            return "s3:ListMultipartUploadParts";
         case Action::AbortMultipartUpload:
             return "s3:AbortMultipartUpload";
         case Action::CreateMultipartUpload:

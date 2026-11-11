@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <expat.h>
 #include <fmt/format.h>
+#include <folly/Conv.h>
 #include <folly/Format.h>
 #include <folly/Random.h>
 #include <folly/Range.h>
@@ -39,6 +40,7 @@
 #include <folly/logging/xlog.h>
 #include <limits.h>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <openssl/hmac.h>
@@ -1733,7 +1735,8 @@ enum class S3ErrorCode
     InvalidBucketState,
     NotImplemented,
     ObjectLockConfigurationNotFoundError,
-    KeyTooLongError
+    KeyTooLongError,
+    NoSuchUpload
 };
 
 std::string_view s3errorCodeToStr(const S3ErrorCode code)
@@ -1778,6 +1781,8 @@ std::string_view s3errorCodeToStr(const S3ErrorCode code)
             return "ObjectLockConfigurationNotFoundError";
         case S3ErrorCode::KeyTooLongError:
             return "KeyTooLongError";
+        case S3ErrorCode::NoSuchUpload:
+            return "NoSuchUpload";
         default:
             return "InternalError";
     }
@@ -1821,6 +1826,8 @@ std::string_view s3errorMsg(const S3ErrorCode code)
             return "Object Lock configuration does not exist for this bucket";
         case S3ErrorCode::KeyTooLongError:
             return "Your key is too long";
+        case S3ErrorCode::NoSuchUpload:
+            return "The specified multipart upload does not exist. The upload ID might be invalid, or the multipart upload might have been aborted or completed.";
         default:
             return "We encountered an internal error. Please try again.";
     }
@@ -2243,7 +2250,7 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
         }
 
         const auto resource = fmt::format("arn:aws:s3:::{}", header_path.substr(1));
-        const auto action = headers->getMethod() == HTTPMethod::GET ? (headers->hasQueryParam("attributes") ? Action::GetObjectAttributes : Action::GetObject) : Action::HeadObject;
+        const auto action = headers->getMethod() == HTTPMethod::GET ? (headers->hasQueryParam("uploadId") ? Action::ListMultipartUploadParts : (headers->hasQueryParam("attributes") ? Action::GetObjectAttributes : Action::GetObject)) : Action::HeadObject;
 
         auto accessKey = checkSig(this, *headers, "", resource, action, true);
 
@@ -2286,6 +2293,13 @@ void S3Handler::onRequest(std::unique_ptr<HTTPMessage> headers) noexcept
             }
 
             getObjectAttributes(*headers, *accessKey);
+            return;
+        }
+
+        if (action == Action::ListMultipartUploadParts)
+        {
+            XLOGF(INFO, "List parts of {}", header_path);
+            listParts(*headers);
             return;
         }
 
@@ -4432,6 +4446,176 @@ void S3Handler::getObjectAttributes(proxygen::HTTPMessage& headers, const std::s
 
                     resp.body(output).sendWithEOM();
                     self->setFinished(); });
+                   });
+}
+
+void S3Handler::listParts(proxygen::HTTPMessage& headers)
+{
+    assertRequestOwner();
+    auto evb = folly::EventBaseManager::get()->getEventBase();
+
+    const auto parseIntParam = [&headers](const std::string& name, const int defaultVal) -> std::optional<int>
+    {
+        const auto valPtr = headers.getQueryParamPtr(name);
+        if (valPtr == nullptr || valPtr->empty())
+            return defaultVal;
+
+        const auto val = folly::tryTo<int>(*valPtr);
+        if (!val.hasValue())
+            return std::nullopt;
+
+        return *val;
+    };
+
+    const auto maxPartsOpt = parseIntParam("max-parts", 1000);
+    if (!maxPartsOpt || *maxPartsOpt < 0)
+    {
+        responseBuilderWithCors(400, "Bad request")
+            .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid max-parts", fullKeyPath(), ""))
+            .sendWithEOM();
+        return;
+    }
+
+    const auto partNumberMarkerOpt = parseIntParam("part-number-marker", 0);
+    if (!partNumberMarkerOpt || *partNumberMarkerOpt < 0)
+    {
+        responseBuilderWithCors(400, "Bad request")
+            .body(s3errorXml(S3ErrorCode::InvalidArgument, "Invalid part-number-marker", fullKeyPath(), ""))
+            .sendWithEOM();
+        return;
+    }
+
+    const auto maxParts = std::min(1000, *maxPartsOpt);
+    const auto partNumberMarker = *partNumberMarkerOpt;
+    const auto uploadIdStr = headers.getQueryParam("uploadId");
+
+    runInCpuThread(self,
+                   [evb, maxParts, partNumberMarker, uploadIdStr](const std::shared_ptr<S3Handler>& self) RELEASE(self->requestOwner)
+                   {
+                       const auto uploadId = self->decryptUploadId(uploadIdStr);
+                       if (uploadId.id <= 0)
+                       {
+                           XLOGF(INFO, "List parts of {}: Invalid uploadId {}", self->keyInfo.key, uploadIdStr);
+                           self->sendError(evb, self, 404, "Not Found", S3ErrorCode::NoSuchUpload, "");
+                           return;
+                       }
+
+                       const auto readRes = self->sfs().read_prepare(
+                           make_key({ .key = self->keyInfo.key, .version = uploadId.id, .bucketId = buckets::getPartialUploadsBucket(self->keyInfo.bucketId) }),
+                           SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading);
+
+                       if (readRes.err == ENOENT)
+                       {
+                           XLOGF(INFO, "List parts of {}: Upload {} not found", self->keyInfo.key, uploadId.id);
+                           self->sendError(evb, self, 404, "Not Found", S3ErrorCode::NoSuchUpload, "");
+                           return;
+                       }
+                       else if (readRes.err != 0)
+                       {
+                           XLOGF(WARN, "List parts of {}: Error reading upload {} err {}", self->keyInfo.key, uploadId.id, readRes.err);
+                           self->sendError(evb, self, 500, "Internal error", S3ErrorCode::InternalError, fmt::format("Error reading upload. Errno {}", readRes.err));
+                           return;
+                       }
+
+                       const auto uploadInfo = parsePartExtsFromStr(readRes.md5sum);
+                       if (uploadInfo.nonce != uploadId.nonce)
+                       {
+                           XLOGF(WARN, "List parts of {}: Upload {} verification failed", self->keyInfo.key, uploadId.id);
+                           self->sendError(evb, self, 404, "Not Found", S3ErrorCode::NoSuchUpload, "");
+                           return;
+                       }
+
+                       // Uploaded part numbers with their size
+                       std::map<int, int64_t> parts;
+                       for (const auto& ext : uploadInfo.parts)
+                       {
+                           for (auto partNum = ext.start; partNum < ext.start + ext.len; ++partNum)
+                           {
+                               if (partNum > 0)
+                                   parts[partNum] = ext.size;
+                           }
+                       }
+
+                       const auto partsBucketId = buckets::getPartsBucket(self->keyInfo.bucketId);
+
+                       std::string partsOutput;
+                       int numOutput = 0;
+                       int lastPartNumber = 0;
+                       bool truncated = false;
+                       for (auto it = parts.upper_bound(partNumberMarker); it != parts.end(); ++it)
+                       {
+                           if (numOutput >= maxParts)
+                           {
+                               truncated = true;
+                               break;
+                           }
+
+                           const auto partRes = self->sfs().read_prepare(
+                               make_key({ .key = partKeyStr(uploadId.id, it->first), .version = 0, .bucketId = partsBucketId }),
+                               SingleFileStorage::ReadMetaOnly | SingleFileStorage::ReadSkipAddReading);
+
+                           if (partRes.err == ENOENT)
+                           {
+                               XLOGF(INFO, "List parts of {}: Part {} of upload {} not found", self->keyInfo.key, it->first, uploadId.id);
+                               continue;
+                           }
+                           else if (partRes.err != 0)
+                           {
+                               XLOGF(WARN, "List parts of {}: Error reading part {} of upload {} err {}", self->keyInfo.key, it->first, uploadId.id, partRes.err);
+                               self->sendError(evb, self, 500, "Internal error", S3ErrorCode::InternalError, fmt::format("Error reading part {}. Errno {}", it->first, partRes.err));
+                               return;
+                           }
+
+                           partsOutput += fmt::format("\t<Part>\n"
+                                                      "\t\t<PartNumber>{}</PartNumber>\n"
+                                                      "\t\t<LastModified>{}</LastModified>\n"
+                                                      "\t\t<ETag>{}</ETag>\n"
+                                                      "\t\t<Size>{}</Size>\n",
+                                                      it->first, format_last_modified(partRes.last_modified), getEtag(partRes.md5sum), it->second);
+
+                           int64_t partLen;
+                           std::unique_ptr<MultiPartDownloadData> partMultiPartData;
+                           std::unique_ptr<ObjMetadata> partObjMetadata;
+                           std::unique_ptr<PayloadHashBase> partChecksumHash;
+                           if (self->parseMultipartInfo(partRes.md5sum, partLen, partMultiPartData, &partObjMetadata, &partChecksumHash) && partChecksumHash)
+                           {
+                               partsOutput += fmt::format("\t\t<Checksum{}>{}</Checksum{}>\n", partChecksumHash->getHashTypeStr(), partChecksumHash->expectedCombined(0), partChecksumHash->getHashTypeStr());
+                           }
+
+                           partsOutput += "\t</Part>\n";
+
+                           ++numOutput;
+                           lastPartNumber = it->first;
+                       }
+
+                       std::string output = fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                                                        "<ListPartsResult>\n"
+                                                        "\t<Bucket>{}</Bucket>\n"
+                                                        "\t<Key>{}</Key>\n"
+                                                        "\t<UploadId>{}</UploadId>\n"
+                                                        "\t<PartNumberMarker>{}</PartNumberMarker>\n"
+                                                        "\t<NextPartNumberMarker>{}</NextPartNumberMarker>\n"
+                                                        "\t<MaxParts>{}</MaxParts>\n"
+                                                        "\t<IsTruncated>{}</IsTruncated>\n"
+                                                        "\t<StorageClass>STANDARD</StorageClass>\n",
+                                                        escapeXML(buckets::getBucketName(self->keyInfo.bucketId)), escapeXML(self->keyInfo.key), escapeXML(uploadIdStr),
+                                                        partNumberMarker, lastPartNumber, maxParts, truncated ? "true" : "false");
+
+                       if (uploadInfo.sdkChecksumType != AwsHashType::None)
+                       {
+                           const auto checksumHash = createPayloadHash(uploadInfo.sdkChecksumType);
+                           if (checksumHash)
+                           {
+                               output += fmt::format("\t<ChecksumAlgorithm>{}</ChecksumAlgorithm>\n"
+                                                     "\t<ChecksumType>{}</ChecksumType>\n",
+                                                     checksumHash->getHashTypeStr(), checksumHash->isFull() ? "FULL_OBJECT" : "COMPOSITE");
+                           }
+                       }
+
+                       output += partsOutput;
+                       output += "</ListPartsResult>";
+
+                       self->sendResponse(evb, self, 200, "OK", std::move(output));
                    });
 }
 
