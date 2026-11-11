@@ -1883,14 +1883,15 @@ std::vector<MultiPartDownloadData::PartExt> addPartExt(std::vector<MultiPartDown
 {
     std::vector<MultiPartDownloadData::PartExt> newParts;
     bool delParts = false;
+    bool extended = false;
     for (auto& part : parts)
     {
-        if (part.size == partSize && part.start + part.len == partNum)
+        if (!extended && part.size == partSize && part.start + part.len == partNum)
         {
             ++part.len;
-            return parts;
+            extended = true;
         }
-        else if (part.start >= partNum && part.start + part.len > partNum)
+        else if (part.start <= partNum && part.start + part.len > partNum)
         {
             // split
             const auto origEnd = part.start + part.len;
@@ -1898,12 +1899,13 @@ std::vector<MultiPartDownloadData::PartExt> addPartExt(std::vector<MultiPartDown
             delParts |= part.len == 0;
             const auto newPartLen = origEnd - partNum - 1;
             if (newPartLen > 0)
-                newParts.push_back({ partSize, partNum + 1, newPartLen });
+                newParts.push_back({ part.size, partNum + 1, newPartLen });
         }
     }
 
     parts.insert(parts.end(), newParts.begin(), newParts.end());
-    parts.push_back({ partSize, partNum, 1 });
+    if (!extended)
+        parts.push_back({ partSize, partNum, 1 });
 
     if (delParts)
     {

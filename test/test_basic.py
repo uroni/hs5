@@ -33,6 +33,7 @@ from boto3.s3.transfer import TransferConfig
 import time
 import filecmp
 import io
+import itertools
 import requests
 import hashlib
 from hs5_commit import Hs5Commit, Hs5RestartError
@@ -1642,7 +1643,7 @@ def test_list_parts(hs5: Hs5Runner):
         5: os.urandom(500),
     }
     etags: dict[int, str] = {}
-    for part_number in [1, 2, 3, 5]:
+    for part_number in [3, 1, 5, 2]:
         etags[part_number] = s3_client.upload_part(
             Bucket=bucket,
             Key=key,
@@ -1650,6 +1651,12 @@ def test_list_parts(hs5: Hs5Runner):
             UploadId=upload_id,
             Body=part_data[part_number],
         )["ETag"]
+
+    # Re-upload part 2 with different data and size
+    part_data[2] = os.urandom(2500)
+    etags[2] = s3_client.upload_part(
+        Bucket=bucket, Key=key, PartNumber=2, UploadId=upload_id, Body=part_data[2]
+    )["ETag"]
 
     def check_parts(parts: list[PartTypeDef], part_numbers: list[int]):
         assert [p.get("PartNumber") for p in parts] == part_numbers
@@ -1715,6 +1722,89 @@ def test_list_parts(hs5: Hs5Runner):
     with pytest.raises(ClientError) as exc:
         s3_client.list_parts(Bucket=bucket, Key=key, UploadId=upload_id)
     assert exc.value.response.get("Error", {}).get("Code") == "NoSuchUpload"
+
+
+def test_list_parts_reupload(hs5: Hs5Runner):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+    key = "list_parts_reupload.dat"
+
+    upload_id = s3_client.create_multipart_upload(Bucket=bucket, Key=key)["UploadId"]
+
+    # Parts 1-4 with the same size end up in one range, re-uploading parts splits it
+    sizes = {1: 1000, 2: 1000, 3: 1000, 4: 1000}
+    for part_number in [1, 2, 3, 4]:
+        s3_client.upload_part(
+            Bucket=bucket,
+            Key=key,
+            PartNumber=part_number,
+            UploadId=upload_id,
+            Body=os.urandom(sizes[part_number]),
+        )
+
+    for part_number, size in [(2, 1500), (1, 700), (4, 1000), (3, 1500)]:
+        sizes[part_number] = size
+        s3_client.upload_part(
+            Bucket=bucket,
+            Key=key,
+            PartNumber=part_number,
+            UploadId=upload_id,
+            Body=os.urandom(size),
+        )
+
+        resp = s3_client.list_parts(Bucket=bucket, Key=key, UploadId=upload_id)
+        assert [(p.get("PartNumber"), p.get("Size")) for p in resp["Parts"]] == sorted(
+            sizes.items()
+        )
+
+    s3_client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+
+    hs5.commit_storage(s3_client)
+    hs5.wait_for_used(0)
+
+
+@pytest.mark.parametrize(
+    "sizes,resizes",
+    [
+        ([100, 100, 100, 100], [200, 200, 200, 200]),
+        ([100, 200, 100, 200], [100, 100, 100, 100]),
+        ([100, 100, 200, 200], [200, 100, 100, 200]),
+        ([100, 200, 300, 400], [100, 200, 300, 400]),
+    ],
+)
+def test_list_parts_permutations(hs5: Hs5Runner, sizes: list[int], resizes: list[int]):
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+    key = "list_parts_perm.dat"
+
+    for order in itertools.permutations(range(1, len(sizes) + 1)):
+        upload_id = s3_client.create_multipart_upload(Bucket=bucket, Key=key)[
+            "UploadId"
+        ]
+
+        expected: dict[int, int] = {}
+        # Upload all parts in order, then upload them again with different sizes
+        for part_number, size in [(p, sizes[p - 1]) for p in order] + [
+            (p, resizes[p - 1]) for p in order
+        ]:
+            s3_client.upload_part(
+                Bucket=bucket,
+                Key=key,
+                PartNumber=part_number,
+                UploadId=upload_id,
+                Body=os.urandom(size),
+            )
+            expected[part_number] = size
+
+            resp = s3_client.list_parts(Bucket=bucket, Key=key, UploadId=upload_id)
+            assert [
+                (p.get("PartNumber"), p.get("Size")) for p in resp["Parts"]
+            ] == sorted(expected.items()), f"order {order}"
+
+        s3_client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+
+    hs5.commit_storage(s3_client)
+    hs5.wait_for_used(0)
 
 
 def test_list_parts_checksum(hs5: Hs5Runner):
