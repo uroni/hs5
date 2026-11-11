@@ -24,3 +24,6 @@ garage
 warp_config.yaml
 warp
 *.download.lock
+litestream
+litestream.new
+litestream.tar.gz.new
