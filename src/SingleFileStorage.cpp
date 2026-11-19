@@ -436,7 +436,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
       stop_on_error(options.stop_on_error), punch_holes(options.punch_holes), no_sync(options.no_sync),
       data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func),
       common_prefix_hash_func(options.common_prefix_hash_func), on_delete_callback(options.on_delete_callback), modify_data_callback(options.modify_data_callback), modify_metadata_callback(options.modify_metadata_callback),
-      match_callback(options.match_callback), wal_write_meta(options.wal_write_meta), wal_write_data(options.wal_write_data), add_reading_callback(options.add_reading_callback)
+      match_callback(options.match_callback), wal_write_meta(options.wal_write_meta), wal_write_data(options.wal_write_data), add_reading_callback(options.add_reading_callback), counter_key_callback(options.counter_key_callback), counter_counts_callback(options.counter_counts_callback)
 {
     if (common_prefix_func == nullptr)
         common_prefix_func = common_prefix_passthrough;
@@ -8020,6 +8020,15 @@ void SingleFileStorage::operator()()
             const bool del_old = frag_info.action == FragAction::DelOld;
             const bool call_callback = frag_info.action != FragAction::DelNoCallback;
 
+            if (!del_old)
+            {
+                if (const auto counter_fn = counter_key(frag_info.fn); !counter_fn.empty())
+                {
+                    const auto old_info = get_frag_info(txn, frag_info.fn, true, false);
+                    commit_errors += update_counter(txn, tid, counter_fn, frag_info.fn, old_info, nullptr);
+                }
+            }
+
             commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, true, del_old, tid, call_callback, &trim_items);
 
             if (frag_info.action == FragAction::DelWithQueued)
@@ -8091,6 +8100,12 @@ void SingleFileStorage::operator()()
         }
         else if (frag_info.action == FragAction::Add || frag_info.action == FragAction::AddNoDelOld)
         {
+            if (const auto counter_fn = counter_key(frag_info.fn); !counter_fn.empty())
+            {
+                const auto old_info = get_frag_info(txn, frag_info.fn, true, false);
+                commit_errors += update_counter(txn, tid, counter_fn, frag_info.fn, old_info, &frag_info.md5sum);
+            }
+
             if (frag_info.action == FragAction::Add)
             {
                 commit_errors += remove_fn(frag_info.fn, txn, freespace_txn, false, false, tid, true, &trim_items);
@@ -8496,6 +8511,9 @@ void SingleFileStorage::operator()()
         if (has_commit_item(frag_info.action) && list_commit_items_used())
         {
             set_list_commit_item_value(txn, frag_info.fn);
+
+            if (const auto counter_fn = counter_key(frag_info.fn); !counter_fn.empty())
+                set_list_commit_item_value(txn, counter_fn);
         }
 
         lock.lock();
@@ -9914,7 +9932,7 @@ bool SingleFileStorage::list_commit_items_used() const
     return wal_file != nullptr || manual_commit;
 }
 
-void SingleFileStorage::incr_commit_item(const std::string_view fn)
+void SingleFileStorage::incr_commit_item_key(const std::string_view fn)
 {
     if (list_commit_items_used())
         ++list_commit_items[std::string(fn)].refs;
@@ -9922,12 +9940,29 @@ void SingleFileStorage::incr_commit_item(const std::string_view fn)
         ++commit_items[common_prefix_hash_func(fn)];
 }
 
-void SingleFileStorage::decr_commit_item(const std::string_view fn)
+void SingleFileStorage::decr_commit_item_key(const std::string_view fn)
 {
     auto& refs = list_commit_items_used() ? list_commit_items[std::string(fn)].refs
                                           : commit_items[common_prefix_hash_func(fn)];
     assert(refs > 0);
     --refs;
+}
+
+void SingleFileStorage::incr_commit_item(const std::string_view fn)
+{
+    incr_commit_item_key(fn);
+
+    // The counter of fn may be modified as well, so reads of it have to see the modification
+    if (const auto counter_fn = counter_key(std::string(fn)); !counter_fn.empty())
+        incr_commit_item_key(counter_fn);
+}
+
+void SingleFileStorage::decr_commit_item(const std::string_view fn)
+{
+    decr_commit_item_key(fn);
+
+    if (const auto counter_fn = counter_key(std::string(fn)); !counter_fn.empty())
+        decr_commit_item_key(counter_fn);
 }
 
 bool SingleFileStorage::is_commit_item(const std::string_view fn)
@@ -10218,6 +10253,64 @@ void SingleFileStorage::list_iter_stop(ListIterData& iter_data)
         iter_stop(iter_data.lmdb);
         iter_data.lmdb_started = false;
     }
+}
+
+std::string SingleFileStorage::counter_key(const std::string& fn)
+{
+    if (!counter_key_callback)
+        return std::string();
+    return counter_key_callback(fn);
+}
+
+int64_t SingleFileStorage::update_counter(MDB_txn* txn, THREAD_ID tid, const std::string& counter_fn, const std::string& fn,
+                                          const SFragInfo& old_info, const std::string* new_md5sum)
+{
+    const bool old_counts = old_info.offset != -1 && counter_counts_callback(fn, old_info.md5sum);
+    const bool new_counts = new_md5sum != nullptr && counter_counts_callback(fn, *new_md5sum);
+    if (old_counts == new_counts)
+        return 0;
+
+    int64_t count = 0;
+    const auto counter_info = get_frag_info(txn, counter_fn, true, false);
+    if (counter_info.offset != -1)
+    {
+        CRData rdata(counter_info.md5sum.data(), counter_info.md5sum.size());
+        if (!rdata.getVarInt(&count))
+        {
+            XLOG(ERR) << "Error parsing counter " << folly::hexlify(counter_fn) << " sfs " << db_path;
+            count = 0;
+        }
+    }
+
+    count += new_counts ? 1 : -1;
+
+    if (count <= 0)
+    {
+        // Can be negative if objects were added before counting was enabled
+        if (counter_info.offset == -1)
+            return 0;
+
+        MDB_val tkey;
+        tkey.mv_data = const_cast<char*>(counter_fn.data());
+        tkey.mv_size = counter_fn.size();
+        const int rc = mdb_del(txn, dbi_main, &tkey, nullptr);
+        if (rc && rc != MDB_NOTFOUND)
+        {
+            XLOG(ERR) << "LMDB: Error deleting counter (" << mdb_strerror(rc) << ") sfs " << db_path;
+            return 1;
+        }
+        return 0;
+    }
+
+    CWData wdata;
+    wdata.addVarInt(count);
+    const int rc = put_frag_info_md5sum(txn, tid, counter_fn, SFragInfo(0, 0), std::string(wdata.getDataPtr(), wdata.getDataSize()));
+    if (rc)
+    {
+        XLOG(ERR) << "LMDB: Error putting counter (" << mdb_strerror(rc) << ") sfs " << db_path;
+        return 1;
+    }
+    return 0;
 }
 
 int SingleFileStorage::put_frag_info_md5sum(MDB_txn* txn, THREAD_ID tid, const std::string& fn, const SFragInfo& frag_info, const std::string& md5sum)

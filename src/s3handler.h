@@ -354,6 +354,9 @@ public:
     // Commits the storage after a modification (unless manual commit is enabled). Returns false on error
     static bool commitStorage(SingleFileStorage& sfs);
 
+    // Deletes the counters of a (deleted) bucket (see buckets::getCountersBucket). Returns false on error
+    static bool deleteBucketCounters(SingleFileStorage& sfs, const int64_t bucketId);
+
     static std::pair<int64_t, std::string_view> flagsAndMd5sumBinFromData(const std::string_view md5sumData);
 
     void sigCheckOk();

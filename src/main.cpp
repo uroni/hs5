@@ -303,6 +303,18 @@ int realMain(int argc, char* argv[])
 
     proxygen::HTTPSessionBase::setMaxReadBufferSize(FLAGS_max_put_buffer_size);
 
+    if (FLAGS_redis_port != -1)
+    {
+        if (!RedisServer::initBucket(FLAGS_redis_bucket))
+            return 1;
+
+        const auto redisBucketId = buckets::getBucket(FLAGS_redis_bucket);
+        if (!redisBucketId)
+            return 1;
+
+        RedisServer::setupCounters(sfsoptions, *redisBucketId);
+    }
+
     SingleFileStorage sfs(sfsoptions);
 
     proxygen::HTTPServerOptions options;
@@ -319,9 +331,6 @@ int realMain(int argc, char* argv[])
     std::unique_ptr<RedisServer> redisServer;
     if (FLAGS_redis_port != -1)
     {
-        if (!RedisServer::initBucket(FLAGS_redis_bucket))
-            return 1;
-
         redisServer = std::make_unique<RedisServer>(sfs, FLAGS_redis_bucket);
         if (!redisServer->start(FLAGS_ip, FLAGS_redis_port, static_cast<size_t>(std::max(FLAGS_redis_io_threads, 1))))
             return 1;

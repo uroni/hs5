@@ -5399,6 +5399,58 @@ bool S3Handler::commit()
     return commitStorage(sfs());
 }
 
+bool S3Handler::deleteBucketCounters(SingleFileStorage& sfs, const int64_t bucketId)
+{
+    const auto countersBucketId = buckets::getCountersBucket(bucketId);
+    const auto iterStartVal = make_key({ .key = {}, .version = std::numeric_limits<int64_t>::max(), .bucketId = countersBucketId });
+
+    size_t numDeleted = 0;
+    {
+        SingleFileStorage::ListIterData iterData;
+        SCOPE_EXIT { sfs.list_iter_stop(iterData); };
+
+        if (!sfs.list_iter_start(iterStartVal, iterStartVal, [countersBucketId](const std::string& key)
+                                 { return extractKeyInfoView(key).bucketId == countersBucketId; }, iterData))
+        {
+            XLOGF(ERR, "Error starting listing of counters of bucket {}", bucketId);
+            return false;
+        }
+
+        while (true)
+        {
+            std::string keyBin, md5sum;
+            int64_t offset, size, lastModified;
+            std::vector<SingleFileStorage::SPunchItem> extraExts;
+            if (!sfs.iter_curr_val(keyBin, offset, size, extraExts, lastModified, md5sum, iterData.curr))
+                break;
+
+            if (extractKeyInfoView(keyBin).bucketId != countersBucketId)
+                break;
+
+            const auto rc = sfs.del(keyBin, SingleFileStorage::DelAction::DelNoCallback, false);
+            if (rc != 0)
+            {
+                XLOGF(ERR, "Error deleting counter of bucket {}: {}", bucketId, rc);
+                return false;
+            }
+            ++numDeleted;
+
+            if (!sfs.list_iter_next(iterData))
+            {
+                XLOGF(ERR, "Error listing counters of bucket {}", bucketId);
+                return false;
+            }
+        }
+    }
+
+    if (numDeleted == 0)
+        return true;
+
+    XLOGF(INFO, "Deleted {} counters of bucket {}", numDeleted, bucketId);
+
+    return commitStorage(sfs);
+}
+
 void S3Handler::finalizeCreateBucket()
 {
     assertRequestOwner();
@@ -6574,6 +6626,8 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
                                // TODO: Make sure there is no object currently being added and prevent adding new ones
                                if (!buckets::deleteBucket(*bucketId))
                                    bucketNotFound = true;
+                               else if (!deleteBucketCounters(self->sfs(), *bucketId))
+                                   XLOGF(WARN, "Error deleting counters of bucket {}", self->keyInfo.key);
                            }
                        }
 

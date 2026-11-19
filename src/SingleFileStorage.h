@@ -197,6 +197,10 @@ public:
     using modify_metadata_callback_t = std::function<nonstd::expected<std::string, int>(const std::string&, const std::string&, const std::string&)>;
     using match_callback_t = std::function<void(MatchInfo&, const SingleFileStorage::SFragInfo&)>;
     using add_reading_callback_t = std::function<void(const std::string_view fn, const SingleFileStorage::SFragInfo&)>;
+    // Key of the counter counting objects with key fn. Empty if fn is not counted
+    using counter_key_callback_t = std::function<std::string(const std::string& fn)>;
+    // Whether the object fn with metadata md5sum is counted
+    using counter_counts_callback_t = std::function<bool(const std::string& fn, const std::string& md5sum)>;
 
     struct SFSOptions
     {
@@ -226,6 +230,11 @@ public:
         modify_metadata_callback_t modify_metadata_callback;
         match_callback_t match_callback;
         add_reading_callback_t add_reading_callback;
+        // Counters: When adding/deleting an object fn the counter at counter_key_callback(fn) is updated in the same
+        // transaction (by the change of counter_counts_callback). The counter value is a varint in the md5sum field
+        // of the counter. Counters with value 0 are deleted
+        counter_key_callback_t counter_key_callback;
+        counter_counts_callback_t counter_counts_callback;
         bool wal_write_meta = true;
         int64_t wal_write_data = 0;
         // Do not fsync LMDB, data file and WAL file. For testing only, data may get lost/corrupted on power loss!
@@ -659,6 +668,14 @@ private:
 
     int put_frag_info_md5sum(MDB_txn* txn, THREAD_ID tid, const std::string& fn, const SFragInfo& frag_info, const std::string& md5sum);
 
+    // Key of the counter of fn (see SFSOptions::counter_key_callback). Empty if not counted
+    std::string counter_key(const std::string& fn);
+
+    // Updates the counter counter_fn after object fn changed from old_info (offset -1 if it did not exist) to
+    // new_md5sum (nullptr if deleted). Returns number of errors
+    int64_t update_counter(MDB_txn* txn, THREAD_ID tid, const std::string& counter_fn, const std::string& fn,
+                           const SFragInfo& old_info, const std::string* new_md5sum);
+
     void add_reading_item(const SFragInfo& fi);
 
     void remove_reading_item(const std::vector<Ext>& extents);
@@ -684,6 +701,9 @@ private:
 
     // Count a queued modification of fn in commit_items/list_commit_items. Requires mutex to be locked
     void incr_commit_item(const std::string_view fn);
+    // Without the counter of fn
+    void incr_commit_item_key(const std::string_view fn);
+    void decr_commit_item_key(const std::string_view fn);
 
     // Mark a queued modification of fn as done (it stays modified until the next LMDB commit).
     // Requires mutex to be locked
@@ -866,6 +886,8 @@ private:
     modify_metadata_callback_t modify_metadata_callback;
     match_callback_t match_callback;
     add_reading_callback_t add_reading_callback;
+    counter_key_callback_t counter_key_callback;
+    counter_counts_callback_t counter_counts_callback;
 
     int64_t curr_version = 0;
 

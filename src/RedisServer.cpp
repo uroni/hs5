@@ -1431,10 +1431,52 @@ void RedisServer::taskFinished()
         tasksCond.notify_all();
 }
 
-std::mutex& RedisServer::keyLock(const std::string& key)
+std::shared_mutex& RedisServer::keyLock(const std::string& key)
 {
     return keyLocks[std::hash<std::string>{}(key) % keyLocks.size()];
 }
+
+// Locks the key locks of multiple keys, so multi-key commands are atomic. Locks in address order (each lock once), so
+// it cannot deadlock with other multi-key commands. Single key commands only hold one lock at a time
+class RedisServer::MultiKeyLock
+{
+public:
+    MultiKeyLock(RedisServer& server, const std::vector<std::string>& args, const size_t start, const size_t step, const bool exclusive) NO_THREAD_SAFETY_ANALYSIS
+        : exclusive(exclusive)
+    {
+        for (size_t i = start; i < args.size(); i += step)
+            locks.push_back(&server.keyLock(args[i]));
+
+        std::sort(locks.begin(), locks.end());
+        locks.erase(std::unique(locks.begin(), locks.end()), locks.end());
+
+        for (auto lock : locks)
+        {
+            if (exclusive)
+                lock->lock();
+            else
+                lock->lock_shared();
+        }
+    }
+
+    ~MultiKeyLock() NO_THREAD_SAFETY_ANALYSIS
+    {
+        for (auto it = locks.rbegin(); it != locks.rend(); ++it)
+        {
+            if (exclusive)
+                (*it)->unlock();
+            else
+                (*it)->unlock_shared();
+        }
+    }
+
+    MultiKeyLock(const MultiKeyLock&) = delete;
+    MultiKeyLock& operator=(const MultiKeyLock&) = delete;
+
+private:
+    const bool exclusive;
+    std::vector<std::shared_mutex*> locks;
+};
 
 void RedisServer::assertAcceptThread() const
 {
@@ -1983,6 +2025,43 @@ RedisServer::PopStatus RedisServer::popElement(const int64_t bucketId, const std
     return PopStatus::Error;
 }
 
+int64_t RedisServer::listLength(const int64_t bucketId, const std::string& key, int& err)
+{
+    const auto res = sfs.read_prepare(make_key(key, buckets::getCountersBucket(bucketId), 0), SingleFileStorage::ReadSkipAddReading);
+    if (res.err == ENOENT)
+        return 0;
+    if (res.err != 0)
+    {
+        err = res.err;
+        return 0;
+    }
+
+    CRData rdata(res.md5sum.data(), res.md5sum.size());
+    int64_t count;
+    if (!rdata.getVarInt(&count))
+    {
+        err = EIO;
+        return 0;
+    }
+    return count;
+}
+
+void RedisServer::setupCounters(SingleFileStorage::SFSOptions& options, const int64_t bucketId)
+{
+    // Number of list elements per key, maintained by the storage engine (also for modifications via S3)
+    options.counter_key_callback = [bucketId](const std::string& fn) -> std::string
+    {
+        const auto keyInfo = extractKeyInfoView(fn);
+        if (keyInfo.bucketId != bucketId)
+            return std::string();
+        return make_key(keyInfo.key, buckets::getCountersBucket(bucketId), 0);
+    };
+    options.counter_counts_callback = [](const std::string& /*fn*/, const std::string& md5sum)
+    {
+        return isListElement(md5sum);
+    };
+}
+
 bool RedisServer::commit()
 {
     return S3Handler::commitStorage(sfs);
@@ -2321,6 +2400,9 @@ RedisServer::ExecResult RedisServer::cmdMget(ConnState& state, const std::vector
     if (auto err = getBucketCtx(ctx))
         return { *err };
 
+    // Atomic with respect to MSET/DEL
+    MultiKeyLock lock(*this, args, 1, 1, false);
+
     ReplyBuilder reply;
     reply.append(resp::arrayHeader(args.size() - 1));
     for (size_t i = 1; i < args.size(); ++i)
@@ -2450,12 +2532,15 @@ RedisServer::ExecResult RedisServer::cmdMset(ConnState& state, const RedisComman
     if (auto err = getBucketCtx(ctx))
         return { *err };
 
-    for (size_t i = 1; i < args.size(); i += 2)
     {
-        std::scoped_lock lock(keyLock(args[i]));
-        const auto rc = setValue(ctx.id, args[i], command.valueArg(i + 1));
-        if (rc != 0)
-            return { resp::error(fmt::format("ERR storage error {}", rc)) };
+        // Atomic: MGET/EXISTS of these keys wait until all are set
+        MultiKeyLock lock(*this, args, 1, 2, true);
+        for (size_t i = 1; i < args.size(); i += 2)
+        {
+            const auto rc = setValue(ctx.id, args[i], command.valueArg(i + 1));
+            if (rc != 0)
+                return { resp::error(fmt::format("ERR storage error {}", rc)) };
+        }
     }
 
     if (!commit())
@@ -2544,30 +2629,33 @@ RedisServer::ExecResult RedisServer::cmdDel(ConnState& state, const std::vector<
 
     int64_t numDeleted = 0;
     bool modified = false;
-    for (size_t i = 1; i < args.size(); ++i)
     {
-        const auto& key = args[i];
-        std::scoped_lock lock(keyLock(key));
-
-        std::vector<Entry> entries;
-        if (!listEntries(ctx.id, key, entries))
-            return { resp::error("ERR error listing versions") };
-
-        bool existed = false;
-        for (const auto& entry : entries)
+        // Atomic: MGET/EXISTS of these keys wait until all are deleted
+        MultiKeyLock lock(*this, args, 1, 1, true);
+        for (size_t i = 1; i < args.size(); ++i)
         {
-            if (!entry.tombstone)
-                existed = true;
+            const auto& key = args[i];
 
-            bool deleted;
-            const auto rc = deleteVersion(ctx.id, key, entry.version, false, deleted);
-            if (rc != 0)
-                return { resp::error(fmt::format("ERR storage error {}", rc)) };
-            modified = true;
+            std::vector<Entry> entries;
+            if (!listEntries(ctx.id, key, entries))
+                return { resp::error("ERR error listing versions") };
+
+            bool existed = false;
+            for (const auto& entry : entries)
+            {
+                if (!entry.tombstone)
+                    existed = true;
+
+                bool deleted;
+                const auto rc = deleteVersion(ctx.id, key, entry.version, false, deleted);
+                if (rc != 0)
+                    return { resp::error(fmt::format("ERR storage error {}", rc)) };
+                modified = true;
+            }
+
+            if (existed)
+                ++numDeleted;
         }
-
-        if (existed)
-            ++numDeleted;
     }
 
     if (modified && !commit())
@@ -2592,6 +2680,7 @@ RedisServer::ExecResult RedisServer::cmdExists(ConnState& state, const std::vect
     if (auto err = getBucketCtx(ctx))
         return { *err };
 
+    MultiKeyLock lock(*this, args, 1, 1, false);
     int64_t count = 0;
     for (size_t i = 1; i < args.size(); ++i)
     {
@@ -2698,13 +2787,11 @@ RedisServer::ExecResult RedisServer::cmdPush(ConnState& state, const RedisComman
 
     notifyKey(key);
 
-    std::vector<Entry> entries;
-    if (!listEntries(ctx.id, key, entries))
-        return { resp::error("ERR error listing versions") };
-
-    const auto elements = std::count_if(entries.begin(), entries.end(), [](const Entry& e)
-                                        { return !e.tombstone; });
-    return { resp::integer(elements) };
+    int err = 0;
+    const auto len = listLength(ctx.id, key, err);
+    if (err != 0)
+        return { resp::error(fmt::format("ERR storage error {}", err)) };
+    return { resp::integer(len) };
 }
 
 RedisServer::ExecResult RedisServer::cmdPop(ConnState& state, const std::vector<std::string>& args, const bool left)
@@ -2860,16 +2947,17 @@ RedisServer::ExecResult RedisServer::cmdLlen(ConnState& state, const std::vector
     if (auto err = getBucketCtx(ctx))
         return { *err };
 
-    std::vector<Entry> entries;
-    if (!listEntries(ctx.id, key, entries))
-        return { resp::error("ERR error listing versions") };
-
-    std::erase_if(entries, [](const Entry& e)
-                  { return e.tombstone; });
-    if (!entries.empty() && !entries.front().isList)
+    int err = 0;
+    const auto entry = findElement(ctx.id, key, true, err);
+    if (err != 0)
+        return { resp::error(fmt::format("ERR storage error {}", err)) };
+    if (entry && !entry->isList)
         return { resp::wrongType };
 
-    return { resp::integer(static_cast<int64_t>(entries.size())) };
+    const auto len = listLength(ctx.id, key, err);
+    if (err != 0)
+        return { resp::error(fmt::format("ERR storage error {}", err)) };
+    return { resp::integer(len) };
 }
 
 RedisServer::ExecResult RedisServer::cmdLrange(ConnState& state, const std::vector<std::string>& args)

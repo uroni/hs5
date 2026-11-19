@@ -307,6 +307,10 @@ class Hs5Runner:
             )
         return redis.Redis(host="127.0.0.1", port=self._redis_port, protocol=protocol)
 
+    def get_redis_port(self) -> int:
+        assert self._redis_port is not None, "Redis protocol server not enabled"
+        return self._redis_port
+
     def redis_bucket(self) -> str:
         return "redis"
 

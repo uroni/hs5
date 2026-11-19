@@ -1380,6 +1380,9 @@ Api::DeleteBucketResp ApiHandler::deleteBucket(const Api::DeleteBucketParams& pa
 
     } while (hasObjects);
 
+    if (!S3Handler::deleteBucketCounters(sfs, bucketId))
+        throw ApiError(Api::Herror::errorDeletingBucket, fmt::format("Error deleting counters of bucket {}", params.bucketName));
+
     return {};
 }
 

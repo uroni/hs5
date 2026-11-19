@@ -11,8 +11,15 @@ import uuid
 
 import pytest
 import redis
+from mypy_boto3_s3.type_defs import ObjectVersionTypeDef
 
 from hs5_fixture import Hs5Runner, hs5_redis, hs5_redis_large
+
+
+def version_id(version: ObjectVersionTypeDef) -> str:
+    vid = version.get("VersionId")
+    assert vid is not None
+    return vid
 
 
 def test_redis_strings(hs5_redis: Hs5Runner):
@@ -115,7 +122,7 @@ def test_redis_lists(hs5_redis: Hs5Runner):
 
     assert r.lpushx("l", b"x") == 0
     assert r.rpush("l", b"x") == 1
-    assert r.rpushx("l", b"y") == 2
+    assert r.rpushx("l", "y") == 2
     assert r.lrange("l", 0, -1) == [b"x", b"y"]
     assert r.type("l") == b"list"
     assert r.delete("l") == 1
@@ -138,13 +145,13 @@ def test_redis_s3_lists(hs5_redis: Hs5Runner):
 
     # Version ids of prepended (negative) versions work via S3
     bodies = [
-        s3.get_object(Bucket=bucket, Key="q", VersionId=v["VersionId"])["Body"].read()
+        s3.get_object(Bucket=bucket, Key="q", VersionId=version_id(v))["Body"].read()
         for v in versions
     ]
     assert bodies == [b"0", b"1", b"2", b"3"]
 
     # Delete an element via S3
-    s3.delete_object(Bucket=bucket, Key="q", VersionId=versions[2]["VersionId"])
+    s3.delete_object(Bucket=bucket, Key="q", VersionId=version_id(versions[2]))
     assert r.lrange("q", 0, -1) == [b"0", b"1", b"3"]
 
     # S3 PUT with list element content type adds to the head of the list
@@ -158,10 +165,10 @@ def test_redis_s3_lists(hs5_redis: Hs5Runner):
         Bucket=bucket,
         Prefix="q",
         KeyMarker="q",
-        VersionIdMarker=versions[1]["VersionId"],
+        VersionIdMarker=version_id(versions[1]),
     )
     assert [
-        s3.get_object(Bucket=bucket, Key="q", VersionId=v["VersionId"])["Body"].read()
+        s3.get_object(Bucket=bucket, Key="q", VersionId=version_id(v))["Body"].read()
         for v in page["Versions"]
     ] == [b"3"]
 
@@ -227,6 +234,7 @@ def test_redis_concurrent_pops(hs5_redis: Hs5Runner):
             v = c.lpop("cq") if left else c.rpop("cq")
             if v is None:
                 return
+            assert isinstance(v, bytes)
             with lock:
                 popped.append(v)
 
@@ -265,7 +273,7 @@ def test_redis_auth(hs5_redis: Hs5Runner):
     with pytest.raises(redis.AuthenticationError):
         redis.Redis(
             host="127.0.0.1",
-            port=hs5_redis._redis_port,
+            port=hs5_redis.get_redis_port(),
             username="root",
             password="wrong",
         ).ping()
@@ -455,8 +463,7 @@ def test_redis_streaming_memory(tmpdir: Path, testrun_uid: str):
         extra_args=["--redis_max_value_size", str(2 * size)],
     )
     try:
-        assert runner._redis_port is not None
-        conn = RawRedisConnection(runner._redis_port)
+        conn = RawRedisConnection(runner.get_redis_port())
         assert conn.command(b"AUTH", b"root", runner.get_root_key().encode()) == b"+OK"
 
         baseline_mb = runner.get_rss_mb()
@@ -526,8 +533,7 @@ def test_redis_streaming_memory(tmpdir: Path, testrun_uid: str):
 def test_redis_pipeline_ordering(hs5_redis: Hs5Runner):
     """Pipelined commands are executed in batches, but replies stay in order"""
     r = hs5_redis.get_redis_client()
-    port = hs5_redis._redis_port
-    assert port is not None
+    port = hs5_redis.get_redis_port()
 
     # Large (streamed) reply in the middle of a pipeline
     large = os.urandom(3 * 1024 * 1024)
@@ -681,3 +687,139 @@ def test_redis_set_replaces_versions(hs5_redis: Hs5Runner):
     assert r.get("k") == b"again"
     assert r.get("lst") == b"str"
     assert r.get("k2") == b"2"
+
+
+def test_redis_list_length_counter(hs5_redis: Hs5Runner):
+    """List lengths are counted by the storage engine, including modifications via S3"""
+    r = hs5_redis.get_redis_client()
+    s3 = hs5_redis.get_s3_client()
+    bucket = hs5_redis.redis_bucket()
+
+    assert r.llen("c") == 0
+    assert r.lpush("c", b"a", b"b") == 2
+    assert r.rpush("c", b"c") == 3
+    assert r.llen("c") == 3
+    assert r.lpop("c") == b"b"
+    assert r.rpop("c", 2) == [b"c", b"a"]
+    assert r.llen("c") == 0
+
+    # Elements added/deleted via S3
+    assert r.rpush("c", b"x", b"y") == 2
+    s3.put_object(
+        Bucket=bucket, Key="c", Body=b"s3", ContentType="application/cdmi-queue"
+    )
+    assert r.llen("c") == 3
+    assert r.lpush("c", b"z") == 4
+    versions = s3.list_object_versions(Bucket=bucket, Prefix="c")["Versions"]
+    s3.delete_object(Bucket=bucket, Key="c", VersionId=version_id(versions[1]))
+    assert r.llen("c") == 3
+    assert r.lrange("c", 0, -1) == [b"z", b"x", b"y"]
+
+    # Delete markers are no list elements
+    s3.delete_object(Bucket=bucket, Key="c")
+    assert r.llen("c") == 3
+    assert r.rpush("c", b"w") == 4
+
+    # Replacing/deleting the list
+    assert r.set("c", b"str")
+    with pytest.raises(redis.ResponseError, match="WRONGTYPE"):
+        r.llen("c")
+    assert r.delete("c") == 1
+    assert r.llen("c") == 0
+    assert r.rpush("c", b"1", b"2", b"3") == 3
+
+    r.rpush("d", b"1")
+    assert r.delete("d") == 1
+    assert r.llen("d") == 0
+
+    # Survives restart (WAL replay)
+    hs5_redis.commit_storage(s3)
+    hs5_redis.restart()
+    r = hs5_redis.get_redis_client()
+    assert r.llen("c") == 3
+    assert r.lpush("c", b"0") == 4
+
+    assert r.flushdb()
+    assert r.llen("c") == 0
+    assert r.rpush("c", b"new") == 1
+
+
+def graceful_restart(runner: Hs5Runner):
+    """Restart with a clean shutdown (commits everything, also with WAL or manual commit)"""
+    runner.commit_storage(runner.get_s3_client())
+    runner.stop(cleanup=False, kill=False)
+    runner.start()
+    runner._login_admin()
+
+
+@pytest.mark.parametrize("via_api", [False, True])
+def test_redis_bucket_delete_removes_counters(
+    hs5_redis: Hs5Runner, capfd, via_api: bool
+):
+    if os.environ.get("ENABLE_WAL") == "1":
+        # Counters of modifications still in the WAL are recomputed during WAL replay, so a stale counter cannot be
+        # created by disabling counting for one run
+        pytest.skip("Cannot create stale counter with WAL")
+
+    r = hs5_redis.get_redis_client()
+    s3 = hs5_redis.get_s3_client()
+    bucket = hs5_redis.redis_bucket()
+
+    r.rpush("l", b"a", b"b")
+    versions = s3.list_object_versions(Bucket=bucket, Prefix="l")["Versions"]
+
+    # Delete an element while the Redis server (and counting) is disabled, so the counter is stale
+    redis_args = hs5_redis.args[hs5_redis.args.index("--redis_port") :][:2]
+    hs5_redis.args = [a for a in hs5_redis.args if a not in redis_args]
+    graceful_restart(hs5_redis)
+    s3.delete_object(Bucket=bucket, Key="l", VersionId=version_id(versions[0]))
+    hs5_redis.args += redis_args
+    graceful_restart(hs5_redis)
+
+    r = hs5_redis.get_redis_client()
+    assert r.llen("l") == 2
+    s3.delete_object(Bucket=bucket, Key="l", VersionId=version_id(versions[1]))
+    # Counter is not deleted (stale)
+    assert r.llen("l") == 1
+
+    capfd.readouterr()
+    if via_api:
+        response = hs5_redis._ses.post(
+            hs5_redis.get_api_url() + "deleteBucket", json={"bucketName": bucket}
+        )
+        assert response.status_code == 200
+    else:
+        s3.delete_bucket(Bucket=bucket)
+    out = capfd.readouterr()
+    assert "Deleted 1 counters of bucket" in out.out + out.err
+
+
+def test_redis_mset_atomic(hs5_redis: Hs5Runner):
+    """MSET sets all keys atomically: a concurrent MGET never sees a mix of old and new values"""
+    keys = [f"m{i}" for i in range(4)]
+    r = hs5_redis.get_redis_client()
+    r.mset({k: b"0" for k in keys})
+
+    stop = threading.Event()
+    mixed = []
+
+    def reader():
+        c = hs5_redis.get_redis_client()
+        while not stop.is_set():
+            values = c.mget(keys)
+            if len(set(values)) != 1:
+                mixed.append(values)
+                return
+
+    t = threading.Thread(target=reader)
+    t.start()
+    try:
+        for i in range(1, 300):
+            r.mset({k: str(i).encode() for k in keys})
+            if mixed:
+                break
+    finally:
+        stop.set()
+        t.join()
+
+    assert not mixed, f"MGET saw a partial MSET: {mixed[0]}"

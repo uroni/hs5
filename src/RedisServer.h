@@ -5,6 +5,7 @@
 #pragma once
 
 #include "Action.h"
+#include "SingleFileStorage.h"
 #include "ThreadSafety.h"
 #include <array>
 #include <atomic>
@@ -16,6 +17,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -77,6 +79,10 @@ public:
 
     // Creates the bucket (with versioning enabled) if it does not exist yet
     static bool initBucket(const std::string& bucket);
+
+    // Lets the storage engine count list elements in the bucket. Has to be set up before the storage engine is
+    // started (to count modifications replayed from the WAL)
+    static void setupCounters(SingleFileStorage::SFSOptions& options, const int64_t bucketId);
 
     // Binds to ip:port and starts accepting connections. Returns false on error
     bool start(const std::string& ip, int port, size_t ioThreads);
@@ -207,7 +213,9 @@ private:
                                          const std::optional<std::string_view> key);
     static std::optional<std::string> checkKey(const std::string_view key);
 
-    std::mutex& keyLock(const std::string& key);
+    std::shared_mutex& keyLock(const std::string& key);
+
+    class MultiKeyLock;
 
     // Versions of key, newest first. Stops after maxElements entries which are no delete markers
     bool listEntries(const int64_t bucketId, const std::string& key, std::vector<Entry>& entries,
@@ -227,6 +235,8 @@ private:
     // value is read with ReadMode::Bulk
     PopStatus popElement(const int64_t bucketId, const std::string& key, const bool left, ReadRes& value, std::string& err);
     bool commit();
+    // Number of list elements of key (counted by the storage engine)
+    int64_t listLength(const int64_t bucketId, const std::string& key, int& err);
 
     // Iterates over keys starting with prefix in key order, starting after startAfter. f(key, type) returns false to stop.
     // atEnd is set if all keys were iterated. Returns false on error
@@ -286,8 +296,9 @@ private:
     std::condition_variable tasksCond;
     size_t runningTasks GUARDED_BY(tasksMutex) = 0;
 
-    // Serializes read-modify-write operations on a key (striped by key hash)
-    std::array<std::mutex, numKeyLocks> keyLocks;
+    // Serializes modifications of a key (striped by key hash). Commands reading/modifying multiple keys atomically
+    // lock all their keys (shared for reading)
+    std::array<std::shared_mutex, numKeyLocks> keyLocks;
 
     std::mutex waitersMutex;
     // Connections blocked on a key (BLPOP/BRPOP)
