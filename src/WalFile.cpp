@@ -20,6 +20,8 @@ const char matchInfoFlagReadNewest = 1 << 0;
 const char matchInfoFlagCheckProtected = 1 << 1;
 const char matchInfoFlagBypassGovernance = 1 << 2;
 const char matchInfoFlagWithProtectedCheckTime = 1 << 3;
+const char matchInfoFlagWithIfVersion = 1 << 4;
+const char matchInfoFlagWithIfContentType = 1 << 5;
 
 const int64_t waitBlockSize = 64 * 1024;
 const int64_t dirtyBlockSize = 64 * 1024;
@@ -105,9 +107,17 @@ namespace
             flags |= matchInfoFlagBypassGovernance;
         if (matchInfo.protectedCheckTime != 0)
             flags |= matchInfoFlagWithProtectedCheckTime;
+        if (matchInfo.ifVersion)
+            flags |= matchInfoFlagWithIfVersion;
+        if (matchInfo.ifContentType)
+            flags |= matchInfoFlagWithIfContentType;
         data.addChar(flags);
         if (matchInfo.protectedCheckTime != 0)
             data.addVarInt(matchInfo.protectedCheckTime);
+        if (matchInfo.ifVersion)
+            data.addVarInt(*matchInfo.ifVersion);
+        if (matchInfo.ifContentType)
+            data.addVarInt(*matchInfo.ifContentType);
         data.addVarInt(matchInfo.ifMatch.size());
         for (const auto& s : matchInfo.ifMatch)
             data.addString2(s);
@@ -153,6 +163,18 @@ namespace
         matchInfo.bypassGovernance = (flags & matchInfoFlagBypassGovernance) != 0;
         if (flags & matchInfoFlagWithProtectedCheckTime)
             b &= data.getVarInt(&matchInfo.protectedCheckTime);
+        if (flags & matchInfoFlagWithIfVersion)
+        {
+            int64_t ifVersion;
+            b &= data.getVarInt(&ifVersion);
+            matchInfo.ifVersion = ifVersion;
+        }
+        if (flags & matchInfoFlagWithIfContentType)
+        {
+            int64_t ifContentType;
+            b &= data.getVarInt(&ifContentType);
+            matchInfo.ifContentType = static_cast<int>(ifContentType);
+        }
         int64_t ifMatchSize = 0;
         b &= data.getVarInt(&ifMatchSize);
         for (size_t i = 0; i < ifMatchSize; ++i)

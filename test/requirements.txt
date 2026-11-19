@@ -15,6 +15,7 @@ typing-extensions >= 4.7.1
 portalocker
 pytest-xdist
 psutil
+redis
 openapi-generator-cli
 black==25.1.0
 clang-format==18.1.8

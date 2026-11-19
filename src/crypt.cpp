@@ -92,15 +92,15 @@ namespace
         return aesBlock(plain, out, key, true);
     }
 
-    int64_t decryptIdBlock(const unsigned char* in, const unsigned char* key)
+    std::optional<int64_t> decryptIdBlock(const unsigned char* in, const unsigned char* key)
     {
         unsigned char plain[aesBlockSize];
         if (!aesBlock(in, plain, key, false))
-            return -1;
+            return std::nullopt;
 
         static const unsigned char zeros[aesBlockSize - sizeof(int64_t)] = {};
         if (sodium_memcmp(plain + sizeof(int64_t), zeros, sizeof(zeros)) != 0)
-            return -1;
+            return std::nullopt;
 
         int64_t ret;
         memcpy(&ret, plain, sizeof(ret));
@@ -138,11 +138,16 @@ std::string cryptEtag(int64_t version, unsigned char* key)
     return std::string(reinterpret_cast<char*>(enc), sizeof(enc));
 }
 
-int64_t decryptId(const std::string& encryptedId, unsigned char* key)
+std::optional<int64_t> decryptIdOpt(const std::string& encryptedId, unsigned char* key)
 {
     const auto binEncId = decodeBase64URL(encryptedId);
     if (!binEncId || binEncId->size() != aesBlockSize)
-        return -1;
+        return std::nullopt;
 
     return decryptIdBlock(reinterpret_cast<const unsigned char*>(binEncId->data()), key);
+}
+
+int64_t decryptId(const std::string& encryptedId, unsigned char* key)
+{
+    return decryptIdOpt(encryptedId, key).value_or(-1);
 }

@@ -18,6 +18,7 @@ import pytest
 import os
 import boto3
 from mypy_boto3_s3.client import S3Client
+import redis
 import requests
 import hs5_api
 
@@ -84,8 +85,10 @@ class Hs5Runner:
         perf_wal: bool = True,
         data_file_alloc_chunk_size: Optional[int] = None,
         extra_args: list[str] = [],
+        with_redis: bool = False,
     ) -> None:
         self._port = get_next_port(testrun_uid)
+        self._redis_port = get_next_port(testrun_uid) if with_redis else None
         self._workdir = workdir
         self._root_key = uuid.uuid4().hex
 
@@ -167,6 +170,10 @@ class Hs5Runner:
             self.args.append(
                 f"--http_worker_threads={os.environ.get('HS5_HTTP_WORKER_THREADS', '4')}"
             )
+
+        if self._redis_port is not None:
+            self.args.append("--redis_port")
+            self.args.append(str(self._redis_port))
 
         self.args.extend(extra_args)
 
@@ -286,6 +293,23 @@ class Hs5Runner:
             config=config,
         )
 
+    def get_redis_client(
+        self, authenticate: bool = True, protocol: int = 3
+    ) -> redis.Redis:
+        assert self._redis_port is not None, "Redis protocol server not enabled"
+        if authenticate:
+            return redis.Redis(
+                host="127.0.0.1",
+                port=self._redis_port,
+                username="root",
+                password=self._root_key,
+                protocol=protocol,
+            )
+        return redis.Redis(host="127.0.0.1", port=self._redis_port, protocol=protocol)
+
+    def redis_bucket(self) -> str:
+        return "redis"
+
     def commit_storage(self, s3: S3Client) -> None:
         if not self.manual_commit:
             return
@@ -404,6 +428,42 @@ def hs5(tmpdir: Path, testrun_uid: str):
     loc = tmpdir / uuid.uuid4().hex
     loc.mkdir()
     runner = Hs5Runner(loc, data_file_size_limit_mb=100, testrun_uid=testrun_uid)
+    yield runner
+    runner.stop(cleanup=True, kill=False)
+    try:
+        rmtree(loc)
+    except:
+        pass
+
+
+@pytest.fixture
+def hs5_redis(tmpdir: Path, testrun_uid: str):
+    """
+    Like hs5, but with the Redis protocol server enabled
+    """
+    loc = tmpdir / uuid.uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(
+        loc, data_file_size_limit_mb=100, testrun_uid=testrun_uid, with_redis=True
+    )
+    yield runner
+    runner.stop(cleanup=True, kill=False)
+    try:
+        rmtree(loc)
+    except:
+        pass
+
+
+@pytest.fixture
+def hs5_redis_large(tmpdir: Path, testrun_uid: str):
+    """
+    Like hs5_large, but with the Redis protocol server enabled
+    """
+    loc = tmpdir / uuid.uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(
+        loc, data_file_size_limit_mb=5000, testrun_uid=testrun_uid, with_redis=True
+    )
     yield runner
     runner.stop(cleanup=True, kill=False)
     try:

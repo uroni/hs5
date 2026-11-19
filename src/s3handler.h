@@ -328,6 +328,9 @@ public:
     static bool parseMultipartInfo(const std::string& md5sum, int64_t& totalLen,
                                    std::unique_ptr<MultiPartDownloadData>& multiPartDownloadData, std::unique_ptr<ObjMetadata>* objMetadata, std::unique_ptr<PayloadHashBase>* sdkChecksumHash);
     static std::string getEtag(const std::string& md5sum);
+    // Content type (ContentType::contentType) from object metadata. 0 if it has none, it is not in the list of
+    // known content types or the metadata cannot be parsed
+    static int contentTypeIdFromMetadata(const std::string& md5sum);
 
     static int seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
     static int seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData,
@@ -347,6 +350,9 @@ public:
     static void onAddReadingCallback(const std::string_view fn, const SingleFileStorage::SFragInfo& fragInfo);
 
     static std::string md5sumBinFromData(const std::string_view md5sumData);
+
+    // Commits the storage after a modification (unless manual commit is enabled). Returns false on error
+    static bool commitStorage(SingleFileStorage& sfs);
 
     static std::pair<int64_t, std::string_view> flagsAndMd5sumBinFromData(const std::string_view md5sumData);
 

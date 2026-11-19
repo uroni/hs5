@@ -33,6 +33,7 @@
 #include "Auth.h"
 #include "Buckets.h"
 #include "DbDao.h"
+#include "RedisServer.h"
 #include "SingleFileStorage.h"
 #include "StaticHandler.h"
 #include "config.h"
@@ -76,6 +77,9 @@ DEFINE_int32(duckdb_port, 4213, "Port to listen on with DuckDB UI protocol");
 DEFINE_bool(enable_core_dumps, false, "Enable core dumps on crashes");
 DECLARE_bool(test_db_no_sync);
 DEFINE_int32(max_put_buffer_size, 1 * 1024 * 1024, "Max read buffer size for HTTP sessions (for PUT)");
+DEFINE_int32(redis_port, -1, "Port to listen on with Redis protocol (-1 if disabled)");
+DEFINE_string(redis_bucket, "redis", "Bucket storing the Redis keys (created with versioning enabled if it does not exist)");
+DEFINE_int32(redis_io_threads, 2, "Number of IO threads of the Redis protocol server");
 
 namespace
 {
@@ -312,6 +316,17 @@ int realMain(int argc, char* argv[])
     server = std::make_unique<proxygen::HTTPServer>(std::move(options));
     server->bind(IPs);
 
+    std::unique_ptr<RedisServer> redisServer;
+    if (FLAGS_redis_port != -1)
+    {
+        if (!RedisServer::initBucket(FLAGS_redis_bucket))
+            return 1;
+
+        redisServer = std::make_unique<RedisServer>(sfs, FLAGS_redis_bucket);
+        if (!redisServer->start(FLAGS_ip, FLAGS_redis_port, static_cast<size_t>(std::max(FLAGS_redis_io_threads, 1))))
+            return 1;
+    }
+
     for (const auto& ip : IPs)
     {
         XLOGF(INFO, "Listening on {}", ip.address.describe());
@@ -359,5 +374,9 @@ int realMain(int argc, char* argv[])
 #endif
 
     t.join();
+
+    if (redisServer)
+        redisServer->stop();
+
     return 0;
 }

@@ -186,6 +186,7 @@ add_executable(hs5
     src/PayloadHash.cpp
     src/UserMetadata.cpp
     src/ObjMetadata.cpp
+    src/RedisServer.cpp
     external/proxygen/RFC1867.cpp
     ${SCHEMA_SOURCES}
     )

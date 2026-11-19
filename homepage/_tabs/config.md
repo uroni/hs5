@@ -69,6 +69,9 @@ LOGLEVEL=info
 | <code class="language-plaintext highlighter-rouge">WAL_<wbr>SMALL_<wbr>OBJECT_<wbr>LIMIT</code> | integer (bytes) | `6000` | In `full` or `data-only` WAL mode, object size threshold for writing object data to WAL. |
 | `WAL_SIZE_MB` | integer (MiB) | `1000` | WAL file size threshold before reset/rollover. |
 | `WAL_ITEMS` | integer | `10000` | WAL item count threshold before reset/rollover. |
+| `REDIS_PORT` | integer | `-1` | Port for the Redis protocol (RESP2/RESP3) server, bound to `SERVER_IP`. `-1` disables it. Clients authenticate with `AUTH <access key> <secret key>`; access is checked against the S3 permissions of `REDIS_BUCKET`. |
+| `REDIS_BUCKET` | string | `redis` | Bucket storing the Redis keys as objects. Created with versioning enabled if it does not exist. Versioning has to be enabled, as list elements are object versions. |
+| <code class="language-plaintext highlighter-rouge">REDIS_<wbr>MAX_<wbr>VALUE_<wbr>SIZE</code> | integer (bytes) | `536870912` | Maximum size of values written or read via the Redis protocol. Larger objects can only be accessed via S3. |
 {: .config-table }
 
 HS5 can also read these options from environment variables using the `HS5_` prefix (for example,

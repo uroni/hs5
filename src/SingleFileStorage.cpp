@@ -2324,11 +2324,14 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
     }
 
     const bool read_newest = (flags & ReadNewest);
+    const bool read_oldest = (flags & ReadOldest);
+    // Key of the found version differs from fn
+    const bool read_find = read_newest || read_oldest;
 
     SFragInfo frag_info;
     if ((flags & ReadUnsynced) == 0)
     {
-        frag_info = get_frag_info(nullptr, fn, true, read_newest);
+        frag_info = get_frag_info(nullptr, fn, true, read_newest, read_oldest);
 
         if (frag_info.offset == -1)
         {
@@ -2359,7 +2362,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
             }
 
             if (add_reading_callback)
-                add_reading_callback(read_newest ? frag_info.fn : fn, frag_info);
+                add_reading_callback(read_find ? frag_info.fn : fn, frag_info);
         }
     }
     else
@@ -2403,7 +2406,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
     res.md5sum = frag_info.md5sum;
     res.last_modified = frag_info.last_modified;
 
-    if (read_newest)
+    if (read_find)
     {
         res.key = frag_info.fn;
     }
@@ -2429,12 +2432,14 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::check_existence(const st
     }
 
     const bool read_newest = (flags & ReadNewest);
+    const bool read_oldest = (flags & ReadOldest);
+    const bool read_find = read_newest || read_oldest;
 
     ReadPrepareResult res{ 0 };
 
     if ((flags & ReadUnsynced) == 0)
     {
-        auto frag_info = get_frag_info(nullptr, fn, false, read_newest);
+        auto frag_info = get_frag_info(nullptr, fn, false, read_newest, read_oldest);
 
         if (frag_info.offset == -1)
         {
@@ -2445,7 +2450,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::check_existence(const st
         res.md5sum = frag_info.md5sum;
         res.last_modified = frag_info.last_modified;
 
-        if (read_newest)
+        if (read_find)
         {
             res.key = frag_info.fn;
         }
@@ -2480,7 +2485,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::check_existence(const st
         res.md5sum = frag_info.md5sum;
         res.last_modified = frag_info.last_modified;
 
-        if (read_newest)
+        if (read_find)
         {
             res.key = frag_info.fn;
         }
@@ -6359,7 +6364,7 @@ void SingleFileStorage::wait_for_startup_finish()
     wait_startup_finished(lock);
 }
 
-SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, const std::string_view fn, bool parse_data, const bool read_newest)
+SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, const std::string_view fn, bool parse_data, const bool read_newest, const bool read_oldest)
 {
     THREAD_ID tid = gettid();
 
@@ -6395,7 +6400,9 @@ SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, cons
 
     SCOPE_EXIT { mdb_cursor_close(mc); };
 
-    if (read_newest)
+    const bool read_find = read_newest || read_oldest;
+
+    if (read_find)
     {
         rc = mdb_cursor_open(txn, dbi_main, &mc);
 
@@ -6412,6 +6419,22 @@ SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, cons
         }
 
         rc = mdb_cursor_get(mc, &tkey, &tvalue, MDB_SET_RANGE);
+
+        if (read_oldest)
+        {
+            if (has_mmap_read_error_reset(tid))
+            {
+                XLOG(ERR) << "LMDB: Failed mdb_cursor_get in get_frag_info (SIGBUS) sfs " << db_path;
+                return SFragInfo();
+            }
+
+            // fn sorts after all versions of the key, so the oldest version is the item before the found one
+            // (or the last item if there is none), unless fn itself exists
+            if (rc == MDB_NOTFOUND)
+                rc = mdb_cursor_get(mc, &tkey, &tvalue, MDB_LAST);
+            else if (rc == 0 && fn != std::string_view(reinterpret_cast<char*>(tkey.mv_data), tkey.mv_size))
+                rc = mdb_cursor_get(mc, &tkey, &tvalue, MDB_PREV);
+        }
     }
     else
     {
@@ -6446,7 +6469,7 @@ SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, cons
     }
 
     SFragInfo ret;
-    if (read_newest)
+    if (read_find)
     {
         ret.fn = std::string(reinterpret_cast<char*>(tkey.mv_data), tkey.mv_size);
         if (common_prefix_func(ret.fn) != common_prefix_func(fn))
@@ -7922,7 +7945,8 @@ void SingleFileStorage::operator()()
                 {
                     const auto flags = frag_info.offset;
                     const bool read_newest = flags & ReadNewest;
-                    *frag_info.commit_info->frag_info = get_frag_info(txn, frag_info.fn, frag_info.action == FragAction::ReadFragInfo, read_newest);
+                    const bool read_oldest = flags & ReadOldest;
+                    *frag_info.commit_info->frag_info = get_frag_info(txn, frag_info.fn, frag_info.action == FragAction::ReadFragInfo, read_newest, read_oldest);
                     if (!(flags & ReadSkipAddReading) && frag_info.commit_info->frag_info->offset != -1 &&
                         (frag_info.commit_info->frag_info->offset != 0 || frag_info.commit_info->frag_info->len > 0))
                     {
@@ -7930,7 +7954,7 @@ void SingleFileStorage::operator()()
                         add_reading_item(*frag_info.commit_info->frag_info);
                     }
                     else if ((flags & ReadAddReadingCallback) && add_reading_callback && frag_info.commit_info->frag_info->offset == 0 && frag_info.commit_info->frag_info->len == 0 && frag_info.commit_info->frag_info->md5sum.size() > 1)
-                        add_reading_callback(read_newest ? frag_info.commit_info->frag_info->fn : frag_info.fn, *frag_info.commit_info->frag_info);
+                        add_reading_callback(read_newest || read_oldest ? frag_info.commit_info->frag_info->fn : frag_info.fn, *frag_info.commit_info->frag_info);
                 }
 
                 frag_info.commit_info->commit_done.notify_all();
@@ -9597,6 +9621,11 @@ int64_t SingleFileStorage::get_next_version()
 int64_t SingleFileStorage::decrypt_id(const std::string& encdata)
 {
     return decryptId(encdata, enckey);
+}
+
+std::optional<int64_t> SingleFileStorage::decrypt_version(const std::string& encdata)
+{
+    return decryptIdOpt(encdata, enckey);
 }
 
 std::string SingleFileStorage::encrypt_id(const int64_t id)

@@ -121,6 +121,12 @@ public:
         std::vector<std::string> ifNoneMatch;
         folly::Optional<int64_t> ifModifiedSince;
         folly::Optional<int64_t> ifUnmodifiedSince;
+        // Match only if the current object has this version (requires readFn with readNewest). Delete markers are
+        // compared as well. Not found matches (if ifMatch is empty)
+        std::optional<int64_t> ifVersion;
+        // Match only if the current object has this content type (ContentType::contentType, 0 for none/unlisted).
+        // Delete markers/not found match (if ifMatch is empty)
+        std::optional<int> ifContentType;
         // Time (seconds since epoch) at which protection is checked (with checkProtected). Current time if 0
         int64_t protectedCheckTime = 0;
         bool readNewest : 1 = false;
@@ -266,6 +272,8 @@ public:
     const static unsigned int ReadAddReadingCallback = 32;
     // Read data via read-only mmap of the data file (falls back to pread on error)
     const static unsigned int ReadWithMmap = 64;
+    // Read the oldest version of the key. fn has to be the key with the smallest possible version (sorting last)
+    const static unsigned int ReadOldest = 128;
 
     struct ReadPrepareResult
     {
@@ -490,6 +498,10 @@ public:
 
     int64_t decrypt_id(const std::string& encdata);
 
+    // Decrypts an object version id. Versions can be negative (prepended list items) or 0 (null version, written
+    // before versioning was enabled). Returns std::nullopt if decryption fails
+    std::optional<int64_t> decrypt_version(const std::string& encdata);
+
     std::string encrypt_id(const int64_t id);
 
     // Binary ETag (16 bytes) from a new version
@@ -631,7 +643,7 @@ private:
 
     std::string compress_filename(const std::string& fn);
 
-    SFragInfo get_frag_info(MDB_txn* txn, const std::string_view fn, bool parse_data, const bool read_newest);
+    SFragInfo get_frag_info(MDB_txn* txn, const std::string_view fn, bool parse_data, const bool read_newest, const bool read_oldest = false);
 
     bool generate_free_len_idx(MDB_txn* txn);
 

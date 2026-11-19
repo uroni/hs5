@@ -37,7 +37,18 @@ private:
 class ObjectReader
 {
 public:
-    ObjectReader(SingleFileStorage& sfs, const std::string& bucket, const std::string& key, const int64_t version = 0);
+    enum class VersionSelect
+    {
+        // Given version. Newest version if version is 0 and the bucket is versioned
+        Default,
+        // Exactly the given version (also if it is 0)
+        Exact,
+        // Oldest version (version is ignored)
+        Oldest
+    };
+
+    ObjectReader(SingleFileStorage& sfs, const std::string& bucket, const std::string& key, const int64_t version = 0,
+                 const VersionSelect versionSelect = VersionSelect::Default);
 
     ~ObjectReader();
 

@@ -3236,8 +3236,8 @@ bool S3Handler::setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::st
     int64_t version = 0;
     if (versionId)
     {
-        version = _sfs.decrypt_id(*versionId);
-        if (version < 0)
+        const auto decVersion = _sfs.decrypt_version(*versionId);
+        if (!decVersion)
         {
             XLOGF(INFO, "Version {} cannot be decrypted when getting key info", *versionId);
             ResponseBuilder resp(downstream());
@@ -3245,6 +3245,7 @@ bool S3Handler::setKeyInfoFromPath(proxygen::HTTPMessage& headers, const std::st
             sendWithBody(resp, isHead, s3errorXml(S3ErrorCode::InvalidArgument, "Invalid version id specified", path, ""));
             return false;
         }
+        version = *decVersion;
     }
 
     const auto bucketEnd = path.find_first_of('/', 1);
@@ -5336,9 +5337,9 @@ void S3Handler::finalizeMultipartUpload()
                    });
 }
 
-bool S3Handler::commit()
+bool S3Handler::commitStorage(SingleFileStorage& sfs)
 {
-    if (sfs().get_manual_commit() && FLAGS_commit_after_ms > 0)
+    if (sfs.get_manual_commit() && FLAGS_commit_after_ms > 0)
     {
         static std::mutex mutex;
         static std::set<SingleFileStorage*> commitAfterStarted;
@@ -5347,14 +5348,14 @@ bool S3Handler::commit()
 
         {
             std::lock_guard lock(mutex);
-            const auto [it, inserted] = commitAfterStarted.insert(&sfs());
+            const auto [it, inserted] = commitAfterStarted.insert(&sfs);
             if (inserted)
                 doStart = true;
         }
 
         if (doStart)
         {
-            runInCpuThreadFireAndForget([sfs = &sfs()]()
+            runInCpuThreadFireAndForget([sfs = &sfs]()
                                         {
 
                 std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_commit_after_ms));
@@ -5379,9 +5380,9 @@ bool S3Handler::commit()
                 } });
         }
     }
-    else if (!sfs().get_manual_commit())
+    else if (!sfs.get_manual_commit())
     {
-        const bool b = sfs().commit(false, -1, FLAGS_pre_sync_commit);
+        const bool b = sfs.commit(false, -1, FLAGS_pre_sync_commit);
 
         if (!b)
         {
@@ -5391,6 +5392,11 @@ bool S3Handler::commit()
     }
 
     return true;
+}
+
+bool S3Handler::commit()
+{
+    return commitStorage(sfs());
 }
 
 void S3Handler::finalizeCreateBucket()
@@ -5883,8 +5889,8 @@ void S3Handler::deleteObjects()
                            }
                            else if (withVersioning && !obj.versionId.empty())
                            {
-                               version = self->sfs().decrypt_id(obj.versionId);
-                               if (version < 0)
+                               const auto decVersion = self->sfs().decrypt_version(obj.versionId);
+                               if (!decVersion)
                                {
                                    resp += fmt::format("\t<Error>\n"
                                                        "\t\t<Code>InvalidArgument</Code>\n"
@@ -5894,6 +5900,7 @@ void S3Handler::deleteObjects()
                                                        escapeXML(obj.key));
                                    continue;
                                }
+                               version = *decVersion;
                            }
 
                            const auto currPath = make_key(obj.key, self->keyInfo.bucketId, version);
@@ -7015,8 +7022,19 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
 {
     const bool listPartial = requestAction() == Action::ListMultipartUploads;
     const bool listVersions = requestAction() == Action::ListObjectVersions;
+    std::optional<int64_t> markerVersionDec;
+    if (!markerVersionStr.empty() && listVersions)
+    {
+        markerVersionDec = sfs().decrypt_version(markerVersionStr);
+        if (!markerVersionDec)
+        {
+            XLOGF(INFO, "Invalid version id marker {}", markerVersionStr);
+            sendError(evb, self, 400, "Bad request", S3ErrorCode::InvalidArgument, "Invalid version id marker specified", bucketName);
+            return;
+        }
+    }
     const auto markerVersion = markerVersionStr.empty() ? std::numeric_limits<int64_t>::max()
-                                                        : (listVersions ? sfs().decrypt_id(markerVersionStr) : decryptUploadId(markerVersionStr).id);
+                                                        : (listVersions ? *markerVersionDec : decryptUploadId(markerVersionStr).id);
     const auto listBucketId = listPartial ? buckets::getPartialUploadsBucket(bucketId) : bucketId;
     SingleFileStorage::ListIterData iter_data;
     std::string iterStartVal;
@@ -9025,13 +9043,47 @@ static bool etagMatches(const std::string& etag, const std::string& cond)
     return !etagView.empty() && etagView == condView;
 }
 
+int S3Handler::contentTypeIdFromMetadata(const std::string& md5sum)
+{
+    int64_t totalLen = 0;
+    std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
+    std::unique_ptr<ObjMetadata> objMetadata;
+    std::unique_ptr<PayloadHashBase> sdkChecksumHash;
+    if (!parseMultipartInfo(md5sum, totalLen, multiPartDownloadData, &objMetadata, &sdkChecksumHash) || !objMetadata)
+        return 0;
+    return objMetadata->contentType.contentType;
+}
+
 void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride)
 {
+    // Version of the current object (also if it is a delete marker)
+    if (matchInfo.ifVersion)
+    {
+        assert(!fragInfo.fn.empty());
+        if (fragInfo.fn.empty() || extractKeyInfoView(fragInfo.fn).version != *matchInfo.ifVersion)
+        {
+            matchInfo.match = false;
+            matchInfo.notModified = false;
+            matchInfo.notFound = false;
+            matchInfo.isDeleteMarker = false;
+            return;
+        }
+    }
+
     // A delete marker as current version means there is no current object
     if (fragInfo.md5sum.size() == 1 && fragInfo.md5sum[0] == metadata_tombstone)
     {
         matchInfo.setNotFound();
         matchInfo.isDeleteMarker = true;
+        return;
+    }
+
+    if (matchInfo.ifContentType && contentTypeIdFromMetadata(fragInfo.md5sum) != *matchInfo.ifContentType)
+    {
+        matchInfo.match = false;
+        matchInfo.notModified = false;
+        matchInfo.notFound = false;
+        matchInfo.isDeleteMarker = false;
         return;
     }
 
@@ -9251,9 +9303,11 @@ std::optional<S3Handler::CopySource> S3Handler::parseCopySource(proxygen::HTTPMe
         if (!folly::tryUriUnescape(*versionIdEnc, versionId))
             return invalidArgument("Invalid version id specified");
 
-        copySource.version = sfs().decrypt_id(versionId);
-        if (copySource.version <= 0)
+        const auto decVersion = sfs().decrypt_version(versionId);
+        // 0 would mean newest version
+        if (!decVersion || *decVersion == 0)
             return invalidArgument("Invalid version id specified");
+        copySource.version = *decVersion;
     }
 
     const auto sourceResource = fmt::format("arn:aws:s3:::{}/{}", copySource.bucket, copySource.key);

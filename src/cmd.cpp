@@ -142,7 +142,10 @@ ConfigResult readConfigFile(const std::string& fn)
         { "TRIM_FREESPACE_SIZE", "trim_freespace_size" },
         { "DB_MAX_DIRTY_MB", "idl_dirty_max" },
         { "WAL_SIZE_MB", "max_wal_size_mb" },
-        { "WAL_ITEMS", "max_wal_items" }
+        { "WAL_ITEMS", "max_wal_items" },
+        { "REDIS_PORT", "redis_port" },
+        { "REDIS_BUCKET", "redis_bucket" },
+        { "REDIS_MAX_VALUE_SIZE", "redis_max_value_size" }
     };
 
     for (const auto& [key, val] : settings)
@@ -209,7 +212,10 @@ ConfigResult readConfigEnv(const std::set<std::string>& alreadySetArgs)
         { "HS5_DB_MAX_DIRTY_MB", "idl_dirty_max" },
         { "HS5_TRIM_FREESPACE_SIZE", "trim_freespace_size" },
         { "HS5_WAL_SIZE_MB", "max_wal_size_mb" },
-        { "HS5_WAL_ITEMS", "max_wal_items" }
+        { "HS5_WAL_ITEMS", "max_wal_items" },
+        { "HS5_REDIS_PORT", "redis_port" },
+        { "HS5_REDIS_BUCKET", "redis_bucket" },
+        { "HS5_REDIS_MAX_VALUE_SIZE", "redis_max_value_size" }
     };
 
     for (const auto& [envKey, argKey] : configMapping)
@@ -351,6 +357,14 @@ int actionRun(std::vector<std::string> args)
                                                     "Number of bytes below which to log object data to WAL file if wal-mode is full or data-only"
                                                     " (default 6000 bytes)",
                                                     false, 6000, "bytes", cmd);
+
+    TCLAP::ValueArg<int> redisPortArg("", "redis-port",
+                                      "Port to listen on for Redis protocol connections (default -1, disabled)",
+                                      false, -1, "port number", cmd);
+
+    TCLAP::ValueArg<std::string> redisBucketArg("", "redis-bucket",
+                                                "Bucket storing the Redis keys. Created with versioning enabled if it does not exist (default redis)",
+                                                false, "redis", "bucket", cmd);
 
     std::vector<std::string> realArgs;
     realArgs.push_back(args[0]);
@@ -525,6 +539,18 @@ int actionRun(std::vector<std::string> args)
     {
         realArgs.push_back("--logging");
         realArgs.push_back(toFollyLoglevel(loglevelArg.getValue()));
+    }
+
+    if (!alreadySetArgs.contains("--redis_port") && redisPortArg.isSet())
+    {
+        realArgs.push_back("--redis_port");
+        realArgs.push_back(std::to_string(redisPortArg.getValue()));
+    }
+
+    if (!alreadySetArgs.contains("--redis_bucket") && redisBucketArg.isSet())
+    {
+        realArgs.push_back("--redis_bucket");
+        realArgs.push_back(redisBucketArg.getValue());
     }
 
     if (duckDbUi.getValue())

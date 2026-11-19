@@ -6,7 +6,8 @@
 #include "Buckets.h"
 #include "s3handler.h"
 
-ObjectReader::ObjectReader(SingleFileStorage& sfs, const std::string& bucket, const std::string& key, const int64_t version)
+ObjectReader::ObjectReader(SingleFileStorage& sfs, const std::string& bucket, const std::string& key, const int64_t version,
+                           const VersionSelect versionSelect)
     : sfs(sfs), name(bucket + "/" + key)
 {
     const auto bucketInfoOpt = buckets::getBucketInfo(bucket);
@@ -21,8 +22,15 @@ ObjectReader::ObjectReader(SingleFileStorage& sfs, const std::string& bucket, co
 
     unsigned int readPrepFlags = SingleFileStorage::ReadAddReadingCallback;
 
-    const auto withVersioning = version == 0 && (bucketInfo.versioning == buckets::VersioningState::Enabled || bucketInfo.versioning == buckets::VersioningState::Suspended);
-    if (version != 0)
+    const auto withVersioning = versionSelect == VersionSelect::Oldest ||
+                                (versionSelect == VersionSelect::Default && version == 0 &&
+                                 (bucketInfo.versioning == buckets::VersioningState::Enabled || bucketInfo.versioning == buckets::VersioningState::Suspended));
+    if (versionSelect == VersionSelect::Oldest)
+    {
+        s3key = make_key(key, bucketId, std::numeric_limits<int64_t>::min());
+        readPrepFlags |= SingleFileStorage::ReadOldest;
+    }
+    else if (version != 0 || versionSelect == VersionSelect::Exact)
     {
         s3key = make_key(key, bucketId, version);
     }
