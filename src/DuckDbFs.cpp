@@ -192,17 +192,18 @@ duckdb::vector<duckdb::OpenFileInfo> DuckDbFs::Glob(const std::string& glob_patt
 
     const auto iterStartVal = make_key(sharedPath, *bucketId, std::numeric_limits<int64_t>::max());
 
-    sfs.list_commit();
+    SingleFileStorage::ListIterData iterData;
 
-    SingleFileStorage::IterData iterData;
+    auto guard = folly::makeGuard([&]
+                                  { sfs.list_iter_stop(iterData); });
 
-    if (!sfs.iter_start(iterStartVal, false, iterData))
+    if (!sfs.list_iter_start(iterStartVal, iterStartVal, [bucketId = *bucketId, sharedPath](const std::string& key)
+                             {
+                                 const auto keyInfo = extractKeyInfoView(key);
+                                 return keyInfo.bucketId == bucketId && keyInfo.key.starts_with(sharedPath); }, iterData))
     {
         throw duckdb::IOException("Failed to start listing");
     }
-
-    auto guard = folly::makeGuard([&]
-                                  { sfs.iter_stop(iterData); });
 
     std::string lastOutputKeyStr;
 
@@ -213,7 +214,7 @@ duckdb::vector<duckdb::OpenFileInfo> DuckDbFs::Glob(const std::string& glob_patt
         std::string keyBin, md5sum;
         int64_t offset, size, last_modified;
         std::vector<SingleFileStorage::SPunchItem> extra_exts;
-        if (!sfs.iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iterData))
+        if (!sfs.iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iterData.curr))
         {
             break;
         }
@@ -254,7 +255,7 @@ duckdb::vector<duckdb::OpenFileInfo> DuckDbFs::Glob(const std::string& glob_patt
             }
         }
 
-        if (!sfs.iter_next(iterData))
+        if (!sfs.list_iter_next(iterData))
         {
             throw duckdb::IOException("Failed to list next");
         }

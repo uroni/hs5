@@ -597,14 +597,13 @@ namespace
     template <typename T, typename U>
     std::optional<std::string> listBucket(SingleFileStorage& sfs, const std::string& iterStartVal, const int64_t bucketId, T stopFunc, U outputFunc)
     {
-        sfs.list_commit();
-
-        SingleFileStorage::IterData iterData = {};
-        if (!sfs.iter_start(iterStartVal, false, iterData))
-            throw ApiError(Api::Herror::errorStartingListing);
-
+        SingleFileStorage::ListIterData iterData;
         auto guard = folly::makeGuard([&]
-                                      { sfs.iter_stop(iterData); });
+                                      { sfs.list_iter_stop(iterData); });
+
+        if (!sfs.list_iter_start(iterStartVal, iterStartVal, [bucketId](const std::string& key)
+                                 { return extractKeyInfoView(key).bucketId == bucketId; }, iterData))
+            throw ApiError(Api::Herror::errorStartingListing);
 
         bool returnNext = false;
 
@@ -613,7 +612,7 @@ namespace
             std::string keyBin, md5sum;
             int64_t offset, size, last_modified;
             std::vector<SingleFileStorage::SPunchItem> extra_exts;
-            if (!sfs.iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iterData))
+            if (!sfs.iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iterData.curr))
                 return {};
 
             const auto keyInfo = extractKeyInfoView(keyBin);
@@ -632,7 +631,7 @@ namespace
                 returnNext = true;
             }
 
-            if (!sfs.iter_next(iterData))
+            if (!sfs.list_iter_next(iterData))
                 throw ApiError(Api::Herror::errorListingInIteration);
         }
     }

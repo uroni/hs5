@@ -6536,12 +6536,12 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
                        if (bucketId)
                        {
                            const auto iterStartVal = make_key({ .key = {}, .version = std::numeric_limits<int64_t>::max(), .bucketId = *bucketId });
-                           SingleFileStorage::IterData iter_data = {};
+                           SingleFileStorage::ListIterData iter_data;
 
-                           self->sfs().list_commit();
-
-                           if (!self->sfs().iter_start(iterStartVal, false, iter_data))
+                           if (!self->sfs().list_iter_start(iterStartVal, iterStartVal, [bucketId = *bucketId](const std::string& key)
+                                                            { return extractKeyInfoView(key).bucketId == bucketId; }, iter_data))
                            {
+                               self->sfs().list_iter_stop(iter_data);
                                XLOGF(ERR, "Error starting listing during delete bucket");
                                self->sendResponse(evb, self, 500, "Internal error");
                                return;
@@ -6550,7 +6550,7 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
                            std::string keyBin, md5sum;
                            int64_t offset, size, last_modified;
                            std::vector<SingleFileStorage::SPunchItem> extra_exts;
-                           if (!self->sfs().iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
+                           if (!self->sfs().iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data.curr))
                            {
                                hasObjects = false;
                            }
@@ -6560,7 +6560,7 @@ void S3Handler::deleteBucket(proxygen::HTTPMessage& headers)
                                hasObjects = keyInfo.bucketId == *bucketId;
                            }
 
-                           self->sfs().iter_stop(iter_data);
+                           self->sfs().list_iter_stop(iter_data);
 
                            if (!hasObjects)
                            {
@@ -7018,7 +7018,7 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
     const auto markerVersion = markerVersionStr.empty() ? std::numeric_limits<int64_t>::max()
                                                         : (listVersions ? sfs().decrypt_id(markerVersionStr) : decryptUploadId(markerVersionStr).id);
     const auto listBucketId = listPartial ? buckets::getPartialUploadsBucket(bucketId) : bucketId;
-    SingleFileStorage::IterData iter_data = {};
+    SingleFileStorage::ListIterData iter_data;
     std::string iterStartVal;
     std::string lastOutputKeyStr;
     int64_t lastOutputVersion = std::numeric_limits<int64_t>::max();
@@ -7059,10 +7059,16 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
             iterStartVal = make_key({ .key = {}, .version = markerVersion, .bucketId = listBucketId });
     }
 
-    sfs().list_commit();
-
-    if (!sfs().iter_start(iterStartVal, false, iter_data))
+    // Uncommitted items in the listing range are merged into the listing. The marker can sort before the
+    // prefix, so the range starts at whichever of both sorts last (and with the newest version)
+    const auto& rangeStartKey = prefix && lastOutputKeyStr < *prefix ? *prefix : lastOutputKeyStr;
+    if (!sfs().list_iter_start(iterStartVal, make_key({ .key = rangeStartKey, .version = std::numeric_limits<int64_t>::max(), .bucketId = listBucketId }), [listBucketId, prefix](const std::string& key)
+                               {
+                                   const auto keyInfo = extractKeyInfoView(key);
+                                   return keyInfo.bucketId == listBucketId &&
+                                          (!prefix || keyInfo.key.starts_with(*prefix)); }, iter_data))
     {
+        sfs().list_iter_stop(iter_data);
         XLOGF(ERR, "Error starting listing");
         sendError(evb, self, 500, "Internal error", S3ErrorCode::InternalError, "Error starting listing", bucketName);
         return;
@@ -7121,7 +7127,7 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
         std::string keyBin, md5sum;
         int64_t offset, size, last_modified;
         std::vector<SingleFileStorage::SPunchItem> extra_exts;
-        if (!sfs().iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data))
+        if (!sfs().iter_curr_val(keyBin, offset, size, extra_exts, last_modified, md5sum, iter_data.curr))
         {
             XLOGF(DBG0, "Finished listing with total keys {} truncated {}", i, truncated);
             truncated = false;
@@ -7236,10 +7242,10 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
             ++keyCount;
         }
 
-        if (!sfs().iter_next(iter_data))
+        if (!sfs().list_iter_next(iter_data))
         {
             XLOGF(ERR, "Error iterating listing");
-            sfs().iter_stop(iter_data);
+            sfs().list_iter_stop(iter_data);
             sendError(evb, self, 500, "Internal error", S3ErrorCode::InternalError, "Error listing (in iteration)", bucketName);
             return;
         }
@@ -7297,7 +7303,7 @@ void S3Handler::listObjects(folly::EventBase* evb, std::shared_ptr<S3Handler> se
         }
     }
 
-    sfs().iter_stop(iter_data);
+    sfs().list_iter_stop(iter_data);
 
     std::string resp;
 

@@ -1724,6 +1724,41 @@ def test_head_error_no_body(hs5: Hs5Runner, case: str):
         assert rest.startswith(b"HTTP/1.1 200"), rest[:100]
 
 
+def test_list_after_write_in_range(hs5: Hs5Runner):
+    """
+    Writes must be listed directly, also after listings of other
+    unmodified ranges and with a start key sorting before the prefix.
+    """
+    s3_client = hs5.get_s3_client()
+    bucket = hs5.testbucketname()
+
+    def keys(**kwargs) -> list[str]:
+        resp = s3_client.list_objects_v2(Bucket=bucket, **kwargs)
+        return [o["Key"] for o in resp.get("Contents", [])]
+
+    s3_client.put_object(Bucket=bucket, Key="c/1", Body=b"c")
+    assert keys(Prefix="c/") == ["c/1"]
+
+    for i in range(1, 4):
+        s3_client.put_object(Bucket=bucket, Key=f"a/{i}", Body=b"a")
+        s3_client.put_object(Bucket=bucket, Key=f"b/{i}", Body=b"b")
+        # Unmodified range
+        assert keys(Prefix="c/") == ["c/1"]
+        # Start key sorts before the prefix and there is a modified item in between
+        assert keys(Prefix="b/", StartAfter="a") == [f"b/{j}" for j in range(1, i + 1)]
+        assert keys(Prefix="a/") == [f"a/{j}" for j in range(1, i + 1)]
+
+    resp = s3_client.list_objects(Bucket=bucket, Prefix="b/", Marker="a")
+    assert [o["Key"] for o in resp.get("Contents", [])] == ["b/1", "b/2", "b/3"]
+
+    s3_client.put_object(Bucket=bucket, Key="b/4", Body=b"b")
+    assert keys(StartAfter="b/1") == ["b/2", "b/3", "b/4", "c/1"]
+
+    s3_client.delete_object(Bucket=bucket, Key="b/2")
+    assert keys(Prefix="b/") == ["b/1", "b/3", "b/4"]
+    assert keys() == ["a/1", "a/2", "a/3", "b/1", "b/3", "b/4", "c/1"]
+
+
 def test_list_parts(hs5: Hs5Runner):
     s3_client = hs5.get_s3_client()
     bucket = hs5.testbucketname()
@@ -2640,9 +2675,9 @@ def test_datafile_space_reused(hs5_large_small_alloc_chunksize: Hs5Runner):
         mb_data = os.urandom(1024 * 1024)
 
         add_objects(hs5._workdir, hs5, 100, mb_data)
-        hs5_large_small_alloc_chunksize.commit_storage(hs5.get_s3_client(), force=True)
+        hs5_large_small_alloc_chunksize.commit_storage(hs5.get_s3_client())
         delete_all_objects(hs5, hs5.testbucketname())
-        hs5_large_small_alloc_chunksize.commit_storage(hs5.get_s3_client(), force=True)
+        hs5_large_small_alloc_chunksize.commit_storage(hs5.get_s3_client())
         wait_for_trim()
 
     for _ in range(0, 2):
@@ -3783,6 +3818,7 @@ def test_object_lock_configuration(hs5: Hs5Runner):
     )
 
     # Object lock is persisted
+    hs5.commit_storage(s3_client)
     hs5.restart()
     s3_client = hs5.get_s3_client()
 
@@ -3842,6 +3878,7 @@ def test_put_object_legal_hold(hs5: Hs5Runner, tmp_path: Path):
     assert obj["Metadata"] == {"foo": "bar"}
     assert obj["Body"].read() == b"abc"
 
+    hs5.commit_storage(s3_client)
     hs5.restart()
     s3_client = hs5.get_s3_client()
 
@@ -4016,6 +4053,7 @@ def test_legal_hold_enforced_at_commit(hs5_no_precheck: Hs5Runner):
     )
     assert len(res["Errors"]) == 1 and res["Errors"][0]["Code"] == "AccessDenied"
 
+    hs5.commit_storage(s3_client)
     hs5.restart()
     s3_client = hs5.get_s3_client()
 
@@ -4224,6 +4262,7 @@ def test_put_object_retention_governance(hs5: Hs5Runner):
         Retention={"Mode": "GOVERNANCE", "RetainUntilDate": retain_until},
     )
 
+    hs5.commit_storage(s3_client)
     hs5.restart()
     s3_client = hs5.get_s3_client()
 
@@ -4387,6 +4426,7 @@ def test_put_object_retention_compliance(hs5: Hs5Runner):
     s3_client.delete_object(Bucket=bucket, Key="ret.txt")
     s3_client.delete_object(Bucket=bucket, Key="ret.txt", VersionId=v2)
 
+    hs5.commit_storage(s3_client)
     hs5.restart()
     s3_client = hs5.get_s3_client()
 
@@ -5021,6 +5061,7 @@ def test_object_lock_headers_put_object(hs5: Hs5Runner):
         Bucket=bucket, Key="ret.txt", Body=b"ghi", ObjectLockLegalHoldStatus="OFF"
     )["VersionId"]
 
+    hs5.commit_storage(s3_client)
     hs5.restart()
     s3_client = hs5.get_s3_client()
 

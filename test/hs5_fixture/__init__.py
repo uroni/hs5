@@ -73,7 +73,6 @@ class Hs5Stats:
 
 class Hs5Runner:
     manual_commit = False
-    manual_commit_list_consistent = True
     with_heaptrack = False
 
     def __init__(
@@ -82,6 +81,7 @@ class Hs5Runner:
         data_file_size_limit_mb: int,
         testrun_uid: str,
         perf: bool = False,
+        perf_wal: bool = True,
         data_file_alloc_chunk_size: Optional[int] = None,
         extra_args: list[str] = [],
     ) -> None:
@@ -115,11 +115,13 @@ class Hs5Runner:
         if os.environ.get("MANUAL_COMMIT") == "1":
             self.manual_commit = True
 
-        if os.environ.get("ENABLE_WAL") == "1" or perf:
+        wal_perf = perf and perf_wal
+
+        if os.environ.get("ENABLE_WAL") == "1" or wal_perf:
             self.args.append("--index_wal_path")
             self.args.append(".")
 
-        if os.environ.get("ENABLE_WAL_WRITE_DATA") == "1" or perf:
+        if os.environ.get("ENABLE_WAL_WRITE_DATA") == "1" or wal_perf:
             self.args.append("--wal_write_data")
             wal_thres = os.environ.get("WAL_WRITE_DATA_THRESHOLD")
             self.args.append("6000" if wal_thres is None else wal_thres)
@@ -284,10 +286,8 @@ class Hs5Runner:
             config=config,
         )
 
-    def commit_storage(self, s3: S3Client, force: bool = False) -> None:
+    def commit_storage(self, s3: S3Client) -> None:
         if not self.manual_commit:
-            return
-        if self.manual_commit_list_consistent and not force:
             return
 
         s3.put_object(
@@ -418,6 +418,28 @@ def hs5_perf(tmpdir: Path, testrun_uid: str):
     loc.mkdir()
     runner = Hs5Runner(
         loc, data_file_size_limit_mb=100, testrun_uid=testrun_uid, perf=True
+    )
+    yield runner
+    runner.stop(cleanup=True, kill=False)
+    try:
+        rmtree(loc)
+    except:
+        pass
+
+
+@pytest.fixture
+def hs5_perf_no_wal(tmpdir: Path, testrun_uid: str):
+    """
+    Like hs5_perf, but without the index WAL
+    """
+    loc = tmpdir / uuid.uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(
+        loc,
+        data_file_size_limit_mb=100,
+        testrun_uid=testrun_uid,
+        perf=True,
+        perf_wal=False,
     )
     yield runner
     runner.stop(cleanup=True, kill=False)

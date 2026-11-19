@@ -8,11 +8,13 @@
 #include <filesystem>
 #include <folly/io/IOBuf.h>
 #include <folly/io/IOBufQueue.h>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <memory.h>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <quic/common/Expected.h>
 #include <set>
@@ -207,7 +209,6 @@ public:
         float alloc_use_free_space_percent = 0.1;
         std::string runtime_id;
         bool manual_commit = false;
-        bool manual_commit_list_consistent = true;
         bool stop_on_error = false;
         bool punch_holes = true;
         int64_t data_file_chunk_size = 10LL * 1024 * 1024 * 1024 * 1024;
@@ -309,15 +310,6 @@ public:
 
     bool commit(bool background_queue, int64_t transid, int64_t disk_id, const bool pre_sync);
 
-    /**
-     * For read after write consistency, when running with WAL, this commits to the LMDB if necessary
-     * so the listings have read after write consistency.
-     *
-     * This could be improved by merging the uncommited changes into the listing, but avoid doing that
-     * work for now.
-     */
-    bool list_commit();
-
     bool empty_queue(bool background_queue);
 
     struct IterData
@@ -343,6 +335,57 @@ public:
     bool iter_curr_val(std::string& fn, int64_t& offset, int64_t& size, std::vector<SPunchItem>& exta_exts, int64_t& last_modified, std::string& md5sum, IterData& iter_data);
 
     bool iter_curr_val(std::string& fn, std::string& data, IterData& iter_data);
+
+    /**
+     * Iteration for listings with read after write consistency (when running with WAL or manual commit).
+     * Like iter_start(fn, ...), but merges items modified since the last LMDB commit
+     * into the iteration. Only modified items in the range are merged. The range starts at range_start
+     * (in key order) and in_range has to return whether a key is in the range, so the range has to be
+     * contiguous in key order. Modified items are copied in batches.
+     * Use iter_curr_val with ListIterData::curr to get the current item.
+     */
+    struct ListIterData
+    {
+        // Current item (iter_key is nullptr at the end)
+        IterData curr = {};
+
+        // LMDB iteration
+        IterData lmdb = {};
+        bool lmdb_started = false;
+        bool lmdb_at_end = false;
+        // Generation of committed items erased from list_commit_items when the LMDB iteration was started
+        uint64_t lmdb_generation = 0;
+        // Generation when the batch of modified items was copied
+        uint64_t modified_generation = 0;
+        // Key the iteration started at
+        std::string start_fn;
+
+        std::function<bool(const std::string&)> in_range;
+
+        // Batch of modified items in key order. Value is nullptr if deleted
+        std::vector<std::pair<std::string, std::shared_ptr<const std::string>>> modified;
+        // Position in modified. std::string::npos if there are no more modified items in range
+        size_t modified_pos = 0;
+
+        enum class Source
+        {
+            None,
+            Lmdb,
+            Modified,
+            // Modified item replacing the LMDB item with the same key
+            Both
+        };
+
+        // Key and source of the current item
+        std::string curr_key;
+        Source curr_source = Source::None;
+    };
+
+    bool list_iter_start(const std::string& fn, const std::string& range_start, std::function<bool(const std::string&)> in_range, ListIterData& iter_data);
+
+    bool list_iter_next(ListIterData& iter_data);
+
+    void list_iter_stop(ListIterData& iter_data);
 
     virtual void operator()();
 
@@ -622,6 +665,27 @@ private:
 
     bool has_commit_item(const FragAction action);
 
+    // Whether modified items are tracked in list_commit_items (for merging them into listings, see
+    // list_iter_start) instead of commit_items. Necessary if items are not committed to the LMDB directly
+    // (WAL or manual commit)
+    bool list_commit_items_used() const;
+
+    // Count a queued modification of fn in commit_items/list_commit_items. Requires mutex to be locked
+    void incr_commit_item(const std::string_view fn);
+
+    // Mark a queued modification of fn as done (it stays modified until the next LMDB commit).
+    // Requires mutex to be locked
+    void decr_commit_item(const std::string_view fn);
+
+    // Whether fn was modified since the last LMDB commit. Requires mutex to be locked
+    bool is_commit_item(const std::string_view fn);
+
+    // Whether there are modified items since the last LMDB commit. Requires mutex to be locked
+    bool commit_items_empty() const;
+
+    // Remove items without queued modifications after an LMDB commit. Requires mutex to be locked
+    void erase_committed_items();
+
     void queue_linked(const SFragInfo& frag_info);
 
     bool with_rewrite;
@@ -636,7 +700,57 @@ private:
     std::deque<SFragInfo> commit_background_queue;
     std::deque<SFragInfo> callback_queue;
     std::thread commit_thread_h;
+    // Hashed common prefixes (see common_prefix_hash_func) of items modified since the last LMDB commit, with
+    // the number of queued modifications. Entries are removed once committed to the LMDB. Only used if
+    // list_commit_items is not used (see list_commit_items_used)
     std::unordered_map<size_t, size_t> commit_items;
+
+    // Compares keys with the key compare function (if set), so list_commit_items is in key order
+    struct CommitItemsCompare
+    {
+        MDB_cmp_func* key_compare_func = nullptr;
+
+        bool operator()(const std::string& a, const std::string& b) const
+        {
+            if (key_compare_func == nullptr)
+                return a < b;
+
+            MDB_val va = { a.size(), const_cast<char*>(a.data()) };
+            MDB_val vb = { b.size(), const_cast<char*>(b.data()) };
+            return key_compare_func(&va, &vb) < 0;
+        }
+    };
+
+    struct ListCommitItem
+    {
+        // Number of queued modifications
+        size_t refs = 0;
+        // Value in the LMDB after the last applied modification. Unset if no modification was applied yet,
+        // nullptr if the item was deleted
+        std::optional<std::shared_ptr<const std::string>> value;
+    };
+
+    // Used instead of commit_items if listings need a commit (list_commit_items_used()). Keys modified since
+    // the last LMDB commit in key order, for merging them into listings (see list_iter_start)
+    std::map<std::string, ListCommitItem, CommitItemsCompare> list_commit_items;
+    // Incremented each time committed items are erased from list_commit_items
+    uint64_t list_commit_items_generation = 0;
+
+    // Set the value of fn in list_commit_items after applying a modification (in commit thread)
+    void set_list_commit_item_value(MDB_txn* txn, const std::string& fn);
+
+    // Copy the next batch of modified items for list_iter. Starts at start (inclusive) if set, otherwise
+    // after iter_data.modified's last item. Sets modified_pos to std::string::npos if there are no more
+    // modified items in range
+    bool list_iter_get_modified(const std::string* start, ListIterData& iter_data);
+
+    // Start or restart LMDB iteration for list_iter at fn (with skip_fn, skip that item)
+    bool list_iter_start_lmdb(const std::string& fn, bool skip_fn, ListIterData& iter_data);
+
+    // Set the current item of list_iter to the next item in key order
+    bool list_iter_set_curr(ListIterData& iter_data);
+
+    int key_compare(const std::string_view a, const std::string_view b) const;
 
     bool do_quit;
 
@@ -724,7 +838,6 @@ private:
 
     std::string runtime_id;
     bool manual_commit;
-    bool manual_commit_list_consistent;
     bool stop_on_error;
     bool punch_holes;
     bool no_sync;
@@ -745,7 +858,6 @@ private:
     int64_t curr_version = 0;
 
     std::unique_ptr<WalFile> wal_file;
-    bool needs_wal_file_reset = false;
     bool wal_write_meta = true;
     int64_t wal_write_data = 0;
     char wal_uuid[16];

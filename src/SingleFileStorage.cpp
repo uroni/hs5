@@ -48,6 +48,7 @@ DEFINE_bool(symlink_lockfile_to_tmpdir, false, "Symlink LMDB lockfile to /tmp");
 DEFINE_int64(min_free_space, 0, "HS5 will try to keep at least this amount of MiB free on the data storage location");
 DEFINE_int64(max_wal_size_mb, 1000, "Maximum WAL file size in MiB before resetting");
 DEFINE_int64(max_wal_items, 10000, "Maxmimum amount of items in WAL file before resetting");
+DEFINE_int64(list_overlay_batch_size, 1000, "Maximum number of uncommitted items copied at once for merging them into a listing");
 DEFINE_bool(check_freespace_on_startup, false, "Check data file freespace on startup");
 DEFINE_bool(wal_write_thread, true, "Use a separate thread for WAL file data writes");
 DEFINE_bool(preallocate_data, true, "Preallocate data file space to improve performance and fragmentation");
@@ -431,7 +432,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
       stop_data_file_copy(false), references(0), db_env(nullptr), freespace_cache_path(options.freespace_cache_path), cache_db_env(nullptr), regen_freespace_cache(false),
       sync_freespace_cache(true), mdb_curr_sync(false), data_file_size_limit(options.data_file_size_limit_mb * 1024 * 1024), alloc_chunk_size(options.alloc_chunk_size),
       alloc_use_free_space_percent(options.alloc_use_free_space_percent),
-      runtime_id(options.runtime_id), manual_commit(options.manual_commit), manual_commit_list_consistent(options.manual_commit_list_consistent),
+      runtime_id(options.runtime_id), manual_commit(options.manual_commit),
       stop_on_error(options.stop_on_error), punch_holes(options.punch_holes), no_sync(options.no_sync),
       data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func),
       common_prefix_hash_func(options.common_prefix_hash_func), on_delete_callback(options.on_delete_callback), modify_data_callback(options.modify_data_callback), modify_metadata_callback(options.modify_metadata_callback),
@@ -441,6 +442,8 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
         common_prefix_func = common_prefix_passthrough;
     if (common_prefix_hash_func == nullptr)
         common_prefix_hash_func = common_prefix_hash_func_passthrough;
+
+    list_commit_items = decltype(list_commit_items)(CommitItemsCompare{ .key_compare_func = key_compare_func });
 
     {
         struct statfs data_file_statfs;
@@ -1220,10 +1223,12 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 
             for (auto& item : items)
             {
+                // This is for if we don't wait for wal before startup
+                queue_linked(item);
+
                 if (has_commit_item(item.action))
                 {
-                    // This is for if we don't wait for wal before startup
-                    ++commit_items[common_prefix_hash_func(item.fn)];
+                    incr_commit_item(item.fn);
                 }
 
                 commit_queue.push_back(std::move(item));
@@ -2036,7 +2041,7 @@ int SingleFileStorage::write_finalize(const std::string& fn, const std::vector<E
     if (match_info)
         curr_frag.commit_info = &commit_info;
 
-    ++commit_items[common_prefix_hash_func(fn)];
+    incr_commit_item(fn);
     queue_linked(curr_frag);
 
     commit_queue.push_back(std::move(curr_frag));
@@ -2248,7 +2253,7 @@ int SingleFileStorage::write_int(const std::string& fn, const char* data,
     if (match_info)
         curr_frag.commit_info = &commit_info;
 
-    ++commit_items[common_prefix_hash_func(cfn)];
+    incr_commit_item(cfn);
 
     commit_queue.push_back(std::move(curr_frag));
 
@@ -2312,8 +2317,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
     {
         std::lock_guard lock(mutex);
 
-        auto it = commit_items.find(common_prefix_hash_func(fn));
-        if (it != commit_items.end())
+        if (is_commit_item(fn))
         {
             flags |= ReadUnsynced;
         }
@@ -2336,8 +2340,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
         {
             std::unique_lock lock(mutex);
 
-            auto it = commit_items.find(common_prefix_hash_func(fn));
-            if (it != commit_items.end())
+            if (is_commit_item(fn))
             {
                 lock.unlock();
                 return read_prepare(fn, flags | ReadUnsynced);
@@ -2349,8 +2352,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
         {
             std::unique_lock lock(mutex);
 
-            auto it = commit_items.find(common_prefix_hash_func(fn));
-            if (it != commit_items.end())
+            if (is_commit_item(fn))
             {
                 lock.unlock();
                 return read_prepare(fn, flags | ReadUnsynced);
@@ -2420,8 +2422,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::check_existence(const st
     {
         std::unique_lock lock(mutex);
 
-        auto it = commit_items.find(common_prefix_hash_func(fn));
-        if (it != commit_items.end())
+        if (is_commit_item(fn))
         {
             flags |= ReadUnsynced;
         }
@@ -2702,7 +2703,7 @@ int SingleFileStorage::del(const std::string_view fn, DelAction da,
     queue_linked(curr_frag);
 
     if (has_commit_item(curr_frag.action))
-        ++commit_items[common_prefix_hash_func(fn)];
+        incr_commit_item(fn);
 
     if (is_defragging)
     {
@@ -2751,7 +2752,7 @@ int SingleFileStorage::modify_metadata(const std::string& fn, const std::string_
         wait_queue(lock, false, false);
         wait_defrag(fn, lock);
 
-        ++commit_items[common_prefix_hash_func(fn)];
+        incr_commit_item(fn);
 
         if (is_defragging)
         {
@@ -2789,7 +2790,7 @@ bool SingleFileStorage::restore_old(const std::string& fn)
     std::unique_lock lock(mutex);
     wait_queue(lock, false, false);
     wait_defrag(cfn, lock);
-    ++commit_items[common_prefix_hash_func(cfn)];
+    incr_commit_item(cfn);
 
     if (is_defragging)
     {
@@ -2874,65 +2875,6 @@ bool SingleFileStorage::commit(bool background_queue, int64_t transid, int64_t d
     }
 
     commit_info.commit_done.wait(commit_done_lock);
-
-    return commit_info.commit_errors == 0;
-}
-
-bool SingleFileStorage::list_commit()
-{
-    if (is_dead)
-    {
-        return false;
-    }
-
-    // Only necessary if using wal file or manual commit settings
-    const bool manual_commit_flush = manual_commit && manual_commit_list_consistent;
-
-    if (!wal_file && !manual_commit_flush)
-    {
-        return true;
-    }
-
-    if (wal_file)
-        XLOGF(INFO, "Listing commit requested for SFS {} because of WAL presence", db_path);
-    else
-        XLOGF(INFO, "Listing commit requested for SFS {} because of manual commit settings", db_path);
-
-    SCommitInfo commit_info;
-    std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
-
-    {
-        std::scoped_lock lock(mutex);
-
-        if (wal_file && !needs_wal_file_reset && !manual_commit_flush)
-        {
-            XLOGF(INFO, "WAL file for SFS {} does not need reset, skipping listing commit", db_path);
-            return true;
-        }
-
-        if (!wal_file && commit_items.empty())
-        {
-            XLOGF(INFO, "No commit items in SFS {}, skipping listing commit", db_path);
-            return true;
-        }
-
-        SFragInfo frag_info;
-        frag_info.offset = -1;
-        frag_info.len = 0;
-        frag_info.md5sum = "l";
-        frag_info.action = FragAction::Commit;
-        frag_info.commit_info = &commit_info;
-
-        if (is_dead)
-            return false;
-
-        commit_queue.push_back(std::move(frag_info));
-
-        cond.notify_all();
-    }
-    commit_info.commit_done.wait(commit_done_lock);
-
-    XLOGF(INFO, "Listing commit for SFS {} completed with {} errors", db_path, commit_info.commit_errors);
 
     return commit_info.commit_errors == 0;
 }
@@ -3240,7 +3182,7 @@ int64_t SingleFileStorage::remove_fn(const std::string& fn, MDB_txn* txn, MDB_tx
                         {
                             if (!lock.owns_lock())
                                 lock.lock();
-                            commit_items[common_prefix_hash_func(action.fn)]++;
+                            incr_commit_item(action.fn);
                         }
                     }
                     callback_queue.insert(callback_queue.end(),
@@ -7254,7 +7196,7 @@ void SingleFileStorage::operator()()
         if (has_commit_item(frag_info.action))
         {
             ++mod_items;
-            --commit_items[common_prefix_hash_func(frag_info.fn)];
+            decr_commit_item(frag_info.fn);
         }
 
         lock.unlock();
@@ -7264,10 +7206,9 @@ void SingleFileStorage::operator()()
 
         auto wal_commit_allowed = [&]()
         {
-            // Commits needing a full index commit (e.g. listing commits) are not deferred, as
-            // deferred commits are finished together with the next commit, which may only be a WAL commit
-            return frag_info.md5sum != "reset" &&
-                   frag_info.md5sum != "l";
+            // Commits needing a full index commit (reset commits) are not deferred, as deferred
+            // commits are finished together with the next commit, which may only be a WAL commit
+            return frag_info.md5sum != "reset";
         };
 
         if (!pending_commit && !from_startup_wal &&
@@ -7363,7 +7304,7 @@ void SingleFileStorage::operator()()
                             if (!lock.owns_lock())
                                 lock.lock();
 
-                            --commit_items[common_prefix_hash_func(linked->fn)];
+                            decr_commit_item(linked->fn);
                         }
 
                         linked = std::move(linked->linked);
@@ -7454,11 +7395,6 @@ void SingleFileStorage::operator()()
             }
 
             last_commit_time = std::chrono::steady_clock::now();
-
-            {
-                std::scoped_lock scoped_lock(mutex);
-                needs_wal_file_reset = true;
-            }
 
             bool has_commit_info = false;
             if (frag_info.commit_info != nullptr)
@@ -7849,21 +7785,7 @@ void SingleFileStorage::operator()()
 
                 if (commit_ok)
                 {
-                    needs_wal_file_reset = false;
-
-                    for (auto it = commit_items.begin(); it != commit_items.end();)
-                    {
-                        if (it->second == 0)
-                        {
-                            auto it_prev = it;
-                            ++it;
-                            commit_items.erase(it_prev);
-                        }
-                        else
-                        {
-                            ++it;
-                        }
-                    }
+                    erase_committed_items();
                 }
             }
 
@@ -8545,6 +8467,11 @@ void SingleFileStorage::operator()()
         else
         {
             assert(false);
+        }
+
+        if (has_commit_item(frag_info.action) && list_commit_items_used())
+        {
+            set_list_commit_item_value(txn, frag_info.fn);
         }
 
         lock.lock();
@@ -9791,18 +9718,29 @@ void SingleFileStorage::assert_reading_items_empty()
 
     size_t commit_items_refs = 0;
 
-    if (!commit_items.empty())
+    const auto check_refs = [&](const auto& items, const auto& format_item, const auto& get_refs)
     {
-        XLOGF(INFO, "Commit items not empty: {} items. sfs {}", commit_items.size(), db_path);
-        for (const auto& [item, refs] : commit_items)
+        if (items.empty())
+            return;
+
+        XLOGF(INFO, "Commit items not empty: {} items. sfs {}", items.size(), db_path);
+        for (const auto& [item, value] : items)
         {
+            const size_t refs = get_refs(value);
             if (refs != 0)
             {
-                XLOGF(ERR, "Item {} refs {}", item, refs);
+                XLOGF(ERR, "Item {} refs {}", format_item(item), refs);
                 ++commit_items_refs;
             }
         }
-    }
+    };
+
+    check_refs(commit_items, [](const size_t item)
+               { return item; }, [](const size_t refs)
+               { return refs; });
+    check_refs(list_commit_items, [](const std::string& item)
+               { return folly::hexlify(item); }, [](const ListCommitItem& item)
+               { return item.refs; });
 
     assert(commit_items_refs == 0);
 }
@@ -9939,7 +9877,318 @@ void SingleFileStorage::run_trim_thread()
 
 bool SingleFileStorage::has_commit_item(const FragAction action)
 {
-    return action == FragAction::Add || action == FragAction::AddNoDelOld || action == FragAction::Del || action == FragAction::DelNoCallback || action == FragAction::DelOld || action == FragAction::RestoreOld || action == FragAction::DelWithQueued || action == FragAction::ModifyMetadata;
+    return action == FragAction::Add || action == FragAction::AddNoDelOld || action == FragAction::Del || action == FragAction::DelNoCallback || action == FragAction::DelOld || action == FragAction::RestoreOld || action == FragAction::DelWithQueued || action == FragAction::ModifyMetadata || action == FragAction::ModifyData;
+}
+
+bool SingleFileStorage::list_commit_items_used() const
+{
+    return wal_file != nullptr || manual_commit;
+}
+
+void SingleFileStorage::incr_commit_item(const std::string_view fn)
+{
+    if (list_commit_items_used())
+        ++list_commit_items[std::string(fn)].refs;
+    else
+        ++commit_items[common_prefix_hash_func(fn)];
+}
+
+void SingleFileStorage::decr_commit_item(const std::string_view fn)
+{
+    auto& refs = list_commit_items_used() ? list_commit_items[std::string(fn)].refs
+                                          : commit_items[common_prefix_hash_func(fn)];
+    assert(refs > 0);
+    --refs;
+}
+
+bool SingleFileStorage::is_commit_item(const std::string_view fn)
+{
+    if (!list_commit_items_used())
+        return commit_items.contains(common_prefix_hash_func(fn));
+
+    // list_commit_items has full keys. Keys with the same common prefix are next to each other, before or
+    // at the common prefix
+    const auto cp = common_prefix_func(fn);
+    const auto it = list_commit_items.lower_bound(cp);
+    if (it != list_commit_items.end() && common_prefix_func(it->first) == cp)
+        return true;
+
+    return it != list_commit_items.begin() && common_prefix_func(std::prev(it)->first) == cp;
+}
+
+bool SingleFileStorage::commit_items_empty() const
+{
+    return list_commit_items_used() ? list_commit_items.empty() : commit_items.empty();
+}
+
+void SingleFileStorage::erase_committed_items()
+{
+    if (list_commit_items_used())
+    {
+        std::erase_if(list_commit_items, [](const auto& item)
+                      { return item.second.refs == 0; });
+        ++list_commit_items_generation;
+    }
+    else
+    {
+        std::erase_if(commit_items, [](const auto& item)
+                      { return item.second == 0; });
+    }
+}
+
+void SingleFileStorage::set_list_commit_item_value(MDB_txn* txn, const std::string& fn)
+{
+    THREAD_ID tid = gettid();
+
+    MDB_val tkey;
+    tkey.mv_data = const_cast<char*>(fn.data());
+    tkey.mv_size = fn.size();
+    MDB_val tval;
+    const int rc = mdb_get(txn, dbi_main, &tkey, &tval);
+
+    std::optional<std::shared_ptr<const std::string>> value;
+    if (has_mmap_read_error_reset(tid))
+    {
+        XLOG(ERR) << "LMDB: Error getting value for listing of " << folly::hexlify(fn) << " (SIGBUS) sfs " << db_path;
+    }
+    else if (rc == 0)
+    {
+        value = std::make_shared<const std::string>(reinterpret_cast<const char*>(tval.mv_data), tval.mv_size);
+    }
+    else if (rc == MDB_NOTFOUND)
+    {
+        value = nullptr;
+    }
+    else
+    {
+        XLOG(ERR) << "LMDB: Error getting value for listing of " << folly::hexlify(fn) << " (" << mdb_strerror(rc) << ") sfs " << db_path;
+    }
+
+    std::scoped_lock lock(mutex);
+    // Unset on error, so listings use the LMDB value (and wait for the queue)
+    list_commit_items[fn].value = std::move(value);
+}
+
+int SingleFileStorage::key_compare(const std::string_view a, const std::string_view b) const
+{
+    if (key_compare_func == nullptr)
+        return a.compare(b);
+
+    MDB_val va = { a.size(), const_cast<char*>(a.data()) };
+    MDB_val vb = { b.size(), const_cast<char*>(b.data()) };
+    return key_compare_func(&va, &vb);
+}
+
+bool SingleFileStorage::list_iter_get_modified(const std::string* start, ListIterData& iter_data)
+{
+    const std::string after = start == nullptr ? iter_data.modified.back().first : std::string();
+
+    iter_data.modified.clear();
+    iter_data.modified_pos = std::string::npos;
+
+    if (!list_commit_items_used())
+        return true;
+
+    const size_t batch_size = static_cast<size_t>(std::max<int64_t>(1, FLAGS_list_overlay_batch_size));
+    bool waited = false;
+
+    while (true)
+    {
+        std::vector<std::pair<std::string, std::shared_ptr<const std::string>>> batch;
+        bool pending = false;
+        uint64_t generation;
+
+        {
+            std::unique_lock lock(mutex);
+
+            // Some items (queued deletes) are modified without being in list_commit_items during startup
+            wait_startup_finished(lock);
+
+            generation = list_commit_items_generation;
+
+            auto it = start != nullptr ? list_commit_items.lower_bound(*start) : list_commit_items.upper_bound(after);
+            for (; it != list_commit_items.end(); ++it)
+            {
+                if (!iter_data.in_range(it->first))
+                    break;
+
+                if (batch.size() >= batch_size)
+                    break;
+
+                // Modification queued or being applied, so value is not up to date
+                if (it->second.refs > 0 || !it->second.value)
+                    pending = true;
+
+                if (!it->second.value)
+                    continue;
+
+                batch.emplace_back(it->first, *it->second.value);
+            }
+        }
+
+        if (pending && !waited)
+        {
+            // Wait for the queued modifications to be applied. Items modified after this point are modified
+            // concurrently to the listing, so they don't need to be waited for
+            waited = true;
+            if (!empty_queue(false))
+                return false;
+            continue;
+        }
+
+        iter_data.modified = std::move(batch);
+        iter_data.modified_pos = iter_data.modified.empty() ? std::string::npos : 0;
+        iter_data.modified_generation = generation;
+        return true;
+    }
+}
+
+bool SingleFileStorage::list_iter_start_lmdb(const std::string& fn, const bool skip_fn, ListIterData& iter_data)
+{
+    if (iter_data.lmdb_started)
+    {
+        iter_stop(iter_data.lmdb);
+        iter_data.lmdb_started = false;
+    }
+
+    if (!iter_start(fn, false, iter_data.lmdb))
+        return false;
+
+    iter_data.lmdb_started = true;
+    iter_data.lmdb_generation = iter_data.modified_generation;
+
+    if (skip_fn && iter_data.lmdb.iter_key.mv_data != nullptr &&
+        std::string_view(reinterpret_cast<const char*>(iter_data.lmdb.iter_key.mv_data), iter_data.lmdb.iter_key.mv_size) == fn)
+    {
+        if (!iter_next(iter_data.lmdb))
+            return false;
+    }
+
+    iter_data.lmdb_at_end = iter_data.lmdb.iter_key.mv_data == nullptr;
+    return true;
+}
+
+bool SingleFileStorage::list_iter_start(const std::string& fn, const std::string& range_start, std::function<bool(const std::string&)> in_range, ListIterData& iter_data)
+{
+    if (is_dead)
+        return false;
+
+    iter_data.in_range = std::move(in_range);
+    iter_data.start_fn = fn;
+
+    // Copy the modified items before starting the LMDB iteration, so items committed (and removed from
+    // list_commit_items) in between are in the LMDB iteration
+    if (!list_iter_get_modified(key_compare(fn, range_start) < 0 ? &range_start : &fn, iter_data))
+        return false;
+
+    if (!list_iter_start_lmdb(fn, false, iter_data))
+        return false;
+
+    return list_iter_set_curr(iter_data);
+}
+
+bool SingleFileStorage::list_iter_set_curr(ListIterData& iter_data)
+{
+    while (true)
+    {
+        if (iter_data.modified_pos != std::string::npos && iter_data.modified_pos >= iter_data.modified.size())
+        {
+            if (!list_iter_get_modified(nullptr, iter_data))
+                return false;
+
+            if (iter_data.modified_generation != iter_data.lmdb_generation)
+            {
+                // Items were committed and removed from list_commit_items since the LMDB iteration was started,
+                // so continue with a new LMDB iteration that has them
+                const bool has_curr = iter_data.curr_source != ListIterData::Source::None;
+                if (!list_iter_start_lmdb(has_curr ? iter_data.curr_key : iter_data.start_fn, has_curr, iter_data))
+                    return false;
+            }
+            continue;
+        }
+
+        const bool has_lmdb = !iter_data.lmdb_at_end;
+        const bool has_modified = iter_data.modified_pos != std::string::npos;
+
+        if (!has_lmdb && !has_modified)
+        {
+            iter_data.curr.iter_key.mv_data = nullptr;
+            iter_data.curr.iter_key.mv_size = 0;
+            iter_data.curr_source = ListIterData::Source::None;
+            return true;
+        }
+
+        int cmp;
+        if (!has_modified)
+            cmp = -1;
+        else if (!has_lmdb)
+            cmp = 1;
+        else
+            cmp = key_compare(std::string_view(reinterpret_cast<const char*>(iter_data.lmdb.iter_key.mv_data), iter_data.lmdb.iter_key.mv_size),
+                              iter_data.modified[iter_data.modified_pos].first);
+
+        if (cmp < 0)
+        {
+            iter_data.curr.iter_key = iter_data.lmdb.iter_key;
+            iter_data.curr.iter_val = iter_data.lmdb.iter_val;
+            iter_data.curr_source = ListIterData::Source::Lmdb;
+        }
+        else
+        {
+            const auto& [key, value] = iter_data.modified[iter_data.modified_pos];
+
+            if (!value)
+            {
+                // Deleted
+                ++iter_data.modified_pos;
+                if (cmp == 0)
+                {
+                    if (!iter_next(iter_data.lmdb))
+                        return false;
+                    iter_data.lmdb_at_end = iter_data.lmdb.iter_key.mv_data == nullptr;
+                }
+                continue;
+            }
+
+            iter_data.curr.iter_key.mv_data = const_cast<char*>(key.data());
+            iter_data.curr.iter_key.mv_size = key.size();
+            iter_data.curr.iter_val.mv_data = const_cast<char*>(value->data());
+            iter_data.curr.iter_val.mv_size = value->size();
+            iter_data.curr_source = cmp == 0 ? ListIterData::Source::Both : ListIterData::Source::Modified;
+        }
+
+        iter_data.curr_key.assign(reinterpret_cast<const char*>(iter_data.curr.iter_key.mv_data), iter_data.curr.iter_key.mv_size);
+        return true;
+    }
+}
+
+bool SingleFileStorage::list_iter_next(ListIterData& iter_data)
+{
+    using Source = ListIterData::Source;
+
+    if (iter_data.curr_source == Source::None)
+        return true;
+
+    if (iter_data.curr_source == Source::Lmdb || iter_data.curr_source == Source::Both)
+    {
+        if (!iter_next(iter_data.lmdb))
+            return false;
+        iter_data.lmdb_at_end = iter_data.lmdb.iter_key.mv_data == nullptr;
+    }
+
+    if (iter_data.curr_source == Source::Modified || iter_data.curr_source == Source::Both)
+        ++iter_data.modified_pos;
+
+    return list_iter_set_curr(iter_data);
+}
+
+void SingleFileStorage::list_iter_stop(ListIterData& iter_data)
+{
+    if (iter_data.lmdb_started)
+    {
+        iter_stop(iter_data.lmdb);
+        iter_data.lmdb_started = false;
+    }
 }
 
 int SingleFileStorage::put_frag_info_md5sum(MDB_txn* txn, THREAD_ID tid, const std::string& fn, const SFragInfo& frag_info, const std::string& md5sum)
@@ -9995,7 +10244,7 @@ void SingleFileStorage::queue_linked(const SFragInfo& frag_info)
     while (curr)
     {
         if (has_commit_item(curr->action))
-            ++commit_items[common_prefix_hash_func(curr->fn)];
+            incr_commit_item(curr->fn);
         curr = curr->linked.get();
     }
 }

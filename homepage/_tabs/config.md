@@ -77,7 +77,6 @@ HS5 can also read these options from environment variables using the `HS5_` pref
 ## Tuning for best performance
 
 - Enable `MANUAL_COMMIT` for write-heavy workloads when you can tolerate delayed visibility/durability. This reduces commit overhead, but recent writes are not fully durable until commit (or `COMMIT_AFTER_MS`) runs.
-- Set `MANUAL_COMMIT_LIST_CONSISTENT=false` to reduce list latency in manual commit mode. Trade-off: list results may temporarily miss uncommitted objects (eventual consistency until commit).
 - Enable `WAL_MODE` only when `MANUAL_COMMIT` is disabled, and prefer placing `WAL_PATH` on storage that is at least as fast as `METADATA_STORAGE_PATH`.
 - Set `TRIM_FREESPACE_SIZE=-1` to disable hole-punch trimming when optimizing for throughput over disk-space reclamation.
 - Increase `DB_MAX_DIRTY_MB` if you have available RAM and want fewer flushes under sustained writes in `MANUAL_COMMIT` mode.
