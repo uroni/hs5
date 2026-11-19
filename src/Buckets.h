@@ -46,6 +46,8 @@ namespace buckets
         std::vector<BucketCorsRule> corsRules;
         // Object lock is enabled for the bucket, so it may have locked objects (legal hold). Cannot be disabled.
         bool objectLockEnabled = false;
+        // Bucket stores Redis keys. The storage engine counts the list elements of keys in the bucket
+        bool redis = false;
     };
 
     std::optional<BucketInfo> getBucketInfo(const std::string_view bucketName);
@@ -78,6 +80,14 @@ namespace buckets
     SetVersioningResult setVersioning(const std::string_view bucketName, VersioningState versioningState);
 
     bool isObjectLockEnabled(int64_t bucketId);
+
+    // Marks the bucket as Redis bucket (see BucketInfo::redis). Returns false if the bucket does not exist
+    bool setRedis(int64_t bucketId);
+
+    bool isRedisBucket(int64_t bucketId);
+
+    // Whether any bucket is marked as Redis bucket
+    bool hasRedisBucket();
 
     enum class EnableObjectLockResult
     {

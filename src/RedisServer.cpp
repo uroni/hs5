@@ -2046,15 +2046,16 @@ int64_t RedisServer::listLength(const int64_t bucketId, const std::string& key, 
     return count;
 }
 
-void RedisServer::setupCounters(SingleFileStorage::SFSOptions& options, const int64_t bucketId)
+void RedisServer::setupCounters(SingleFileStorage::SFSOptions& options)
 {
-    // Number of list elements per key, maintained by the storage engine (also for modifications via S3)
-    options.counter_key_callback = [bucketId](const std::string& fn) -> std::string
+    // Number of list elements per key in Redis buckets, maintained by the storage engine (also for modifications via
+    // S3 and if the Redis server is disabled)
+    options.counter_key_callback = [](const std::string& fn) -> std::string
     {
         const auto keyInfo = extractKeyInfoView(fn);
-        if (keyInfo.bucketId != bucketId)
+        if (!buckets::isRedisBucket(keyInfo.bucketId))
             return std::string();
-        return make_key(keyInfo.key, buckets::getCountersBucket(bucketId), 0);
+        return make_key(keyInfo.key, buckets::getCountersBucket(keyInfo.bucketId), 0);
     };
     options.counter_counts_callback = [](const std::string& /*fn*/, const std::string& md5sum)
     {
@@ -3309,15 +3310,25 @@ bool RedisServer::initBucket(const std::string& bucket)
         return false;
     }
 
-    if (buckets::getBucket(bucket))
+    if (const auto bucketId = buckets::getBucket(bucket))
     {
         const auto bucketInfo = buckets::getBucketInfo(bucket);
         if (bucketInfo && bucketInfo->versioning != buckets::VersioningState::Enabled)
             XLOGF(WARN, "Versioning is not enabled on Redis bucket {}. Redis commands will fail until it is enabled", bucket);
+
+        if (bucketInfo && !bucketInfo->redis)
+            XLOGF(WARN, "Marking existing bucket {} as Redis bucket. List elements already in it are not counted", bucket);
+
+        if (!buckets::setRedis(*bucketId))
+        {
+            XLOGF(ERR, "Error marking bucket {} as Redis bucket", bucket);
+            return false;
+        }
         return true;
     }
 
-    if (buckets::addBucket(bucket, false) < 0)
+    const auto bucketId = buckets::addBucket(bucket, false);
+    if (bucketId < 0)
     {
         XLOGF(ERR, "Error creating Redis bucket {}", bucket);
         return false;
@@ -3326,6 +3337,12 @@ bool RedisServer::initBucket(const std::string& bucket)
     if (buckets::setVersioning(bucket, buckets::VersioningState::Enabled) != buckets::SetVersioningResult::Ok)
     {
         XLOGF(ERR, "Error enabling versioning on Redis bucket {}", bucket);
+        return false;
+    }
+
+    if (!buckets::setRedis(bucketId))
+    {
+        XLOGF(ERR, "Error marking bucket {} as Redis bucket", bucket);
         return false;
     }
 

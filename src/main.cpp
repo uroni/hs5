@@ -303,17 +303,11 @@ int realMain(int argc, char* argv[])
 
     proxygen::HTTPSessionBase::setMaxReadBufferSize(FLAGS_max_put_buffer_size);
 
-    if (FLAGS_redis_port != -1)
-    {
-        if (!RedisServer::initBucket(FLAGS_redis_bucket))
-            return 1;
+    if (FLAGS_redis_port != -1 && !RedisServer::initBucket(FLAGS_redis_bucket))
+        return 1;
 
-        const auto redisBucketId = buckets::getBucket(FLAGS_redis_bucket);
-        if (!redisBucketId)
-            return 1;
-
-        RedisServer::setupCounters(sfsoptions, *redisBucketId);
-    }
+    if (buckets::hasRedisBucket())
+        RedisServer::setupCounters(sfsoptions);
 
     SingleFileStorage sfs(sfsoptions);
 

@@ -225,6 +225,13 @@ void upgrade6_7(sqlgen::Database& db)
 	)""");
 }
 
+void upgrade7_8(sqlgen::Database& db)
+{
+    db.write(R"""(
+		ALTER TABLE buckets ADD redis INTEGER DEFAULT 0;
+	)""");
+}
+
 const std::map<int64_t, upgrade_func_t*> upgrade_funcs{
     { 0, upgrade0_1 },
     { 1, upgrade1_2 },
@@ -232,7 +239,8 @@ const std::map<int64_t, upgrade_func_t*> upgrade_funcs{
     { 3, upgrade3_4 },
     { 4, upgrade4_5 },
     { 5, upgrade5_6 },
-    { 6, upgrade6_7 }
+    { 6, upgrade6_7 },
+    { 7, upgrade7_8 }
 };
 
 sqlgen::Database& DbDao::getStaticDb()
@@ -771,15 +779,15 @@ void DbDao::removeAccessKey(int64_t id)
 /**
  * @-SQLGenAccess
  * @func vector<Bucket> DbDao::getBuckets
- * @return int64 id, string name, int64 created, int publicPerms, int versioning, int objectLockEnabled
+ * @return int64 id, string name, int64 created, int publicPerms, int versioning, int objectLockEnabled, int redis
  * @sql
- *      SELECT id, name, created, publicPerms, versioning, objectLockEnabled FROM buckets
+ *      SELECT id, name, created, publicPerms, versioning, objectLockEnabled, redis FROM buckets
  */
 std::vector<DbDao::Bucket> DbDao::getBuckets()
 {
     if (!_getBuckets.prepared())
     {
-        _getBuckets = db.prepare("SELECT id, name, created, publicPerms, versioning, objectLockEnabled FROM buckets");
+        _getBuckets = db.prepare("SELECT id, name, created, publicPerms, versioning, objectLockEnabled, redis FROM buckets");
     }
     auto& cursor = _getBuckets.cursor();
     std::vector<DbDao::Bucket> ret;
@@ -793,6 +801,7 @@ std::vector<DbDao::Bucket> DbDao::getBuckets()
         cursor.get(3, obj.publicPerms);
         cursor.get(4, obj.versioning);
         cursor.get(5, obj.objectLockEnabled);
+        cursor.get(6, obj.redis);
     }
     cursor.shutdown();
     return ret;
@@ -1110,7 +1119,7 @@ std::vector<DbDao::UserRole> DbDao::getRolesByUserId(int64_t user_id)
 {
     if (!_getRolesByUserId.prepared())
     {
-        _getRolesByUserId = db.prepare("SELECT ur.id AS id, r.id AS role_id, name, ur.system AS system  FROM (roles r INNER JOIN user_roles ur ON r.id=ur.role_id) WHERE ur.user_id=?");
+        _getRolesByUserId = db.prepare("SELECT ur.id AS id, r.id AS role_id, name, ur.system AS system FROM (roles r INNER JOIN user_roles ur ON r.id=ur.role_id) WHERE ur.user_id=?");
     }
     _getRolesByUserId.bind(user_id);
     auto& cursor = _getRolesByUserId.cursor();
@@ -1373,7 +1382,7 @@ std::vector<DbDao::BucketPermissionWithUsername> DbDao::getBucketPermissionsWith
 {
     if (!_getBucketPermissionsWithUsername.prepared())
     {
-        _getBucketPermissionsWithUsername = db.prepare("SELECT bucket_permissions.id AS id, bucket_id, user_id, permissions, name AS username FROM  (bucket_permissions INNER JOIN users ON bucket_permissions.user_id = users.id) WHERE bucket_id=?");
+        _getBucketPermissionsWithUsername = db.prepare("SELECT bucket_permissions.id AS id, bucket_id, user_id, permissions, name AS username FROM (bucket_permissions INNER JOIN users ON bucket_permissions.user_id = users.id) WHERE bucket_id=?");
     }
     _getBucketPermissionsWithUsername.bind(bucket_id);
     auto& cursor = _getBucketPermissionsWithUsername.cursor();
@@ -1405,7 +1414,7 @@ std::vector<DbDao::BucketPermissionWithUsername> DbDao::getBucketPermissionsOfUs
 {
     if (!_getBucketPermissionsOfUser.prepared())
     {
-        _getBucketPermissionsOfUser = db.prepare("SELECT id, bucket_id,  permissions FROM  bucket_permissions WHERE user_id=?");
+        _getBucketPermissionsOfUser = db.prepare("SELECT id, bucket_id,  permissions FROM bucket_permissions WHERE user_id=?");
     }
     _getBucketPermissionsOfUser.bind(user_id);
     auto& cursor = _getBucketPermissionsOfUser.cursor();
@@ -1548,6 +1557,24 @@ void DbDao::setBucketObjectLockEnabled(int objectLockEnabled, int64_t id)
     _setBucketObjectLockEnabled.bind(id);
     _setBucketObjectLockEnabled.write();
     _setBucketObjectLockEnabled.reset();
+}
+
+/**
+ * @-SQLGenAccess
+ * @func void DbDao::setBucketRedis
+ * @sql
+ *      UPDATE buckets SET redis=:redis(int) WHERE id=:id(int64)
+ */
+void DbDao::setBucketRedis(int redis, int64_t id)
+{
+    if (!_setBucketRedis.prepared())
+    {
+        _setBucketRedis = db.prepare("UPDATE buckets SET redis=? WHERE id=?");
+    }
+    _setBucketRedis.bind(redis);
+    _setBucketRedis.bind(id);
+    _setBucketRedis.write();
+    _setBucketRedis.reset();
 }
 
 /**

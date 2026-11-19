@@ -7,6 +7,7 @@
 #include "apigen/Object.hpp"
 #include "utils.h"
 #include <Database.h>
+#include <algorithm>
 #include <folly/logging/xlog.h>
 #include <gflags/gflags.h>
 #include <map>
@@ -57,7 +58,8 @@ namespace buckets
                 .created = std::chrono::seconds(bucket.created),
                 .publicPerms = bucket.publicPerms,
                 .versioning = static_cast<VersioningState>(bucket.versioning),
-                .objectLockEnabled = bucket.objectLockEnabled != 0
+                .objectLockEnabled = bucket.objectLockEnabled != 0,
+                .redis = bucket.redis != 0
             };
 
             const auto corsRules = dao.getCorsRules(bucket.id);
@@ -299,6 +301,44 @@ namespace buckets
             return false;
 
         return it->second->second.objectLockEnabled;
+    }
+
+    bool setRedis(int64_t bucketId)
+    {
+        DbDao dao;
+
+        std::scoped_lock lock{ mutex };
+
+        auto it = bucketNames.find(bucketId);
+        if (it == bucketNames.end())
+            return false;
+
+        auto& bucketInfo = it->second->second;
+        if (bucketInfo.redis)
+            return true;
+
+        dao.setBucketRedis(1, bucketId);
+        bucketInfo.redis = true;
+        return true;
+    }
+
+    bool isRedisBucket(int64_t bucketId)
+    {
+        std::shared_lock lock{ mutex };
+
+        auto it = bucketNames.find(bucketId);
+        if (it == bucketNames.end())
+            return false;
+
+        return it->second->second.redis;
+    }
+
+    bool hasRedisBucket()
+    {
+        std::shared_lock lock{ mutex };
+
+        return std::any_of(buckets.begin(), buckets.end(), [](const auto& bucket)
+                           { return bucket.second.redis; });
     }
 
     EnableObjectLockResult enableObjectLock(int64_t bucketId)

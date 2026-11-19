@@ -4,6 +4,7 @@ import hashlib
 import os
 import random
 import socket
+import sqlite3
 from pathlib import Path
 import threading
 import time
@@ -744,6 +745,22 @@ def test_redis_list_length_counter(hs5_redis: Hs5Runner):
     assert r.rpush("c", b"new") == 1
 
 
+def disable_redis_server(runner: Hs5Runner) -> list[str]:
+    """Removes the Redis server arguments (for the next start). Returns them"""
+    idx = runner.args.index("--redis_port")
+    redis_args = runner.args[idx : idx + 2]
+    del runner.args[idx : idx + 2]
+    return redis_args
+
+
+def set_redis_bucket_flag(runner: Hs5Runner, bucket: str, value: bool):
+    """Sets the Redis bucket flag in the database (server has to be stopped)"""
+    con = sqlite3.connect(Path(runner._workdir) / "hs5.db")
+    con.execute("UPDATE buckets SET redis=? WHERE name=?", (1 if value else 0, bucket))
+    con.commit()
+    con.close()
+
+
 def graceful_restart(runner: Hs5Runner):
     """Restart with a clean shutdown (commits everything, also with WAL or manual commit)"""
     runner.commit_storage(runner.get_s3_client())
@@ -768,10 +785,14 @@ def test_redis_bucket_delete_removes_counters(
     r.rpush("l", b"a", b"b")
     versions = s3.list_object_versions(Bucket=bucket, Prefix="l")["Versions"]
 
-    # Delete an element while the Redis server (and counting) is disabled, so the counter is stale
-    redis_args = hs5_redis.args[hs5_redis.args.index("--redis_port") :][:2]
-    hs5_redis.args = [a for a in hs5_redis.args if a not in redis_args]
-    graceful_restart(hs5_redis)
+    # Delete an element while the bucket is not marked as Redis bucket (and the Redis server is disabled, which
+    # would mark it again), so the counter is stale
+    redis_args = disable_redis_server(hs5_redis)
+    hs5_redis.commit_storage(s3)
+    hs5_redis.stop(cleanup=False, kill=False)
+    set_redis_bucket_flag(hs5_redis, bucket, False)
+    hs5_redis.start()
+    hs5_redis._login_admin()
     s3.delete_object(Bucket=bucket, Key="l", VersionId=version_id(versions[0]))
     hs5_redis.args += redis_args
     graceful_restart(hs5_redis)
@@ -823,3 +844,27 @@ def test_redis_mset_atomic(hs5_redis: Hs5Runner):
         t.join()
 
     assert not mixed, f"MGET saw a partial MSET: {mixed[0]}"
+
+
+def test_redis_counting_without_redis_server(hs5_redis: Hs5Runner):
+    """Redis buckets are marked in the database, so list elements are counted also if the Redis server is disabled"""
+    r = hs5_redis.get_redis_client()
+    s3 = hs5_redis.get_s3_client()
+    bucket = hs5_redis.redis_bucket()
+
+    r.rpush("l", b"a", b"b", b"c")
+    versions = s3.list_object_versions(Bucket=bucket, Prefix="l")["Versions"]
+
+    redis_args = disable_redis_server(hs5_redis)
+    graceful_restart(hs5_redis)
+    s3.delete_object(Bucket=bucket, Key="l", VersionId=version_id(versions[0]))
+    s3.put_object(
+        Bucket=bucket, Key="l", Body=b"s3", ContentType="application/cdmi-queue"
+    )
+    hs5_redis.args += redis_args
+    hs5_redis.commit_storage(s3)
+    hs5_redis.restart()
+
+    r = hs5_redis.get_redis_client()
+    assert r.llen("l") == 3
+    assert r.lrange("l", 0, -1) == [b"s3", b"b", b"c"]

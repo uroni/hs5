@@ -324,7 +324,19 @@ class Hs5Runner:
 
     def stop_server(self, fast: bool):
         def stop_thread():
-            s3 = self.get_s3_client()
+            # Without retries: The server stops while handling the request, so a retry could stop a server
+            # restarted on the same port
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=self.get_url(),
+                aws_access_key_id=self.get_root_user(),
+                aws_secret_access_key=self._root_key,
+                config=botocore.config.Config(
+                    signature_version="s3v4",
+                    request_checksum_calculation="when_supported",
+                    retries={"total_max_attempts": 1},
+                ),
+            )
             try:
                 pkey = "3db7da22-8ce2-4420-a8ca-f09f0b8e0e61" + (
                     "-fast" if fast else ""

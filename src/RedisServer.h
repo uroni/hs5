@@ -77,12 +77,12 @@ public:
     RedisServer(const RedisServer&) = delete;
     RedisServer& operator=(const RedisServer&) = delete;
 
-    // Creates the bucket (with versioning enabled) if it does not exist yet
-    static bool initBucket(const std::string& bucket);
+    // Lets the storage engine count list elements in Redis buckets (buckets::BucketInfo::redis). Has to be set up before
+    // the storage engine is started (to count modifications replayed from the WAL)
+    static void setupCounters(SingleFileStorage::SFSOptions& options);
 
-    // Lets the storage engine count list elements in the bucket. Has to be set up before the storage engine is
-    // started (to count modifications replayed from the WAL)
-    static void setupCounters(SingleFileStorage::SFSOptions& options, const int64_t bucketId);
+    // Creates the bucket (with versioning enabled) if it does not exist yet and marks it as Redis bucket
+    static bool initBucket(const std::string& bucket);
 
     // Binds to ip:port and starts accepting connections. Returns false on error
     bool start(const std::string& ip, int port, size_t ioThreads);

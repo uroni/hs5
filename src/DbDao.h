@@ -60,6 +60,7 @@ class DbDao
     sqlgen::DatabaseQuery _setBucketPublicPerms;
     sqlgen::DatabaseQuery _setBucketVersioning;
     sqlgen::DatabaseQuery _setBucketObjectLockEnabled;
+    sqlgen::DatabaseQuery _setBucketRedis;
     sqlgen::DatabaseQuery _addCorsRule;
     sqlgen::DatabaseQuery _addCorsAllowedOrigin;
     sqlgen::DatabaseQuery _addCorsAllowedMethod;
@@ -120,6 +121,7 @@ public:
         int publicPerms;
         int versioning;
         int objectLockEnabled;
+        int redis;
     };
     struct BucketPermission
     {
@@ -258,6 +260,7 @@ public:
     void setBucketPublicPerms(int publicPerms, int64_t id);
     void setBucketVersioning(int versioning, int64_t id);
     void setBucketObjectLockEnabled(int objectLockEnabled, int64_t id);
+    void setBucketRedis(int redis, int64_t id);
     std::optional<int64_t> addCorsRule(int64_t bucket_id, int max_age_seconds, const std::string& cors_id);
     std::optional<int64_t> addCorsAllowedOrigin(int64_t bucket_cors_id, const std::string& allowed_origin);
     std::optional<int64_t> addCorsAllowedMethod(int64_t bucket_cors_id, const std::string& allowed_method);
