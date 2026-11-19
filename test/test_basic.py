@@ -5480,3 +5480,34 @@ def test_list_start_after_before_prefix(hs5: Hs5Runner, delimiter: Optional[str]
             Bucket=bucket, Prefix=prefix, StartAfter=items[0]
         )
         assert sorted(entries(res)) == sorted(items[1:])
+
+
+@pytest.mark.parametrize("commit_after_ms", [30000, 0])
+def test_manual_commit_shutdown_with_pending_delayed_commit(
+    tmpdir: Path, testrun_uid: str, commit_after_ms: int
+):
+    """Shutdown commits pending modifications with manual commit. With delayed commits it does not wait for the delay
+    or use the destroyed storage"""
+    loc = Path(tmpdir) / uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(
+        loc,
+        data_file_size_limit_mb=100,
+        testrun_uid=testrun_uid,
+        extra_args=["--manual_commit", "--commit_after_ms", str(commit_after_ms)],
+    )
+    s3 = runner.get_s3_client()
+    s3.put_object(Bucket=runner.testbucketname(), Key="pending", Body=b"data")
+
+    start = time.monotonic()
+    runner.stop_server(fast=False)
+    assert runner._process.wait(timeout=20) == 0
+    assert time.monotonic() - start < 10
+
+    runner.start()
+    runner._login_admin()
+    obj = runner.get_s3_client().get_object(
+        Bucket=runner.testbucketname(), Key="pending"
+    )
+    assert obj["Body"].read() == b"data"
+    runner.stop(cleanup=True, kill=False)

@@ -351,8 +351,11 @@ public:
 
     static std::string md5sumBinFromData(const std::string_view md5sumData);
 
-    // Commits the storage after a modification (unless manual commit is enabled). Returns false on error
-    static bool commitStorage(SingleFileStorage& sfs);
+    // Commits the storage after a modification (unless manual commit is enabled). Returns false on error.
+    // With wait, commits pending modifications on shutdown: Wakes up delayed commits (manual commit with
+    // commit_after_ms) and waits for them to finish, or commits (manual commit without commit_after_ms). Call before
+    // destroying the storage, after stopping everything that modifies it
+    static bool commitStorage(SingleFileStorage& sfs, const bool wait = false);
 
     // Deletes the counters of a (deleted) bucket (see buckets::getCountersBucket). Returns false on error
     static bool deleteBucketCounters(SingleFileStorage& sfs, const int64_t bucketId);

@@ -381,5 +381,8 @@ int realMain(int argc, char* argv[])
     if (redisServer)
         redisServer->stop();
 
+    // Delayed commit tasks use the storage
+    S3Handler::commitStorage(sfs, true);
+
     return 0;
 }

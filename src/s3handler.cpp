@@ -5337,12 +5337,32 @@ void S3Handler::finalizeMultipartUpload()
                    });
 }
 
-bool S3Handler::commitStorage(SingleFileStorage& sfs)
+bool S3Handler::commitStorage(SingleFileStorage& sfs, const bool wait)
 {
     if (sfs.get_manual_commit() && FLAGS_commit_after_ms > 0)
     {
         static std::mutex mutex;
+        static std::condition_variable commitAfterCond;
         static std::set<SingleFileStorage*> commitAfterStarted;
+        // Commit tasks which have not finished yet (removed from commitAfterStarted before committing)
+        static std::atomic<size_t> commitAfterRunning = 0;
+
+        if (wait)
+        {
+            // Wake up delayed commits and wait for them to finish (e.g. before the storage is destroyed)
+            while (true)
+            {
+                {
+                    std::lock_guard lock(mutex);
+                    if (commitAfterStarted.empty() && commitAfterRunning == 0)
+                        break;
+                    // Commit immediately
+                    commitAfterCond.notify_all();
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            return true;
+        }
 
         bool doStart = false;
 
@@ -5350,18 +5370,20 @@ bool S3Handler::commitStorage(SingleFileStorage& sfs)
             std::lock_guard lock(mutex);
             const auto [it, inserted] = commitAfterStarted.insert(&sfs);
             if (inserted)
+            {
                 doStart = true;
+                ++commitAfterRunning;
+            }
         }
 
         if (doStart)
         {
             runInCpuThreadFireAndForget([sfs = &sfs]()
                                         {
-
-                std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_commit_after_ms));
-
                 {
-                    std::lock_guard lock(mutex);
+                    // Woken up by commitStorage with wait to commit immediately
+                    std::unique_lock lock(mutex);
+                    commitAfterCond.wait_for(lock, std::chrono::milliseconds(FLAGS_commit_after_ms));
                     commitAfterStarted.erase(sfs);
                 }
 
@@ -5377,11 +5399,14 @@ bool S3Handler::commitStorage(SingleFileStorage& sfs)
                 else
                 {
                     XLOGF(INFO, "Commit after {} ms succeeded. Commit duration {}ms", FLAGS_commit_after_ms, std::chrono::duration_cast<std::chrono::milliseconds>(duration).count());
-                } });
+                }
+
+                --commitAfterRunning; });
         }
     }
-    else if (!sfs.get_manual_commit())
+    else if (!sfs.get_manual_commit() || wait)
     {
+        // Without manual commit, or committing on shutdown with manual commit without delayed commits
         const bool b = sfs.commit(false, -1, FLAGS_pre_sync_commit);
 
         if (!b)
