@@ -7930,10 +7930,9 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                     catch (const folly::base64_decode_error&)
                     {
                         XLOGF(WARN, "Received invalid base64 in payload hash in trailer: {}", headerValue);
-                        ResponseBuilder(self->downstream())
-                            .status(500, "Internal error")
-                            .body("Received invalid base64 in payload hash in trailer")
-                            .sendWithEOM();
+                        ResponseBuilder resp(downstream());
+                        resp.status(400, "Bad Request");
+                        sendWithBody(resp, false, s3errorXml(S3ErrorCode::InvalidRequest, "Received invalid base64 in payload hash in trailer", "", ""));
                         setFinished();
                         return;
                     }
@@ -7949,10 +7948,9 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                         if (const auto err = applyTrailerHash(expectedHash))
                         {
                             XLOGF(WARN, "{}", err);
-                            ResponseBuilder(downstream())
-                                .status(500, "Internal error")
-                                .body(err)
-                                .sendWithEOM();
+                            ResponseBuilder resp(downstream());
+                            resp.status(400, "Bad Request");
+                            sendWithBody(resp, false, s3errorXml(S3ErrorCode::InvalidRequest, err, fullKeyPath(), ""));
                             setFinished();
                             return;
                         }
@@ -7961,10 +7959,9 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
                 else
                 {
                     XLOGF(WARN, "Invalid trailer header in chunked encoding body received: {}", awsChunkedEncoding->header);
-                    ResponseBuilder(downstream())
-                        .status(500, "Internal error")
-                        .body("Invalid trailer header in chunked encoding body received")
-                        .sendWithEOM();
+                    ResponseBuilder resp(downstream());
+                    resp.status(400, "Bad Request");
+                    sendWithBody(resp, false, s3errorXml(S3ErrorCode::InvalidRequest, "Invalid trailer header in chunked encoding body received", "", ""));
                     setFinished();
                     return;
                 }
@@ -8222,7 +8219,7 @@ void S3Handler::onBodyCPU(folly::EventBase* evb, std::shared_ptr<S3Handler> self
             sfs().free_extents(extents);
             extents.clear();
 
-            sendResponse(evb, self, 500, "Internal error", err);
+            sendError(evb, self, 400, "Bad Request", S3ErrorCode::InvalidRequest, err);
             return;
         }
 

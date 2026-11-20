@@ -2309,9 +2309,9 @@ def test_put_chunked(
     "trailer_value,expected_status",
     [
         # Rejected while decoding the aws-chunked body (HTTP thread)
-        ("!!not-base64!!", 500),
+        ("!!not-base64!!", 400),
         # Valid base64, but not the size of a CRC32 (rejected when applied on the body thread)
-        (base64.b64encode(b"abc").decode("ascii"), 500),
+        (base64.b64encode(b"abc").decode("ascii"), 400),
         # Valid CRC32 size, but wrong value
         (base64.b64encode(b"\0\0\0\0").decode("ascii"), 400),
     ],
