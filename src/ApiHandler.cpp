@@ -77,7 +77,7 @@
 #include "s3handler.h"
 #include "utils.h"
 #include <argon2.h>
-#include <fmt/core.h>
+#include <fmt/format.h>
 #include <folly/Random.h>
 #include <folly/Range.h>
 #include <folly/String.h>

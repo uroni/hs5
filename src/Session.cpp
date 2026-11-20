@@ -6,7 +6,7 @@
 #include "Auth.h"
 #include <assert.h>
 #include <condition_variable>
-#include <fmt/core.h>
+#include <fmt/format.h>
 #include <map>
 #include <mutex>
 

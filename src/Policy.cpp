@@ -5,7 +5,7 @@
 #include "Policy.h"
 #include "Action.h"
 #include "DbDao.h"
-#include <fmt/core.h>
+#include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
