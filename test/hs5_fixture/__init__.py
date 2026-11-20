@@ -171,6 +171,10 @@ class Hs5Runner:
                 f"--http_worker_threads={os.environ.get('HS5_HTTP_WORKER_THREADS', '4')}"
             )
 
+        get_in_worker_threshold = os.environ.get("GET_IN_WORKER_THRESHOLD")
+        if get_in_worker_threshold is not None:
+            self.args.append(f"--get_in_worker_threshold={get_in_worker_threshold}")
+
         if self._redis_port is not None:
             self.args.append("--redis_port")
             self.args.append(str(self._redis_port))

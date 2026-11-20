@@ -44,6 +44,7 @@
 #include <vector>
 
 DECLARE_bool(disable_md5_etag);
+DECLARE_int64(get_in_worker_threshold);
 DEFINE_int64(redis_max_value_size, 512 * 1024 * 1024, "Max size of values written or read via the Redis protocol (larger objects can only be accessed via S3)");
 
 namespace
@@ -294,6 +295,13 @@ namespace
     bool isListElement(const std::string& md5sum)
     {
         return !isTombstone(md5sum) && S3Handler::contentTypeIdFromMetadata(md5sum) == listContentType().contentType;
+    }
+
+    // Object read by reader is a list element
+    bool isListReader(ObjectReader& reader)
+    {
+        const auto objMetadata = reader.GetObjMetadata();
+        return objMetadata != nullptr && objMetadata->contentType.contentType == listContentType().contentType;
     }
 
     // Writes data at offset of an object to its extents
@@ -1019,6 +1027,30 @@ private:
 
     void processPending() REQUIRES(evbThread)
     {
+        // Execute GETs of small values directly (get_in_worker_threshold). Only if no command is in flight, so the
+        // order of replies stays the same
+        if (FLAGS_get_in_worker_threshold > 0)
+        {
+            bool executed = false;
+            while (!closed && !inFlight && !blocked && !pending.empty() && replies.size() < maxPendingCommands)
+            {
+                assertCmdOwnerOnEvb();
+                auto res = server.execInline(cmdState, pending.front());
+                if (!res)
+                    break;
+                pending.pop_front();
+                replies.push_back(std::move(*res));
+                executed = true;
+            }
+
+            if (executed)
+            {
+                sendReplies();
+                if (closed)
+                    return;
+            }
+        }
+
         // Execute pipelined commands in batches. Don't execute more while too many replies wait to be sent
         if (!closed && !inFlight && !blocked && !pending.empty() && replies.size() < maxPendingCommands)
         {
@@ -1174,8 +1206,27 @@ private:
     }
 
     // Sends queued replies in order. A reply with streamed parts is sent completely before the next one
+    // Sends queued replies in order. A reply with streamed parts is sent completely before the next one. Consecutive
+    // replies (e.g. of pipelined commands) are written together, with one syscall
     void sendReplies() REQUIRES(evbThread)
     {
+        folly::IOBufQueue out(folly::IOBufQueue::cacheChainLength());
+        const auto append = [&out](std::string data)
+        {
+            if (data.empty())
+                return;
+            // Copy small replies into one buffer, chain large ones
+            if (data.size() < 4096)
+                out.append(data.data(), data.size());
+            else
+                out.append(folly::IOBuf::fromString(std::move(data)));
+        };
+        const auto flush = [this, &out]() REQUIRES(evbThread)
+        {
+            if (!out.empty() && sock)
+                sock->writeChain(nullptr, out.move());
+        };
+
         while (!closed && !sendState && !replies.empty())
         {
             auto res = std::move(replies.front());
@@ -1187,19 +1238,23 @@ private:
                 sendState->parts = std::move(res.streamParts);
                 sendState->tail = std::move(res.tail);
                 sendState->closeAfter = res.close;
-                write(std::move(res.reply));
+                append(std::move(res.reply));
+                flush();
                 continueSending();
                 return;
             }
 
-            write(std::move(res.reply));
+            append(std::move(res.reply));
 
             if (res.close)
             {
+                flush();
                 close();
                 return;
             }
         }
+
+        flush();
     }
 
     // Sends the streamed parts of a reply. Reads the next chunk of a value if not too much data is waiting to be
@@ -1789,45 +1844,49 @@ std::optional<RedisServer::Entry> RedisServer::findElement(const int64_t bucketI
     return std::nullopt;
 }
 
+RedisServer::ReadRes RedisServer::readFromReader(std::shared_ptr<ObjectReader> reader, const std::string& key, const ReadMode mode)
+{
+    ReadRes ret{ .status = ReadRes::Status::Ok, .size = reader->FileSize() };
+    if (mode == ReadMode::Size)
+        return ret;
+
+    if (ret.size > FLAGS_redis_max_value_size)
+    {
+        return ReadRes{ .status = ReadRes::Status::Error,
+                        .value = fmt::format("value of key '{}' is too large ({} bytes, max {}). Read it via S3", key, ret.size, FLAGS_redis_max_value_size) };
+    }
+
+    const auto size = static_cast<size_t>(ret.size);
+    if (mode == ReadMode::Bulk)
+    {
+        if (ret.size >= streamThreshold)
+        {
+            // Read while sending the reply. The reader keeps the data readable even if the version is deleted
+            ret.reader = std::move(reader);
+            return ret;
+        }
+
+        const auto header = fmt::format("${}\r\n", size);
+        ret.value.resize(header.size() + size + 2);
+        std::memcpy(ret.value.data(), header.data(), header.size());
+        if (size > 0)
+            reader->Read(ret.value.data() + header.size(), ret.size, 0);
+        ret.value[header.size() + size] = '\r';
+        ret.value[header.size() + size + 1] = '\n';
+    }
+    else if (size > 0)
+    {
+        ret.value.resize(size);
+        reader->Read(ret.value.data(), ret.size, 0);
+    }
+    return ret;
+}
+
 RedisServer::ReadRes RedisServer::readValue(const std::string& key, const int64_t version, const ReadMode mode)
 {
     try
     {
-        auto reader = std::make_shared<ObjectReader>(sfs, bucketName, key, version, ObjectReader::VersionSelect::Exact);
-        ReadRes ret{ .status = ReadRes::Status::Ok, .size = reader->FileSize() };
-        if (mode == ReadMode::Size)
-            return ret;
-
-        if (ret.size > FLAGS_redis_max_value_size)
-        {
-            return ReadRes{ .status = ReadRes::Status::Error,
-                            .value = fmt::format("value of key '{}' is too large ({} bytes, max {}). Read it via S3", key, ret.size, FLAGS_redis_max_value_size) };
-        }
-
-        const auto size = static_cast<size_t>(ret.size);
-        if (mode == ReadMode::Bulk)
-        {
-            if (ret.size >= streamThreshold)
-            {
-                // Read while sending the reply. The reader keeps the data readable even if the version is deleted
-                ret.reader = std::move(reader);
-                return ret;
-            }
-
-            const auto header = fmt::format("${}\r\n", size);
-            ret.value.resize(header.size() + size + 2);
-            std::memcpy(ret.value.data(), header.data(), header.size());
-            if (size > 0)
-                reader->Read(ret.value.data() + header.size(), ret.size, 0);
-            ret.value[header.size() + size] = '\r';
-            ret.value[header.size() + size + 1] = '\n';
-        }
-        else if (size > 0)
-        {
-            ret.value.resize(size);
-            reader->Read(ret.value.data(), ret.size, 0);
-        }
-        return ret;
+        return readFromReader(std::make_shared<ObjectReader>(sfs, bucketName, key, version, ObjectReader::VersionSelect::Exact), key, mode);
     }
     catch (const ObjectReadError& e)
     {
@@ -1839,29 +1898,25 @@ RedisServer::ReadRes RedisServer::readValue(const std::string& key, const int64_
     }
 }
 
-RedisServer::ReadRes RedisServer::getString(const int64_t bucketId, const std::string& key, const ReadMode mode)
+RedisServer::ReadRes RedisServer::getString(const std::string& key, const ReadMode mode)
 {
-    for (int i = 0; i < maxRetries; ++i)
+    try
     {
-        int err = 0;
-        const auto entry = findEnd(bucketId, key, true, err);
-        if (err != 0)
-            return ReadRes{ .status = ReadRes::Status::Error, .value = fmt::format("storage error {}", err) };
-
-        if (!entry || entry->tombstone)
-            return ReadRes{ .status = ReadRes::Status::NotFound };
-
-        if (entry->isList)
+        // Newest version (one lookup). Not found if it is a delete marker
+        auto reader = std::make_shared<ObjectReader>(sfs, bucketName, key);
+        if (isListReader(*reader))
             return ReadRes{ .status = ReadRes::Status::WrongType };
 
-        auto res = readValue(key, entry->version, mode);
-        if (res.status != ReadRes::Status::NotFound)
-            return res;
-
-        // Deleted concurrently. Retry
+        return readFromReader(std::move(reader), key, mode);
     }
+    catch (const ObjectReadError& e)
+    {
+        if (e.notFound())
+            return ReadRes{ .status = ReadRes::Status::NotFound };
 
-    return ReadRes{ .status = ReadRes::Status::Error, .value = "too many concurrent modifications" };
+        XLOGF(WARN, "Error reading Redis key {}: {}", key, e.what());
+        return ReadRes{ .status = ReadRes::Status::Error, .value = e.what() };
+    }
 }
 
 int RedisServer::prepareValue(const int64_t bucketId, const std::string& key, const ValueArg& value, const ContentType& contentType, PreparedValue& prepared)
@@ -2236,6 +2291,51 @@ RedisServer::ExecResult RedisServer::exec(ConnState& state, const RedisCommand& 
     return { resp::error(fmt::format("ERR unknown command '{}', with args beginning with: {}", args[0].substr(0, 128), argsStr)) };
 }
 
+std::optional<RedisServer::ExecResult> RedisServer::execInline(ConnState& state, const RedisCommand& command)
+{
+    const auto& args = command.args;
+    if (args.size() != 2 || args[0].size() != 3 || toUpper(args[0]) != "GET")
+        return std::nullopt;
+
+    const auto& key = args[1];
+    if (checkKey(key) || checkAuth(state, args[0], { Action::GetObject }, key))
+        return std::nullopt;
+    BucketCtx ctx;
+    if (getBucketCtx(ctx))
+        return std::nullopt;
+
+    try
+    {
+        // Newest version (one lookup). Not found if it is a delete marker
+        // Reads of keys with uncommitted modifications would wait for the commit thread. Execute them via exec instead
+        ObjectReader reader(sfs, bucketName, key, 0, ObjectReader::VersionSelect::Default, SingleFileStorage::ReadWithMmap,
+                            SingleFileStorage::ReadFailUnsynced);
+        if (isListReader(reader))
+            return ExecResult{ resp::wrongType };
+
+        const auto size = reader.FileSize();
+        if (size >= FLAGS_get_in_worker_threshold)
+            return std::nullopt;
+
+        const auto header = fmt::format("${}\r\n", size);
+        std::string reply;
+        reply.resize(header.size() + static_cast<size_t>(size) + 2);
+        std::memcpy(reply.data(), header.data(), header.size());
+        if (size > 0)
+            reader.Read(reply.data() + header.size(), size, 0);
+        reply[header.size() + static_cast<size_t>(size)] = '\r';
+        reply[header.size() + static_cast<size_t>(size) + 1] = '\n';
+        return ExecResult{ std::move(reply) };
+    }
+    catch (const ObjectReadError& e)
+    {
+        if (e.notFound())
+            return ExecResult{ resp::nullBulk(state) };
+        // Error is reported via exec
+        return std::nullopt;
+    }
+}
+
 RedisServer::ExecResult RedisServer::cmdAuth(ConnState& state, const std::vector<std::string>& args)
 {
     if (args.size() == 2)
@@ -2349,7 +2449,7 @@ RedisServer::ExecResult RedisServer::cmdGet(ConnState& state, const std::vector<
     if (auto err = getBucketCtx(ctx))
         return { *err };
 
-    auto res = getString(ctx.id, key, ReadMode::Bulk);
+    auto res = getString(key, ReadMode::Bulk);
     if (res.status == ReadRes::Status::NotFound)
         return { resp::nullBulk(state) };
     if (res.status == ReadRes::Status::WrongType)
@@ -2375,7 +2475,7 @@ RedisServer::ExecResult RedisServer::cmdStrlen(ConnState& state, const std::vect
     if (auto err = getBucketCtx(ctx))
         return { *err };
 
-    const auto res = getString(ctx.id, key, ReadMode::Size);
+    const auto res = getString(key, ReadMode::Size);
     if (res.status == ReadRes::Status::NotFound)
         return { resp::integer(0) };
     if (res.status == ReadRes::Status::WrongType)
@@ -2408,7 +2508,7 @@ RedisServer::ExecResult RedisServer::cmdMget(ConnState& state, const std::vector
     reply.append(resp::arrayHeader(args.size() - 1));
     for (size_t i = 1; i < args.size(); ++i)
     {
-        auto res = getString(ctx.id, args[i], ReadMode::Bulk);
+        auto res = getString(args[i], ReadMode::Bulk);
         if (res.status == ReadRes::Status::Error)
             return { resp::error(fmt::format("ERR {}", res.value)) };
         if (res.status == ReadRes::Status::NotFound || res.status == ReadRes::Status::WrongType)
@@ -2469,7 +2569,7 @@ RedisServer::ExecResult RedisServer::cmdSet(ConnState& state, const RedisCommand
         ReadRes old{ .status = ReadRes::Status::NotFound };
         if (get || nx || xx)
         {
-            old = getString(ctx.id, key, get ? ReadMode::Bulk : ReadMode::Size);
+            old = getString(key, get ? ReadMode::Bulk : ReadMode::Size);
             if (old.status == ReadRes::Status::Error)
                 return { resp::error(fmt::format("ERR {}", old.value)) };
             if (get && old.status == ReadRes::Status::WrongType)
@@ -2581,7 +2681,7 @@ RedisServer::ExecResult RedisServer::cmdIncr(ConnState& state, const std::vector
         std::scoped_lock lock(keyLock(key));
 
         // Don't read large values into memory, they are no integers
-        const auto currSize = getString(ctx.id, key, ReadMode::Size);
+        const auto currSize = getString(key, ReadMode::Size);
         if (currSize.status == ReadRes::Status::Error)
             return { resp::error(fmt::format("ERR {}", currSize.value)) };
         if (currSize.status == ReadRes::Status::WrongType)
@@ -2589,7 +2689,7 @@ RedisServer::ExecResult RedisServer::cmdIncr(ConnState& state, const std::vector
         if (currSize.status == ReadRes::Status::Ok && currSize.size > 20)
             return { resp::notInteger };
 
-        const auto curr = getString(ctx.id, key, ReadMode::Value);
+        const auto curr = getString(key, ReadMode::Value);
         if (curr.status == ReadRes::Status::Error)
             return { resp::error(fmt::format("ERR {}", curr.value)) };
 

@@ -7,8 +7,8 @@
 #include "s3handler.h"
 
 ObjectReader::ObjectReader(SingleFileStorage& sfs, const std::string& bucket, const std::string& key, const int64_t version,
-                           const VersionSelect versionSelect)
-    : sfs(sfs), name(bucket + "/" + key)
+                           const VersionSelect versionSelect, const unsigned int readFlags, const unsigned int prepareFlags)
+    : sfs(sfs), name(bucket + "/" + key), readFlags(readFlags)
 {
     const auto bucketInfoOpt = buckets::getBucketInfo(bucket);
     if (!bucketInfoOpt)
@@ -20,7 +20,7 @@ ObjectReader::ObjectReader(SingleFileStorage& sfs, const std::string& bucket, co
 
     bucketId = bucketInfo.id;
 
-    unsigned int readPrepFlags = SingleFileStorage::ReadAddReadingCallback;
+    unsigned int readPrepFlags = SingleFileStorage::ReadAddReadingCallback | prepareFlags;
 
     const auto withVersioning = versionSelect == VersionSelect::Oldest ||
                                 (versionSelect == VersionSelect::Default && version == 0 &&
@@ -139,7 +139,7 @@ void ObjectReader::Read(char* buffer, int64_t bsize, int64_t offset)
         int64_t rlen = std::min(static_cast<int64_t>(bsize), fsize - offset);
 
         ssize_t read;
-        auto res = sfs.read_ext(curr_ext, 0, static_cast<size_t>(rlen), buffer, read);
+        auto res = sfs.read_ext(curr_ext, readFlags, static_cast<size_t>(rlen), buffer, read);
 
         if (res != 0)
         {

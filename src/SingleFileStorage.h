@@ -281,6 +281,9 @@ public:
     const static unsigned int ReadAddReadingCallback = 32;
     // Read data via read-only mmap of the data file (falls back to pread on error)
     const static unsigned int ReadWithMmap = 64;
+    // read_prepare: Fail with EWOULDBLOCK instead of reading via the commit thread if the item has modifications not
+    // committed to LMDB yet (e.g. to not wait for the commit thread in an EventBase thread)
+    const static unsigned int ReadFailUnsynced = 256;
     // Read the oldest version of the key. fn has to be the key with the smallest possible version (sorting last)
     const static unsigned int ReadOldest = 128;
 
@@ -767,6 +770,13 @@ private:
     std::map<std::string, ListCommitItem, CommitItemsCompare> list_commit_items;
     // Incremented each time committed items are erased from list_commit_items
     uint64_t list_commit_items_generation = 0;
+
+    // Number of entries in commit_items/list_commit_items (updated with mutex locked). Lets reads skip locking the
+    // mutex to check whether they have to read unsynced (is_commit_item) if there are no modified items
+    std::atomic<size_t> commit_items_count{ 0 };
+
+    // Updates commit_items_count. Requires mutex to be locked
+    void update_commit_items_count();
 
     // Set the value of fn in list_commit_items after applying a modification (in commit thread)
     void set_list_commit_item_value(MDB_txn* txn, const std::string& fn);

@@ -47,8 +47,11 @@ public:
         Oldest
     };
 
+    // readFlags are flags for reading data (SingleFileStorage::read_ext), e.g. SingleFileStorage::ReadWithMmap.
+    // prepareFlags are additional flags for SingleFileStorage::read_prepare, e.g. SingleFileStorage::ReadFailUnsynced
     ObjectReader(SingleFileStorage& sfs, const std::string& bucket, const std::string& key, const int64_t version = 0,
-                 const VersionSelect versionSelect = VersionSelect::Default);
+                 const VersionSelect versionSelect = VersionSelect::Default, const unsigned int readFlags = 0,
+                 const unsigned int prepareFlags = 0);
 
     ~ObjectReader();
 
@@ -103,6 +106,8 @@ private:
     std::string etag;
 
     int64_t pos = 0;
+
+    const unsigned int readFlags;
 
     std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
 

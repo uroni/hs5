@@ -205,6 +205,10 @@ private:
     // Executes a command (on a CPU thread)
     ExecResult exec(ConnState& state, const RedisCommand& cmd, const std::shared_ptr<RedisConnection>& conn);
 
+    // Executes a GET of a small value directly (on the EventBase thread of the connection), reading the value via
+    // mmap (see get_in_worker_threshold). Returns std::nullopt if the command has to be executed via exec
+    std::optional<ExecResult> execInline(ConnState& state, const RedisCommand& cmd);
+
     void taskStarted() EXCLUDES(tasksMutex);
     void taskFinished() EXCLUDES(tasksMutex);
 
@@ -225,8 +229,9 @@ private:
     // Newest or oldest version of key, which is not a delete marker
     std::optional<Entry> findElement(const int64_t bucketId, const std::string& key, const bool newest, int& err);
     ReadRes readValue(const std::string& key, const int64_t version, const ReadMode mode);
-    // Reads newest version (string value)
-    ReadRes getString(const int64_t bucketId, const std::string& key, const ReadMode mode);
+    // Reads newest version (string value) with one lookup
+    ReadRes getString(const std::string& key, const ReadMode mode);
+    ReadRes readFromReader(std::shared_ptr<ObjectReader> reader, const std::string& key, const ReadMode mode);
     // Writes value to the data file (unless it was streamed already) and sets the object metadata
     int prepareValue(const int64_t bucketId, const std::string& key, const ValueArg& value, const ContentType& contentType, PreparedValue& prepared);
     int deleteVersion(const int64_t bucketId, const std::string& key, const int64_t version, const bool requireExisting, bool& deleted);

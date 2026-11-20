@@ -2313,7 +2313,8 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
         return ReadPrepareResult{ ENOTRECOVERABLE };
     }
 
-    if ((flags & ReadUnsynced) == 0)
+    // Without modified items (commit_items_count is incremented before a modification is queued), fn is no commit item
+    if ((flags & ReadUnsynced) == 0 && commit_items_count.load(std::memory_order_acquire) > 0)
     {
         std::lock_guard lock(mutex);
 
@@ -2367,6 +2368,9 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
     }
     else
     {
+        if (flags & ReadFailUnsynced)
+            return ReadPrepareResult{ EWOULDBLOCK };
+
         SCommitInfo commit_info;
         commit_info.frag_info = &frag_info;
         std::unique_lock commit_done_lock(commit_info.commit_done_mutex);
@@ -2421,7 +2425,7 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::check_existence(const st
         return ReadPrepareResult{ ENOTRECOVERABLE };
     }
 
-    if ((flags & ReadUnsynced) == 0)
+    if ((flags & ReadUnsynced) == 0 && commit_items_count.load(std::memory_order_acquire) > 0)
     {
         std::unique_lock lock(mutex);
 
@@ -9938,6 +9942,8 @@ void SingleFileStorage::incr_commit_item_key(const std::string_view fn)
         ++list_commit_items[std::string(fn)].refs;
     else
         ++commit_items[common_prefix_hash_func(fn)];
+
+    update_commit_items_count();
 }
 
 void SingleFileStorage::decr_commit_item_key(const std::string_view fn)
@@ -9998,6 +10004,15 @@ void SingleFileStorage::erase_committed_items()
         std::erase_if(commit_items, [](const auto& item)
                       { return item.second == 0; });
     }
+
+    update_commit_items_count();
+}
+
+void SingleFileStorage::update_commit_items_count()
+{
+    // Release: Pairs with the acquire load in read_prepare/check_existence, so a read issued after a modification was
+    // queued sees the count of it
+    commit_items_count.store(list_commit_items_used() ? list_commit_items.size() : commit_items.size(), std::memory_order_release);
 }
 
 void SingleFileStorage::set_list_commit_item_value(MDB_txn* txn, const std::string& fn)
@@ -10031,6 +10046,7 @@ void SingleFileStorage::set_list_commit_item_value(MDB_txn* txn, const std::stri
     std::scoped_lock lock(mutex);
     // Unset on error, so listings use the LMDB value (and wait for the queue)
     list_commit_items[fn].value = std::move(value);
+    update_commit_items_count();
 }
 
 int SingleFileStorage::key_compare(const std::string_view a, const std::string_view b) const

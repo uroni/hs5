@@ -18,6 +18,7 @@
 #include <folly/memory/MallctlHelper.h>
 #include <folly/portability/GFlags.h>
 #include <folly/portability/Unistd.h>
+#include <folly/system/HardwareConcurrency.h>
 #include <folly/system/ThreadName.h>
 #include <gflags/gflags.h>
 #include <iostream>
@@ -79,7 +80,6 @@ DECLARE_bool(test_db_no_sync);
 DEFINE_int32(max_put_buffer_size, 1 * 1024 * 1024, "Max read buffer size for HTTP sessions (for PUT)");
 DEFINE_int32(redis_port, -1, "Port to listen on with Redis protocol (-1 if disabled)");
 DEFINE_string(redis_bucket, "redis", "Bucket storing the Redis keys (created with versioning enabled if it does not exist)");
-DEFINE_int32(redis_io_threads, 2, "Number of IO threads of the Redis protocol server");
 
 namespace
 {
@@ -326,7 +326,10 @@ int realMain(int argc, char* argv[])
     if (FLAGS_redis_port != -1)
     {
         redisServer = std::make_unique<RedisServer>(sfs, FLAGS_redis_bucket);
-        if (!redisServer->start(FLAGS_ip, FLAGS_redis_port, static_cast<size_t>(std::max(FLAGS_redis_io_threads, 1))))
+        // Same number of IO threads as the HTTP server
+        const auto redisIoThreads = FLAGS_http_worker_threads > 0 ? static_cast<size_t>(FLAGS_http_worker_threads)
+                                                                  : static_cast<size_t>(folly::hardware_concurrency());
+        if (!redisServer->start(FLAGS_ip, FLAGS_redis_port, redisIoThreads))
             return 1;
     }
 
