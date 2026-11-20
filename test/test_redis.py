@@ -318,6 +318,7 @@ def test_redis_resp2(hs5_redis: Hs5Runner):
     assert r.blpop(["l"], timeout=1) == (b"l", b"a")
 
 
+@pytest.mark.slow
 def test_redis_large_values(hs5_redis_large: Hs5Runner):
     r = hs5_redis_large.get_redis_client()
     s3 = hs5_redis_large.get_s3_client()
@@ -451,6 +452,7 @@ class RawRedisConnection:
         return self.readline()
 
 
+@pytest.mark.slow
 def test_redis_streaming_memory(tmpdir: Path, testrun_uid: str):
     """Large values are streamed to/from the data file instead of being buffered in memory"""
     size = 1024 * 1024 * 1024
@@ -870,6 +872,7 @@ def test_redis_counting_without_redis_server(hs5_redis: Hs5Runner):
     assert r.lrange("l", 0, -1) == [b"s3", b"b", b"c"]
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("value_size", [100, 20000])
 def test_redis_inline_get_concurrent_overwrite(
     tmpdir: Path, testrun_uid: str, value_size: int
