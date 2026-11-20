@@ -3,6 +3,7 @@
 #include "File.h"
 #include "crypt.h"
 #include "relaxed_atomic.h"
+#include <array>
 #include <assert.h>
 #include <condition_variable>
 #include <filesystem>
@@ -679,6 +680,7 @@ private:
     int64_t update_counter(MDB_txn* txn, THREAD_ID tid, const std::string& counter_fn, const std::string& fn,
                            const SFragInfo& old_info, const std::string* new_md5sum);
 
+    // Register/unregister a read of an object
     void add_reading_item(const SFragInfo& fi);
 
     void remove_reading_item(const std::vector<Ext>& extents);
@@ -775,6 +777,13 @@ private:
     // mutex to check whether they have to read unsynced (is_commit_item) if there are no modified items
     std::atomic<size_t> commit_items_count{ 0 };
 
+    // Incremented by the commit thread before freed extents can be reused/trimmed (and before committed items are
+    // erased). A read whose lookup and registration did not overlap with an increment registered in time
+    std::atomic<uint64_t> free_generation{ 0 };
+
+    // read_prepare (internal): Read was already retried because extents were freed during the lookup
+    const static unsigned int ReadRetried = 1u << 30;
+
     // Updates commit_items_count. Requires mutex to be locked
     void update_commit_items_count();
 
@@ -823,6 +832,9 @@ private:
     MDB_env* cache_db_env;
     MDB_dbi dbi_cache_size;
     std::set<int64_t> curr_new_free_extents;
+    // Extents freed while being read. Not reused/trimmed until the read finished. Rarely filled. Lock order: reading
+    // shard mutex before reading_free_skip_mutex
+    std::mutex reading_free_skip_mutex;
     std::set<int64_t> reading_free_skip_extents;
     std::unordered_set<std::string> defrag_items;
     std::vector<SPunchItem> curr_free_skip_extents;
@@ -833,7 +845,22 @@ private:
         bool free_skip = false;
     };
 
-    std::map<int64_t, ReadingItem> reading_items;
+    // Registered reads (by first data file offset of the object), sharded by offset so reads of different objects
+    // don't contend
+    static constexpr size_t num_reading_shards = 64;
+    struct alignas(64) ReadingShard
+    {
+        std::mutex mutex;
+        std::map<int64_t, ReadingItem> items;
+    };
+    std::array<ReadingShard, num_reading_shards> reading_shards;
+
+    ReadingShard& reading_shard(const int64_t offset)
+    {
+        return reading_shards[static_cast<uint64_t>(offset / sfs_block_size) % num_reading_shards];
+    }
+
+    size_t num_reading_items();
 
     std::mutex mutex;
     std::condition_variable cond;

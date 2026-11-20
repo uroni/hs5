@@ -45,6 +45,7 @@
 
 DECLARE_bool(disable_md5_etag);
 DECLARE_int64(get_in_worker_threshold);
+DEFINE_int32(test_inline_read_delay_ms, 0, "Delay inline GETs (get_in_worker_threshold) between looking up and reading the value. For testing only");
 DEFINE_int64(redis_max_value_size, 512 * 1024 * 1024, "Max size of values written or read via the Redis protocol (larger objects can only be accessed via S3)");
 
 namespace
@@ -2316,6 +2317,9 @@ std::optional<RedisServer::ExecResult> RedisServer::execInline(ConnState& state,
         const auto size = reader.FileSize();
         if (size >= FLAGS_get_in_worker_threshold)
             return std::nullopt;
+
+        if (FLAGS_test_inline_read_delay_ms > 0)
+            std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_test_inline_read_delay_ms));
 
         const auto header = fmt::format("${}\r\n", size);
         std::string reply;

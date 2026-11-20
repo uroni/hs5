@@ -5511,3 +5511,52 @@ def test_manual_commit_shutdown_with_pending_delayed_commit(
     )
     assert obj["Body"].read() == b"data"
     runner.stop(cleanup=True, kill=False)
+
+
+def test_read_while_object_deleted(tmpdir: Path, testrun_uid: str):
+    """A GET which looked up an object but registered the read only after the object was deleted and its space was
+    released (and trimmed) returns the current state (not found) instead of the freed data
+    """
+    loc = Path(tmpdir) / uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(
+        loc,
+        data_file_size_limit_mb=100,
+        testrun_uid=testrun_uid,
+        # Window between looking up the object and registering the read
+        extra_args=["--test_read_prepare_delay_ms=2000"],
+    )
+    try:
+        s3 = runner.get_s3_client()
+        bucket = runner.testbucketname()
+        # Larger than trim_freespace_size, so the freed space is trimmed (reads zeros)
+        data = os.urandom(4 * 1024 * 1024)
+        s3.put_object(Bucket=bucket, Key="big", Body=data)
+
+        result: dict[str, Union[bytes, str]] = {}
+
+        def get():
+            try:
+                result["body"] = (
+                    runner.get_s3_client()
+                    .get_object(Bucket=bucket, Key="big")["Body"]
+                    .read()
+                )
+            except ClientError as e:
+                result["error"] = e.response.get("Error", {}).get("Code", "")
+            except Exception as e:
+                result["exception"] = repr(e)
+
+        t = threading.Thread(target=get)
+        t.start()
+        time.sleep(0.5)
+        s3.delete_object(Bucket=bucket, Key="big")
+        t.join()
+
+        assert "exception" not in result, f"GET failed: {result['exception']}"
+        if "error" in result:
+            assert result["error"] == "NoSuchKey"
+        else:
+            assert result["body"] == data, "GET returned data of the deleted object"
+    finally:
+        runner.stop(cleanup=True, kill=False)

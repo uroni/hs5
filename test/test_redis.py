@@ -868,3 +868,67 @@ def test_redis_counting_without_redis_server(hs5_redis: Hs5Runner):
     r = hs5_redis.get_redis_client()
     assert r.llen("l") == 3
     assert r.lrange("l", 0, -1) == [b"s3", b"b", b"c"]
+
+
+@pytest.mark.parametrize("value_size", [100, 20000])
+def test_redis_inline_get_concurrent_overwrite(
+    tmpdir: Path, testrun_uid: str, value_size: int
+):
+    """GETs read in the IO thread (get_in_worker_threshold) never see data of freed and reused extents while keys are
+    overwritten concurrently
+    """
+    loc = Path(tmpdir) / uuid.uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(
+        loc,
+        data_file_size_limit_mb=100,
+        testrun_uid=testrun_uid,
+        with_redis=True,
+        # Small allocation chunks, so freed extents are reused quickly
+        data_file_alloc_chunk_size=64 * 1024,
+        extra_args=[
+            "--get_in_worker_threshold=100000",
+            # Widens the window between looking up and reading the value
+            "--test_inline_read_delay_ms=100",
+        ],
+    )
+    try:
+        keys = [f"ow{i}" for i in range(4)]
+        stop = threading.Event()
+        errors: list[str] = []
+
+        def value(i: int) -> bytes:
+            unit = f"{i:08d}".encode()
+            return unit * (value_size // len(unit))
+
+        def writer(widx: int):
+            c = runner.get_redis_client()
+            i = widx
+            while not stop.is_set():
+                c.set(keys[i % len(keys)], value(i))
+                i += 2
+
+        def reader():
+            c = runner.get_redis_client()
+            while not stop.is_set():
+                for k in keys:
+                    v = c.get(k)
+                    if v is None:
+                        continue
+                    assert isinstance(v, bytes)
+                    if len(v) != len(value(0)) or v != v[:8] * (len(v) // 8):
+                        errors.append(f"{k}: inconsistent value {v[:32]!r}...")
+                        return
+
+        threads = [threading.Thread(target=writer, args=(w,)) for w in range(2)]
+        threads += [threading.Thread(target=reader) for _ in range(4)]
+        for t in threads:
+            t.start()
+        time.sleep(5)
+        stop.set()
+        for t in threads:
+            t.join()
+
+        assert not errors, errors[0]
+    finally:
+        runner.stop(cleanup=True, kill=False)

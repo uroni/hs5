@@ -52,6 +52,7 @@ DEFINE_int64(list_overlay_batch_size, 1000, "Maximum number of uncommitted items
 DEFINE_bool(check_freespace_on_startup, false, "Check data file freespace on startup");
 DEFINE_bool(wal_write_thread, true, "Use a separate thread for WAL file data writes");
 DEFINE_bool(preallocate_data, true, "Preallocate data file space to improve performance and fragmentation");
+DEFINE_int32(test_read_prepare_delay_ms, 0, "Sleep in read_prepare between looking up and registering a read (for testing)");
 DEFINE_int64(trim_freespace_size, 1 * 1024 * 1024, "If more than this amount of free space is continuouly in the data file, free it up by punching holes (in bytes)");
 DEFINE_uint32(idl_dirty_max, 50, "Maximum number of dirty entries in the LMDB database before flush to disk in MiB");
 
@@ -2275,8 +2276,9 @@ int SingleFileStorage::write_int(const std::string& fn, const char* data,
 
 void SingleFileStorage::add_reading_item(const SingleFileStorage::SFragInfo& fi)
 {
-    auto& ri = reading_items[fi.offset];
-    ++ri.refs;
+    auto& shard = reading_shard(fi.offset);
+    std::scoped_lock lock(shard.mutex);
+    ++shard.items[fi.offset].refs;
 }
 
 void SingleFileStorage::remove_reading_item(const std::vector<Ext>& extents)
@@ -2284,9 +2286,11 @@ void SingleFileStorage::remove_reading_item(const std::vector<Ext>& extents)
     assert(!extents.empty());
     if (extents.begin()->data_file_offset == 0 && extents.begin()->len == 0)
         return;
-    auto ri = reading_items.find(extents.begin()->data_file_offset);
-    assert(ri != reading_items.end());
-    if (ri == reading_items.end())
+    auto& shard = reading_shard(extents.begin()->data_file_offset);
+    std::scoped_lock lock(shard.mutex);
+    auto ri = shard.items.find(extents.begin()->data_file_offset);
+    assert(ri != shard.items.end());
+    if (ri == shard.items.end())
         return;
     --ri->second.refs;
     assert(ri->second.refs >= 0);
@@ -2294,6 +2298,7 @@ void SingleFileStorage::remove_reading_item(const std::vector<Ext>& extents)
     {
         if (ri->second.free_skip)
         {
+            std::scoped_lock skip_lock(reading_free_skip_mutex);
             for (const auto& ext : extents)
             {
                 auto it = reading_free_skip_extents.find(ext.data_file_offset);
@@ -2302,8 +2307,19 @@ void SingleFileStorage::remove_reading_item(const std::vector<Ext>& extents)
             }
         }
 
-        reading_items.erase(ri);
+        shard.items.erase(ri);
     }
+}
+
+size_t SingleFileStorage::num_reading_items()
+{
+    size_t ret = 0;
+    for (auto& shard : reading_shards)
+    {
+        std::scoped_lock lock(shard.mutex);
+        ret += shard.items.size();
+    }
+    return ret;
 }
 
 SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::string_view fn, unsigned int flags)
@@ -2332,6 +2348,8 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
     SFragInfo frag_info;
     if ((flags & ReadUnsynced) == 0)
     {
+        // Extents freed while looking up and registering may have been released without seeing the registration
+        const auto free_gen = free_generation.load(std::memory_order_acquire);
         frag_info = get_frag_info(nullptr, fn, true, read_newest, read_oldest);
 
         if (frag_info.offset == -1)
@@ -2342,15 +2360,38 @@ SingleFileStorage::ReadPrepareResult SingleFileStorage::read_prepare(const std::
 
         if (!(flags & ReadSkipAddReading) && (frag_info.offset != 0 || frag_info.len > 0))
         {
-            std::unique_lock lock(mutex);
+            if (FLAGS_test_read_prepare_delay_ms > 0)
+                std::this_thread::sleep_for(std::chrono::milliseconds(FLAGS_test_read_prepare_delay_ms));
 
-            if (is_commit_item(fn))
+            // Register before checking for modifications: Either freeing the extents sees the registration, or the
+            // modification was queued before the check (and fn is a commit item)
+            add_reading_item(frag_info);
+
+            bool commit_item = false;
+            if (commit_items_count.load(std::memory_order_acquire) > 0)
             {
-                lock.unlock();
-                return read_prepare(fn, flags | ReadUnsynced);
+                std::scoped_lock lock(mutex);
+                commit_item = is_commit_item(fn);
             }
 
-            add_reading_item(frag_info);
+            // Extents were released (e.g. the object deleted and its space trimmed or reused) between the lookup and
+            // the registration. Look up again
+            const bool freed = !commit_item && free_generation.load(std::memory_order_acquire) != free_gen;
+
+            if (commit_item || freed)
+            {
+                std::vector<Ext> extents;
+                extents.reserve(1 + frag_info.extra_exts.size());
+                extents.push_back(Ext(0, frag_info.offset, frag_info.len));
+                for (const auto& ext : frag_info.extra_exts)
+                    extents.push_back(Ext(0, ext.offset, ext.len));
+                remove_reading_item(extents);
+
+                // Retry once, then read via the commit thread (always sees the current state)
+                if (freed && !(flags & ReadRetried))
+                    return read_prepare(fn, flags | ReadRetried);
+                return read_prepare(fn, flags | ReadUnsynced);
+            }
         }
         else if ((flags & ReadAddReadingCallback) && frag_info.offset == 0 && frag_info.len == 0 && frag_info.md5sum.size() > 1)
         {
@@ -2649,10 +2690,7 @@ int SingleFileStorage::read_ext(const Ext& ext, const unsigned int flags, const 
 int SingleFileStorage::read_finalize(const std::string& fn, const std::vector<Ext>& extents, unsigned int flags)
 {
     if (!extents.empty())
-    {
-        std::lock_guard lock(mutex);
         remove_reading_item(extents);
-    }
     return 0;
 }
 
@@ -3202,12 +3240,14 @@ int64_t SingleFileStorage::remove_fn(const std::string& fn, MDB_txn* txn, MDB_tx
 
             if (startup_finished && (offset != 0 || length > 0))
             {
-                std::lock_guard lock(mutex);
-                auto it_reading = reading_items.find(offset);
-                if (it_reading != reading_items.end())
+                auto& shard = reading_shard(offset);
+                std::scoped_lock lock(shard.mutex);
+                auto it_reading = shard.items.find(offset);
+                if (it_reading != shard.items.end())
                 {
                     assert(it_reading->second.refs > 0);
                     it_reading->second.free_skip = true;
+                    std::scoped_lock skip_lock(reading_free_skip_mutex);
                     reading_free_skip_extents.insert(offset);
                     for (const auto& ext : extra_exts)
                     {
@@ -3972,8 +4012,7 @@ bool SingleFileStorage::find_freemap_ext(MDB_txn* txn,
                     }
 
                     {
-                        // TODO perf: Seperate RW-Lock?
-                        std::scoped_lock lock(mutex);
+                        std::scoped_lock lock(reading_free_skip_mutex);
                         auto it = reading_free_skip_extents.lower_bound(start);
                         if (it != reading_free_skip_extents.end() && *it < start + len)
                         {
@@ -7416,6 +7455,10 @@ void SingleFileStorage::operator()()
             }
             else
             {
+                // Before freed extents can be reused/trimmed. Reads registering concurrently re-validate
+                if (!curr_new_free_extents.empty() || !trim_items.empty())
+                    free_generation.fetch_add(1, std::memory_order_release);
+
                 curr_new_free_extents.clear();
 
                 run_trim_queue(trim_items);
@@ -7764,6 +7807,11 @@ void SingleFileStorage::operator()()
 
             if (commit_ok)
             {
+                // Before freed extents can be reused/trimmed (and before erase_committed_items). Reads registering
+                // concurrently re-validate
+                if (!curr_new_free_extents.empty() || !trim_items.empty())
+                    free_generation.fetch_add(1, std::memory_order_release);
+
                 curr_new_free_extents.clear();
 
                 if (from_startup_wal)
@@ -7954,7 +8002,6 @@ void SingleFileStorage::operator()()
                     if (!(flags & ReadSkipAddReading) && frag_info.commit_info->frag_info->offset != -1 &&
                         (frag_info.commit_info->frag_info->offset != 0 || frag_info.commit_info->frag_info->len > 0))
                     {
-                        std::lock_guard lock(mutex);
                         add_reading_item(*frag_info.commit_info->frag_info);
                     }
                     else if ((flags & ReadAddReadingCallback) && add_reading_callback && frag_info.commit_info->frag_info->offset == 0 && frag_info.commit_info->frag_info->len == 0 && frag_info.commit_info->frag_info->md5sum.size() > 1)
@@ -9747,25 +9794,26 @@ void SingleFileStorage::assert_reading_items_empty()
         const auto wait_until = std::chrono::steady_clock::now() + 30s;
         while (std::chrono::steady_clock::now() < wait_until)
         {
-            {
-                std::scoped_lock lock(mutex);
-                if (reading_items.empty())
-                    break;
-            }
+            if (num_reading_items() == 0)
+                break;
             std::this_thread::sleep_for(10ms);
         }
     }
 
-    std::scoped_lock lock(mutex);
-    if (!reading_items.empty())
+    const auto num_items = num_reading_items();
+    if (num_items != 0)
     {
-        XLOGF(ERR, "Reading items not empty: {} items. sfs {}", reading_items.size(), db_path);
-        for (const auto& [offset, item] : reading_items)
+        XLOGF(ERR, "Reading items not empty: {} items. sfs {}", num_items, db_path);
+        for (auto& shard : reading_shards)
         {
-            XLOGF(ERR, "Reading item offset {} refs {} free_skip {}", offset, item.refs, item.free_skip);
+            std::scoped_lock lock(shard.mutex);
+            for (const auto& [offset, item] : shard.items)
+            {
+                XLOGF(ERR, "Reading item offset {} refs {} free_skip {}", offset, item.refs, item.free_skip);
+            }
         }
     }
-    assert(reading_items.empty());
+    assert(num_items == 0);
 
     size_t commit_items_refs = 0;
 
@@ -9882,7 +9930,7 @@ void SingleFileStorage::run_trim_thread()
             return;
 
         {
-            std::scoped_lock lock(mutex);
+            std::scoped_lock lock(reading_free_skip_mutex);
             auto it = reading_free_skip_extents.lower_bound(item.offset);
             if (it != reading_free_skip_extents.end() && *it < item.offset + item.len)
             {
