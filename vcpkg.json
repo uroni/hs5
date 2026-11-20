@@ -17,7 +17,11 @@
     "aws-c-common",
     "frozen",
     "date",
-    "jemalloc"
+    "jemalloc",
+    {
+      "name": "lua",
+      "features": ["cpp"]
+    }
   ],
   "default-features": [
     "duckdb"

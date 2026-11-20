@@ -145,7 +145,12 @@ ConfigResult readConfigFile(const std::string& fn)
         { "WAL_ITEMS", "max_wal_items" },
         { "REDIS_PORT", "redis_port" },
         { "REDIS_BUCKET", "redis_bucket" },
-        { "REDIS_MAX_VALUE_SIZE", "redis_max_value_size" }
+        { "REDIS_MAX_VALUE_SIZE", "redis_max_value_size" },
+        { "REDIS_SCRIPT_TIMEOUT_MS", "redis_script_timeout_ms" },
+        { "REDIS_SCRIPT_ALWAYS_GLOBAL", "redis_script_always_global" },
+        { "REDIS_SCRIPT_ALLOW_UNDECLARED_KEYS", "redis_script_allow_undeclared_keys" },
+        { "REDIS_COLLECTION_INLINE_MAX_ENTRIES", "redis_collection_inline_max_entries" },
+        { "REDIS_COLLECTION_INLINE_MAX_BYTES", "redis_collection_inline_max_bytes" }
     };
 
     for (const auto& [key, val] : settings)
@@ -215,7 +220,12 @@ ConfigResult readConfigEnv(const std::set<std::string>& alreadySetArgs)
         { "HS5_WAL_ITEMS", "max_wal_items" },
         { "HS5_REDIS_PORT", "redis_port" },
         { "HS5_REDIS_BUCKET", "redis_bucket" },
-        { "HS5_REDIS_MAX_VALUE_SIZE", "redis_max_value_size" }
+        { "HS5_REDIS_MAX_VALUE_SIZE", "redis_max_value_size" },
+        { "HS5_REDIS_SCRIPT_TIMEOUT_MS", "redis_script_timeout_ms" },
+        { "HS5_REDIS_SCRIPT_ALWAYS_GLOBAL", "redis_script_always_global" },
+        { "HS5_REDIS_SCRIPT_ALLOW_UNDECLARED_KEYS", "redis_script_allow_undeclared_keys" },
+        { "HS5_REDIS_COLLECTION_INLINE_MAX_ENTRIES", "redis_collection_inline_max_entries" },
+        { "HS5_REDIS_COLLECTION_INLINE_MAX_BYTES", "redis_collection_inline_max_bytes" }
     };
 
     for (const auto& [envKey, argKey] : configMapping)

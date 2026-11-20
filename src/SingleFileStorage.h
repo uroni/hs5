@@ -233,7 +233,8 @@ public:
         add_reading_callback_t add_reading_callback;
         // Counters: When adding/deleting an object fn the counter at counter_key_callback(fn) is updated in the same
         // transaction (by the change of counter_counts_callback). The counter value is a varint in the md5sum field
-        // of the counter. Counters with value 0 are deleted
+        // of the counter. Data after the varint is kept when the count changes (it can be set via modify_metadata).
+        // Counters with value 0 are deleted (including that data)
         counter_key_callback_t counter_key_callback;
         counter_counts_callback_t counter_counts_callback;
         bool wal_write_meta = true;
@@ -503,6 +504,12 @@ public:
     bool get_manual_commit()
     {
         return manual_commit;
+    }
+
+    // Listings (list_iter_start) include modifications which are not committed yet (with WAL or manual commit)
+    bool listings_include_uncommitted() const
+    {
+        return list_commit_items_used();
     }
 
     int64_t get_next_partid();

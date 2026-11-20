@@ -27,6 +27,8 @@ int64_t ObjMetadata::flags() const
         f |= metadata_flag_with_lock_info;
     if (legalHold)
         f |= metadata_flag_with_legal_hold;
+    if (redisData.has_value())
+        f |= metadata_flag_with_redis_data;
     return f;
 }
 
@@ -53,7 +55,14 @@ void ObjMetadata::serialize(CWData& wdata) const
             wdata.addInt64(std::chrono::duration_cast<std::chrono::seconds>(lockInfo->retainUntil.time_since_epoch()).count());
         if (lockInfo->eventHold())
             wdata.addInt64(lockInfo->eventDurationDays * 1000 + lockInfo->eventDurationYears);
+        if (lockInfo->redisExpiry())
+        {
+            wdata.addVarInt(lockInfo->redisExpiryMs);
+            wdata.addVarInt(lockInfo->redisExpiryIndexVersion);
+        }
     }
+    if (redisData.has_value())
+        wdata.addString2(*redisData);
 }
 
 bool ObjMetadata::deserialize(CRData& rdata, const int64_t flags)
@@ -125,10 +134,22 @@ bool ObjMetadata::deserialize(CRData& rdata, const int64_t flags)
             lockInfo->eventDurationDays = eventDuration / 1000;
             lockInfo->eventDurationYears = eventDuration % 1000;
         }
+        if (lockInfo->redisExpiry())
+        {
+            if (!rdata.getVarInt(&lockInfo->redisExpiryMs) || !rdata.getVarInt(&lockInfo->redisExpiryIndexVersion))
+                return false;
+        }
     }
     if (flags & metadata_flag_with_legal_hold)
     {
         legalHold = true;
+    }
+    if (flags & metadata_flag_with_redis_data)
+    {
+        std::string val;
+        if (!rdata.getStr2(&val))
+            return false;
+        redisData = std::move(val);
     }
     return true;
 }
@@ -153,7 +174,7 @@ void ObjMetadata::addRespHeaders(proxygen::ResponseBuilder& resp)
         resp.header(proxygen::HTTP_HEADER_EXPIRES, *expires);
     if (legalHold)
         resp.header("x-amz-object-lock-legal-hold", "ON");
-    if (lockInfo.has_value())
+    if (lockInfo.has_value() && lockInfo->hasObjectLock())
     {
         if (lockInfo->complianceMode())
             resp.header("x-amz-object-lock-mode", "COMPLIANCE");

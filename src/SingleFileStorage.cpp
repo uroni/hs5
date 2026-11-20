@@ -7147,9 +7147,19 @@ void SingleFileStorage::operator()()
 
     size_t mod_items = 0;
 
+    // Item of the modification being applied. Its commit item is decremented after the modification was applied, so
+    // listings (list_iter_get_modified) wait for it until its value is updated
+    std::optional<std::string> applying_commit_item;
+
     while (!do_quit && !is_dead)
     {
         assert(lock.owns_lock());
+        // If the previous modification was not applied (continue)
+        if (applying_commit_item)
+        {
+            decr_commit_item(*applying_commit_item);
+            applying_commit_item.reset();
+        }
 
         if (commit_errors > 0)
         {
@@ -7262,7 +7272,7 @@ void SingleFileStorage::operator()()
         if (has_commit_item(frag_info.action))
         {
             ++mod_items;
-            decr_commit_item(frag_info.fn);
+            applying_commit_item = frag_info.fn;
         }
 
         lock.unlock();
@@ -8568,6 +8578,11 @@ void SingleFileStorage::operator()()
         }
 
         lock.lock();
+        if (applying_commit_item)
+        {
+            decr_commit_item(*applying_commit_item);
+            applying_commit_item.reset();
+        }
     }
 
     if (is_dead && !do_quit)
@@ -10335,6 +10350,8 @@ int64_t SingleFileStorage::update_counter(MDB_txn* txn, THREAD_ID tid, const std
         return 0;
 
     int64_t count = 0;
+    // Data after the count (kept when the count changes)
+    std::string_view tail;
     const auto counter_info = get_frag_info(txn, counter_fn, true, false);
     if (counter_info.offset != -1)
     {
@@ -10343,6 +10360,10 @@ int64_t SingleFileStorage::update_counter(MDB_txn* txn, THREAD_ID tid, const std
         {
             XLOG(ERR) << "Error parsing counter " << folly::hexlify(counter_fn) << " sfs " << db_path;
             count = 0;
+        }
+        else
+        {
+            tail = std::string_view(rdata.getCurrDataPtr(), rdata.getLeft());
         }
     }
 
@@ -10368,6 +10389,7 @@ int64_t SingleFileStorage::update_counter(MDB_txn* txn, THREAD_ID tid, const std
 
     CWData wdata;
     wdata.addVarInt(count);
+    wdata.addBuffer(tail.data(), tail.size());
     const int rc = put_frag_info_md5sum(txn, tid, counter_fn, SFragInfo(0, 0), std::string(wdata.getDataPtr(), wdata.getDataSize()));
     if (rc)
     {

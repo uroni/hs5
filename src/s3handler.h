@@ -149,19 +149,26 @@ const int64_t metadata_flag_with_language = 1 << 9;
 const int64_t metadata_flag_with_disposition = 1 << 10;
 const int64_t metadata_flag_with_lock_info = 1 << 11;
 const int64_t metadata_flag_with_legal_hold = 1 << 12;
+const int64_t metadata_flag_with_redis_data = 1 << 13;
 const int64_t metadata_flag_has_obj_metadata = metadata_flag_with_content_type | metadata_flag_with_meta |
                                                metadata_flag_with_disposition | metadata_flag_with_cache_control |
                                                metadata_flag_with_encoding | metadata_flag_with_language | metadata_flag_with_expires |
-                                               metadata_flag_with_lock_info | metadata_flag_with_legal_hold;
+                                               metadata_flag_with_lock_info | metadata_flag_with_legal_hold |
+                                               metadata_flag_with_redis_data;
 const int64_t metadata_known_flags = metadata_flag_with_content_type | metadata_flag_with_meta |
                                      metadata_flag_with_disposition | metadata_flag_with_cache_control |
                                      metadata_flag_with_encoding | metadata_flag_with_language |
                                      metadata_flag_with_expires | metadata_flag_with_checksum |
-                                     metadata_flag_with_lock_info | metadata_flag_with_legal_hold;
+                                     metadata_flag_with_lock_info | metadata_flag_with_legal_hold |
+                                     metadata_flag_with_redis_data;
 
 // Modification types for SingleFileStorage::modify_metadata
 const char metadata_modify_legal_hold = 1;
 const char metadata_modify_retention = 2;
+// Sets/removes the Redis key expiry (ObjMetadata::LockInfo)
+const char metadata_modify_redis_expiry = 3;
+// Replaces the data after the count of a counter (see SingleFileStorage::SFSOptions::counter_key_callback)
+const char metadata_modify_counter_tail = 4;
 
 class S3Handler : public proxygen::RequestHandler, public proxygen::RFC1867Codec::Callback
 {
@@ -331,6 +338,8 @@ public:
     // Content type (ContentType::contentType) from object metadata. 0 if it has none, it is not in the list of
     // known content types or the metadata cannot be parsed
     static int contentTypeIdFromMetadata(const std::string& md5sum);
+    // Object metadata of the object with metadata md5sum. nullptr if it has none or it cannot be parsed
+    static std::unique_ptr<ObjMetadata> objMetadataFromMetadata(const std::string& md5sum);
 
     static int seekMultipartExt(SingleFileStorage& sfs, int64_t offset, int64_t bucketId, MultiPartDownloadData& multiPartDownloadData, std::vector<SingleFileStorage::Ext>& extents);
     static int seekMultipart(SingleFileStorage& sfs, int partNumber, int64_t bucketId, const bool addReading, MultiPartDownloadData& multiPartDownloadData,

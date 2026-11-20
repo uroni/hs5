@@ -8738,6 +8738,10 @@ void S3Handler::onError(ProxygenError err) noexcept
 std::vector<SingleFileStorage::SFragInfo> S3Handler::onDeleteCallback(const std::string& fn, const std::string& md5sum)
 {
     const auto keyInfo = extractKeyInfoView(fn);
+    // Counters and Redis key expiries. md5sum is no object metadata
+    if (buckets::isCountersBucket(keyInfo.bucketId))
+        return {};
+
     if (buckets::isPartialUploadsBucket(keyInfo.bucketId))
     {
         const auto parts = parsePartExtsFromStr(md5sum);
@@ -8898,7 +8902,7 @@ static int applyRetention(std::optional<ObjMetadata::LockInfo>& lockInfo, CRData
             return EINVAL;
 
         newLockInfo.emplace();
-        newLockInfo->flags = static_cast<unsigned int>(flags);
+        newLockInfo->flags = static_cast<unsigned int>(flags) & ~lockinfo_flag_redis_expiry;
         newLockInfo->retainUntil = std::chrono::system_clock::time_point(std::chrono::seconds(retainUntilSec));
         newLockInfo->eventDurationDays = static_cast<unsigned int>(days);
         newLockInfo->eventDurationYears = static_cast<unsigned short>(years);
@@ -8939,7 +8943,47 @@ static int applyRetention(std::optional<ObjMetadata::LockInfo>& lockInfo, CRData
             return EACCES;
     }
 
+    // Keep the Redis key expiry
+    if (lockInfo && lockInfo->redisExpiry())
+    {
+        if (!newLockInfo)
+            newLockInfo.emplace();
+        newLockInfo->flags |= lockinfo_flag_redis_expiry;
+        newLockInfo->redisExpiryMs = lockInfo->redisExpiryMs;
+        newLockInfo->redisExpiryIndexVersion = lockInfo->redisExpiryIndexVersion;
+    }
+
     lockInfo = newLockInfo;
+    return 0;
+}
+
+// Sets or removes the Redis key expiry in the lock info. Returns 0 on success or an error code
+static int applyRedisExpiry(std::optional<ObjMetadata::LockInfo>& lockInfo, CRData& rparam)
+{
+    char hasExpiry;
+    if (!rparam.getChar(&hasExpiry))
+        return EINVAL;
+
+    if (hasExpiry)
+    {
+        int64_t expiryMs, indexVersion;
+        if (!rparam.getVarInt(&expiryMs) || !rparam.getVarInt(&indexVersion))
+            return EINVAL;
+        if (!lockInfo)
+            lockInfo.emplace();
+        lockInfo->flags |= lockinfo_flag_redis_expiry;
+        lockInfo->redisExpiryMs = expiryMs;
+        lockInfo->redisExpiryIndexVersion = indexVersion;
+        return 0;
+    }
+
+    if (!lockInfo)
+        return 0;
+    lockInfo->flags &= ~lockinfo_flag_redis_expiry;
+    lockInfo->redisExpiryMs = 0;
+    lockInfo->redisExpiryIndexVersion = 0;
+    if (lockInfo->flags == 0 && !lockInfo->hasObjectLock())
+        lockInfo.reset();
     return 0;
 }
 
@@ -8949,6 +8993,19 @@ nonstd::expected<std::string, int> S3Handler::onModifyMetadataCallback(const std
     char modifyType;
     if (!rparam.getChar(&modifyType))
         return nonstd::make_unexpected(EINVAL);
+
+    if (modifyType == metadata_modify_counter_tail)
+    {
+        // md5sum is a counter (varint), not object metadata
+        CRData rcounter(md5sum.data(), md5sum.size());
+        int64_t count;
+        if (!buckets::isCountersBucket(extractKeyInfoView(fn).bucketId) || !rcounter.getVarInt(&count))
+            return nonstd::make_unexpected(EINVAL);
+        CWData wdata;
+        wdata.addVarInt(count);
+        wdata.addBuffer(rparam.getCurrDataPtr(), rparam.getLeft());
+        return std::string(wdata.getDataPtr(), wdata.getDataSize());
+    }
 
     CRData rdata(md5sum.data(), md5sum.size());
     int64_t itype;
@@ -8974,16 +9031,18 @@ nonstd::expected<std::string, int> S3Handler::onModifyMetadataCallback(const std
         }
         break;
         case metadata_modify_retention:
+        case metadata_modify_redis_expiry:
         {
             ObjMetadata objMetadata;
             unsigned int objMetadataStart, objMetadataEnd;
             if (!locateObjMetadata(md5sum, itype, objMetadata, objMetadataStart, objMetadataEnd))
             {
-                XLOGF(ERR, "Error parsing object metadata of {} for retention modification", fn);
+                XLOGF(ERR, "Error parsing object metadata of {} for metadata modification", fn);
                 return nonstd::make_unexpected(EIO);
             }
 
-            const auto rc = applyRetention(objMetadata.lockInfo, rparam);
+            const auto rc = modifyType == metadata_modify_retention ? applyRetention(objMetadata.lockInfo, rparam)
+                                                                    : applyRedisExpiry(objMetadata.lockInfo, rparam);
             if (rc != 0)
                 return nonstd::make_unexpected(rc);
 
@@ -9128,6 +9187,17 @@ int S3Handler::contentTypeIdFromMetadata(const std::string& md5sum)
     if (!parseMultipartInfo(md5sum, totalLen, multiPartDownloadData, &objMetadata, &sdkChecksumHash) || !objMetadata)
         return 0;
     return objMetadata->contentType.contentType;
+}
+
+std::unique_ptr<ObjMetadata> S3Handler::objMetadataFromMetadata(const std::string& md5sum)
+{
+    int64_t totalLen = 0;
+    std::unique_ptr<MultiPartDownloadData> multiPartDownloadData;
+    std::unique_ptr<ObjMetadata> objMetadata;
+    std::unique_ptr<PayloadHashBase> sdkChecksumHash;
+    if (!parseMultipartInfo(md5sum, totalLen, multiPartDownloadData, &objMetadata, &sdkChecksumHash))
+        return nullptr;
+    return objMetadata;
 }
 
 void S3Handler::onMatchCallback(SingleFileStorage::MatchInfo& matchInfo, const SingleFileStorage::SFragInfo& fragInfo, const std::optional<std::string>& etagOverride)

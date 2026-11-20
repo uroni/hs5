@@ -65,6 +65,8 @@ namespace buckets
     // Bucket storing counters of objects in the bucket (e.g. number of list elements of Redis lists)
     int64_t getCountersBucket(int64_t bucketId);
 
+    bool isCountersBucket(int64_t bucketId);
+
     std::string getBucketName(int64_t bucketId);
 
     Api::ListResp getBucketNames();

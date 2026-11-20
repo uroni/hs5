@@ -11,6 +11,8 @@
 const uint32_t lockinfo_flag_lock_mode_compliance = 1 << 0;
 const uint32_t lockinfo_flag_retain_until = 1 << 1;
 const uint32_t lockinfo_flag_event_hold = 1 << 2;
+// Expiry of a Redis key (see RedisServer). Not an object lock
+const uint32_t lockinfo_flag_redis_expiry = 1 << 3;
 
 class ObjMetadata
 {
@@ -29,6 +31,9 @@ public:
         std::chrono::system_clock::time_point retainUntil = std::chrono::system_clock::time_point{};
         unsigned int eventDurationDays = 0;
         unsigned short eventDurationYears = 0;
+        // Redis key expiry time (ms since epoch) and version of its entry in the expiry index
+        int64_t redisExpiryMs = 0;
+        int64_t redisExpiryIndexVersion = 0;
 
         bool complianceMode() const
         {
@@ -43,6 +48,17 @@ public:
         bool eventHold() const
         {
             return flags & lockinfo_flag_event_hold;
+        }
+
+        bool redisExpiry() const
+        {
+            return flags & lockinfo_flag_redis_expiry;
+        }
+
+        // Has object lock information (retention or event hold), not only the Redis expiry
+        bool hasObjectLock() const
+        {
+            return retainUntilSet() || eventHold();
         }
 
         // How long the object stays protected after the event hold is released
@@ -60,6 +76,8 @@ public:
 
     std::optional<LockInfo> lockInfo;
     bool legalHold = false;
+    // Serialized small Redis hash/set/sorted set, stored inline instead of as object data (see RedisServer)
+    std::optional<std::string> redisData;
 
     static std::unique_ptr<ObjMetadata> fromHeaders(proxygen::HTTPMessage& headers, bool& invalid);
 

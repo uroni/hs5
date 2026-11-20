@@ -235,6 +235,11 @@ namespace buckets
         return bucketId + 3;
     }
 
+    bool isCountersBucket(int64_t bucketId)
+    {
+        return bucketId > 0 && bucketId % 4 == 0;
+    }
+
     std::string getBucketName(int64_t bucketId)
     {
         std::scoped_lock lock{ mutex };

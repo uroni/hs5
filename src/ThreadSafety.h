@@ -76,6 +76,12 @@ public:
         cond.wait(l);
     }
 
+    template <typename Rep, typename Period>
+    void waitFor(std::condition_variable& cond, const std::chrono::duration<Rep, Period>& duration)
+    {
+        cond.wait_for(l, duration);
+    }
+
     CondVarLock(const CondVarLock&) = delete;
     CondVarLock& operator=(const CondVarLock&) = delete;
 };

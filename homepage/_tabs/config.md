@@ -72,6 +72,11 @@ LOGLEVEL=info
 | `REDIS_PORT` | integer | `-1` | Port for the Redis protocol (RESP2/RESP3) server, bound to `SERVER_IP`. `-1` disables it. Clients authenticate with `AUTH <access key> <secret key>`; access is checked against the S3 permissions of `REDIS_BUCKET`. |
 | `REDIS_BUCKET` | string | `redis` | Bucket storing the Redis keys as objects. Created with versioning enabled if it does not exist. Versioning has to be enabled, as list elements are object versions. |
 | <code class="language-plaintext highlighter-rouge">REDIS_<wbr>MAX_<wbr>VALUE_<wbr>SIZE</code> | integer (bytes) | `536870912` | Maximum size of values written or read via the Redis protocol. Larger objects can only be accessed via S3. |
+| <code class="language-plaintext highlighter-rouge">REDIS_<wbr>SCRIPT_<wbr>TIMEOUT_<wbr>MS</code> | integer (ms) | `5000` | Lua scripts (`EVAL`/`EVALSHA`) running longer than this are aborted. |
+| <code class="language-plaintext highlighter-rouge">REDIS_<wbr>SCRIPT_<wbr>ALWAYS_<wbr>GLOBAL</code> | boolean | `false` | Run all Lua scripts exclusively (no other Redis command runs concurrently, like a single-threaded Redis server). By default scripts only lock the keys they declare; scripts accessing undeclared keys are detected and run exclusively. |
+| <code class="language-plaintext highlighter-rouge">REDIS_<wbr>SCRIPT_<wbr>ALLOW_<wbr>UNDECLARED_<wbr>KEYS</code> | boolean | `false` | Allow Lua scripts to access undeclared keys after they modified data (without atomicity). By default such scripts fail. |
+| <code class="language-plaintext highlighter-rouge">REDIS_<wbr>COLLECTION_<wbr>INLINE_<wbr>MAX_<wbr>ENTRIES</code> | integer | `128` | Redis hashes, sets and sorted sets with at most this many elements are stored inline in the metadata of their key. Larger ones are stored with one entry per element, so modifying an element does not rewrite the whole collection. |
+| <code class="language-plaintext highlighter-rouge">REDIS_<wbr>COLLECTION_<wbr>INLINE_<wbr>MAX_<wbr>BYTES</code> | integer (bytes) | `8192` | Maximum serialized size of Redis hashes, sets and sorted sets stored inline. |
 {: .config-table }
 
 HS5 can also read these options from environment variables using the `HS5_` prefix (for example,
