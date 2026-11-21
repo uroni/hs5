@@ -61,6 +61,11 @@ def find_hs5_binary() -> Path:
     assert False, "hs5 binary not found"
 
 
+def is_asan_build() -> bool:
+    """ASan holds freed memory in its quarantine, so RSS measurements are meaningless"""
+    return "asan" in str(find_hs5_binary())
+
+
 @dataclass
 class Hs5Stats:
     used: int

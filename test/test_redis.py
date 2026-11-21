@@ -14,7 +14,7 @@ import pytest
 import redis
 from mypy_boto3_s3.type_defs import ObjectVersionTypeDef
 
-from hs5_fixture import Hs5Runner, hs5_redis, hs5_redis_large
+from hs5_fixture import Hs5Runner, hs5_redis, hs5_redis_large, is_asan_build
 
 
 def version_id(version: ObjectVersionTypeDef) -> str:
@@ -502,12 +502,13 @@ def test_redis_streaming_memory(tmpdir: Path, testrun_uid: str):
         assert obj["ETag"] == f'"{md5.hexdigest()}"'
 
         # Memory use while streaming 1 GiB stays far below the value size
-        assert (
-            write_peak_mb - baseline_mb < 128
-        ), f"RSS grew from {baseline_mb} MiB to {write_peak_mb} MiB while writing"
-        assert (
-            read_peak_mb - baseline_mb < 128
-        ), f"RSS grew from {baseline_mb} MiB to {read_peak_mb} MiB while reading"
+        if not is_asan_build():
+            assert (
+                write_peak_mb - baseline_mb < 128
+            ), f"RSS grew from {baseline_mb} MiB to {write_peak_mb} MiB while writing"
+            assert (
+                read_peak_mb - baseline_mb < 128
+            ), f"RSS grew from {baseline_mb} MiB to {read_peak_mb} MiB while reading"
 
         # Popping streams as well
         assert conn.command(b"RPUSH", b"hugelist", b"small") == b":1"
