@@ -871,6 +871,13 @@ private:
     // Entry of fn in list_commit_items (added if it does not exist). Requires mutex to be locked
     ListCommitItem& list_commit_item(const std::string_view fn);
 
+    // Values written to dbi_main while the current commit item is applied (commit thread), so the values for
+    // list_commit_items are not read back from the LMDB. nullptr: deleted. Only recorded if record_main_writes is set
+    bool record_main_writes = false;
+    std::vector<std::pair<std::string, std::shared_ptr<const std::string>>> main_writes;
+    // Records a put (val set) or delete (val nullptr) of key in dbi_main (commit thread)
+    void record_main_write(const MDB_val& key, const MDB_val* val);
+
     // Value of fn for list_commit_items after applying a modification (in commit thread, without mutex). Unset on
     // error (listings then use the LMDB value and wait for the queue), nullptr if fn does not exist
     std::optional<std::shared_ptr<const std::string>> read_list_commit_item_value(MDB_txn* txn, const std::string& fn);

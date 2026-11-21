@@ -3308,6 +3308,12 @@ int64_t SingleFileStorage::remove_fn(const std::string& fn, MDB_txn* txn, MDB_tx
                     XLOG(ERR) << "LMDB: Failed to delete extent info in commit (" << mdb_strerror(rc) << ") sfs " << db_path;
                     ++commit_errors;
                 }
+                else if (!del_old)
+                {
+                    // The cursor is at fn (MDB_SET)
+                    MDB_val del_key{ .mv_size = fn.size(), .mv_data = const_cast<char*>(fn.data()) };
+                    record_main_write(del_key, nullptr);
+                }
                 if (has_mmap_read_error_reset(tid))
                 {
                     XLOG(ERR) << "LMDB:Failed to delete extent info in commit (SIGBUS) sfs " << db_path;
@@ -3387,6 +3393,7 @@ int64_t SingleFileStorage::restore_fn(const std::string& fn, MDB_txn* txn, MDB_t
             ++commit_errors;
             return commit_errors;
         }
+        record_main_write(tkey, &val_offset);
 
         if (has_mmap_read_error_reset(tid))
         {
@@ -4223,6 +4230,9 @@ int64_t SingleFileStorage::reset_del_log_fn(MDB_txn* txn, MDB_txn* freespace_txn
                 tkey.mv_size = fn.size();
 
                 rc = mdb_put(txn, dbi_main, &tkey, &tval_offset, 0);
+
+                if (!rc)
+                    record_main_write(tkey, &tval_offset);
 
                 if (rc)
                 {
@@ -6874,6 +6884,9 @@ int SingleFileStorage::put_with_rewrite(MDB_txn* txn, MDB_dbi dbi, MDB_val* tkey
         XLOG(ERR) << "LMDB: Failed mdb_cursor_open in put_with_rewrite (" << mdb_strerror(rc) << ") sfs " << db_path;
         return rc;
     }
+
+    if (dbi == dbi_main)
+        record_main_write(*tkey, tval);
     if (has_mmap_read_error_reset(tid))
     {
         XLOG(ERR) << "LMDB: Failed  mdb_cursor_open in put_with_rewrite (SIGBUS) sfs " << db_path;
@@ -7301,6 +7314,10 @@ void SingleFileStorage::operator()()
             ++mod_items;
             applying_commit_item = frag_info.fn;
         }
+
+        // Writes of this item (for the values of list_commit_items)
+        main_writes.clear();
+        record_main_writes = has_commit_item(frag_info.action) && list_commit_items_used();
 
         lock.unlock();
 
@@ -8609,6 +8626,8 @@ void SingleFileStorage::operator()()
             if (!counter_fn.empty())
                 counter_list_value = read_list_commit_item_value(txn, counter_fn);
         }
+        record_main_writes = false;
+        main_writes.clear();
 
         lock.lock();
         if (set_list_values)
@@ -10144,8 +10163,48 @@ SingleFileStorage::ListCommitItem& SingleFileStorage::list_commit_item(const std
     return list_commit_items.emplace_hint(it, std::move(key), ListCommitItem())->second;
 }
 
+void SingleFileStorage::record_main_write(const MDB_val& key, const MDB_val* val)
+{
+    if (!record_main_writes)
+        return;
+
+    const std::string_view fn(reinterpret_cast<const char*>(key.mv_data), key.mv_size);
+    auto value = val != nullptr ? std::make_shared<const std::string>(reinterpret_cast<const char*>(val->mv_data), val->mv_size)
+                                : std::shared_ptr<const std::string>();
+    for (auto& [written_fn, written_value] : main_writes)
+    {
+        if (written_fn == fn)
+        {
+            // The last write is the value in the LMDB
+            written_value = std::move(value);
+            return;
+        }
+    }
+    main_writes.emplace_back(std::string(fn), std::move(value));
+}
+
 std::optional<std::shared_ptr<const std::string>> SingleFileStorage::read_list_commit_item_value(MDB_txn* txn, const std::string& fn)
 {
+    // Written while applying the item (else not modified by it or not recorded: read it)
+    for (const auto& [written_fn, written_value] : main_writes)
+    {
+        if (written_fn == fn)
+        {
+#ifndef NDEBUG
+            // All writes of dbi_main have to be recorded
+            MDB_val dkey{ .mv_size = fn.size(), .mv_data = const_cast<char*>(fn.data()) };
+            MDB_val dval;
+            const int drc = mdb_get(txn, dbi_main, &dkey, &dval);
+            assert(drc == 0 || drc == MDB_NOTFOUND);
+            if (drc == 0)
+                assert(written_value && *written_value == std::string_view(reinterpret_cast<const char*>(dval.mv_data), dval.mv_size));
+            else
+                assert(!written_value);
+#endif
+            return written_value;
+        }
+    }
+
     THREAD_ID tid = cached_gettid();
 
     MDB_val tkey;
@@ -10447,6 +10506,7 @@ int64_t SingleFileStorage::update_counter(MDB_txn* txn, THREAD_ID tid, const std
             XLOG(ERR) << "LMDB: Error deleting counter (" << mdb_strerror(rc) << ") sfs " << db_path;
             return 1;
         }
+        record_main_write(tkey, nullptr);
         return 0;
     }
 
