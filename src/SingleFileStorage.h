@@ -527,6 +527,9 @@ public:
 
     int64_t get_next_version();
 
+    // Number of modifications queued for the commit thread (locks the mutex)
+    size_t get_commit_queue_size();
+
     int64_t decrypt_id(const std::string& encdata);
 
     // Decrypts an object version id. Versions can be negative (prepended list items) or 0 (null version, written

@@ -10298,6 +10298,12 @@ bool SingleFileStorage::is_commit_item(const std::string_view fn)
     return it != list_commit_items.begin() && common_prefix_func(std::prev(it)->first.fn) == cp;
 }
 
+size_t SingleFileStorage::get_commit_queue_size()
+{
+    std::scoped_lock lock(mutex);
+    return commit_queue.size();
+}
+
 bool SingleFileStorage::commit_items_empty() const
 {
     return list_commit_items_used() ? list_commit_items.empty() : commit_items.empty();

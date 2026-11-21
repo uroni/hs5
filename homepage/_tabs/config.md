@@ -86,6 +86,7 @@ LOGLEVEL=info
 | `AMQP_HEARTBEAT` | integer (seconds) | `60` | AMQP heartbeat interval offered to clients. `0` disables heartbeats. |
 | <code class="language-plaintext highlighter-rouge">AMQP_<wbr>MEMORY_<wbr>MESSAGE_<wbr>MAX</code> | integer (bytes) | `65536` (64 KiB) | AMQP messages with bodies up to this size are also kept in memory and delivered from there instead of being read from storage. `0` disables it. |
 | <code class="language-plaintext highlighter-rouge">AMQP_<wbr>MEMORY_<wbr>MAX_<wbr>MB</code> | integer (MiB) | `256` | Maximum memory used by AMQP messages kept in memory. Further messages are delivered from storage. |
+| <code class="language-plaintext highlighter-rouge">AMQP_<wbr>FLOW_<wbr>QUEUE_<wbr>BACKLOG</code> | integer | `1000` | Flow control: stop reading from publishing connections (without consumers) while a queue they publish to has more ready messages and its consumers are receiving messages, until the backlog is halved. Keeps latency low when consumers are slower than publishers. Stuck consumers do not block publishers. `0` disables it. |
 {: .config-table }
 
 HS5 can also read these options from environment variables using the `HS5_` prefix (for example,

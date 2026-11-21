@@ -135,6 +135,8 @@ public:
         std::optional<std::string> deadLetterRoutingKey;
         // Version of the next message (versions are per queue key, 0 is reserved)
         std::atomic<int64_t> nextVersion = 1;
+        // Last time messages were delivered to consumers (ms since epoch, flow control)
+        std::atomic<int64_t> deliveredMs{ 0 };
 
         std::mutex mutex;
         std::deque<Msg> ready GUARDED_BY(mutex);
@@ -237,8 +239,9 @@ private:
     // property of the message. persistent: delivery mode 2 (the message is persistent if the queue is durable as well).
     // memory: in-memory copy shared by the target queues of a message (created by the first call if the message is
     // small and the memory limit allows it)
+    // backlog: set to the number of ready messages of queue afterwards (if not nullptr)
     int storeMessage(const std::shared_ptr<Queue>& queue, const ValueArg& value, const std::string& meta, std::optional<int64_t> expirationMs,
-                     bool persistent, std::shared_ptr<const MemoryMessage>& memory);
+                     bool persistent, std::shared_ptr<const MemoryMessage>& memory, size_t* backlog = nullptr);
     // Removes expired messages from the head of queues (dead lettering them)
     void expireMessages() EXCLUDES(mutex);
     // Delivers ready messages to consumers with capacity
@@ -248,13 +251,19 @@ private:
     // Returns a delivered message to the queue
     void requeue(const std::shared_ptr<Queue>& queue, Msg msg, bool countAsDelivery);
     // Delivered message was settled (acked/rejected), so the consumer/channel has capacity again
-    void settled(const std::shared_ptr<Queue>& queue, Consumer* consumer, ChannelCounters* counters);
+    // dispatchNow: dispatch queue (else the caller does it later)
+    void settled(const std::shared_ptr<Queue>& queue, Consumer* consumer, ChannelCounters* counters, bool dispatchNow = true);
     void removeConsumer(const std::shared_ptr<Queue>& queue, const Consumer* consumer);
     // Commits in the background (coalesced)
     void requestCommit();
     // Commits in the background within the maintenance interval (changes of non-persistent messages, which do not need
     // to be durable soon)
     void requestLazyCommit();
+    // Publishers are blocked (flow control) because the storage queue is too long (any thread)
+    bool publishFlowBlocked();
+    // Publishers to queue are blocked (flow control) because consumers do not keep up: more than backlog ready
+    // messages while consumers receive messages (any thread)
+    bool queueFlowBlocked(Queue& queue, size_t backlog);
     // Deletes queues unused for longer than x-expires and expires messages
     void maintenanceThreadFunc() EXCLUDES(maintenanceMutex);
 
@@ -291,6 +300,9 @@ private:
     std::atomic<bool> commitScheduled{ false };
     // Uncommitted changes of non-persistent messages (committed by the maintenance thread)
     std::atomic<bool> lazyCommitPending{ false };
+    // Flow control state (publishFlowBlocked) and time of the last sample (us)
+    std::atomic<bool> flowBlocked{ false };
+    std::atomic<int64_t> flowSampleUs{ 0 };
 
     // Only accessed by start() and stop()
     std::thread maintenanceThread;

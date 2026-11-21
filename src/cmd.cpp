@@ -158,7 +158,10 @@ ConfigResult readConfigFile(const std::string& fn)
         { "AMQP_FRAME_MAX", "amqp_frame_max" },
         { "AMQP_HEARTBEAT", "amqp_heartbeat" },
         { "AMQP_MEMORY_MESSAGE_MAX", "amqp_memory_message_max" },
-        { "AMQP_MEMORY_MAX_MB", "amqp_memory_max_mb" }
+        { "AMQP_MEMORY_MAX_MB", "amqp_memory_max_mb" },
+        { "AMQP_FLOW_QUEUE_BACKLOG", "amqp_flow_queue_backlog" },
+        { "AMQP_FLOW_STORAGE_QUEUE_HIGH", "amqp_flow_storage_queue_high" },
+        { "AMQP_FLOW_STORAGE_QUEUE_LOW", "amqp_flow_storage_queue_low" }
     };
 
     for (const auto& [key, val] : settings)
@@ -247,7 +250,10 @@ ConfigResult readConfigEnv(const std::set<std::string>& alreadySetArgs)
         { "HS5_AMQP_FRAME_MAX", "amqp_frame_max" },
         { "HS5_AMQP_HEARTBEAT", "amqp_heartbeat" },
         { "HS5_AMQP_MEMORY_MESSAGE_MAX", "amqp_memory_message_max" },
-        { "HS5_AMQP_MEMORY_MAX_MB", "amqp_memory_max_mb" }
+        { "HS5_AMQP_MEMORY_MAX_MB", "amqp_memory_max_mb" },
+        { "HS5_AMQP_FLOW_QUEUE_BACKLOG", "amqp_flow_queue_backlog" },
+        { "HS5_AMQP_FLOW_STORAGE_QUEUE_HIGH", "amqp_flow_storage_queue_high" },
+        { "HS5_AMQP_FLOW_STORAGE_QUEUE_LOW", "amqp_flow_storage_queue_low" }
     };
 
     for (const auto& [envKey, argKey] : configMapping)

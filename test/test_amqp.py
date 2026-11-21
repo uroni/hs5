@@ -362,6 +362,50 @@ def test_amqp_confirmed_durable(hs5_amqp: Hs5Runner):
     conn.close()
 
 
+def test_amqp_flow_control(tmp_path, testrun_uid: str):
+    # Publishers are blocked whenever a storage modification is queued
+    runner = Hs5Runner(
+        tmp_path,
+        data_file_size_limit_mb=100,
+        testrun_uid=testrun_uid,
+        with_amqp=True,
+        extra_args=[
+            "--amqp_flow_storage_queue_high",
+            "1",
+            "--amqp_flow_storage_queue_low",
+            "1",
+        ],
+    )
+    try:
+        n = 3000
+        pub = connect(runner)
+        pch = pub.channel()
+        pch.queue_declare("flow")
+        for i in range(n):
+            pch.basic_publish("", "flow", f"f{i}".encode())
+        cch_conn = connect(runner)
+        cch = cch_conn.channel()
+        # With confirms (blocked between publishes)
+        pch.confirm_delivery()
+        for i in range(n, n + 100):
+            pch.basic_publish("", "flow", f"f{i}".encode())
+        bodies = []
+        for _ in range(n + 100):
+            method, props, body = get_msg(cch, "flow")
+            cch.basic_ack(tag(method))
+            bodies.append(body)
+        assert bodies == [f"f{i}".encode() for i in range(n + 100)]
+
+        # Connections with consumers are not blocked (their acks would be blocked as well)
+        both = cch
+        both.basic_publish("", "flow", b"own")
+        assert get_body(both, "flow") == b"own"
+        pub.close()
+        cch_conn.close()
+    finally:
+        runner.stop(cleanup=True, kill=False)
+
+
 def test_amqp_ttl_and_expiry(hs5_amqp: Hs5Runner):
     conn = connect(hs5_amqp)
     ch = conn.channel()

@@ -21,6 +21,10 @@ DEFINE_int32(amqp_frame_max, 131072, "Max AMQP frame size offered to clients");
 DEFINE_int32(amqp_heartbeat, 60, "AMQP heartbeat interval offered to clients (seconds, 0 to disable)");
 DEFINE_int64(amqp_memory_message_max, 64 * 1024, "Max body size of AMQP messages kept in memory (delivered without reading them from storage, 0 to disable)");
 DEFINE_int64(amqp_memory_max_mb, 256, "Max memory used by AMQP messages kept in memory (MiB)");
+DEFINE_int64(amqp_flow_storage_queue_high, 0, "Stop reading from AMQP publishers (without consumers) while more storage modifications are queued (0 to disable; the storage throttles writers itself, and this reduced throughput with WAL)");
+DEFINE_int64(amqp_flow_storage_queue_low, 250, "Resume reading from blocked AMQP publishers once the queued storage modifications are below this");
+DEFINE_int64(amqp_flow_pending_input, 64 * 1024, "Max unprocessed input of AMQP connections recently blocked by flow control (bytes, 0: the normal limit). Less input waits in the server while consumers do not keep up");
+DEFINE_int64(amqp_flow_queue_backlog, 1000, "Stop reading from AMQP publishers (without consumers) to a queue with more ready messages while its consumers receive messages, until half of it (0 to disable)");
 
 namespace
 {
@@ -32,7 +36,7 @@ namespace
     // Frame size before connection.tune-ok
     constexpr uint32_t frameMinSize = 4096;
     // Stop reading from a connection if this many bytes of frames are not processed yet
-    constexpr size_t maxPendingInput = 64 * 1024 * 1024;
+    constexpr size_t maxPendingInput = 1 * 1024 * 1024;
     // Don't deliver more messages to a connection while this much data is waiting to be sent
     constexpr size_t maxPendingOutput = 16 * 1024 * 1024;
     constexpr uint16_t maxChannels = 2047;
@@ -989,6 +993,11 @@ public:
                                                        assertOnEvb();
                                                        onHeartbeatTimer(); });
         heartbeatTimer->scheduleTimeout(std::chrono::seconds(1));
+        // Not runAfterDelay: The HHWheelTimer has a 10ms tick, too coarse for flow control
+        flowTimer = folly::AsyncTimeout::make(*evb, [this]() noexcept
+                                              {
+                                                  assertOnEvb();
+                                                  processPending(); });
         sock->setReadCB(this);
     }
 
@@ -1001,6 +1010,7 @@ public:
         closedFlag = true;
         auto self = shared_from_this();
         heartbeatTimer.reset();
+        flowTimer.reset();
         if (sock)
         {
             sock->setReadCB(nullptr);
@@ -1027,15 +1037,28 @@ public:
     }
 
     // Delivers a message of queue to consumer (any thread). Counters were incremented by the dispatcher
-    static void deliver(std::shared_ptr<AmqpConnection> conn, std::shared_ptr<Queue> queue, std::shared_ptr<Consumer> consumer, Msg msg)
+    struct Delivery
     {
-        ++conn->deliveriesInFlight;
+        std::shared_ptr<Consumer> consumer;
+        Msg msg;
+    };
+
+    // Delivers messages of queue to consumers of this connection (any thread), in one task with one socket write.
+    // Counters were incremented by the dispatcher
+    static void deliver(std::shared_ptr<AmqpConnection> conn, std::shared_ptr<Queue> queue, std::vector<Delivery> deliveries)
+    {
+        const auto n = deliveries.size();
+        conn->deliveriesInFlight += n;
         auto self = conn;
-        self->runTask([conn = std::move(conn), queue = std::move(queue), consumer = std::move(consumer), msg]()
+        self->runTask([conn = std::move(conn), queue = std::move(queue), deliveries = std::move(deliveries), n]()
                       {
                           conn->assertSerial();
-                          conn->doDeliver(queue, consumer, msg);
-                          --conn->deliveriesInFlight; });
+                          {
+                              OutputBatch batch(*conn);
+                              for (const auto& d : deliveries)
+                                  conn->doDeliver(queue, d.consumer, d.msg);
+                          }
+                          conn->deliveriesInFlight -= n; });
     }
 
     // Consumer was cancelled because its queue was deleted (any thread)
@@ -1250,7 +1273,73 @@ private:
             outQueue.push_back(OutItem{ .data = std::move(data) });
             return;
         }
+        if (outputBatchDepth > 0)
+        {
+            outputBatch += data;
+            return;
+        }
         sendRaw(std::move(data));
+    }
+
+    // Collects the output (send) of a scope into one socket write and dispatches the queues of dispatchLater at its
+    // end (serial thread)
+    class OutputBatch
+    {
+    public:
+        explicit OutputBatch(AmqpConnection& conn)
+            : conn(conn)
+        {
+            ++conn.outputBatchDepth;
+        }
+        ~OutputBatch()
+        {
+            if (--conn.outputBatchDepth == 0)
+            {
+                conn.flushOutputBatch();
+                conn.flushDispatchLater();
+            }
+        }
+        OutputBatch(const OutputBatch&) = delete;
+        OutputBatch& operator=(const OutputBatch&) = delete;
+
+    private:
+        AmqpConnection& conn;
+    };
+
+    void flushOutputBatch() REQUIRES(serialThread)
+    {
+        if (outputBatch.empty())
+            return;
+        auto data = std::move(outputBatch);
+        outputBatch = std::string();
+        sendRaw(std::move(data));
+    }
+
+    // Dispatches queue at the end of the current OutputBatch (or now without one), once per queue
+    void dispatchLater(const std::shared_ptr<Queue>& queue) REQUIRES(serialThread)
+    {
+        if (outputBatchDepth == 0)
+        {
+            server.dispatch(queue);
+            return;
+        }
+        if (std::find(dispatchQueues.begin(), dispatchQueues.end(), queue) == dispatchQueues.end())
+            dispatchQueues.push_back(queue);
+    }
+
+    void flushDispatchLater() REQUIRES(serialThread)
+    {
+        auto queues = std::move(dispatchQueues);
+        dispatchQueues.clear();
+        for (const auto& queue : queues)
+            server.dispatch(queue);
+    }
+
+    // Closes after the output so far was written (serial thread)
+    void closeAfterOutput() REQUIRES(serialThread)
+    {
+        flushOutputBatch();
+        closeNow();
     }
 
     // Sends queued output. Reads the next chunk of a streamed message only if not too much output is pending
@@ -1401,22 +1490,27 @@ private:
     {
         if (closed)
             return;
-        if (!processing && !pending.empty())
+        if (!processing && !pending.empty() && !flowPaused())
         {
             processing = true;
             std::vector<Frame> frames(std::make_move_iterator(pending.begin()), std::make_move_iterator(pending.end()));
             pending.clear();
-            const auto bytes = pendingBytes;
             pendingBytes = 0;
-            runTask([self = shared_from_this(), frames = std::move(frames), bytes]() mutable
+            runTask([self = shared_from_this(), frames = std::move(frames)]() mutable
                     {
                         self->assertSerial();
-                        self->processFrames(frames);
-                        self->evb->runInEventBaseThread([self, bytes]()
+                        const auto processed = self->processFrames(frames);
+                        // Not processed because of flow control: back to the front of pending (in order)
+                        std::vector<Frame> rest(std::make_move_iterator(frames.begin() + static_cast<ptrdiff_t>(processed)), std::make_move_iterator(frames.end()));
+                        self->evb->runInEventBaseThread([self, rest = std::move(rest)]() mutable
                                                         {
                                                             self->assertOnEvb();
                                                             self->processing = false;
-                                                            self->updateReading();
+                                                            for (auto it = rest.rbegin(); it != rest.rend(); ++it)
+                                                            {
+                                                                self->pendingBytes += it->payload.size();
+                                                                self->pending.push_front(std::move(*it));
+                                                            }
                                                             self->processPending(); }); });
         }
         updateReading();
@@ -1426,7 +1520,22 @@ private:
     {
         if (closed || !sock)
             return;
-        const bool pause = pendingBytes >= maxPendingInput;
+        // Flow control (see flowPaused): publishers are slowed down while consumers of a queue they publish to do not
+        // keep up (or the storage is overloaded). Not connections with consumers, as their acks would be blocked
+        const bool flowPause = flowPaused();
+        const auto now = std::chrono::steady_clock::now();
+        if (flowPause)
+        {
+            lastFlowPause = now;
+            // Resume once unblocked
+            if (flowTimer && !flowTimer->isScheduled())
+                flowTimer->scheduleTimeout(std::chrono::milliseconds(1));
+        }
+        // Publishers blocked recently: less input is buffered (it would wait while the consumers do not keep up)
+        const size_t maxPending = FLAGS_amqp_flow_pending_input > 0 && now - lastFlowPause < std::chrono::seconds(1)
+                                      ? std::min(maxPendingInput, static_cast<size_t>(FLAGS_amqp_flow_pending_input))
+                                      : maxPendingInput;
+        const bool pause = pendingBytes >= maxPending || flowPause;
         if (pause && !readPaused)
         {
             sock->setReadCB(nullptr);
@@ -1445,6 +1554,9 @@ private:
             return;
         const auto now = std::chrono::steady_clock::now();
         const auto hb = heartbeat.load();
+        // Heartbeats are not read while reading is paused (by the server)
+        if (readPaused)
+            lastRead = now;
         if (hb > 0)
         {
             if (now - lastRead > std::chrono::seconds(2 * hb))
@@ -1538,6 +1650,22 @@ private:
         ch.pubBody.clear();
     }
 
+    // connection.close from the client: Replies and waits for the client to close the socket (like RabbitMQ). Frames
+    // the client sent before it received close-ok (e.g. acks of deliveries it was still processing) are ignored,
+    // instead of failing on a closed socket. Unacked deliveries are requeued now
+    void onClientClose() REQUIRES(serialThread)
+    {
+        cleanup();
+        send(methodFrame(0, classConnection, connectionCloseOk));
+        state = State::Closing;
+        flushOutputBatch();
+        evb->runInEventBaseThread([self = shared_from_this()]()
+                                  { self->evb->runAfterDelay([self]()
+                                                             {
+                                                                 self->assertOnEvb();
+                                                                 self->close(); }, 1000); });
+    }
+
     void cleanup() REQUIRES(serialThread)
     {
         for (auto& [channelId, ch] : channels)
@@ -1566,15 +1694,48 @@ private:
         return checkAuth(exchangeResource(vhost, exchange), actions);
     }
 
-    void processFrames(std::vector<Frame>& frames) REQUIRES(serialThread)
+    // Flow control applies to this connection (see updateReading)
+    bool flowPaused()
     {
+        if (!publisher.load(std::memory_order_relaxed) || consumer.load(std::memory_order_relaxed))
+            return false;
+        if (server.publishFlowBlocked())
+            return true;
+
+        std::shared_ptr<AmqpServer::Queue> queue;
+        {
+            std::scoped_lock lock(flowMutex);
+            queue = flowQueue;
+        }
+        if (!queue)
+            return false;
+        // Until the backlog is halved
+        if (server.queueFlowBlocked(*queue, static_cast<size_t>(std::max<int64_t>(1, FLAGS_amqp_flow_queue_backlog / 2))))
+            return true;
+        std::scoped_lock lock(flowMutex);
+        if (flowQueue == queue)
+            flowQueue.reset();
+        return false;
+    }
+
+    // Processes frames. Stops before a method frame if flow control blocks the connection and returns the number
+    // of processed frames (the rest is processed once it is unblocked)
+    size_t processFrames(std::vector<Frame>& frames) REQUIRES(serialThread)
+    {
+        OutputBatch batch(*this);
+        size_t processed = 0;
         for (auto& f : frames)
         {
             if (closedFlag)
-                return;
+                return frames.size();
+            // Frames read before reading was paused are processed in batches as well
+            if (f.type == frameMethod && processed > 0 && flowPaused())
+                break;
             processFrame(f);
+            ++processed;
         }
         finishConfirms();
+        return processed;
     }
 
     // Sends the pending publish confirms, after a commit if a confirmed message is persistent. The commit runs in the
@@ -1663,7 +1824,7 @@ private:
                 else if (classId == classConnection && methodId == connectionClose)
                 {
                     send(methodFrame(0, classConnection, connectionCloseOk));
-                    closeNow();
+                    closeAfterOutput();
                 }
             }
             return;
@@ -1942,11 +2103,8 @@ private:
                 return;
             }
             case connectionClose: // close
-            {
-                send(methodFrame(0, classConnection, connectionCloseOk));
-                closeNow();
+                onClientClose();
                 return;
-            }
             case connectionCloseOk: // close-ok
                 closeNow();
                 return;
@@ -2186,6 +2344,7 @@ private:
                         connectionError(notAllowed, fmt::format("NOT_ALLOWED - attempt to reuse consumer tag '{}'", tag), classId, methodId);
                         return;
                     }
+                    this->consumer.store(true, std::memory_order_relaxed);
                     auto consumer = std::make_shared<Consumer>();
                     consumer->conn = weak_from_this();
                     consumer->channel = channelId;
@@ -2253,6 +2412,7 @@ private:
                 }
                 case basicGet: // get
                 {
+                    consumer.store(true, std::memory_order_relaxed);
                     r.short_();
                     const auto queueName = r.shortstr();
                     const bool noAck = r.bit();
@@ -2423,7 +2583,8 @@ private:
                     deadLetter(d.queue, d.msg, "rejected");
                 server.deleteMessage(d.queue, d.msg);
             }
-            server.settled(d.queue, d.consumer.get(), ch.counters.get());
+            server.settled(d.queue, d.consumer.get(), ch.counters.get(), false);
+            dispatchLater(d.queue);
         }
         // Also for persistent messages: after a crash, a message whose deletion was not committed yet is redelivered
         // (at-least-once, like RabbitMQ, which does not sync acks either). Dead lettered messages are committed by
@@ -2547,6 +2708,9 @@ private:
             return true;
         }
         send(std::move(out));
+        // Batched output before the streamed body
+        if (outQueue.empty())
+            flushOutputBatch();
         outQueue.push_back(OutItem{ .reader = m.reader, .channel = channelId, .size = m.size });
         // Otherwise a streamed message is being sent already (pump continues with this one)
         if (outQueue.size() == 1)
@@ -2561,7 +2725,8 @@ private:
         {
             server.requeue(queue, msg, false);
             if (!consumer->noAck)
-                server.settled(queue, consumer.get(), consumer->counters.get());
+                server.settled(queue, consumer.get(), consumer->counters.get(), false);
+            dispatchLater(queue);
             return;
         }
         auto& ch = it->second;
@@ -2574,9 +2739,8 @@ private:
                 deadLetter(queue, msg, m, "expired");
             server.deleteMessage(queue, msg);
             if (!consumer->noAck)
-                server.settled(queue, consumer.get(), consumer->counters.get());
-            else
-                server.dispatch(queue);
+                server.settled(queue, consumer.get(), consumer->counters.get(), false);
+            dispatchLater(queue);
             return;
         }
 
@@ -2594,7 +2758,7 @@ private:
             // The reader keeps streamed data readable. Committed lazily (redelivered after a crash before the commit)
             server.deleteMessage(queue, msg);
             server.requestLazyCommit();
-            server.dispatch(queue);
+            dispatchLater(queue);
         }
         else
         {
@@ -2667,6 +2831,7 @@ private:
 
     void completePublish(const uint16_t channelId, Channel& ch) REQUIRES(serialThread)
     {
+        publisher.store(true, std::memory_order_relaxed);
         ch.publishing = false;
         ch.haveHeader = false;
         auto body = std::move(ch.pubBody);
@@ -2708,8 +2873,15 @@ private:
         std::shared_ptr<const AmqpServer::MemoryMessage> memory;
         for (size_t i = 0; i < targets.size(); ++i)
         {
+            size_t backlog = 0;
             const auto rc = server.storeMessage(targets[i], streams.empty() ? ValueArg{ .data = body } : ValueArg{ .streamed = streams[i] }, meta, ch.pubExpiration,
-                                                ch.pubPersistent, memory);
+                                                ch.pubPersistent, memory, &backlog);
+            if (rc == 0 && FLAGS_amqp_flow_queue_backlog > 0 && backlog > static_cast<size_t>(FLAGS_amqp_flow_queue_backlog) &&
+                server.queueFlowBlocked(*targets[i], static_cast<size_t>(FLAGS_amqp_flow_queue_backlog)))
+            {
+                std::scoped_lock lock(flowMutex);
+                flowQueue = targets[i];
+            }
             if (rc != 0)
             {
                 XLOGF(WARN, "Error storing AMQP message in queue {}: {}", targets[i]->name, rc);
@@ -2781,6 +2953,16 @@ private:
     // Frames are being processed on the serial executor
     bool processing GUARDED_BY(evbThread) = false;
     bool readPaused GUARDED_BY(evbThread) = false;
+    // Calls processPending again soon (to resume reading/processing paused by flow control)
+    std::unique_ptr<folly::AsyncTimeout> flowTimer GUARDED_BY(evbThread);
+    // Last time flow control paused this connection
+    std::chrono::steady_clock::time_point lastFlowPause GUARDED_BY(evbThread);
+    // Published messages / consumed (basic.consume or basic.get) on this connection (flow control)
+    std::atomic<bool> publisher{ false };
+    std::atomic<bool> consumer{ false };
+    // Queue whose consumers do not keep up with the publishes of this connection (flow control)
+    std::mutex flowMutex;
+    std::shared_ptr<AmqpServer::Queue> flowQueue GUARDED_BY(flowMutex);
     bool closed GUARDED_BY(evbThread) = false;
     // Sizes of the writes in progress (in order)
     std::deque<size_t> writeSizes GUARDED_BY(evbThread);
@@ -2809,6 +2991,11 @@ private:
     bool confirmCommitRunning GUARDED_BY(serialThread) = false;
     // Output waiting for a streamed message to be sent (front is the streamed message)
     std::deque<OutItem> outQueue GUARDED_BY(serialThread);
+    // Output collected by OutputBatch (written at its end)
+    std::string outputBatch GUARDED_BY(serialThread);
+    int outputBatchDepth GUARDED_BY(serialThread) = 0;
+    // Queues to dispatch at the end of the OutputBatch
+    std::vector<std::shared_ptr<Queue>> dispatchQueues GUARDED_BY(serialThread);
     // pump() waits for output to be written
     std::atomic<bool> waitingForDrain{ false };
 };
@@ -3657,7 +3844,8 @@ AmqpServer::MemoryMessage::~MemoryMessage()
 }
 
 int AmqpServer::storeMessage(const std::shared_ptr<Queue>& queue, const ValueArg& value, const std::string& meta,
-                             const std::optional<int64_t> expirationMs, const bool persistent, std::shared_ptr<const MemoryMessage>& memory)
+                             const std::optional<int64_t> expirationMs, const bool persistent, std::shared_ptr<const MemoryMessage>& memory,
+                             size_t* backlog)
 {
     // Approximate limit (concurrent publishes may exceed it a bit)
     if (!memory && !value.streamed && static_cast<int64_t>(value.data.size()) <= FLAGS_amqp_memory_message_max &&
@@ -3689,6 +3877,8 @@ int AmqpServer::storeMessage(const std::shared_ptr<Queue>& queue, const ValueArg
             return 0;
         }
         queue->ready.push_back(Msg{ .version = version, .redelivered = false, .deliveryCount = 0, .expiresAt = expiresAt, .persistent = persistent && queue->durable, .memory = memory });
+        if (backlog != nullptr)
+            *backlog = queue->ready.size();
     }
     return 0;
 }
@@ -3714,7 +3904,7 @@ void AmqpServer::requeue(const std::shared_ptr<Queue>& queue, Msg msg, const boo
     dispatch(queue);
 }
 
-void AmqpServer::settled(const std::shared_ptr<Queue>& queue, Consumer* consumer, ChannelCounters* counters)
+void AmqpServer::settled(const std::shared_ptr<Queue>& queue, Consumer* consumer, ChannelCounters* counters, const bool dispatchNow)
 {
     if (consumer != nullptr && !consumer->noAck)
         --consumer->unacked;
@@ -3725,7 +3915,8 @@ void AmqpServer::settled(const std::shared_ptr<Queue>& queue, Consumer* consumer
         if (queue->unacked > 0)
             --queue->unacked;
     }
-    dispatch(queue);
+    if (dispatchNow)
+        dispatch(queue);
 }
 
 void AmqpServer::removeConsumer(const std::shared_ptr<Queue>& queue, const Consumer* consumer)
@@ -3755,6 +3946,35 @@ void AmqpServer::requestCommit()
                                            if (!store.commit())
                                                XLOGF(WARN, "AMQP background commit failed");
                                            taskFinished(); });
+}
+
+bool AmqpServer::publishFlowBlocked()
+{
+    if (FLAGS_amqp_flow_storage_queue_high <= 0)
+        return false;
+
+    // Samples the storage queue at most every ms (it needs the storage mutex)
+    const int64_t now = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    int64_t last = flowSampleUs.load(std::memory_order_relaxed);
+    if (now - last >= 1000 && flowSampleUs.compare_exchange_strong(last, now, std::memory_order_relaxed))
+    {
+        const auto queued = static_cast<int64_t>(store.sfs.get_commit_queue_size());
+        const bool blocked = flowBlocked.load(std::memory_order_relaxed);
+        if (!blocked && queued >= FLAGS_amqp_flow_storage_queue_high)
+            flowBlocked.store(true, std::memory_order_relaxed);
+        else if (blocked && queued < FLAGS_amqp_flow_storage_queue_low)
+            flowBlocked.store(false, std::memory_order_relaxed);
+    }
+    return flowBlocked.load(std::memory_order_relaxed);
+}
+
+bool AmqpServer::queueFlowBlocked(Queue& queue, const size_t backlog)
+{
+    // Consumers that stopped (e.g. at their prefetch limit without acking) do not block publishers
+    if (nowMs() - queue.deliveredMs.load(std::memory_order_relaxed) > 1000)
+        return false;
+    std::scoped_lock qlock(queue.mutex);
+    return !queue.deleted && !queue.consumers.empty() && queue.ready.size() >= backlog;
 }
 
 void AmqpServer::requestLazyCommit()
@@ -3905,8 +4125,25 @@ void AmqpServer::dispatch(const std::shared_ptr<Queue>& queue)
         }
     }
 
+    if (deliveries.empty())
+        return;
+    queue->deliveredMs.store(nowMs(), std::memory_order_relaxed);
+
+    // One task (and socket write) per connection, in order
+    std::vector<std::pair<std::shared_ptr<AmqpConnection>, std::vector<AmqpConnection::Delivery>>> perConn;
     for (auto& d : deliveries)
-        AmqpConnection::deliver(std::move(d.conn), queue, std::move(d.consumer), d.msg);
+    {
+        auto it = std::find_if(perConn.begin(), perConn.end(), [&](const auto& e)
+                               { return e.first == d.conn; });
+        if (it == perConn.end())
+        {
+            perConn.emplace_back(d.conn, std::vector<AmqpConnection::Delivery>());
+            it = std::prev(perConn.end());
+        }
+        it->second.push_back(AmqpConnection::Delivery{ .consumer = std::move(d.consumer), .msg = std::move(d.msg) });
+    }
+    for (auto& [conn, connDeliveries] : perConn)
+        AmqpConnection::deliver(conn, queue, std::move(connDeliveries));
 }
 
 void AmqpServer::Acceptor::connectionAccepted(folly::NetworkSocket fd, const folly::SocketAddress& clientAddr, AcceptInfo /*info*/) noexcept
