@@ -192,6 +192,15 @@ public:
 
     typedef std::string (*common_prefix_func_t)(const std::string_view);
     typedef size_t (*common_prefix_hash_func_t)(const std::string_view);
+    // Key split into parts that order (major, then middle, then minor, all ascending) exactly like key_compare_func.
+    // middle points into the key
+    struct DecodedKey
+    {
+        int64_t major = 0;
+        std::string_view middle;
+        int64_t minor = 0;
+    };
+    typedef DecodedKey (*decode_key_func_t)(const std::string_view);
     using on_delete_callback_t = std::function<std::vector<SingleFileStorage::SFragInfo>(const std::string&, const std::string&)>;
     using modify_data_callback_t = std::function<std::optional<std::string>(const std::string&, std::string, std::string)>;
     // Returns the new md5sum or an error code
@@ -226,6 +235,8 @@ public:
         MDB_cmp_func* key_compare_func = nullptr;
         common_prefix_func_t common_prefix_func = nullptr;
         common_prefix_hash_func_t common_prefix_hash_func = nullptr;
+        // Required if key_compare_func is set. Used to compare keys of list_commit_items without decoding them each time
+        decode_key_func_t decode_key_func = nullptr;
         on_delete_callback_t on_delete_callback;
         modify_data_callback_t modify_data_callback;
         modify_metadata_callback_t modify_metadata_callback;
@@ -749,19 +760,80 @@ private:
     // list_commit_items is not used (see list_commit_items_used)
     std::unordered_map<size_t, size_t> commit_items;
 
-    // Compares keys with the key compare function (if set), so list_commit_items is in key order
+    // Key of list_commit_items: the key and its decoded parts (see decode_key_func), so comparisons do not decode
+    struct ListCommitKey
+    {
+        std::string fn;
+        int64_t major = 0;
+        int64_t minor = 0;
+        // Position of DecodedKey::middle in fn
+        size_t middle_offset = 0;
+        size_t middle_size = 0;
+
+        std::string_view middle() const
+        {
+            return std::string_view(fn).substr(middle_offset, middle_size);
+        }
+    };
+
+    // Key for lookups in list_commit_items (without copying the key)
+    struct ListCommitKeyView
+    {
+        std::string_view fn;
+        DecodedKey decoded;
+    };
+
+    // Orders list_commit_items like the key compare function (in key order)
     struct CommitItemsCompare
     {
+        using is_transparent = void;
+
+        // Only for checking the order (debug builds)
         MDB_cmp_func* key_compare_func = nullptr;
 
-        bool operator()(const std::string& a, const std::string& b) const
+        static std::string_view fn_of(const ListCommitKey& k)
         {
-            if (key_compare_func == nullptr)
-                return a < b;
+            return k.fn;
+        }
+        static std::string_view fn_of(const ListCommitKeyView& k)
+        {
+            return k.fn;
+        }
+        static DecodedKey decoded_of(const ListCommitKey& k)
+        {
+            return DecodedKey{ .major = k.major, .middle = k.middle(), .minor = k.minor };
+        }
+        static const DecodedKey& decoded_of(const ListCommitKeyView& k)
+        {
+            return k.decoded;
+        }
 
-            MDB_val va = { a.size(), const_cast<char*>(a.data()) };
-            MDB_val vb = { b.size(), const_cast<char*>(b.data()) };
-            return key_compare_func(&va, &vb) < 0;
+        template <typename A, typename B>
+        bool operator()(const A& a, const B& b) const
+        {
+            const DecodedKey da = decoded_of(a);
+            const DecodedKey db = decoded_of(b);
+            int cmp;
+            if (da.major != db.major)
+                cmp = da.major < db.major ? -1 : 1;
+            else if (const int c = da.middle.compare(db.middle); c != 0)
+                cmp = c;
+            else if (da.minor != db.minor)
+                cmp = da.minor < db.minor ? -1 : 1;
+            else
+                cmp = 0;
+#ifndef NDEBUG
+            if (key_compare_func != nullptr)
+            {
+                const auto fa = fn_of(a);
+                const auto fb = fn_of(b);
+                MDB_val va = { fa.size(), const_cast<char*>(fa.data()) };
+                MDB_val vb = { fb.size(), const_cast<char*>(fb.data()) };
+                const int expected = key_compare_func(&va, &vb);
+                assert((cmp < 0) == (expected < 0) && (cmp > 0) == (expected > 0));
+            }
+#endif
+            return cmp < 0;
         }
     };
 
@@ -776,7 +848,7 @@ private:
 
     // Used instead of commit_items if listings need a commit (list_commit_items_used()). Keys modified since
     // the last LMDB commit in key order, for merging them into listings (see list_iter_start)
-    std::map<std::string, ListCommitItem, CommitItemsCompare> list_commit_items;
+    std::map<ListCommitKey, ListCommitItem, CommitItemsCompare> list_commit_items;
     // Incremented each time committed items are erased from list_commit_items
     uint64_t list_commit_items_generation = 0;
 
@@ -794,8 +866,14 @@ private:
     // Updates commit_items_count. Requires mutex to be locked
     void update_commit_items_count();
 
-    // Set the value of fn in list_commit_items after applying a modification (in commit thread)
-    void set_list_commit_item_value(MDB_txn* txn, const std::string& fn);
+    // Decodes fn for a lookup in list_commit_items (the view points into fn)
+    ListCommitKeyView list_commit_key_view(const std::string_view fn) const;
+    // Entry of fn in list_commit_items (added if it does not exist). Requires mutex to be locked
+    ListCommitItem& list_commit_item(const std::string_view fn);
+
+    // Value of fn for list_commit_items after applying a modification (in commit thread, without mutex). Unset on
+    // error (listings then use the LMDB value and wait for the queue), nullptr if fn does not exist
+    std::optional<std::shared_ptr<const std::string>> read_list_commit_item_value(MDB_txn* txn, const std::string& fn);
 
     // Copy the next batch of modified items for list_iter. Starts at start (inclusive) if set, otherwise
     // after iter_data.modified's last item. Sets modified_pos to std::string::npos if there are no more
@@ -925,6 +1003,7 @@ private:
 
     common_prefix_func_t common_prefix_func;
     common_prefix_hash_func_t common_prefix_hash_func;
+    decode_key_func_t decode_key_func;
     on_delete_callback_t on_delete_callback;
     modify_data_callback_t modify_data_callback;
     modify_metadata_callback_t modify_metadata_callback;

@@ -430,6 +430,12 @@ namespace
     {
         return std::hash<std::string_view>()(str);
     }
+
+    // Without key compare function: byte order
+    SingleFileStorage::DecodedKey decode_key_passthrough(const std::string_view str)
+    {
+        return SingleFileStorage::DecodedKey{ .middle = str };
+    }
 } // namespace
 
 std::mutex SingleFileStorage::mmap_read_error_mutex;
@@ -449,13 +455,21 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
       runtime_id(options.runtime_id), manual_commit(options.manual_commit),
       stop_on_error(options.stop_on_error), punch_holes(options.punch_holes), no_sync(options.no_sync),
       data_file_chunk_size(options.data_file_chunk_size), key_compare_func(options.key_compare_func), common_prefix_func(options.common_prefix_func),
-      common_prefix_hash_func(options.common_prefix_hash_func), on_delete_callback(options.on_delete_callback), modify_data_callback(options.modify_data_callback), modify_metadata_callback(options.modify_metadata_callback),
+      common_prefix_hash_func(options.common_prefix_hash_func), decode_key_func(options.decode_key_func), on_delete_callback(options.on_delete_callback), modify_data_callback(options.modify_data_callback), modify_metadata_callback(options.modify_metadata_callback),
       match_callback(options.match_callback), wal_write_meta(options.wal_write_meta), wal_write_data(options.wal_write_data), add_reading_callback(options.add_reading_callback), counter_key_callback(options.counter_key_callback), counter_counts_callback(options.counter_counts_callback)
 {
     if (common_prefix_func == nullptr)
         common_prefix_func = common_prefix_passthrough;
     if (common_prefix_hash_func == nullptr)
         common_prefix_hash_func = common_prefix_hash_func_passthrough;
+
+    if (decode_key_func == nullptr)
+    {
+        // Decoded keys have to be in the order of the key compare function
+        if (key_compare_func != nullptr)
+            throw std::invalid_argument("SingleFileStorage: decode_key_func is required with key_compare_func");
+        decode_key_func = decode_key_passthrough;
+    }
 
     list_commit_items = decltype(list_commit_items)(CommitItemsCompare{ .key_compare_func = key_compare_func });
 
@@ -8582,15 +8596,28 @@ void SingleFileStorage::operator()()
             assert(false);
         }
 
-        if (has_commit_item(frag_info.action) && list_commit_items_used())
+        // Values for listings (read without the mutex, set together with decrementing the queued modifications)
+        const bool set_list_values = has_commit_item(frag_info.action) && list_commit_items_used();
+        std::optional<std::shared_ptr<const std::string>> list_value;
+        std::optional<std::shared_ptr<const std::string>> counter_list_value;
+        std::string counter_fn;
+        if (set_list_values)
         {
-            set_list_commit_item_value(txn, frag_info.fn);
+            list_value = read_list_commit_item_value(txn, frag_info.fn);
 
-            if (const auto counter_fn = counter_key(frag_info.fn); !counter_fn.empty())
-                set_list_commit_item_value(txn, counter_fn);
+            counter_fn = counter_key(frag_info.fn);
+            if (!counter_fn.empty())
+                counter_list_value = read_list_commit_item_value(txn, counter_fn);
         }
 
         lock.lock();
+        if (set_list_values)
+        {
+            list_commit_item(frag_info.fn).value = std::move(list_value);
+            if (!counter_fn.empty())
+                list_commit_item(counter_fn).value = std::move(counter_list_value);
+            update_commit_items_count();
+        }
         if (applying_commit_item)
         {
             decr_commit_item(*applying_commit_item);
@@ -9865,8 +9892,8 @@ void SingleFileStorage::assert_reading_items_empty()
     check_refs(commit_items, [](const size_t item)
                { return item; }, [](const size_t refs)
                { return refs; });
-    check_refs(list_commit_items, [](const std::string& item)
-               { return folly::hexlify(item); }, [](const ListCommitItem& item)
+    check_refs(list_commit_items, [](const ListCommitKey& item)
+               { return folly::hexlify(item.fn); }, [](const ListCommitItem& item)
                { return item.refs; });
 
     assert(commit_items_refs == 0);
@@ -10015,7 +10042,7 @@ bool SingleFileStorage::list_commit_items_used() const
 void SingleFileStorage::incr_commit_item_key(const std::string_view fn)
 {
     if (list_commit_items_used())
-        ++list_commit_items[std::string(fn)].refs;
+        ++list_commit_item(fn).refs;
     else
         ++commit_items[common_prefix_hash_func(fn)];
 
@@ -10024,7 +10051,7 @@ void SingleFileStorage::incr_commit_item_key(const std::string_view fn)
 
 void SingleFileStorage::decr_commit_item_key(const std::string_view fn)
 {
-    auto& refs = list_commit_items_used() ? list_commit_items[std::string(fn)].refs
+    auto& refs = list_commit_items_used() ? list_commit_item(fn).refs
                                           : commit_items[common_prefix_hash_func(fn)];
     assert(refs > 0);
     --refs;
@@ -10055,11 +10082,11 @@ bool SingleFileStorage::is_commit_item(const std::string_view fn)
     // list_commit_items has full keys. Keys with the same common prefix are next to each other, before or
     // at the common prefix
     const auto cp = common_prefix_func(fn);
-    const auto it = list_commit_items.lower_bound(cp);
-    if (it != list_commit_items.end() && common_prefix_func(it->first) == cp)
+    const auto it = list_commit_items.lower_bound(list_commit_key_view(cp));
+    if (it != list_commit_items.end() && common_prefix_func(it->first.fn) == cp)
         return true;
 
-    return it != list_commit_items.begin() && common_prefix_func(std::prev(it)->first) == cp;
+    return it != list_commit_items.begin() && common_prefix_func(std::prev(it)->first.fn) == cp;
 }
 
 bool SingleFileStorage::commit_items_empty() const
@@ -10091,7 +10118,33 @@ void SingleFileStorage::update_commit_items_count()
     commit_items_count.store(list_commit_items_used() ? list_commit_items.size() : commit_items.size(), std::memory_order_release);
 }
 
-void SingleFileStorage::set_list_commit_item_value(MDB_txn* txn, const std::string& fn)
+SingleFileStorage::ListCommitKeyView SingleFileStorage::list_commit_key_view(const std::string_view fn) const
+{
+    return ListCommitKeyView{ .fn = fn, .decoded = decode_key_func(fn) };
+}
+
+SingleFileStorage::ListCommitItem& SingleFileStorage::list_commit_item(const std::string_view fn)
+{
+    const auto view = list_commit_key_view(fn);
+    auto it = list_commit_items.lower_bound(view);
+    if (it != list_commit_items.end() && !list_commit_items.key_comp()(view, it->first))
+        return it->second;
+
+    ListCommitKey key{ .fn = std::string(fn) };
+    // Decode the owned copy (middle points into it)
+    const auto decoded = decode_key_func(key.fn);
+    key.major = decoded.major;
+    key.minor = decoded.minor;
+    if (!decoded.middle.empty())
+    {
+        assert(decoded.middle.data() >= key.fn.data() && decoded.middle.data() + decoded.middle.size() <= key.fn.data() + key.fn.size());
+        key.middle_offset = static_cast<size_t>(decoded.middle.data() - key.fn.data());
+        key.middle_size = decoded.middle.size();
+    }
+    return list_commit_items.emplace_hint(it, std::move(key), ListCommitItem())->second;
+}
+
+std::optional<std::shared_ptr<const std::string>> SingleFileStorage::read_list_commit_item_value(MDB_txn* txn, const std::string& fn)
 {
     THREAD_ID tid = cached_gettid();
 
@@ -10119,10 +10172,7 @@ void SingleFileStorage::set_list_commit_item_value(MDB_txn* txn, const std::stri
         XLOG(ERR) << "LMDB: Error getting value for listing of " << folly::hexlify(fn) << " (" << mdb_strerror(rc) << ") sfs " << db_path;
     }
 
-    std::scoped_lock lock(mutex);
-    // Unset on error, so listings use the LMDB value (and wait for the queue)
-    list_commit_items[fn].value = std::move(value);
-    update_commit_items_count();
+    return value;
 }
 
 int SingleFileStorage::key_compare(const std::string_view a, const std::string_view b) const
@@ -10162,10 +10212,10 @@ bool SingleFileStorage::list_iter_get_modified(const std::string* start, ListIte
 
             generation = list_commit_items_generation;
 
-            auto it = start != nullptr ? list_commit_items.lower_bound(*start) : list_commit_items.upper_bound(after);
+            auto it = start != nullptr ? list_commit_items.lower_bound(list_commit_key_view(*start)) : list_commit_items.upper_bound(list_commit_key_view(after));
             for (; it != list_commit_items.end(); ++it)
             {
-                if (!iter_data.in_range(it->first))
+                if (!iter_data.in_range(it->first.fn))
                     break;
 
                 if (batch.size() >= batch_size)
@@ -10178,7 +10228,7 @@ bool SingleFileStorage::list_iter_get_modified(const std::string* start, ListIte
                 if (!it->second.value)
                     continue;
 
-                batch.emplace_back(it->first, *it->second.value);
+                batch.emplace_back(it->first.fn, *it->second.value);
             }
         }
 

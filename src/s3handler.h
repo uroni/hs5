@@ -53,6 +53,8 @@ enum class S3ErrorCode;
 int mdb_cmp_s3key(const MDB_val* a, const MDB_val* b);
 std::string s3key_common_prefix(const std::string_view key);
 size_t s3key_common_prefix_hash(const std::string_view key);
+// Bucket id, key and version, in the order of mdb_cmp_s3key (bucket id and version descending)
+SingleFileStorage::DecodedKey s3key_decode(const std::string_view key);
 
 struct KeyInfo
 {

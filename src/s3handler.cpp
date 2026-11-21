@@ -842,6 +842,13 @@ std::string s3key_common_prefix(const std::string_view key)
     return make_key(keyInfo.key, keyInfo.bucketId, 0);
 }
 
+SingleFileStorage::DecodedKey s3key_decode(const std::string_view key)
+{
+    const auto keyInfo = extractKeyInfoView(key);
+    // ~ reverses the order (without overflow)
+    return SingleFileStorage::DecodedKey{ .major = ~keyInfo.bucketId, .middle = keyInfo.key, .minor = ~keyInfo.version };
+}
+
 size_t s3key_common_prefix_hash(const std::string_view key)
 {
     const auto keyInfo = extractKeyInfoView(key);

@@ -337,6 +337,11 @@ def test_amqp_lazy_commit(hs5_amqp: Hs5Runner):
 
 
 def test_amqp_confirmed_durable(hs5_amqp: Hs5Runner):
+    if hs5_amqp.manual_commit:
+        pytest.skip(
+            "Commits are delayed in manual commit mode, so confirms do not imply durability"
+        )
+
     conn = connect(hs5_amqp)
     ch = conn.channel()
     ch.queue_declare("cd", durable=True)
