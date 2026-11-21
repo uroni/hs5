@@ -78,6 +78,13 @@ LOGLEVEL=info
 | <code class="language-plaintext highlighter-rouge">REDIS_<wbr>SCRIPT_<wbr>ALLOW_<wbr>UNDECLARED_<wbr>KEYS</code> | boolean | `false` | Allow Lua scripts to access undeclared keys after they modified data (without atomicity). By default such scripts fail. |
 | <code class="language-plaintext highlighter-rouge">REDIS_<wbr>COLLECTION_<wbr>INLINE_<wbr>MAX_<wbr>ENTRIES</code> | integer | `128` | Redis hashes, sets and sorted sets with at most this many elements are stored inline in the metadata of their key. Larger ones are stored with one entry per element, so modifying an element does not rewrite the whole collection. |
 | <code class="language-plaintext highlighter-rouge">REDIS_<wbr>COLLECTION_<wbr>INLINE_<wbr>MAX_<wbr>BYTES</code> | integer (bytes) | `8192` | Maximum serialized size of Redis hashes, sets and sorted sets stored inline. |
+| `AMQP_PORT` | integer | `-1` | Port for the AMQP 0-9-1 server (RabbitMQ protocol, e.g. for Celery), bound to `SERVER_IP`. `-1` disables it. Clients log in with an access key as user name and the secret key as password; access is checked against the S3 permissions of `AMQP_BUCKET`. |
+| `AMQP_BUCKET` | string | `amqp` | Bucket storing the AMQP queues (messages are object versions) and durable definitions. Created with versioning enabled if it does not exist. |
+| <code class="language-plaintext highlighter-rouge">AMQP_<wbr>MAX_<wbr>MESSAGE_<wbr>SIZE</code> | integer (bytes) | `134217728` (128 MiB) | Maximum size of AMQP message bodies. Larger messages are sent in several frames of at most `AMQP_FRAME_MAX`. |
+| <code class="language-plaintext highlighter-rouge">AMQP_<wbr>FRAME_<wbr>MAX</code> | integer (bytes) | `131072` (128 KiB) | Maximum AMQP frame size offered to clients. |
+| `AMQP_HEARTBEAT` | integer (seconds) | `60` | AMQP heartbeat interval offered to clients. `0` disables heartbeats. |
+| <code class="language-plaintext highlighter-rouge">AMQP_<wbr>MEMORY_<wbr>MESSAGE_<wbr>MAX</code> | integer (bytes) | `65536` (64 KiB) | AMQP messages with bodies up to this size are also kept in memory and delivered from there instead of being read from storage. `0` disables it. |
+| <code class="language-plaintext highlighter-rouge">AMQP_<wbr>MEMORY_<wbr>MAX_<wbr>MB</code> | integer (MiB) | `256` | Maximum memory used by AMQP messages kept in memory. Further messages are delivered from storage. |
 {: .config-table }
 
 HS5 can also read these options from environment variables using the `HS5_` prefix (for example,

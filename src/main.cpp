@@ -30,10 +30,12 @@
 #ifdef HS5_WITH_DUCKDB
 #include <duckdb.hpp>
 #endif
+#include "AmqpServer.h"
 #include "ApiHandler.h"
 #include "Auth.h"
 #include "Buckets.h"
 #include "DbDao.h"
+#include "KeyStore.h"
 #include "RedisServer.h"
 #include "SingleFileStorage.h"
 #include "StaticHandler.h"
@@ -80,6 +82,8 @@ DECLARE_bool(test_db_no_sync);
 DEFINE_int32(max_put_buffer_size, 1 * 1024 * 1024, "Max read buffer size for HTTP sessions (for PUT)");
 DEFINE_int32(redis_port, -1, "Port to listen on with Redis protocol (-1 if disabled)");
 DEFINE_string(redis_bucket, "redis", "Bucket storing the Redis keys (created with versioning enabled if it does not exist)");
+DEFINE_int32(amqp_port, -1, "Port to listen on with AMQP 0-9-1 (-1 if disabled)");
+DEFINE_string(amqp_bucket, "amqp", "Bucket storing the AMQP queues and messages (created with versioning enabled if it does not exist)");
 
 namespace
 {
@@ -303,11 +307,13 @@ int realMain(int argc, char* argv[])
 
     proxygen::HTTPSessionBase::setMaxReadBufferSize(FLAGS_max_put_buffer_size);
 
-    if (FLAGS_redis_port != -1 && !RedisServer::initBucket(FLAGS_redis_bucket))
+    if (FLAGS_redis_port != -1 && !KeyStore::initBucket(FLAGS_redis_bucket))
+        return 1;
+    if (FLAGS_amqp_port != -1 && !KeyStore::initBucket(FLAGS_amqp_bucket))
         return 1;
 
     if (buckets::hasRedisBucket())
-        RedisServer::setupCounters(sfsoptions);
+        KeyStore::setupCounters(sfsoptions);
 
     SingleFileStorage sfs(sfsoptions);
 
@@ -322,14 +328,36 @@ int realMain(int argc, char* argv[])
     server = std::make_unique<proxygen::HTTPServer>(std::move(options));
     server->bind(IPs);
 
+    std::unique_ptr<KeyStore> redisStore;
     std::unique_ptr<RedisServer> redisServer;
     if (FLAGS_redis_port != -1)
     {
-        redisServer = std::make_unique<RedisServer>(sfs, FLAGS_redis_bucket);
+        redisStore = std::make_unique<KeyStore>(sfs, FLAGS_redis_bucket);
+        redisStore->start();
+        redisServer = std::make_unique<RedisServer>(*redisStore);
         // Same number of IO threads as the HTTP server
         const auto redisIoThreads = FLAGS_http_worker_threads > 0 ? static_cast<size_t>(FLAGS_http_worker_threads)
                                                                   : static_cast<size_t>(folly::hardware_concurrency());
         if (!redisServer->start(FLAGS_ip, FLAGS_redis_port, redisIoThreads))
+            return 1;
+    }
+
+    std::unique_ptr<KeyStore> amqpStore;
+    std::unique_ptr<AmqpServer> amqpServer;
+    if (FLAGS_amqp_port != -1)
+    {
+        // Shares the store if it uses the same bucket as the Redis server
+        KeyStore* store = redisStore && FLAGS_amqp_bucket == FLAGS_redis_bucket ? redisStore.get() : nullptr;
+        if (store == nullptr)
+        {
+            amqpStore = std::make_unique<KeyStore>(sfs, FLAGS_amqp_bucket);
+            amqpStore->start();
+            store = amqpStore.get();
+        }
+        amqpServer = std::make_unique<AmqpServer>(*store);
+        const auto amqpIoThreads = FLAGS_http_worker_threads > 0 ? static_cast<size_t>(FLAGS_http_worker_threads)
+                                                                 : static_cast<size_t>(folly::hardware_concurrency());
+        if (!amqpServer->start(FLAGS_ip, FLAGS_amqp_port, amqpIoThreads))
             return 1;
     }
 
@@ -381,8 +409,14 @@ int realMain(int argc, char* argv[])
 
     t.join();
 
+    if (amqpServer)
+        amqpServer->stop();
     if (redisServer)
         redisServer->stop();
+    if (amqpStore)
+        amqpStore->stop();
+    if (redisStore)
+        redisStore->stop();
 
     // Delayed commit tasks use the storage
     S3Handler::commitStorage(sfs, true);

@@ -187,6 +187,8 @@ add_executable(hs5
     src/UserMetadata.cpp
     src/ObjMetadata.cpp
     src/RedisServer.cpp
+    src/KeyStore.cpp
+    src/AmqpServer.cpp
     external/proxygen/RFC1867.cpp
     ${SCHEMA_SOURCES}
     )

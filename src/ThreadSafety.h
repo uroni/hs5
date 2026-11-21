@@ -85,3 +85,25 @@ public:
     CondVarLock(const CondVarLock&) = delete;
     CondVarLock& operator=(const CondVarLock&) = delete;
 };
+
+// Shared lock of a std::shared_mutex (std::shared_lock is not annotated)
+template <typename Mutex>
+class SCOPED_CAPABILITY SharedLock
+{
+    Mutex& m;
+
+public:
+    explicit SharedLock(Mutex& m) ACQUIRE_SHARED(m)
+        : m(m)
+    {
+        m.lock_shared();
+    }
+
+    ~SharedLock() RELEASE()
+    {
+        m.unlock_shared();
+    }
+
+    SharedLock(const SharedLock&) = delete;
+    SharedLock& operator=(const SharedLock&) = delete;
+};

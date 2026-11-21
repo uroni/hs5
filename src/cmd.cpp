@@ -151,7 +151,14 @@ ConfigResult readConfigFile(const std::string& fn)
         { "REDIS_SCRIPT_ALWAYS_GLOBAL", "redis_script_always_global" },
         { "REDIS_SCRIPT_ALLOW_UNDECLARED_KEYS", "redis_script_allow_undeclared_keys" },
         { "REDIS_COLLECTION_INLINE_MAX_ENTRIES", "redis_collection_inline_max_entries" },
-        { "REDIS_COLLECTION_INLINE_MAX_BYTES", "redis_collection_inline_max_bytes" }
+        { "REDIS_COLLECTION_INLINE_MAX_BYTES", "redis_collection_inline_max_bytes" },
+        { "AMQP_PORT", "amqp_port" },
+        { "AMQP_BUCKET", "amqp_bucket" },
+        { "AMQP_MAX_MESSAGE_SIZE", "amqp_max_message_size" },
+        { "AMQP_FRAME_MAX", "amqp_frame_max" },
+        { "AMQP_HEARTBEAT", "amqp_heartbeat" },
+        { "AMQP_MEMORY_MESSAGE_MAX", "amqp_memory_message_max" },
+        { "AMQP_MEMORY_MAX_MB", "amqp_memory_max_mb" }
     };
 
     for (const auto& [key, val] : settings)
@@ -227,7 +234,14 @@ ConfigResult readConfigEnv(const std::set<std::string>& alreadySetArgs)
         { "HS5_REDIS_SCRIPT_ALWAYS_GLOBAL", "redis_script_always_global" },
         { "HS5_REDIS_SCRIPT_ALLOW_UNDECLARED_KEYS", "redis_script_allow_undeclared_keys" },
         { "HS5_REDIS_COLLECTION_INLINE_MAX_ENTRIES", "redis_collection_inline_max_entries" },
-        { "HS5_REDIS_COLLECTION_INLINE_MAX_BYTES", "redis_collection_inline_max_bytes" }
+        { "HS5_REDIS_COLLECTION_INLINE_MAX_BYTES", "redis_collection_inline_max_bytes" },
+        { "HS5_AMQP_PORT", "amqp_port" },
+        { "HS5_AMQP_BUCKET", "amqp_bucket" },
+        { "HS5_AMQP_MAX_MESSAGE_SIZE", "amqp_max_message_size" },
+        { "HS5_AMQP_FRAME_MAX", "amqp_frame_max" },
+        { "HS5_AMQP_HEARTBEAT", "amqp_heartbeat" },
+        { "HS5_AMQP_MEMORY_MESSAGE_MAX", "amqp_memory_message_max" },
+        { "HS5_AMQP_MEMORY_MAX_MB", "amqp_memory_max_mb" }
     };
 
     for (const auto& [envKey, argKey] : configMapping)

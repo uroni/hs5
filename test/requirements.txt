@@ -17,6 +17,7 @@ pytest-xdist
 psutil
 redis
 celery
+pika
 openapi-generator-cli
 black==25.1.0
 clang-format==18.1.8

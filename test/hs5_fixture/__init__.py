@@ -86,9 +86,11 @@ class Hs5Runner:
         data_file_alloc_chunk_size: Optional[int] = None,
         extra_args: list[str] = [],
         with_redis: bool = False,
+        with_amqp: bool = False,
     ) -> None:
         self._port = get_next_port(testrun_uid)
         self._redis_port = get_next_port(testrun_uid) if with_redis else None
+        self._amqp_port = get_next_port(testrun_uid) if with_amqp else None
         self._workdir = workdir
         self._root_key = uuid.uuid4().hex
 
@@ -178,6 +180,10 @@ class Hs5Runner:
         if self._redis_port is not None:
             self.args.append("--redis_port")
             self.args.append(str(self._redis_port))
+
+        if self._amqp_port is not None:
+            self.args.append("--amqp_port")
+            self.args.append(str(self._amqp_port))
 
         self.args.extend(extra_args)
 
@@ -317,6 +323,16 @@ class Hs5Runner:
 
     def redis_bucket(self) -> str:
         return "redis"
+
+    def get_amqp_port(self) -> int:
+        assert self._amqp_port is not None, "AMQP server not enabled"
+        return self._amqp_port
+
+    def amqp_url(self) -> str:
+        return f"amqp://root:{self._root_key}@127.0.0.1:{self.get_amqp_port()}//"
+
+    def amqp_bucket(self) -> str:
+        return "amqp"
 
     def commit_storage(self, s3: S3Client) -> None:
         if not self.manual_commit:
@@ -659,6 +675,28 @@ def hs5_no_md5_etag(tmpdir: Path, testrun_uid: str):
         data_file_size_limit_mb=100,
         testrun_uid=testrun_uid,
         extra_args=["--disable_md5_etag"],
+    )
+    yield runner
+    runner.stop(cleanup=True, kill=False)
+    try:
+        rmtree(loc)
+    except:
+        pass
+
+
+@pytest.fixture
+def hs5_amqp(tmpdir: Path, testrun_uid: str):
+    """
+    Like hs5, but with the AMQP (and Redis) protocol servers enabled
+    """
+    loc = tmpdir / uuid.uuid4().hex
+    loc.mkdir()
+    runner = Hs5Runner(
+        loc,
+        data_file_size_limit_mb=100,
+        testrun_uid=testrun_uid,
+        with_redis=True,
+        with_amqp=True,
     )
     yield runner
     runner.stop(cleanup=True, kill=False)

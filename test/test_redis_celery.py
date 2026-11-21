@@ -28,7 +28,7 @@ from pathlib import Path
 
 from celery import Celery
 
-app = Celery("celery_tasks", broker=os.environ["HS5_REDIS_URL"], backend=os.environ["HS5_REDIS_URL"])
+app = Celery("celery_tasks", broker=os.environ.get("HS5_BROKER_URL") or os.environ["HS5_REDIS_URL"], backend=os.environ["HS5_REDIS_URL"])
 app.conf.update(
     broker_transport_options={
         "visibility_timeout": int(os.environ.get("VISIBILITY_TIMEOUT", "3600")),
@@ -135,9 +135,10 @@ def wait_for_worker(app: Celery, name: str, timeout: float = 60):
     raise TimeoutError(f"Celery worker {name} did not start")
 
 
-@pytest.fixture(params=["inline", "large"])
+@pytest.fixture(params=["inline", "large", "amqp"])
 def celery_redis(request, tmp_path: Path, testrun_uid: str) -> Iterator[Hs5Runner]:
-    """Redis server. With "large", hashes/sets/sorted sets (e.g. the unacked messages) are stored with one entry per element"""
+    """Redis server (result backend and broker). With "large", hashes/sets/sorted sets (e.g. the unacked messages) are
+    stored with one entry per element. With "amqp", AMQP is the broker"""
     loc = tmp_path / uuid.uuid4().hex
     loc.mkdir()
     extra_args = []
@@ -148,8 +149,10 @@ def celery_redis(request, tmp_path: Path, testrun_uid: str) -> Iterator[Hs5Runne
         data_file_size_limit_mb=100,
         testrun_uid=testrun_uid,
         with_redis=True,
+        with_amqp=request.param == "amqp",
         extra_args=extra_args,
     )
+    runner.celery_amqp = request.param == "amqp"  # type: ignore
     yield runner
     runner.stop(cleanup=True, kill=False)
 
@@ -162,6 +165,10 @@ def celery_env(
     sys.path.insert(0, str(tmp_path))
     url = redis_url(celery_redis)
     os.environ["HS5_REDIS_URL"] = url
+    if getattr(celery_redis, "celery_amqp", False):
+        os.environ["HS5_BROKER_URL"] = celery_redis.amqp_url()
+    else:
+        os.environ.pop("HS5_BROKER_URL", None)
     sys.modules.pop("celery_tasks", None)
     import celery_tasks  # type: ignore
 
@@ -193,11 +200,15 @@ def test_celery_tasks(celery_redis: Hs5Runner, celery_env: tuple[Celery, Path, s
         assert res.get(timeout=30) == [i * 2 for i in range(10)]
 
         # Chords use Lua scripts in the result backend
-        res = chord(celery_tasks.add.s(i, i) for i in range(5))(celery_tasks.tsum.s())
-        assert res.get(timeout=30) == 20
+        chord_res = chord(celery_tasks.add.s(i, i) for i in range(5))(
+            celery_tasks.tsum.s()
+        )
+        assert chord_res is not None
+        assert chord_res.get(timeout=30) == 20
 
-        res = chain(celery_tasks.add.s(1, 2), celery_tasks.add.s(3))()
-        assert res.get(timeout=30) == 6
+        chain_res = chain(celery_tasks.add.s(1, 2), celery_tasks.add.s(3))()
+        assert chain_res is not None
+        assert chain_res.get(timeout=30) == 6
 
         with pytest.raises(ValueError, match="boom"):
             celery_tasks.fail.delay().get(timeout=30)
