@@ -1652,10 +1652,12 @@ private:
 
     // connection.close from the client: Replies and waits for the client to close the socket (like RabbitMQ). Frames
     // the client sent before it received close-ok (e.g. acks of deliveries it was still processing) are ignored,
-    // instead of failing on a closed socket. Unacked deliveries are requeued now
+    // instead of failing on a closed socket. Unacked deliveries are requeued now. Exclusive queues are removed before
+    // close-ok, so they are gone once the client sees it
     void onClientClose() REQUIRES(serialThread)
     {
         cleanup();
+        server.connectionClosed(id);
         send(methodFrame(0, classConnection, connectionCloseOk));
         state = State::Closing;
         flushOutputBatch();
