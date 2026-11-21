@@ -84,6 +84,18 @@ int fallocate64(void* fd, int mode, int64_t offset, int64_t len)
     return 1;
 }
 #endif
+
+namespace
+{
+    // gettid() is a syscall each time (not cached by glibc). Called per queued item on the commit thread
+    THREAD_ID cached_gettid()
+    {
+        thread_local THREAD_ID tid = 0;
+        if (tid == 0)
+            tid = gettid();
+        return tid;
+    }
+} // namespace
 #include "relaxed_atomic.h"
 #include <signal.h>
 
@@ -737,7 +749,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
         throw std::runtime_error("LMDB: Failed to open LMDB database file (" + (std::string)mdb_strerror(rc) + ")");
     }
 
-    THREAD_ID tid = gettid();
+    THREAD_ID tid = cached_gettid();
     setup_mmap_read_error(tid);
 
     MDB_txn* txn;
@@ -1276,7 +1288,7 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
             {
                 XLOGF(INFO, "WAL file recovery reserved {} extents", commit_info.reserved_extents.size());
 
-                THREAD_ID tid = gettid();
+                THREAD_ID tid = cached_gettid();
                 setup_mmap_read_error(tid);
 
                 MDB_txn* txn;
@@ -1524,7 +1536,7 @@ int64_t SingleFileStorage::get_transid(int64_t disk_id)
 {
     std::scoped_lock lock(mutex);
 
-    THREAD_ID tid = gettid();
+    THREAD_ID tid = cached_gettid();
 
     setup_mmap_read_error(tid);
 
@@ -4666,7 +4678,7 @@ bool SingleFileStorage::open_cache_db(int64_t current_txn_id, int64_t mapsize, b
         cache_db_env = nullptr;
     }
 
-    THREAD_ID tid = gettid();
+    THREAD_ID tid = cached_gettid();
 
     int rc = mdb_env_create(&cache_db_env);
 
@@ -4875,7 +4887,7 @@ bool SingleFileStorage::generate_freespace_cache(MDB_txn* source_txn, MDB_txn* d
 {
     bool ignore_errors = std::filesystem::exists("/etc/urbackup/generate_freespace_cache_ignore_errors");
 
-    THREAD_ID tid = gettid();
+    THREAD_ID tid = cached_gettid();
 
     MDB_val tkey;
     int rc;
@@ -5243,7 +5255,7 @@ bool SingleFileStorage::freespace_check(MDB_txn* source_txn, MDB_txn* freespace_
         curr_data_file_offset_end = data_file_offset_end;
     }
 
-    THREAD_ID tid = gettid();
+    THREAD_ID tid = cached_gettid();
 
     MDB_val tkey;
     int rc;
@@ -5816,7 +5828,7 @@ bool SingleFileStorage::freespace_check(MDB_txn* source_txn, MDB_txn* freespace_
 
 bool SingleFileStorage::clear_freespace_cache(MDB_txn* txn)
 {
-    THREAD_ID tid = gettid();
+    THREAD_ID tid = cached_gettid();
     MDB_dbi local_dbi_free, local_dbi_free_len;
 
     int rc = mdb_dbi_open(txn, "free", MDB_CREATE, &local_dbi_free);
@@ -6409,7 +6421,7 @@ void SingleFileStorage::wait_for_startup_finish()
 
 SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, const std::string_view fn, bool parse_data, const bool read_newest, const bool read_oldest)
 {
-    THREAD_ID tid = gettid();
+    THREAD_ID tid = cached_gettid();
 
     bool tear_down_txn = false;
     if (txn == nullptr)
@@ -6562,7 +6574,7 @@ SingleFileStorage::SFragInfo SingleFileStorage::get_frag_info(MDB_txn* txn, cons
 
 bool SingleFileStorage::generate_free_len_idx(MDB_txn* txn)
 {
-    THREAD_ID tid = gettid();
+    THREAD_ID tid = cached_gettid();
     MDB_cursor* it_cursor;
     mdb_cursor_open(txn, dbi_free, &it_cursor);
     MDB_cursor_op op = MDB_FIRST;
@@ -6871,7 +6883,7 @@ void SingleFileStorage::operator()()
 
     XLOGF(DBG0, "curr_write_ext_start={} curr_write_ext_end={}", curr_write_ext_start, curr_write_ext_end);
 
-    THREAD_ID tid = gettid();
+    THREAD_ID tid = cached_gettid();
     setup_mmap_read_error(tid);
 
     int64_t commit_errors = 0;
@@ -8723,7 +8735,7 @@ int64_t SingleFileStorage::get_data_file_size_full()
 
 int64_t SingleFileStorage::max_free_extent(int64_t& len)
 {
-    THREAD_ID tid = gettid();
+    THREAD_ID tid = cached_gettid();
     setup_mmap_read_error(tid);
 
     MDB_txn* txn;
@@ -9013,7 +9025,7 @@ void SingleFileStorage::defrag(str_map& params, relaxed_atomic<int64_t>& defrag_
 
     stop_defrag = false;
 
-    THREAD_ID tid = gettid();
+    THREAD_ID tid = cached_gettid();
     setup_mmap_read_error(tid);
 
     MDB_txn* freespace_txn;
@@ -9498,7 +9510,7 @@ bool SingleFileStorage::start_thread(int64_t transid)
 
 bool SingleFileStorage::regen_datafile_free(MDB_txn* freespace_txn)
 {
-    THREAD_ID tid = gettid();
+    THREAD_ID tid = cached_gettid();
     bool ret = true;
     MDB_cursor* it_cursor;
     mdb_cursor_open(freespace_txn, dbi_free, &it_cursor);
@@ -9552,7 +9564,7 @@ bool SingleFileStorage::regen_datafile_free(MDB_txn* freespace_txn)
 
 bool SingleFileStorage::regen_free_len_idx(MDB_txn* freespace_txn)
 {
-    THREAD_ID tid = gettid();
+    THREAD_ID tid = cached_gettid();
     if (data_file_free > 0)
     {
         MDB_cursor* it_cursor;
@@ -10080,7 +10092,7 @@ void SingleFileStorage::update_commit_items_count()
 
 void SingleFileStorage::set_list_commit_item_value(MDB_txn* txn, const std::string& fn)
 {
-    THREAD_ID tid = gettid();
+    THREAD_ID tid = cached_gettid();
 
     MDB_val tkey;
     tkey.mv_data = const_cast<char*>(fn.data());
