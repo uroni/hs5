@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795292103844,
+  "lastUpdate": 1795293518460,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -15199,6 +15199,149 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0",
             "extra": "mean: 7.074753804000011 sec\nrounds: 1"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "4c281408bd3b1ecc7444f4a56de36a35315a033e",
+          "message": "Send stop SIGTERM to the server main thread via pthread_kill\n\nA process-directed SIGTERM could land on a worker thread's fatal signal\nhandler, since libevent's signalfd backend only blocks it on the event\nbase thread.",
+          "timestamp": "2026-11-21T21:21:23+01:00",
+          "tree_id": "78d61d43809f6a6fb11ae630af5034651147e3d4",
+          "url": "https://github.com/uroni/hs5/commit/4c281408bd3b1ecc7444f4a56de36a35315a033e"
+        },
+        "date": 1795293516821,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007928045391042648,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.134494781 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007865943752104672,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 127.13032682600004 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08771528690243499,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1852871548354253",
+            "extra": "mean: 11.400521337999976 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.07091467708141834,
+            "unit": "iter/sec",
+            "range": "stddev: 0.23507521287814",
+            "extra": "mean: 14.101453199199977 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.056623964884800204,
+            "unit": "iter/sec",
+            "range": "stddev: 0.7710639530277053",
+            "extra": "mean: 17.6603669848 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf_docker_registry.py::test_perf_docker_registry_filesystem",
+            "value": 0.34126459333272025,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 2.9302776189999804 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_docker_registry.py::test_perf_docker_registry_hs5",
+            "value": 0.24488402414324187,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 4.083565693999958 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_docker_registry.py::test_perf_docker_registry_hs5_no_wal",
+            "value": 0.21974497273489296,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 4.550729818999912 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_docker_registry.py::test_perf_docker_registry_minio",
+            "value": 0.21512279338442644,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 4.648507879000022 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync[local_file]",
+            "value": 0.29156527682187044,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 3.4297636909999483 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync[hs5_perf]",
+            "value": 0.27181637178406437,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 3.6789542640000263 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync[minio]",
+            "value": 0.22122970215353707,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 4.520188700999938 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync[garage_sqlite]",
+            "value": 0.1743779350531127,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 5.734670499999993 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync_multi_db[local_file]",
+            "value": 0.38585498516041805,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 2.5916472210000165 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync_multi_db[hs5_perf]",
+            "value": 0.38078501832113576,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 2.6261537399999497 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync_multi_db[minio]",
+            "value": 0.2796230095517767,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 3.5762436059999345 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync_multi_db[garage_sqlite]",
+            "value": 0.12856617046116953,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 7.778095873999973 sec\nrounds: 1"
           }
         ]
       }
