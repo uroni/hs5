@@ -41,8 +41,10 @@
 #include "StaticHandler.h"
 #include "config.h"
 #include "s3handler.h"
+#include <atomic>
 #include <chrono>
 #include <csignal>
+#include <pthread.h>
 #ifdef HS5_WITH_DUCKDB
 #include "DuckDbFs.h"
 
@@ -172,13 +174,32 @@ namespace
     };
 } // namespace
 
+namespace
+{
+    pthread_t serverMainThread;
+    std::atomic<bool> serverMainThreadSet{ false };
+    std::atomic<bool> serverStopRequested{ false };
+} // namespace
+
 void stopServer()
 {
+    if (serverStopRequested.exchange(true))
+        return;
+
+    if (!serverMainThreadSet.load())
+    {
+        XLOGF(ERR, "Stop requested before server main thread started");
+        _exit(1);
+    }
+
     // HTTPServer::stop() must run on the main event base thread (it destroys the signal handler registered there).
     // Raising SIGTERM lets proxygen's signal handler stop the server from that thread.
-    if (kill(getpid(), SIGTERM) != 0)
+    // The signal must be directed at that thread: libevent's signalfd backend blocks SIGTERM only there,
+    // so a process-directed signal could be delivered to another thread's (fatal) signal handler instead.
+    const int rc = pthread_kill(serverMainThread, SIGTERM);
+    if (rc != 0)
     {
-        XLOGF(ERR, "Raising SIGTERM to stop server failed: {}", folly::errnoStr(errno));
+        XLOGF(ERR, "Raising SIGTERM to stop server failed: {}", folly::errnoStr(rc));
         _exit(1);
     }
 }
@@ -379,6 +400,8 @@ int realMain(int argc, char* argv[])
     std::thread t([&]()
                   {
       folly::setThreadName("http srv main");
+      serverMainThread = pthread_self();
+      serverMainThreadSet.store(true);
       server->start();
       server.reset(); });
 
