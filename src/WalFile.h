@@ -214,6 +214,17 @@ public:
         std::vector<std::unique_ptr<SingleFileStorage::SCommitInfo>> itemCommitInfos;
         std::vector<std::unique_ptr<SingleFileStorage::MatchInfo>> itemMatchInfos;
         std::optional<CommitInfo> commit_info;
+        // End of the data written to the data file by data items after the last commit marker, 0 if none
+        int64_t max_data_end = 0;
+        // Number of items before the last commit marker (0 without one)
+        size_t committed_items = 0;
+        // Write extents the data file allocation switched to after the last commit marker (in order)
+        struct AllocState
+        {
+            int64_t data_file_offset;
+            int64_t data_file_offset_end;
+        };
+        std::vector<AllocState> alloc_states;
     };
 
     ReadResult read(int64_t transid, MultiFile* data_file, const bool initOnly, const bool readFromAltFile) EXCLUDES(mutex);
@@ -245,6 +256,10 @@ public:
 
     void reset(ResetPrep& prep, const bool sync, const std::optional<bool> useAltFileManual);
     void reset(const bool sync, const std::optional<bool> useAltFileManual) EXCLUDES(mutex);
+    // Logs that the data file allocation switched to a new write extent (allocations within it are sequential), so
+    // recovery knows the allocation state after the last commit marker. Written in order (allocation lock held)
+    bool writeAllocState(int64_t dataFileOffset, int64_t dataFileOffsetEnd);
+
     bool sync(const CommitInfo& commitInfo);
     bool fsync();
     bool switchFiles() EXCLUDES(mutex);

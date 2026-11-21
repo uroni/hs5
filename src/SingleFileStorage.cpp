@@ -421,6 +421,37 @@ void mmap_read_error(int sig, siginfo_t* si, void* unused)
 
 namespace
 {
+    // What WAL recovery needs for the allocation state: items, data and write extent switches after the last commit
+    // marker (of the current WAL file, else also of the alt file)
+    SingleFileStorage::WalRecovery wal_recovery(const WalFile::ReadResult& alt, const WalFile::ReadResult& curr, const int64_t block_size)
+    {
+        SingleFileStorage::WalRecovery ret;
+        const bool curr_has_marker = curr.commit_info.has_value();
+        auto add = [&](const WalFile::ReadResult& res, const size_t first)
+        {
+            for (size_t i = first; i < res.items.size(); ++i)
+            {
+                const auto& item = res.items[i];
+                if (!SingleFileStorage::writes_data(item.action))
+                    continue;
+                if (item.offset >= 0 && item.len > 0)
+                    ret.recovered_exts.emplace_back(item.offset, item.offset + div_up(item.len, block_size) * block_size);
+                for (const auto& ext : item.extra_exts)
+                {
+                    if (ext.offset >= 0 && ext.len > 0)
+                        ret.recovered_exts.emplace_back(ext.offset, ext.offset + div_up(ext.len, block_size) * block_size);
+                }
+            }
+            for (const auto& sw : res.alloc_states)
+                ret.write_extent_switches.emplace_back(sw.data_file_offset, sw.data_file_offset_end);
+            ret.max_data_end = std::max(ret.max_data_end, res.max_data_end);
+        };
+        if (!curr_has_marker)
+            add(alt, alt.committed_items);
+        add(curr, curr.committed_items);
+        return ret;
+    }
+
     std::string common_prefix_passthrough(const std::string_view str)
     {
         return std::string(str);
@@ -1241,6 +1272,18 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
             XLOGF(INFO, "WAL file (alt) read {} items", readResAlt.items.size());
         }
 
+        // Read both before adding the items (moved): the items after the last commit marker determine the allocation
+        // state (see recover_allocation_state)
+        auto readRes = wal_file->read(curr_transid, &data_file, false, false);
+
+        if (!readRes.items.empty())
+        {
+            XLOGF(INFO, "WAL file read {} items", readRes.items.size());
+        }
+
+        const auto wal_recovery_info = wal_recovery(readResAlt, readRes, block_size);
+        std::vector<SPunchItem> marker_reserved_extents;
+
         auto addWalItems = [&](auto items, auto itemCommitInfos, auto itemMatchInfos)
         {
             wal_startup_commit_infos.insert(wal_startup_commit_infos.end(),
@@ -1265,14 +1308,6 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
         };
 
         addWalItems(std::move(readResAlt.items), std::move(readResAlt.itemCommitInfos), std::move(readResAlt.itemMatchInfos));
-
-        auto readRes = wal_file->read(curr_transid, &data_file, false, false);
-
-        if (!readRes.items.empty())
-        {
-            XLOGF(INFO, "WAL file read {} items", readRes.items.size());
-        }
-
         addWalItems(std::move(readRes.items), std::move(readRes.itemCommitInfos), std::move(readRes.itemMatchInfos));
 
         if (startup_wal_items > 0)
@@ -1299,37 +1334,15 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
             curr_partid = commit_info.local_curr_partid;
             curr_version = commit_info.local_curr_version;
 
+            // Freed by recover_allocation_state unless used by recovered items (writes that finished after the marker)
+            marker_reserved_extents = commit_info.reserved_extents;
             if (!commit_info.reserved_extents.empty())
-            {
                 XLOGF(INFO, "WAL file recovery reserved {} extents", commit_info.reserved_extents.size());
-
-                THREAD_ID tid = cached_gettid();
-                setup_mmap_read_error(tid);
-
-                MDB_txn* txn;
-                rc = mdb_txn_begin(db_env, NULL, 0, &txn);
-                if (rc)
-                    throw std::runtime_error("LMDB: Failed to open transaction handle for commit (1) (" + std::string(mdb_strerror(rc)) + ") sfs " + db_path);
-
-                if (has_mmap_read_error_reset(tid))
-                    throw std::runtime_error("LMDB: Failed to open transaction handle for commit (1) (SIGBUS) sfs " + db_path);
-
-                size_t idx = 0;
-                for (const auto& ext : commit_info.reserved_extents)
-                {
-                    if (add_tmp(idx++, txn, tid, ext.offset, ext.len, true))
-                        throw std::runtime_error("LMDB: Failed to add reserved extent from WAL during recovery");
-                }
-
-                rc = mdb_txn_commit(txn);
-                if (rc)
-                    throw std::runtime_error("LMDB: Error commiting txn for dbi handle (" + (std::string)mdb_strerror(rc) + ")");
-                if (has_mmap_read_error_reset(tid))
-                    throw std::runtime_error("LMDB: Error commiting txn for dbi handle (SIGBUS)");
-            }
 
             XLOG(INFO) << "WAL Data file max " << std::to_string(data_file_max_size) << " offset " << std::to_string(data_file_offset) << " end " << std::to_string(data_file_offset_end) << " free " << std::to_string(data_file_free) << " transid " << std::to_string(curr_transid) << " curr_partid " << curr_partid << " curr_version " << curr_version << " fn " << data_file_path;
         }
+
+        recover_allocation_state(wal_recovery_info, marker_reserved_extents);
 
         wal_write_thread = std::jthread([this](std::stop_token st)
                                         { wal_file->dataWriteThread(st); });
@@ -1848,6 +1861,138 @@ void SingleFileStorage::unreference()
     --references;
 }
 
+void SingleFileStorage::recover_allocation_state(const WalRecovery& recovery, const std::vector<SPunchItem>& reserved_extents)
+{
+    auto recovered_exts = recovery.recovered_exts;
+    // Extents (offset, end) of writes that may not have finished (reserved extents of the marker, allocations after
+    // it), freed if no recovered item uses them
+    std::vector<std::pair<int64_t, int64_t>> unfinished_exts;
+    for (const auto& ext : reserved_extents)
+        unfinished_exts.emplace_back(ext.offset, ext.offset + div_up(ext.len, block_size) * block_size);
+
+    // Write extents after the last commit marker (of the current file, else also of the alt file). Allocations
+    // within a write extent are sequential: one that was switched away from was used up, the last one up to the end
+    // of the data of recovered items in it (allocations after it did not finish and are allocated again). The space
+    // of allocations that did not finish is freed below
+    const auto& switches = recovery.write_extent_switches;
+    int64_t recovered_data_end = recovery.max_data_end;
+    for (const auto& [off, end] : recovered_exts)
+        recovered_data_end = std::max(recovered_data_end, end);
+
+    {
+        int64_t start = data_file_offset;
+        int64_t end = data_file_offset_end;
+        for (const auto& [sw_start, sw_end] : switches)
+        {
+            if (end > start)
+                unfinished_exts.emplace_back(start, end);
+            start = sw_start;
+            end = sw_end;
+        }
+
+        int64_t used_end = start;
+        for (const auto& [off, ext_end] : recovered_exts)
+        {
+            if (off >= start && (end <= 0 || off < end))
+                used_end = std::max(used_end, ext_end);
+        }
+        used_end = div_up(used_end, block_size) * block_size;
+
+        if (used_end > start || !switches.empty())
+        {
+            XLOGF(INFO, "WAL recovery: {} write extent switches after the last commit. Write offset {} end {} (was {} {})", switches.size(),
+                  used_end, end, data_file_offset, data_file_offset_end);
+            if (used_end > start)
+                unfinished_exts.emplace_back(start, used_end);
+            data_file_offset = used_end;
+            data_file_offset_end = (end >= 0 && end < used_end) ? used_end : end;
+        }
+        recovered_data_end = std::max(recovered_data_end, used_end);
+        for (const auto& [ustart, uend] : unfinished_exts)
+            recovered_data_end = std::max(recovered_data_end, uend);
+    }
+
+    recovered_data_end = div_up(recovered_data_end, block_size) * block_size;
+    if (recovered_data_end > data_file_max_size)
+        data_file_max_size = recovered_data_end;
+
+    // Free the space of writes that did not finish: unfinished extents minus the ones of recovered items
+    std::vector<std::pair<int64_t, int64_t>> free_exts;
+    {
+        // Disjoint, sorted
+        std::sort(recovered_exts.begin(), recovered_exts.end());
+        std::vector<std::pair<int64_t, int64_t>> used;
+        for (const auto& ext : recovered_exts)
+        {
+            if (!used.empty() && ext.first <= used.back().second)
+                used.back().second = std::max(used.back().second, ext.second);
+            else
+                used.push_back(ext);
+        }
+        recovered_exts = std::move(used);
+
+        for (const auto& [ustart, uend] : unfinished_exts)
+        {
+            int64_t pos = ustart;
+            auto it = std::lower_bound(recovered_exts.begin(), recovered_exts.end(), std::make_pair(ustart, std::numeric_limits<int64_t>::min()));
+            if (it != recovered_exts.begin())
+                --it;
+            for (; it != recovered_exts.end() && it->first < uend; ++it)
+            {
+                if (it->second <= pos)
+                    continue;
+                if (it->first > pos)
+                    free_exts.emplace_back(pos, it->first);
+                pos = std::max(pos, it->second);
+            }
+            if (pos < uend)
+                free_exts.emplace_back(pos, uend);
+        }
+    }
+
+    if (!free_exts.empty())
+    {
+        THREAD_ID tid = cached_gettid();
+        setup_mmap_read_error(tid);
+
+        MDB_txn* txn;
+        int rc = mdb_txn_begin(db_env, NULL, 0, &txn);
+        if (rc)
+            throw std::runtime_error("LMDB: Failed to open transaction handle for commit (1) (" + std::string(mdb_strerror(rc)) + ") sfs " + db_path);
+
+        if (has_mmap_read_error_reset(tid))
+            throw std::runtime_error("LMDB: Failed to open transaction handle for commit (1) (SIGBUS) sfs " + db_path);
+
+        int64_t idx = 0;
+        for (const auto& [start, end] : free_exts)
+        {
+            if (add_tmp(idx++, txn, tid, start, end - start, true))
+                throw std::runtime_error("LMDB: Failed to add unfinished extent from WAL during recovery");
+        }
+
+        rc = mdb_txn_commit(txn);
+        if (rc)
+            throw std::runtime_error("LMDB: Error commiting txn for dbi handle (" + (std::string)mdb_strerror(rc) + ")");
+        if (has_mmap_read_error_reset(tid))
+            throw std::runtime_error("LMDB: Error commiting txn for dbi handle (SIGBUS)");
+
+        XLOGF(INFO, "WAL recovery: freeing {} extents of unfinished writes", free_exts.size());
+    }
+}
+
+bool SingleFileStorage::log_write_extent()
+{
+    if (!wal_file || !wal_write_meta)
+        return true;
+
+    if (!wal_file->writeAllocState(data_file_offset, data_file_offset_end))
+    {
+        XLOG(ERR) << "Failed to log the write extent to WAL file. " << folly::errnoStr(errno);
+        return false;
+    }
+    return true;
+}
+
 SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std::string& fn, size_t data_size)
 {
     if (is_dead)
@@ -1909,6 +2054,12 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
 
                 data_file_offset = commit_info.new_datafile_offset;
                 data_file_offset_end = commit_info.new_datafile_offset_end;
+
+                if (!log_write_extent())
+                {
+                    free_extents(extents);
+                    return WritePrepareResult{ EIO };
+                }
 
                 if (data_file_offset_end > data_file_alloc_end)
                 {
@@ -2159,6 +2310,12 @@ int SingleFileStorage::write_int(const std::string& fn, const char* data,
 
                 data_file_offset = commit_info.new_datafile_offset;
                 data_file_offset_end = commit_info.new_datafile_offset_end;
+
+                if (!log_write_extent())
+                {
+                    free_extents(extents);
+                    return EIO;
+                }
 
                 XLOG(DBG0) << "Found new free extent (" << std::to_string(data_file_offset) << ", " << std::to_string(data_file_offset_end) << "). Size " << folly::prettyPrint(data_file_offset_end - data_file_offset, folly::PRETTY_BYTES_IEC);
             }
@@ -2640,7 +2797,7 @@ SingleFileStorage::ReadExtResult SingleFileStorage::read_ext(const Ext& ext, con
         }
         if (read < ssize_t(toread))
         {
-            return ReadExtResult{ errno };
+            return ReadExtResult{ read < 0 && errno != 0 ? errno : EIO };
         }
         else
         {
@@ -2703,7 +2860,8 @@ int SingleFileStorage::read_ext(const Ext& ext, const unsigned int flags, const 
         }
         if (read < ssize_t(toread))
         {
-            return errno;
+            // Short read at the end of the file does not set errno (callers would retry forever)
+            return read < 0 && errno != 0 ? errno : EIO;
         }
         else
         {

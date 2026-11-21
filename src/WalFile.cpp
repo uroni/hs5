@@ -14,6 +14,7 @@ const char dataTypeFragInfo = 0;
 const char dataTypeDataFileData = 1;
 const char dataTypeInit = 2;
 const char dataTypeSync = 3;
+const char dataTypeAlloc = 4;
 
 // Flags of serialized match info
 const char matchInfoFlagReadNewest = 1 << 0;
@@ -630,10 +631,13 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
             if (!data_file)
                 throw std::runtime_error("WalFile: read: data file is null");
 
-            if (data_file->pwriteFullFillPage(data_ptr, data_size, data_off) != data_size)
+            // Without filling the rest of the page with zeros: The data can be a part of an object whose following
+            // data was written directly to the data file (not to the WAL), which would be overwritten
+            if (data_file->pwriteFull(data_ptr, data_size, data_off) != static_cast<ssize_t>(data_size))
             {
                 throw std::runtime_error("WalFile: read: failed to write data to data file: " + folly::errnoStr(errno));
             }
+            ret.max_data_end = std::max(ret.max_data_end, data_off + static_cast<int64_t>(data_size));
         }
         else if (type == dataTypeSync)
         {
@@ -641,6 +645,17 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
             if (!deserializeCommitInfo(data, commitInfo))
                 throw std::runtime_error("WalFile: read: failed to read commit info");
             ret.commit_info = commitInfo;
+            // The marker's state covers the items, data and allocations before it
+            ret.committed_items = ret.items.size();
+            ret.max_data_end = 0;
+            ret.alloc_states.clear();
+        }
+        else if (type == dataTypeAlloc)
+        {
+            ReadResult::AllocState state;
+            if (!data.getVarInt(&state.data_file_offset) || !data.getVarInt(&state.data_file_offset_end))
+                throw std::runtime_error("WalFile: read: failed to read allocation state");
+            ret.alloc_states.push_back(state);
         }
         else
         {
@@ -649,6 +664,15 @@ WalFile::ReadResult WalFile::read(int64_t transid, MultiFile* data_file, const b
     }
 
     return ret;
+}
+
+bool WalFile::writeAllocState(const int64_t dataFileOffset, const int64_t dataFileOffsetEnd)
+{
+    CWData data;
+    writeDataHeader(data, dataTypeAlloc, unlockedSeqNo());
+    data.addVarInt(dataFileOffset);
+    data.addVarInt(dataFileOffsetEnd);
+    return writeData(data);
 }
 
 bool WalFile::sync(const CommitInfo& commitInfo)

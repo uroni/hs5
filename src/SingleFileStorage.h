@@ -717,6 +717,34 @@ private:
 
     bool has_commit_item(const FragAction action);
 
+public:
+    // The action writes data into the data file at its extents (offset/len and extra_exts)
+    static bool writes_data(const FragAction action)
+    {
+        return action == FragAction::Add || action == FragAction::AddNoDelOld || action == FragAction::ModifyData;
+    }
+
+    // See wal_recovery (SingleFileStorage.cpp)
+    struct WalRecovery
+    {
+        // Extents (offset, end) of the data of items after the last commit marker
+        std::vector<std::pair<int64_t, int64_t>> recovered_exts;
+        // Write extents (offset, end) switched to after the last commit marker (in order)
+        std::vector<std::pair<int64_t, int64_t>> write_extent_switches;
+        // End of data items after the last commit marker
+        int64_t max_data_end = 0;
+    };
+
+private:
+    // Allocation state after WAL recovery: the write extent of the last commit marker (already set) or the last one
+    // switched to after it, used up to the end of the recovered data in it. Frees the space of writes that did not
+    // finish (reserved extents of the marker, allocations after it) unless recovered items use it
+    void recover_allocation_state(const WalRecovery& recovery, const std::vector<SPunchItem>& reserved_extents);
+
+    // Logs a switch of the write extent (data_file_offset/data_file_offset_end) to the WAL (if it logs metadata), so
+    // recovery knows the write extent after the last commit marker. Requires datafileoffset_mutex to be locked
+    bool log_write_extent();
+
     // Whether modified items are tracked in list_commit_items (for merging them into listings, see
     // list_iter_start) instead of commit_items. Necessary if items are not committed to the LMDB directly
     // (WAL or manual commit)
