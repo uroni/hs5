@@ -43,6 +43,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <openssl/crypto.h>
 #include <openssl/hmac.h>
 #include <openssl/md5.h>
 #include <openssl/sha.h>
@@ -394,7 +395,9 @@ std::optional<std::string> checkSigQueryStringV2(S3Handler* s3handler, HTTPMessa
 
     try
     {
-        if (urlSig != folly::uriUnescape<std::string>(signature))
+        const auto requestSig = folly::uriUnescape<std::string>(signature);
+        if (urlSig.size() != requestSig.size() ||
+            CRYPTO_memcmp(urlSig.data(), requestSig.data(), urlSig.size()) != 0)
             return std::nullopt;
     }
     catch (std::invalid_argument&)
@@ -730,7 +733,8 @@ std::optional<std::string> checkSig(
         calculatedSignature = folly::hexlify(hmacSha256Binary(signingKey, stringToSign));
     }
 
-    if (calculatedSignature != requestSignature)
+    if (calculatedSignature.size() != requestSignature.size() ||
+        CRYPTO_memcmp(calculatedSignature.data(), requestSignature.data(), calculatedSignature.size()) != 0)
     {
         XLOGF(INFO, "Signature mismatch for {}?{} method {} access key {} resource {} action {} payload hash {} expected {} got {} used host={}", headers.getPathAsStringPiece(),
               headers.getQueryStringAsStringPiece(), headers.getMethodString(), accessKey, ressource, static_cast<int>(action), payload, calculatedSignature, requestSignature, usedHost);
@@ -7853,7 +7857,8 @@ void S3Handler::onBody(std::unique_ptr<folly::IOBuf> body) noexcept
 
                         const auto expectedSig = hmacSha256Binary(awsChunkedEncoding->signingKey, stringToSign);
 
-                        if (awsChunkedEncoding->expectedSig != expectedSig)
+                        if (awsChunkedEncoding->expectedSig.size() != expectedSig.size() ||
+                            CRYPTO_memcmp(awsChunkedEncoding->expectedSig.data(), expectedSig.data(), expectedSig.size()) != 0)
                         {
                             XLOGF(WARN, "Chunk signature mismatch in chunked encoding body. Expected {}, got {}", folly::hexlify(expectedSig), folly::hexlify(awsChunkedEncoding->expectedSig));
                             ResponseBuilder(downstream())
