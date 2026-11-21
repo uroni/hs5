@@ -197,6 +197,12 @@ ConfigResult readConfigFile(const std::string& fn)
             }
             continue;
         }
+        if (key == "WAL_COMMIT_SYNC")
+        {
+            res.args.push_back(std::string("--wal_commit_sync=") + (parseConfigBool(val) ? "true" : "false"));
+            res.setArgs.insert("--wal_commit_sync");
+            continue;
+        }
         if (key == "PREALLOCATE_DATA")
         {
             res.args.push_back(std::string("--preallocate_data=") + (parseConfigBool(val) ? "true" : "false"));
@@ -598,6 +604,12 @@ int actionRun(std::vector<std::string> args)
     {
         if (auto disableMd5EtagEnv = getenv("HS5_DISABLE_MD5_ETAG"); disableMd5EtagEnv && parseConfigBool(disableMd5EtagEnv))
             realArgs.push_back("--disable_md5_etag");
+    }
+
+    if (!alreadySetArgs.contains("--wal_commit_sync"))
+    {
+        if (auto walCommitSyncEnv = getenv("HS5_WAL_COMMIT_SYNC"); walCommitSyncEnv)
+            realArgs.push_back(std::string("--wal_commit_sync=") + (parseConfigBool(walCommitSyncEnv) ? "true" : "false"));
     }
 
     if (!alreadySetArgs.contains("--preallocate_data"))

@@ -54,6 +54,7 @@ DEFINE_bool(wal_write_thread, true, "Use a separate thread for WAL file data wri
 DEFINE_bool(preallocate_data, true, "Preallocate data file space to improve performance and fragmentation");
 DEFINE_int32(test_read_prepare_delay_ms, 0, "Sleep in read_prepare between looking up and registering a read (for testing)");
 DEFINE_int64(trim_freespace_size, 1 * 1024 * 1024, "If more than this amount of free space is continuouly in the data file, free it up by punching holes (in bytes)");
+DEFINE_bool(wal_commit_sync, true, "Sync the WAL file on each commit. Without it, commits are written to the OS (they survive a crash of the process, but the commits of up to the last second can be lost on an OS crash or power loss). The WAL is still synced at least every second and before full index commits");
 DEFINE_int64(commit_max_defer_ms, 10, "Max time a requested commit is deferred while modifications are queued (to commit them together), in ms");
 DEFINE_uint32(idl_dirty_max, 50, "Maximum number of dirty entries in the LMDB database before flush to disk in MiB");
 
@@ -7340,6 +7341,20 @@ void SingleFileStorage::operator()()
     std::set<SPunchItem> trim_items;
     std::deque<SFragInfo> pending_commits;
     std::chrono::steady_clock::time_point last_commit_time = std::chrono::steady_clock::now();
+    // Last time the WAL was synced by a commit (see wal_commit_sync)
+    std::chrono::steady_clock::time_point last_wal_sync = std::chrono::steady_clock::now();
+    // Whether a commit has to sync the WAL. Without wal_commit_sync at least every second (bounds what is lost on
+    // power loss and how long freed extents are kept), and always before the WAL is reset (force)
+    const auto need_wal_sync = [&last_wal_sync](const bool force)
+    {
+        if (FLAGS_wal_commit_sync || force)
+            return true;
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_wal_sync < 1s)
+            return false;
+        last_wal_sync = now;
+        return true;
+    };
 
     auto can_skip_commit = false;
 
@@ -7659,11 +7674,17 @@ void SingleFileStorage::operator()()
                                                   .local_curr_version = local_curr_version,
                                                   .reserved_extents = local_reserved_extents };
 
-            const auto commit_ok = wal_file->sync(commitInfo);
+            const bool sync_wal = need_wal_sync(false);
+            const auto commit_ok = wal_file->sync(commitInfo, sync_wal);
             if (!commit_ok)
             {
                 XLOG(ERR) << "Failed to sync wal file. " << folly::errnoStr(errno);
                 ++commit_errors;
+            }
+            else if (!sync_wal)
+            {
+                // Not durable yet (lost on power loss): extents freed by it must not be reused or trimmed until the
+                // next synced commit, as they would still be in use after recovering without this commit
             }
             else
             {
@@ -7762,6 +7783,8 @@ void SingleFileStorage::operator()()
             }
 
             auto wal_file_reset = true;
+            // The WAL was not synced (wal_commit_sync), so this commit is not durable yet
+            bool full_commit_unsynced = false;
 
             if (wal_file && !from_startup_wal && !wal_write_meta && wal_write_data != 0 && wal_file->items() < FLAGS_max_wal_items &&
                 wal_file->size() < FLAGS_max_wal_size_mb * 1024 * 1024)
@@ -7797,13 +7820,18 @@ void SingleFileStorage::operator()()
                     ++commit_errors;
                 }
             }
-            else
+            else if (need_wal_sync(wal_file_reset))
             {
+                // Always before the WAL is reset
                 if (!wal_file->fsync())
                 {
                     XLOG(ERR) << "Failed to sync wal file. " << folly::errnoStr(errno);
                     ++commit_errors;
                 }
+            }
+            else
+            {
+                full_commit_unsynced = true;
             }
 
             size_t num_reserved_extents;
@@ -8019,21 +8047,25 @@ void SingleFileStorage::operator()()
 
             if (commit_ok)
             {
-                // Before freed extents can be reused/trimmed (and before erase_committed_items). Reads registering
-                // concurrently re-validate
-                if (!curr_new_free_extents.empty() || !trim_items.empty())
-                    free_generation.fetch_add(1, std::memory_order_release);
-
-                curr_new_free_extents.clear();
-
-                if (from_startup_wal)
+                // Not durable yet without a WAL sync: freed extents are kept until a synced commit (see WAL commit)
+                if (!full_commit_unsynced)
                 {
-                    // Might be used already
-                    trim_items.clear();
-                }
-                else
-                {
-                    run_trim_queue(trim_items);
+                    // Before freed extents can be reused/trimmed (and before erase_committed_items). Reads registering
+                    // concurrently re-validate
+                    if (!curr_new_free_extents.empty() || !trim_items.empty())
+                        free_generation.fetch_add(1, std::memory_order_release);
+
+                    curr_new_free_extents.clear();
+
+                    if (from_startup_wal)
+                    {
+                        // Might be used already
+                        trim_items.clear();
+                    }
+                    else
+                    {
+                        run_trim_queue(trim_items);
+                    }
                 }
 
                 if (new_data_file_copy_done > 0)

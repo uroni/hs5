@@ -675,7 +675,7 @@ bool WalFile::writeAllocState(const int64_t dataFileOffset, const int64_t dataFi
     return writeData(data);
 }
 
-bool WalFile::sync(const CommitInfo& commitInfo)
+bool WalFile::sync(const CommitInfo& commitInfo, const bool doFsync)
 {
     CWData data;
     writeDataHeader(data, dataTypeSync, unlockedSeqNo());
@@ -683,6 +683,9 @@ bool WalFile::sync(const CommitInfo& commitInfo)
 
     if (!writeData(data))
         return false;
+
+    if (!doFsync)
+        return true;
 
     return fsyncFile(unlockedCurrentFile()) == 0;
 }

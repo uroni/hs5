@@ -260,7 +260,8 @@ public:
     // recovery knows the allocation state after the last commit marker. Written in order (allocation lock held)
     bool writeAllocState(int64_t dataFileOffset, int64_t dataFileOffsetEnd);
 
-    bool sync(const CommitInfo& commitInfo);
+    // Writes the commit marker. doFsync: sync the WAL file (else it is only written to the OS)
+    bool sync(const CommitInfo& commitInfo, const bool doFsync = true);
     bool fsync();
     bool switchFiles() EXCLUDES(mutex);
 

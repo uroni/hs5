@@ -70,6 +70,7 @@ LOGLEVEL=info
 | <code class="language-plaintext highlighter-rouge">WAL_<wbr>SMALL_<wbr>OBJECT_<wbr>LIMIT</code> | integer (bytes) | `6000` | In `full` or `data-only` WAL mode, object size threshold for writing object data to WAL. |
 | `WAL_SIZE_MB` | integer (MiB) | `1000` | WAL file size threshold before reset/rollover. |
 | `WAL_ITEMS` | integer | `10000` | WAL item count threshold before reset/rollover. |
+| <code class="language-plaintext highlighter-rouge">WAL_<wbr>COMMIT_<wbr>SYNC</code> | boolean | `true` | Sync the WAL file on each commit. With `false`, commits only wait until the WAL is written to the OS: they survive a crash of HS5, but recent commits can be lost on an OS crash or power loss. The index stays consistent, as full index commits are still synced. Only has an effect with `WAL_MODE` enabled. |
 | `REDIS_PORT` | integer | `-1` | Port for the Redis protocol (RESP2/RESP3) server, bound to `SERVER_IP`. `-1` disables it. Clients authenticate with `AUTH <access key> <secret key>`; access is checked against the S3 permissions of `REDIS_BUCKET`. |
 | `REDIS_BUCKET` | string | `redis` | Bucket storing the Redis keys as objects. Created with versioning enabled if it does not exist. Versioning has to be enabled, as list elements are object versions. |
 | <code class="language-plaintext highlighter-rouge">REDIS_<wbr>MAX_<wbr>VALUE_<wbr>SIZE</code> | integer (bytes) | `536870912` | Maximum size of values written or read via the Redis protocol. Larger objects can only be accessed via S3. |
