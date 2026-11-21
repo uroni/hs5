@@ -42,6 +42,7 @@
 #include "config.h"
 #include "s3handler.h"
 #include <chrono>
+#include <csignal>
 #ifdef HS5_WITH_DUCKDB
 #include "DuckDbFs.h"
 
@@ -173,7 +174,13 @@ namespace
 
 void stopServer()
 {
-    server->stop();
+    // HTTPServer::stop() must run on the main event base thread (it destroys the signal handler registered there).
+    // Raising SIGTERM lets proxygen's signal handler stop the server from that thread.
+    if (kill(getpid(), SIGTERM) != 0)
+    {
+        XLOGF(ERR, "Raising SIGTERM to stop server failed: {}", folly::errnoStr(errno));
+        _exit(1);
+    }
 }
 
 int realMain(int argc, char* argv[])
