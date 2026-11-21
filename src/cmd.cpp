@@ -136,6 +136,7 @@ ConfigResult readConfigFile(const std::string& fn)
         { "INIT_ROOT_PASSWORD", "init_root_password" },
         { "INIT_CREATE_BUCKET", "init_create_bucket" },
         { "COMMIT_AFTER_MS", "commit_after_ms" },
+        { "COMMIT_MAX_DEFER_MS", "commit_max_defer_ms" },
         { "WORKER_THREADS", "folly_global_cpu_executor_threads" },
         { "HTTP_WORKER_THREADS", "http_worker_threads" },
         { "GET_IN_WORKER_THRESHOLD", "get_in_worker_threshold" },
@@ -216,6 +217,7 @@ ConfigResult readConfigEnv(const std::set<std::string>& alreadySetArgs)
     const std::map<std::string_view, std::string_view> configMapping = {
         { "HS5_DB_MAX_DIRTY_MB", "idl_dirty_max" },
         { "HS5_TRIM_FREESPACE_SIZE", "trim_freespace_size" },
+        { "HS5_COMMIT_MAX_DEFER_MS", "commit_max_defer_ms" },
         { "HS5_WAL_SIZE_MB", "max_wal_size_mb" },
         { "HS5_WAL_ITEMS", "max_wal_items" },
         { "HS5_REDIS_PORT", "redis_port" },

@@ -54,6 +54,7 @@ DEFINE_bool(wal_write_thread, true, "Use a separate thread for WAL file data wri
 DEFINE_bool(preallocate_data, true, "Preallocate data file space to improve performance and fragmentation");
 DEFINE_int32(test_read_prepare_delay_ms, 0, "Sleep in read_prepare between looking up and registering a read (for testing)");
 DEFINE_int64(trim_freespace_size, 1 * 1024 * 1024, "If more than this amount of free space is continuouly in the data file, free it up by punching holes (in bytes)");
+DEFINE_int64(commit_max_defer_ms, 10, "Max time a requested commit is deferred while modifications are queued (to commit them together), in ms");
 DEFINE_uint32(idl_dirty_max, 50, "Maximum number of dirty entries in the LMDB database before flush to disk in MiB");
 
 #ifndef _WIN32
@@ -7220,7 +7221,7 @@ void SingleFileStorage::operator()()
             frag_info = std::move(callback_queue.front());
             callback_queue.pop_front();
         }
-        else if (!pending_commits.empty() && std::chrono::steady_clock::now() - last_commit_time > 100ms)
+        else if (!pending_commits.empty() && std::chrono::steady_clock::now() - last_commit_time > std::chrono::milliseconds(FLAGS_commit_max_defer_ms))
         {
             frag_info = std::move(pending_commits.front());
             pending_commits.pop_front();
