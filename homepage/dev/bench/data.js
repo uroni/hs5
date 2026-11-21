@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795206553700,
+  "lastUpdate": 1795291088256,
   "repoUrl": "https://github.com/uroni/hs5",
   "entries": {
     "Benchmark": [
@@ -14913,6 +14913,149 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0",
             "extra": "mean: 5.924077255999691 sec\nrounds: 1"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "committer": {
+            "email": "martin@urbackup.org",
+            "name": "Martin Raiber",
+            "username": "uroni"
+          },
+          "distinct": true,
+          "id": "ef272a6e806b89710f1a29a1ae81f5b70aad2e4d",
+          "message": "AMQP flow control, batched deliveries, graceful client close",
+          "timestamp": "2026-11-21T20:38:57+01:00",
+          "tree_id": "4764046a3ea61fe16b4871108b8ece8aa9d914b1",
+          "url": "https://github.com/uroni/hs5/commit/ef272a6e806b89710f1a29a1ae81f5b70aad2e4d"
+        },
+        "date": 1795291087174,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[hs5]",
+            "value": 0.007909598111792988,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.42867385500006 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_warp_mixed[minio]",
+            "value": 0.007881537218276967,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 126.87880197799996 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_hs5",
+            "value": 0.08920078145581992,
+            "unit": "iter/sec",
+            "range": "stddev: 0.11847240943579254",
+            "extra": "mean: 11.210664118399995 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_minio",
+            "value": 0.07177336450014621,
+            "unit": "iter/sec",
+            "range": "stddev: 0.10627692953308475",
+            "extra": "mean: 13.932745203799982 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf.py::test_perf_upload_many_files_garage_sqlite",
+            "value": 0.060524234589795854,
+            "unit": "iter/sec",
+            "range": "stddev: 0.28111519787079026",
+            "extra": "mean: 16.52230725060001 sec\nrounds: 5"
+          },
+          {
+            "name": "test/test_perf_docker_registry.py::test_perf_docker_registry_filesystem",
+            "value": 0.35693217372060737,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 2.8016527330000827 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_docker_registry.py::test_perf_docker_registry_hs5",
+            "value": 0.23098885241145317,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 4.329213248000087 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_docker_registry.py::test_perf_docker_registry_hs5_no_wal",
+            "value": 0.22269937815731322,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 4.490358294999851 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_docker_registry.py::test_perf_docker_registry_minio",
+            "value": 0.222614272818784,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 4.492074956999886 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync[local_file]",
+            "value": 0.2996594556973685,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 3.3371214590001728 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync[hs5_perf]",
+            "value": 0.2860850936005377,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 3.4954634910000095 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync[minio]",
+            "value": 0.2355729149215584,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 4.244970184000067 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync[garage_sqlite]",
+            "value": 0.19146077939412973,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 5.223001823999994 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync_multi_db[local_file]",
+            "value": 0.4298170640893688,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 2.326571194000053 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync_multi_db[hs5_perf]",
+            "value": 0.4015069390557334,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 2.4906169799999134 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync_multi_db[minio]",
+            "value": 0.2663950424671178,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 3.7538236099999267 sec\nrounds: 1"
+          },
+          {
+            "name": "test/test_perf_litestream.py::test_perf_litestream_sync_multi_db[garage_sqlite]",
+            "value": 0.1406032970528585,
+            "unit": "iter/sec",
+            "range": "stddev: 0",
+            "extra": "mean: 7.112208753000004 sec\nrounds: 1"
           }
         ]
       }
