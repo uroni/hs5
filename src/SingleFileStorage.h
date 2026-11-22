@@ -717,6 +717,8 @@ private:
     bool run_trim_queue(std::set<SPunchItem>& trim_items);
 
     void run_trim_thread();
+    void run_prealloc_thread(std::stop_token st);
+    void request_prealloc(int64_t size);
 
     bool has_commit_item(const FragAction action);
 
@@ -1070,6 +1072,11 @@ private:
     std::map<int64_t, int> trimming_free_skip_extents;
 
     std::jthread trim_thread;
+
+    std::mutex prealloc_mutex;
+    std::condition_variable_any prealloc_cond;
+    int64_t prealloc_target = 0;
+    std::jthread prealloc_thread;
 };
 
 class ScopedSFSRef

@@ -1378,6 +1378,12 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
 
     trim_thread = std::jthread([this]()
                                { this->run_trim_thread(); });
+
+    if (FLAGS_preallocate_data)
+    {
+        prealloc_thread = std::jthread([this](std::stop_token st)
+                                       { this->run_prealloc_thread(st); });
+    }
 }
 
 SingleFileStorage::SingleFileStorage()
@@ -1393,6 +1399,12 @@ SingleFileStorage::SingleFileStorage()
 SingleFileStorage::~SingleFileStorage()
 {
     XLOGF(INFO, "Shutting down SingleFileStorage...");
+
+    if (prealloc_thread.joinable())
+    {
+        prealloc_thread.request_stop();
+        prealloc_thread.join();
+    }
 
     if (wal_file)
     {
@@ -2099,7 +2111,7 @@ SingleFileStorage::WritePrepareResult SingleFileStorage::write_prepare(const std
 
     if (FLAGS_preallocate_data && alloc_fsize > 0)
     {
-        data_file.alloc(alloc_fsize);
+        request_prealloc(alloc_fsize);
     }
 
     return WritePrepareResult{ 0, extents };
@@ -10155,6 +10167,44 @@ bool SingleFileStorage::run_trim_queue(std::set<SPunchItem>& trim_items)
     }
     trim_items.clear();
     return true;
+}
+
+void SingleFileStorage::request_prealloc(int64_t size)
+{
+    if (!prealloc_thread.joinable())
+    {
+        data_file.alloc(size);
+        return;
+    }
+
+    std::scoped_lock lock(prealloc_mutex);
+    if (size > prealloc_target)
+    {
+        prealloc_target = size;
+        prealloc_cond.notify_all();
+    }
+}
+
+void SingleFileStorage::run_prealloc_thread(std::stop_token st)
+{
+    folly::setThreadName("prealloc data");
+    int64_t done = 0;
+    std::unique_lock lock(prealloc_mutex);
+    while (true)
+    {
+        if (!prealloc_cond.wait(lock, st, [&]()
+                                { return prealloc_target > done; }))
+            return;
+
+        const int64_t target = prealloc_target;
+        lock.unlock();
+        if (!data_file.alloc(target))
+        {
+            XLOGF(WARN, "Preallocating data file to {} failed", target);
+        }
+        lock.lock();
+        done = target;
+    }
 }
 
 void SingleFileStorage::run_trim_thread()
