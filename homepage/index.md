@@ -26,6 +26,8 @@ Table of Contents
  * [Durability guarantees](#durability-guarantees)
  * [Manual commit mode](#manual-commit-mode)
  * [DuckDB](#duckdb-ui)
+ * [Redis API](#redis-api)
+ * [RabbitMQ API](#rabbitmq-api)
 
 # About HS5
 
@@ -140,3 +142,12 @@ FROM "hs5://test/train_services.parquet"
   WHERE arrival_time > departure_time;
 ```
 
+## Redis API #
+
+If `REDIS_PORT` is set, a bucket named `redis` (configurable) can be accessed via Redis RESP2/RESP3 protocol on that port. As credentials use the same as if you would access it via S3 (`AUTH <access key> <secret key>`).
+The main reason to use this is that it allows for durable storage of large objects via Redis protocol.
+
+## RabbitMQ API #
+
+If `AMQP_PORT` is set, a bucket named `amqp` (configurable) stores items queued via the AMQP 0-9-1/RabbitMQ protocol on that port. As credentials use the same as if you would access it via S3.
+The main reason to use this is that it allows for durable storage of large queued items.
