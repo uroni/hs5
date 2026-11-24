@@ -109,6 +109,14 @@ jobs:
       matrix:
         variant: [debug, benchmark, asan, tsan]
         os: [ubuntu-latest]
+        # ASan+UBSan builds with the SQLite based LMDB API replacements instead of LMDB
+        include:
+          - variant: asan-sqlite
+            os: ubuntu-latest
+            cmake_args: "['-DHS5_LMDB_SQLITE=ON']"
+          - variant: asan-sqlite-btree
+            os: ubuntu-latest
+            cmake_args: "['-DHS5_LMDB_SQLITE_BTREE=ON']"
 
     steps:
       - uses: actions/checkout@v3
@@ -164,12 +172,13 @@ jobs:
           testPreset: 'test-release'
 
       - name: Run CMake+vcpkg+Ninja+CTest to build debug packages with AddressSanitizer+UndefinedBehaviorSanitizer and generate/build/test the code.
-        if: matrix.variant == 'asan'
+        if: startsWith(matrix.variant, 'asan')
         uses: lukka/run-cmake@v10
         env:
           VCPKG_BINARY_SOURCES: "clear;http,https://vcpkg:${{ secrets.VCPKG_WEBDAV_PW }}@vcpkg.urbackup.org,readwrite"
         with:
           configurePreset: 'ninja-multi-vcpkg-asan'
+          configurePresetAdditionalArgs: ${{ matrix.cmake_args || '[]' }}
           buildPreset: 'ninja-vcpkg-debug-asan'
           testPreset: 'test-debug-asan'
 
@@ -233,7 +242,7 @@ jobs:
           custom-arguments: -p no:sugar -p no:threadexception --benchmark-skip test --timeout=300 -n auto
 
       - uses: pavelzw/pytest-action@v2
-        if: matrix.variant == 'asan'
+        if: startsWith(matrix.variant, 'asan')
         env:
           HS5_BINARY: builds/ninja-multi-vcpkg-asan/Debug/hs5
           ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_summary=1"
