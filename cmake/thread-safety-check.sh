@@ -24,7 +24,9 @@ fi
 
 if [[ $# -gt 0 ]]; then
   FILES=("$@")
+  AUTO_FILES=0
 else
+  AUTO_FILES=1
   # Sources that are annotated: the .cpp or its .h includes ThreadSafety.h
   # (other files use std::mutex in ways the analysis cannot follow, e.g. SCOPE_EXIT unlocks)
   FILES=()
@@ -72,6 +74,11 @@ for e in json.load(open(sys.argv[1])):
 EOF
   )
   if [[ ${#ARGS[@]} -eq 0 ]]; then
+    if [[ $AUTO_FILES -eq 1 ]]; then
+      # Not compiled in this build configuration (e.g. src/LmdbSqlite.cpp without HS5_LMDB_SQLITE)
+      echo "thread-safety-check: skipping '$file' (not part of this build)"
+      continue
+    fi
     echo "thread-safety-check: '$file' not found in compile_commands.json" >&2
     status=1
     continue

@@ -48,3 +48,6 @@ vcpkg_cmake_install()
 
 file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/include")
 file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/share")
+
+# SQLite amalgamation of the library, for the HS5_LMDB_SQLITE_BTREE backend (which uses SQLite internals)
+file(INSTALL "${SOURCE_PATH}/sqlite/sqlite3.c" DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}/amalgamation")

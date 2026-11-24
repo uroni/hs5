@@ -721,6 +721,14 @@ SingleFileStorage::SingleFileStorage(SFSOptions options)
         sync_freespace_cache = false;
     }
 
+#if defined(HS5_LMDB_SQLITE) || defined(HS5_LMDB_SQLITE_BTREE)
+    if (!freespace_cache_path.empty() && freespace_cache_path != db_path)
+    {
+        XLOG(WARN) << "Separate freespace cache is not supported with the SQLite index backend. Ignoring freespace cache path " << freespace_cache_path;
+        freespace_cache_path.clear();
+    }
+#endif
+
 #ifdef _WIN32
     use_direct_io = false;
 #endif

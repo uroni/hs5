@@ -1,5 +1,11 @@
 #pragma once
+#if defined(HS5_LMDB_SQLITE)
+#include "LmdbSqlite.h"
+#elif defined(HS5_LMDB_SQLITE_BTREE)
+#include "LmdbSqliteBtree.h"
+#else
 #include "../external/lmdb/lmdb.h"
+#endif
 #include "File.h"
 #include "crypt.h"
 #include "relaxed_atomic.h"

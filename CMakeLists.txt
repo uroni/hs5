@@ -157,10 +157,39 @@ if(CMAKE_C_FLAGS MATCHES "-fsanitize=[^ ]*undefined")
   set_source_files_properties(external/lmdb/mdb.c PROPERTIES COMPILE_OPTIONS "-fno-sanitize=alignment")
 endif()
 
-add_executable(hs5
+option(HS5_LMDB_SQLITE "Use the SQLite based LMDB API replacement (src/LmdbSqlite.cpp) instead of LMDB" OFF)
+option(HS5_LMDB_SQLITE_BTREE "Use the LMDB API replacement on the SQLite B-tree/WAL layers without SQL (src/LmdbSqliteBtree.cpp) instead of LMDB" OFF)
+if(HS5_LMDB_SQLITE AND HS5_LMDB_SQLITE_BTREE)
+  message(FATAL_ERROR "HS5_LMDB_SQLITE and HS5_LMDB_SQLITE_BTREE are mutually exclusive")
+endif()
+if(HS5_LMDB_SQLITE)
+  set(HS5_LMDB_SOURCES src/LmdbSqlite.cpp)
+elseif(HS5_LMDB_SQLITE_BTREE)
+  # The shim compiles its own (private) copy of the SQLite amalgamation to access the
+  # B-tree internals. Installed by the sqlite-cpp-sqlgen port, so it is the same SQLite
+  # version as the linked one.
+  set(HS5_SQLITE_AMALGAMATION_DIR "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/sqlite-cpp-sqlgen/amalgamation"
+    CACHE PATH "Directory containing the SQLite amalgamation sqlite3.c for HS5_LMDB_SQLITE_BTREE")
+  if(NOT EXISTS "${HS5_SQLITE_AMALGAMATION_DIR}/sqlite3.c")
+    message(FATAL_ERROR "HS5_LMDB_SQLITE_BTREE: ${HS5_SQLITE_AMALGAMATION_DIR}/sqlite3.c not found (set HS5_SQLITE_AMALGAMATION_DIR)")
+  endif()
+  set(HS5_LMDB_SOURCES src/LmdbSqliteBtree.cpp src/LmdbSqliteBtreeShim.c)
+  set_source_files_properties(src/LmdbSqliteBtreeShim.c PROPERTIES
+    INCLUDE_DIRECTORIES "${HS5_SQLITE_AMALGAMATION_DIR}"
+    COMPILE_OPTIONS "-Wno-unused-function;-Wno-unused-variable;-Wno-unused-but-set-variable")
+  # SQLite's balance_nonroot() indexes (cond ? apNew : apOld)[i] with arrays of different sizes
+  if(CMAKE_C_FLAGS MATCHES "-fsanitize=[^ ]*undefined")
+    set_property(SOURCE src/LmdbSqliteBtreeShim.c APPEND PROPERTY COMPILE_OPTIONS "-fno-sanitize=object-size")
+  endif()
+else()
+  set(HS5_LMDB_SOURCES
     external/lmdb/midl.cpp
     external/lmdb/mdb.c
-    external/lmdb/cppmidl.cpp
+    external/lmdb/cppmidl.cpp)
+endif()
+
+add_executable(hs5
+    ${HS5_LMDB_SOURCES}
     src/zig_libc_compat.c
     src/main.cpp
     src/s3handler.cpp
@@ -241,6 +270,12 @@ target_link_libraries(hs5 PRIVATE $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zst
   AWS::aws-c-common AWS::aws-checksums date::date unofficial::lua::lua-cpp $<$<BOOL:${HS5_USE_JEMALLOC}>:${JEMALLOC_LIBRARY}>)
 
 target_compile_features(hs5 PUBLIC cxx_std_20)
+if(HS5_LMDB_SQLITE)
+  target_compile_definitions(hs5 PRIVATE HS5_LMDB_SQLITE)
+endif()
+if(HS5_LMDB_SQLITE_BTREE)
+  target_compile_definitions(hs5 PRIVATE HS5_LMDB_SQLITE_BTREE)
+endif()
 if(HS5_USE_JEMALLOC)
   target_compile_definitions(hs5 PRIVATE USE_JEMALLOC)
 endif()
