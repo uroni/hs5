@@ -10099,6 +10099,33 @@ void SingleFileStorage::assert_reading_items_empty()
     }
     assert(num_items == 0);
 
+    std::unique_lock lock(mutex);
+
+    const auto has_commit_item_refs = [this]()
+    {
+        for (const auto& [item, refs] : commit_items)
+        {
+            if (refs != 0)
+                return true;
+        }
+        for (const auto& [item, value] : list_commit_items)
+        {
+            if (value.refs != 0)
+                return true;
+        }
+        return false;
+    };
+
+    {
+        const auto wait_until = std::chrono::steady_clock::now() + 30s;
+        while (std::chrono::steady_clock::now() < wait_until && has_commit_item_refs())
+        {
+            lock.unlock();
+            std::this_thread::sleep_for(10ms);
+            lock.lock();
+        }
+    }
+
     size_t commit_items_refs = 0;
 
     const auto check_refs = [&](const auto& items, const auto& format_item, const auto& get_refs)
