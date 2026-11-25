@@ -53,7 +53,6 @@ LOGLEVEL=info
 | `INIT_ROOT_PASSWORD` | string | auto-generated if unset | Initial root password on first startup. |
 | `INIT_CREATE_BUCKET` | string | empty | Comma-separated list of buckets to create at startup. |
 | `MANUAL_COMMIT` | boolean | `false` | Enable manual commit mode. Accepted true values: `true`, `yes`, `on`, `1`. |
-| <code class="language-plaintext highlighter-rouge">MANUAL_<wbr>COMMIT_<wbr>LIST_<wbr>CONSISTENT</code> | boolean | `true` | Keep list operations fully consistent in manual commit mode (higher latency). |
 | `COMMIT_AFTER_MS` | integer (ms) | `30000` | In manual commit mode, automatically commit after this delay. Use `0` to disable auto-commit. |
 | <code class="language-plaintext highlighter-rouge">COMMIT_<wbr>MAX_<wbr>DEFER_<wbr>MS</code> | integer (ms) | `10` | Requested commits are deferred while modifications are queued, so they are committed together. This is the maximum deferral under continuous load. Low values (below about 10 ms) cause more commits and lower throughput with concurrent writers. |
 | `WORKER_THREADS` | integer | `2 x CPU cores` | Number of global worker threads. |
